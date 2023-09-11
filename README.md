@@ -177,8 +177,10 @@
 
 
 
-<h2> Конвертація в html </h2>
+<h2> Конвертація  </h2>
 
+notebbok в html
 <code>
 jupyter nbconvert --to html ./your_notebook.ipynb
 </code>
+

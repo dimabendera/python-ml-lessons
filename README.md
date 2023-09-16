@@ -15,52 +15,13 @@
   </li>
 
   <li type="I">Лекція 1. Python. [8h].
-    #### Section 1: General Programming Basics
-- Simple Math
-- Variable Assignment
-- Basic Syntax and Logic
-- Data Types: int, float, bool, str
 
+#### Section 1: General Programming Basics
 #### Section 2: Strings
-- Identifying and using strings
-- String slicing
-- String formatting
-- String methods
-- - str.replace()
-- - str.find()
-- - str.count()
-- - str.lower()
-
 #### Section 3: Conditionals
-- Logical control; changing the behavior of your programs
-- and keyword, or keyword
-- if / else structure
-- if / elif ... / else structure
-- Nesting conditionals
-
 #### Section 4: Lists
-- Containers for data types
-- First In, Last Out (Stack)
-- Accessing specific list items through index (slice notation)
-- List methods
-- - list.append()
-- - list.insert()
-- - list.pop()
-- - list.extend()
-- Finding items in list (in keyword)
-- Deduplicating a list using list(set(list_to_deduplicate))
-
 #### Section 5: Loops
-- for loop (for each item in a list: ...)
-- enumerate()
-- zip()
-- range()
-- while loop (ask each time: is this still true?)
-
-#### Section 6: Strings to Lists and Vice-Versa
-- str.join() (create a string from a list)
-- str.split() (create a list from a string)
-
+#### Section 6: Functions
 #### Section 7: File handling
 - with open(filename) as textfile: ...
 - file.read()
@@ -69,49 +30,7 @@
 - File handling flags (r, w, b, +)
 - Writing to files
 
-#### Section 8: Python's Most Commonly Used Built-in Functions
-- - Types (used primarily for converting one type to another)
-- int()
-- float()
-- str()
-- bool()
-- list()
-- set()
-- dict()
-- - Comparison and Calculation
-- abs()
-- len()
-- max()
-- min()
-- round()
-- sum()
-- - Loop (Sequence) Control
-- enumerate()
-- range() / xrange()
-- reversed()
-- sorted()
-- zip()
 
-#### Section 9: Functions
-- def keyword
-- arguments
-- default arguments
-- *args
-- **kwargs
-- return keyword
-- sequence unpacking (return and receive multiple values)
-- namespaces
-
-#### Section 10: Dictionaries
-- Accessing specific dictionary items through key (looks like a slice)
-- Accessing all keys as a list using .keys()
-- Faking a sorted dictionary by using sorted() on the .keys()
-- Accessing all values as a list using .values()
-- Accessing all key, value pairs as a list using .items()
-- Adding new items through .fromkeys()
-- Checking for whether a key exists with .has_key
-- Using .get() to safely get a key's value if it exists without getting an error if not
-- Adding new items with direct assignment and .update()
 
 #### Section 11: Dictionaries and Lists, together
 - Accessing specific items in a nested list

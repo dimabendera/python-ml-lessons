@@ -5,7 +5,7 @@
 Основа взята з <a src="https://docs.google.com/document/d/1SgVPHOoGtm_hdNZP5YL_zCDlT11F-SY0_fnqGdfj2-U/edit">документу</a>
 
 <ul>
-  <li type="I">Введення. Короткі тести, сесії запитань і відповідей [3 год]
+  <li type="I">Введення. Короткі тести, сесії запитань і відповідей [1.5 h]
     <ol>
       <li type="1">Визначення цілей, відповідальності;</li>
       <li type="1">Хід розробки, вимоги до продукту, робота в команді, відстеження завдань, таймінг;</li>
@@ -14,7 +14,7 @@
     </ol>
   </li>
 
-  <li type="I">Лекція 1. Python. [8h].
+  <li type="I">Лекція 1. Python. [4.5h].
 
 #### Section 1: General Programming Basics
 #### Section 2: Strings
@@ -23,32 +23,15 @@
 #### Section 5: Loops
 #### Section 6: Functions
 #### Section 7: File handling
-- with open(filename) as textfile: ...
-- file.read()
-- Reading text files 
-- Reading CSV files
-- File handling flags (r, w, b, +)
-- Writing to files
-
-
-
-#### Section 11: Dictionaries and Lists, together
+#### Section 8: Classes
+#### Section 12: Standard Library
+#### Section 11: API
 - Accessing specific items in a nested list
 - Accessing specific items in a nested dictionary
 - Accessing specific items in a nested list within a dictionary
 - Accessing specific items in a nested dictionary within a list
 - If you can do those four above, you can handle receiving JSON API returns
 
-#### Section 12: Standard Library
-- import keyword
-- from ... import ... as ... structure
-- time
-- random
-- math
-- re (regular expressions)
-- os
-- sys
-- json
 
 #### Section 13: External Libraries (Not necessarily in order; keep these in mind)
 - Installing external libraries with easy_install
@@ -74,11 +57,7 @@
 - Inline Conditionals
 - Generators
 
-#### Section 16: Classes
-- Classes
-- Magic Methods
 
-  </li>
     
 
   

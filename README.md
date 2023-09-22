@@ -14,7 +14,7 @@
     </ol>
   </li>
 
-  <li type="I">Лекція 1. Python. [4.5h].
+  <li type="I">Частина 1. Python. [4.5h].
 
 #### Section 1: General Programming Basics
 #### Section 2: Strings
@@ -22,45 +22,15 @@
 #### Section 4: Lists
 #### Section 5: Loops
 #### Section 6: Functions
-#### Section 7: File handling
-#### Section 8: Classes
-#### Section 12: Standard Library
-#### Section 11: API
-- Accessing specific items in a nested list
-- Accessing specific items in a nested dictionary
-- Accessing specific items in a nested list within a dictionary
-- Accessing specific items in a nested dictionary within a list
-- If you can do those four above, you can handle receiving JSON API returns
-
-
-#### Section 13: External Libraries (Not necessarily in order; keep these in mind)
-- Installing external libraries with easy_install
-- Using easy_install to install pip (an easier / better way to install external libraries)
-- requests (web crawling made easy)
-- BeautifulSoup (parsing HTML)
-- xlrd (Read Excel .xls files)
-- xlwt (Write to Excel .xls files)
-- xlsxwriter (Write to Excel .xls and .xlsx files, with additional functionality beyond xlwt)
-- cherrypy (Simple, lightweight framework for serving web pages)
-- psycopg2 (Connect to and issue SQL commands to your postgresql database)
-
-#### Section 14: Exception Handling
-- try / except syntax
-- Using multiple excepts
-- Recognizing the different error types
-- Exception, the generic exception type (use sparingly)
-- Nesting exception handling
-- try / except / else syntax
-
-#### Section 15: Intermediate Concepts
-- List Comprehensions
-- Inline Conditionals
-- Generators
-
-
-    
-
+#### Section 7: Classes
+#### Section 8: File handling
+#### Section 9: Exception Handling
+#### Section 10: Modules
+#### Section 11: Standard Modules
+#### Section 12: REST API
   
+<li type="I">Частина 2. External Libs. [4.5h].
+<li type="I">Частина 3. ML. [4.5h].
 </ul>
 
 

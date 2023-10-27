@@ -14,23 +14,4 @@
    Наприклад, для [(1, 10), (2, 20), (1, 5)], функція поверне {1: 15, 2: 20}.
 """
 
-import time
 
-factorial = lambda num: 1 if(num == 1) else num*factorial(num-1)
-
-
-def time_decorator(func):
-    def inner(*args, **kwargs):
-        begin = time.time()
-        func(*args, **kwargs)
-        end = time.time()
-        print(f"This func takes :{end - begin}")
-    return inner
-
-
-@time_decorator
-def calculate(func, number):
-    print(func(number))
-
-
-calculate(factorial, 100)

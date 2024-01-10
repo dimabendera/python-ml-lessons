@@ -4,6 +4,3 @@
 2) Напишіть функції min max, які знаходять мінімальне мінімальне значення в массиві
 """
 
-numbers = {"1": "a", "2": "b", "3": "c"}
-numbers_swapped = {value: key for key, value in numbers.items()}
-print(numbers_swapped)

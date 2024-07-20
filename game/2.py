@@ -1,8 +1,11 @@
+"""
+Базове малювання
 pygame.draw.rect(screen, color, pygame.Rect(x, y, width, height))
 pygame.draw.circle(screen, color, (x, y), radius)
 pygame.draw.line(screen, color, start_pos, end_pos, width)
 pygame.draw.ellipse(screen, color, pygame.Rect(x, y, width, height))
 pygame.draw.polygon(screen, color, points)
+"""
 
 
 import pygame

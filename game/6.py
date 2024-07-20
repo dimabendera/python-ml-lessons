@@ -1,3 +1,6 @@
+"""
+Завантаження sprite
+"""
 import pygame
 import sys
 

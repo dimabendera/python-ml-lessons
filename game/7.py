@@ -1,3 +1,6 @@
+"""
+3D ефекти
+"""
 import pygame
 import math
 

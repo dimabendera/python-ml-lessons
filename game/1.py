@@ -1,3 +1,6 @@
+"""
+Основи
+"""
 import pygame
 import sys
 

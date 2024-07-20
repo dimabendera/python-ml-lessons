@@ -1,3 +1,6 @@
+"""
+Звуки
+"""
 import pygame
 
 pygame.init()

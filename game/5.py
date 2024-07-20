@@ -1,3 +1,7 @@
+"""
+Гра з текстом score
+Ловити падаючі зірочкти
+"""
 import pygame
 import sys
 import random

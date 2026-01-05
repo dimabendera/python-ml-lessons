@@ -56,7 +56,7 @@
 
 
 
-<img alt="../_images/chapter21.05-Computing-Integrals-in-Python_6_0.png" src="../_images/chapter21.05-Computing-Integrals-in-Python_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter21.05-Computing-Integrals-in-Python_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter21.05-Computing-Integrals-in-Python_6_0.png"/>
 
 
 <p>Функція <span>\(quad(f,a,b)\)</span> використовує іншу схему чисельного інтегрування для апроксимації інтегралів. <span>\(quad\)</span> інтегрує функцію, визначену об'єктом-функцією <span>\(f\)</span>, від <span>\(a\)</span> до <span>\(b\)</span>.</p>

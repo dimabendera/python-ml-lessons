@@ -44,7 +44,7 @@
 
 
 
-<img alt="../_images/chapter20.04-Numerical-Differentiation-with-Noise_5_0.png" src="../_images/chapter20.04-Numerical-Differentiation-with-Noise_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.04-Numerical-Differentiation-with-Noise_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.04-Numerical-Differentiation-with-Noise_5_0.png"/>
 
 
 <p>Похідні наших двох тестових функцій:</p>
@@ -77,5 +77,5 @@
 
 
 
-<img alt="../_images/chapter20.04-Numerical-Differentiation-with-Noise_7_0.png" src="../_images/chapter20.04-Numerical-Differentiation-with-Noise_7_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.04-Numerical-Differentiation-with-Noise_7_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.04-Numerical-Differentiation-with-Noise_7_0.png"/>
 ```

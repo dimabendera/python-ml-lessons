@@ -60,7 +60,7 @@ S''_{n-1}(x_n) &amp;=&amp; 0.
 
 
 
-<img alt="../_images/chapter17.03-Cubic-Spline-Interpolation_6_0.png" src="../_images/chapter17.03-Cubic-Spline-Interpolation_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.03-Cubic-Spline-Interpolation_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.03-Cubic-Spline-Interpolation_6_0.png"/>
 
 
 <p>Щоб визначити коефіцієнти кожної кубічної функції, ми явно записуємо обмеження у вигляді системи лінійних рівнянь з <span>\(4(n-1)\)</span> невідомими. Для <span>\(n\)</span> точок даних невідомими є коефіцієнти <span>\(a_i, b_i, c_i, d_i\)</span> кубічного сплайна, <span>\(S_i\)</span>, що з'єднує точки <span>\(x_i\)</span> та <span>\(x_{i+1}\)</span>.</p>

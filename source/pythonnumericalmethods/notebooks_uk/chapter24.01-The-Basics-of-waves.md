@@ -28,7 +28,7 @@
 
 
 
-<img alt="../_images/chapter24.01-The-Basics-of-waves_5_0.png" src="../_images/chapter24.01-The-Basics-of-waves_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_5_0.png"/>
 
 
 <p>Ми можемо уявити, що синусоїдальна хвиля може змінюватися як у часі, так і в просторі. Якщо ми побудуємо графік змін у різних місцях, кожен часовий знімок буде синусоїдальною хвилею, що змінюється залежно від розташування. Дивіться наступний малюнок із фіксованою точкою в <span>\(x=2.5\)</span>, показаною червоною крапкою. Звісно, ви також можете побачити зміни в часі в певному місці, ви можете побудувати цей графік самостійно.</p>
@@ -56,7 +56,7 @@
 
 
 
-<img alt="../_images/chapter24.01-The-Basics-of-waves_7_0.png" src="../_images/chapter24.01-The-Basics-of-waves_7_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_7_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_7_0.png"/>
 
 
 
@@ -105,7 +105,7 @@
 
 
 
-<img alt="../_images/chapter24.01-The-Basics-of-waves_9_0.png" src="../_images/chapter24.01-The-Basics-of-waves_9_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_9_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_9_0.png"/>
 
 
 <p>**СПРОБУЙТЕ!** Згенеруйте дві синусоїдальні хвилі з часом від 0 до 1 секунди. Обидві хвилі мають частоту 5 Гц і дискретизовані з частотою 100 Гц, але фаза становить 0 і 10 відповідно. Також амплітуда двох хвиль становить 5 і 10. Побудуйте графіки двох хвиль і подивіться різницю.</p>
@@ -132,4 +132,4 @@
 
 
 
-<img alt="../_images/chapter24.01-The-Basics-of-waves_11_0.png" src="../_images/chapter24.01-The-Basics-of-waves_11_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_11_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.01-The-Basics-of-waves_11_0.png"/>

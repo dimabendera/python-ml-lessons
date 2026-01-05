@@ -47,7 +47,7 @@
 
 
 
-<img alt="../_images/chapter22.06-Python-ODE-Solvers_5_0.png" src="../_images/chapter22.06-Python-ODE-Solvers_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_5_0.png"/>
 
 
 <p>На лівому графіку вище показано інтегрування <span>\(\frac{dS(t)}{dt}=\cos(t)\)</span> за допомогою <em>solve_ivp</em>. Правий графік обчислює різницю між розв'язком, отриманим за допомогою <em>solve_ivp</em>, та аналітичним розв'язком цього ОДР. Як видно з графіка, різниця між наближеним і точним розв'язком цього ОДР є малою. Також ми можемо контролювати відносну та абсолютну похибки за допомогою аргументів <em>rtol</em> та <em>atol</em>; розв'язувач утримує локальні оцінки похибки меншими за <span>\(atol + rtol*abs(S)\)</span>. Значення за замовчуванням становлять 1e-3 для rtol та 1e-6 для atol.</p>
@@ -72,7 +72,7 @@
 
 
 
-<img alt="../_images/chapter22.06-Python-ODE-Solvers_7_0.png" src="../_images/chapter22.06-Python-ODE-Solvers_7_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_7_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_7_0.png"/>
 
 
 <p><strong>ПРИКЛАД:</strong> Розглянемо ОДР</p>
@@ -103,7 +103,7 @@
 
 
 
-<img alt="../_images/chapter22.06-Python-ODE-Solvers_9_0.png" src="../_images/chapter22.06-Python-ODE-Solvers_9_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_9_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_9_0.png"/>
 
 
 <p>Наведений вище графік показує відповідні числові результати. Як і в попередньому прикладі, різниця між результатом <em>solve_ivp</em> та обчисленням аналітичного розв'язку в Python є дуже малою порівняно зі значенням функції.</p>
@@ -133,5 +133,5 @@
 
 
 
-<img alt="../_images/chapter22.06-Python-ODE-Solvers_11_0.png" src="../_images/chapter22.06-Python-ODE-Solvers_11_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_11_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.06-Python-ODE-Solvers_11_0.png"/>
 ```

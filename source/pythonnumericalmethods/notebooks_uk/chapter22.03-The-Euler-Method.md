@@ -62,7 +62,7 @@ S(t_{j+1}) = S(t_j) + hF(t_j, S(t_j)).
 
 
 
-<img alt="../_images/chapter22.03-The-Euler-Method_6_0.png" src="../_images/chapter22.03-The-Euler-Method_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.03-The-Euler-Method_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.03-The-Euler-Method_6_0.png"/>
 
 
 <p>На наведеному вище графіку ми бачимо, що кожна точка є одним наближенням, що базується на попередній точці лінійним чином. Починаючи з початкового значення, ми можемо в кінцевому підсумку отримати наближення розв'язку на числовій сітці. Якщо ми повторимо процес для <span>\(h = 0.01\)</span>, ми отримаємо краще наближення розв'язку:</p>
@@ -93,7 +93,7 @@ S(t_{j+1}) = S(t_j) + hF(t_j, S(t_j)).
 
 
 
-<img alt="../_images/chapter22.03-The-Euler-Method_8_0.png" src="../_images/chapter22.03-The-Euler-Method_8_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.03-The-Euler-Method_8_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.03-The-Euler-Method_8_0.png"/>
 
 
 <p>Явна формула Ейлера називається "явною", оскільки для обчислення стану в точці <span>\(t_{j+1}\)</span> вона вимагає інформації лише в точці <span>\(t_j\)</span>. Тобто, <span>\(S(t_{j+1})\)</span> можна записати явно через значення, які ми маємо (тобто <span>\(t_j\)</span> та <span>\(S(t_j)\)</span>). <strong>Неявну формулу Ейлера</strong> можна отримати, взявши лінійне наближення <span>\(S(t)\)</span> навколо <span>\(t_{j+1}\)</span> та обчисливши його в точці <span>\(t_j\)</span>:</p>

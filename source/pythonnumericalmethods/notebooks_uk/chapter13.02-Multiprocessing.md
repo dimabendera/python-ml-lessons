@@ -126,7 +126,7 @@
 
 
 
-<img alt="../_images/chapter13.02-Multiprocessing_16_0.png" src="../_images/chapter13.02-Multiprocessing_16_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter13.02-Multiprocessing_16_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter13.02-Multiprocessing_16_0.png"/>
 
 
 <p>З малюнка видно, що коли кількість точок даних невелика (менше 10000), час виконання для послідовної версії швидший через накладні витрати паралельної версії на запуск та підтримку нових процесів. Але після цього ми чітко бачимо, що переможцем є паралельна версія.</p>

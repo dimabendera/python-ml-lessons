@@ -63,7 +63,7 @@
 
 
 
-<img alt="../_images/chapter22.04-Numerical-Error-and-Instability_5_0.png" src="../_images/chapter22.04-Numerical-Error-and-Instability_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.04-Numerical-Error-and-Instability_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.04-Numerical-Error-and-Instability_5_0.png"/>
 
 
 <p>Наведений вище рисунок показує порівняння чисельних розв'язків задачі про маятник. Точний розв'язок є чистою косинусоїдою. Явна схема Ейлера є очевидно нестійкою. Неявна схема Ейлера експоненційно затухає, що є невірним. Метод трапецій правильно відтворює розв'язок, з невеликим зсувом фази, що зростає з часом.</p>

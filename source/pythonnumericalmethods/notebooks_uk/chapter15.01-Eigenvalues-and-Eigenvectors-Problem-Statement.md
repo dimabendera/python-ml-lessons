@@ -58,7 +58,7 @@
 
 
 
-<img alt="../_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_5_0.png" src="../_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_5_0.png"/>
 
 
 <p>З отриманого графіка видно, що початковий вектор <span>\(x\)</span> повернувся і розтягнувся після перетворення матрицею <span>\(A\)</span>. Вектор [[1], [1]] перетворився на [[2], [1]]. Спробуймо виконати ту ж вправу з іншим вектором [[1], [0]].</p>
@@ -73,7 +73,7 @@
 
 
 
-<img alt="../_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_7_0.png" src="../_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_7_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_7_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter15.01-Eigenvalues-and-Eigenvectors-Problem-Statement_7_0.png"/>
 
 
 <p>Тепер ми бачимо, що для цього нового вектора єдине, що змінилося після перетворення, — це його довжина, він розтягнувся. Новий вектор — [[2], [0]], отже, перетворення має вигляд</p>

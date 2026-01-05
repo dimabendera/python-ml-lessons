@@ -45,7 +45,7 @@
 <li><p>Логічний оператор XOR має таку таблицю істинності:<br/>
 Створіть еквівалентний логічний вираз для XOR, використовуючи лише AND, OR та NOT, який має таку ж таблицю істинності (див. наступний малюнок)</p></li>
 </ol>
-<p><img alt="XOR" src="../_images/01.06.01-truth_table.png"/></p>
+<p><img alt="XOR" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/01.06.01-truth_table.png"/></p>
 <ol>
 <li><p>Виконайте наступне обчислення в командному рядку Python.<br/>
 <span>\(e^{2}\sin{\pi/6} + log_e(3)\cos{\pi/9}-5^3\)</span></p></li>

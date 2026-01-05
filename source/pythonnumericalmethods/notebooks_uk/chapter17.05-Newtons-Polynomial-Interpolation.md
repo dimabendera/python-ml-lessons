@@ -120,7 +120,7 @@ y_4 &amp; 0 &amp; 0 &amp; 0  &amp; 0
 <pre><span></span>[&lt;matplotlib.lines.Line2D at 0x11bd4e630&gt;]
 </pre>
 
-<img alt="../_images/chapter17.05-Newtons-Polynomial-Interpolation_6_1.png" src="../_images/chapter17.05-Newtons-Polynomial-Interpolation_6_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.05-Newtons-Polynomial-Interpolation_6_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.05-Newtons-Polynomial-Interpolation_6_1.png"/>
 
 
 <p>Ми бачимо, що поліном Ньютона проходить через усі точки даних і апроксимує їх.</p>

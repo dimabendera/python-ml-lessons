@@ -66,7 +66,7 @@
 
 
 
-<img alt="../_images/chapter24.02-Discrete-Fourier-Transform_5_0.png" src="../_images/chapter24.02-Discrete-Fourier-Transform_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.02-Discrete-Fourier-Transform_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.02-Discrete-Fourier-Transform_5_0.png"/>
 
 
 <p><strong>СПРОБУЙТЕ!</strong> Напишіть функцію <em>DFT(x)</em>, яка приймає один аргумент, <em>x</em> - вхідний 1-вимірний сигнал з дійсними значеннями. Функція обчислить ДПФ сигналу та поверне значення ДПФ. Застосуйте цю функцію до сигналу, який ми згенерували вище, та побудуйте результат.</p>
@@ -111,7 +111,7 @@
 
 
 
-<img alt="../_images/chapter24.02-Discrete-Fourier-Transform_8_0.png" src="../_images/chapter24.02-Discrete-Fourier-Transform_8_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.02-Discrete-Fourier-Transform_8_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.02-Discrete-Fourier-Transform_8_0.png"/>
 
 
 <p>Звідси ми бачимо, що вихід ДПФ симетричний відносно половини частоти дискретизації (ви можете спробувати різні частоти дискретизації для перевірки). Ця половина частоти дискретизації називається <strong>частотою Найквіста</strong> або частотою згортання, вона названа на честь інженера-електронника Гаррі Найквіста. Він і Клод Шеннон мають теорему дискретизації Найквіста-Шеннона, яка стверджує, що сигнал, дискретизований з певною швидкістю, може бути повністю реконструйований, якщо він містить лише частотні компоненти нижче половини цієї частоти дискретизації, таким чином, найвища вихідна частота з ДПФ становить половину частоти дискретизації.</p>
@@ -142,7 +142,7 @@
 
 
 
-<img alt="../_images/chapter24.02-Discrete-Fourier-Transform_10_0.png" src="../_images/chapter24.02-Discrete-Fourier-Transform_10_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.02-Discrete-Fourier-Transform_10_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.02-Discrete-Fourier-Transform_10_0.png"/>
 
 
 <p>Ми бачимо, що, побудувавши першу половину результатів ДПФ, ми можемо побачити 3 чіткі піки на частотах 1 Гц, 4 Гц і 7 Гц, з амплітудами 3, 1, 0.5, як і очікувалося. Ось як ми можемо використовувати ДПФ для аналізу довільного сигналу, розкладаючи його на прості синусоїдальні хвилі.</p>

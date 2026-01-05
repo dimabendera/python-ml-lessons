@@ -37,7 +37,7 @@
 
 
 
-<img alt="../_images/chapter24.04-FFT-in-Python_5_0.png" src="../_images/chapter24.04-FFT-in-Python_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_5_0.png"/>
 
 
 
@@ -78,7 +78,7 @@
   return array(a, dtype, copy=False, order=order)
 </pre>
 
-<img alt="../_images/chapter24.04-FFT-in-Python_7_1.png" src="../_images/chapter24.04-FFT-in-Python_7_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_7_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_7_1.png"/>
 
 
 
@@ -126,7 +126,7 @@
   if __name__ == '__main__':
 </pre>
 
-<img alt="../_images/chapter24.04-FFT-in-Python_10_1.png" src="../_images/chapter24.04-FFT-in-Python_10_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_10_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_10_1.png"/>
 
 
 
@@ -196,7 +196,7 @@ To register the converters:
   warnings.warn(msg, FutureWarning)
 </pre>
 
-<img alt="../_images/chapter24.04-FFT-in-Python_18_1.png" src="../_images/chapter24.04-FFT-in-Python_18_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_18_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_18_1.png"/>
 
 
 <p>З побудованого часового ряду важко сказати, чи є якісь закономірності в даних. Давайте перетворимо дані в частотну область і подивимося, чи є щось цікаве.</p>
@@ -224,7 +224,7 @@ To register the converters:
 
 
 
-<img alt="../_images/chapter24.04-FFT-in-Python_20_0.png" src="../_images/chapter24.04-FFT-in-Python_20_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_20_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_20_0.png"/>
 
 
 <p>Ми бачимо деякі чіткі піки на графіку амплітуди ШПФ, але важко сказати, що вони означають у термінах частоти. Давайте побудуємо результати, використовуючи години, і виділимо деякі години, пов'язані з піками.</p>
@@ -247,7 +247,7 @@ To register the converters:
   
 </pre>
 
-<img alt="../_images/chapter24.04-FFT-in-Python_22_1.png" src="../_images/chapter24.04-FFT-in-Python_22_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_22_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_22_1.png"/>
 
 
 <p>Тепер ми можемо побачити деякі цікаві закономірності, а саме три піки, пов'язані з 12, 24 та 84 годинами. Ці піки означають, що ми бачимо деякий повторюваний сигнал кожні 12, 24 та 84 години. Це має сенс і відповідає нашим патернам людської активності. ШПФ може допомогти нам зрозуміти деякі повторювані сигнали в нашому фізичному світі.</p>
@@ -274,7 +274,7 @@ To register the converters:
 
 
 
-<img alt="../_images/chapter24.04-FFT-in-Python_25_0.png" src="../_images/chapter24.04-FFT-in-Python_25_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_25_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_25_0.png"/>
 
 
 
@@ -331,12 +331,12 @@ To register the converters:
   return array(a, dtype, copy=False, order=order)
 </pre>
 
-<img alt="../_images/chapter24.04-FFT-in-Python_26_1.png" src="../_images/chapter24.04-FFT-in-Python_26_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_26_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_26_1.png"/>
 <pre><span></span>/Users/qingkaikong/miniconda3/lib/python3.6/site-packages/ipykernel_launcher.py:31: UserWarning: In Matplotlib 3.3 individual lines on a stem plot will be added as a LineCollection instead of individual lines. This significantly improves the performance of a stem plot. To remove this warning and switch to the new behaviour, set the "use_line_collection" keyword argument to True.
 /Users/qingkaikong/miniconda3/lib/python3.6/site-packages/ipykernel_launcher.py:38: UserWarning: In Matplotlib 3.3 individual lines on a stem plot will be added as a LineCollection instead of individual lines. This significantly improves the performance of a stem plot. To remove this warning and switch to the new behaviour, set the "use_line_collection" keyword argument to True.
 </pre>
 
-<img alt="../_images/chapter24.04-FFT-in-Python_26_3.png" src="../_images/chapter24.04-FFT-in-Python_26_3.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_26_3.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.04-FFT-in-Python_26_3.png"/>
 
 
 <p>З наведеного вище прикладу, присвоюючи нулі амплітудам ШПФ для будь-яких абсолютних частот і повертаючись до сигналу в часовій області, ми за кілька кроків реалізуємо дуже простий фільтр високих частот. Ви можете спробувати самостійно реалізувати простий фільтр низьких частот або смуговий фільтр. Таким чином, ШПФ може допомогти нам отримати сигнал, який нас цікавить, і видалити небажані.</p>

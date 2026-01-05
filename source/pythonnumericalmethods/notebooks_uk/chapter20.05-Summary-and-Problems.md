@@ -31,7 +31,7 @@
 <span>plt</span><span>.</span><span>show</span><span>()</span>
 </pre>
 
-<p><img alt="" src="../_images/20.05.01-Q2-1.png"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/20.05.01-Q2-1.png"/></p>
 <pre><span></span><span>x</span> <span>=</span> <span>np</span><span>.</span><span>linspace</span><span>(</span><span>0</span><span>,</span> <span>np</span><span>.</span><span>pi</span><span>,</span> <span>1000</span><span>)</span>
 <span>f</span> <span>=</span> <span>lambda</span> <span>x</span><span>:</span> <span>np</span><span>.</span><span>sin</span><span>(</span><span>np</span><span>.</span><span>exp</span><span>(</span><span>x</span><span>))</span>
 <span>[</span><span>dy10</span><span>,</span> <span>X10</span><span>]</span> <span>=</span> <span>my_num_diff</span><span>(</span><span>f</span><span>,</span> <span>0</span><span>,</span> <span>np</span><span>.</span><span>pi</span><span>,</span> <span>10</span><span>,</span> <span>'central'</span><span>)</span>
@@ -49,7 +49,7 @@
 <span>plt</span><span>.</span><span>show</span><span>()</span>
 </pre>
 
-<p><img alt="" src="../_images/20.05.01-Q2-2.png"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/20.05.01-Q2-2.png"/></p>
 <ol>
 <li><p>Напишіть функцію <span>\(my\_num\_diff\_w\_smoothing(x, y, n)\)</span>, з виходом <span>\([dy, X], \)</span>де <span>\(x\)</span> та <span>\(y\)</span> є 1D масивами numpy однакової довжини, а <span>\(n\)</span> є строго позитивним скаляром. Функція спочатку має створити вектор "згладжених" точок даних <span>\(y\)</span>, де <span>\(y\_smooth[i] = np.mean(y[i-n:i+n])\)</span>. Потім функція має обчислити <span>\(dy\)</span>, похідну згладженого <span>\(y\)</span>-вектора, використовуючи метод центральної різниці. Функція також має виводити 1D масив <span>\(X\)</span> такого ж розміру, як <span>\(dy\)</span>, і позначати значення x, для яких <span>\(dy\)</span> є дійсним.</p></li>
 </ol>
@@ -77,7 +77,7 @@
 <span>plt</span><span>.</span><span>show</span><span>()</span>
 </pre>
 
-<p><img alt="" src="../_images/20.05.01-Q3.png"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/20.05.01-Q3.png"/></p>
 <ol>
 <li><p>Використайте ряд Тейлора, щоб показати наступні апроксимації та їх точність.
 $$</p></li>

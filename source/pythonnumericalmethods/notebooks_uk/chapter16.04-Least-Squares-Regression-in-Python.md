@@ -86,7 +86,7 @@ Y = A{\beta}.
 
 
 
-<img alt="Графік регресії методом найменших квадратів" src="../_images/chapter16.04-Least-Squares-Regression-in-Python_8_0.png"/>
+<img alt="Графік регресії методом найменших квадратів" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.04-Least-Squares-Regression-in-Python_8_0.png"/>
 
 
 <p>У Python існує багато різних способів виконання регресії методом найменших квадратів. Наприклад, ми можемо використовувати такі пакети, як *numpy*, *scipy*, *statsmodels*, *sklearn* тощо, щоб отримати розв'язок методом найменших квадратів. Тут ми використаємо наведений вище приклад і покажемо вам більше способів це зробити. Обирайте той, який вам подобається.</p>

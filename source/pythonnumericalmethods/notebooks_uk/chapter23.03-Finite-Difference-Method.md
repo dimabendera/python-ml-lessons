@@ -87,7 +87,7 @@
 [ 0.   -2.45 -2.45 -2.45 -2.45 -2.45 -2.45 -2.45 -2.45 -2.45 50.  ]
 </pre>
 
-<img alt="../_images/chapter23.03-Finite-Difference-Method_4_1.png" src="../_images/chapter23.03-Finite-Difference-Method_4_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.03-Finite-Difference-Method_4_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.03-Finite-Difference-Method_4_1.png"/>
 
 
 <p>Тепер розв'яжемо для <span>\(y'(0)\)</span>. Зі скінченно-різницевої формули ми знаємо, що <span>\(\frac{dy}{dx} = \frac{y_{i+1}-y_{i-1}}{2h}\)</span>, що означає <span>\(y'(0) = \frac{y_{1} - y_{-1}}{2h}\)</span>, але ми не знаємо, чому дорівнює <span>\(y_{-1}\)</span>. Насправді, ми можемо обчислити <span>\(y_{-1}\)</span>, оскільки ми знаємо значення <span>\(y\)</span> в кожному вузлі сітки. Зі скінченно-різницевої формули для другої похідної ми знаємо, що <span>\(\frac{y_{-1}-2y_0+y_{1}}{h^2} = -g\)</span>. Отже, ми можемо знайти <span>\(y_{-1}\)</span>, а потім отримати швидкість запуску. Дивіться обчислення нижче.</p>
@@ -172,7 +172,7 @@
 
 
 
-<img alt="../_images/chapter23.03-Finite-Difference-Method_8_0.png" src="../_images/chapter23.03-Finite-Difference-Method_8_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.03-Finite-Difference-Method_8_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.03-Finite-Difference-Method_8_0.png"/>
 
 
 <p>Ми бачимо, що зі збільшенням щільності сітки ми наближаємося до точного розв'язку в граничній точці.</p>

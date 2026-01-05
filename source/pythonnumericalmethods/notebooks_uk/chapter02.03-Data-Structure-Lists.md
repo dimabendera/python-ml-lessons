@@ -55,7 +55,7 @@
 
 
 <p>Спосіб отримання елемента зі списку дуже схожий на роботу з рядками, дивіться індексацію на наступному малюнку</p>
-<p><img alt="Індексація_списку" src="../_images/02.03.01-list_index.png"/></p>
+<p><img alt="Індексація_списку" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/02.03.01-list_index.png"/></p>
 <p><strong>СПРОБУЙТЕ!</strong> Отримайте 3-й елемент зі списку list_3</p>
 
 

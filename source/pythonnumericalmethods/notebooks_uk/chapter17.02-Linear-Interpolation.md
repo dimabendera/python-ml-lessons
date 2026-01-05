@@ -47,4 +47,4 @@ $<span>\(
 
 
 
-<img alt="../_images/chapter17.02-Linear-Interpolation_6_0.png" src="../_images/chapter17.02-Linear-Interpolation_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.02-Linear-Interpolation_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.02-Linear-Interpolation_6_0.png"/>

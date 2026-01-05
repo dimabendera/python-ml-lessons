@@ -98,7 +98,7 @@ F(n) = \begin{cases}
 
 
 
-<p><img alt="дерево рекурсії для fibonacci(5)" src="../_images/06.01.02-Recursion_tree_for_fibonacci.png"/></p>
+<p><img alt="дерево рекурсії для fibonacci(5)" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/06.01.02-Recursion_tree_for_fibonacci.png"/></p>
 <p>Як вправу, розгляньте наступну модифікацію функції <code><span>fibonacci</span></code>, де результати кожного рекурсивного виклику виводяться на екран.</p>
 <p><strong>ПРИКЛАД:</strong> Напишіть функцію <code><span>fibonacci_display</span></code>, що базується на модифікації <code><span>fibonacci</span></code>. Чи можете ви визначити порядок, у якому числа Фібоначчі з'являться на екрані для fibonacci(5)?</p>
 

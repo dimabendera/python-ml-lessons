@@ -23,7 +23,7 @@
 
 
 
-<img alt="../_images/chapter12.03-Working-with-Maps_5_0.png" src="../_images/chapter12.03-Working-with-Maps_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_5_0.png"/>
 
 
 <p>У наведеному вище прикладі ми побудували карту з проєкцією Plate Carrée, ви можете ознайомитися з іншими <a href="https://scitools.org.uk/cartopy/docs/v0.16/crs/projections.html#cartopy-projections">проєкціями, що підтримуються cartopy</a>. Також ми увімкнули лінії сітки та нанесли на карту підписи.</p>
@@ -40,7 +40,7 @@
 
 
 
-<img alt="../_images/chapter12.03-Working-with-Maps_7_0.png" src="../_images/chapter12.03-Working-with-Maps_7_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_7_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_7_0.png"/>
 
 
 <p>Звісно, ми можемо збільшити масштаб карти до будь-якого місця на Землі за допомогою функції <em>ax.set_extent</em>, яка приймає список, де перші два числа є межами осі X, а останні два — межами осі Y.</p>
@@ -57,7 +57,7 @@
 
 
 
-<img alt="../_images/chapter12.03-Working-with-Maps_9_0.png" src="../_images/chapter12.03-Working-with-Maps_9_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_9_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_9_0.png"/>
 
 
 <p>Ми помічаємо, що на карту не додано жодних об'єктів, таких як кордони країн, межі штатів, озера/вода тощо. У cartopy всі ці об'єкти потрібно додавати окремо.</p>
@@ -88,7 +88,7 @@
 
 
 
-<img alt="../_images/chapter12.03-Working-with-Maps_12_0.png" src="../_images/chapter12.03-Working-with-Maps_12_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_12_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_12_0.png"/>
 
 
 <p>Ми можемо збільшити масштаб до меншої області, але тоді нам потрібно завантажити та використовувати берегові лінії та суходіл високої роздільної здатності, щоб отримати гарну карту.</p>
@@ -121,7 +121,7 @@
 
 
 
-<img alt="../_images/chapter12.03-Working-with-Maps_14_0.png" src="../_images/chapter12.03-Working-with-Maps_14_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_14_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_14_0.png"/>
 
 
 <p>Звісно, у багатьох випадках ми хочемо нанести наші дані на карту та показати просторове розташування певних об'єктів. Дані можна додавати так само, як і до звичайних осей matplotlib. За замовчуванням система координат будь-яких доданих даних збігається з системою координат осей, яку ми визначили на початку побудови графіка. Спробуймо спочатку додати деякі дані на карту вище.</p>
@@ -159,7 +159,7 @@
 
 
 
-<img alt="../_images/chapter12.03-Working-with-Maps_16_0.png" src="../_images/chapter12.03-Working-with-Maps_16_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_16_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.03-Working-with-Maps_16_0.png"/>
 
 
 <p>Є багато інших речей, які ми можемо побудувати за допомогою пакета cartopy. Ви можете знайти офіційну <a href="https://scitools.org.uk/cartopy/docs/latest/gallery/index.html">галерею прикладів</a> і дізнатися більше про створення гарних карт.</p>

@@ -85,7 +85,7 @@ P(t)=\frac{KP_0e^{rt}}{K + P_0(e^{rt}-1)}
 
 
 
-<img alt="../_images/chapter22.08-Summary-and-Problems_6_0.png" src="../_images/chapter22.08-Summary-and-Problems_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_6_0.png"/>
 
 
 <ol>
@@ -160,7 +160,7 @@ $$</p></li>
 
 
 
-<img alt="../_images/chapter22.08-Summary-and-Problems_10_0.png" src="../_images/chapter22.08-Summary-and-Problems_10_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_10_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_10_0.png"/>
 
 
 <ol>
@@ -226,7 +226,7 @@ $<span>\(
 <pre><span></span>&lt;matplotlib.legend.Legend at 0x1531a2f400&gt;
 </pre>
 
-<img alt="../_images/chapter22.08-Summary-and-Problems_13_1.png" src="../_images/chapter22.08-Summary-and-Problems_13_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_13_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_13_1.png"/>
 
 
 <ol>
@@ -288,7 +288,7 @@ $<span>\(
 
 
 
-<img alt="../_images/chapter22.08-Summary-and-Problems_16_0.png" src="../_images/chapter22.08-Summary-and-Problems_16_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_16_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_16_0.png"/>
 
 
 <ol>
@@ -326,5 +326,5 @@ $<span>\(
 
 
 
-<img alt="../_images/chapter22.08-Summary-and-Problems_18_0.png" src="../_images/chapter22.08-Summary-and-Problems_18_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_18_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter22.08-Summary-and-Problems_18_0.png"/>
 ```

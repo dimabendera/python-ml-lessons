@@ -41,7 +41,7 @@
 
 
 
-<img alt="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_6_0.png" src="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_6_0.png"/>
 
 
 <p>Підберемо параметри для даних після застосування логарифмічного трюку.</p>
@@ -73,7 +73,7 @@
 
 
 
-<img alt="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_9_0.png" src="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_9_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_9_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_9_0.png"/>
 
 
 
@@ -110,7 +110,7 @@
 
 
 
-<img alt="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_11_0.png" src="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_11_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_11_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_11_0.png"/>
 
 
 <p>Наведений вище рисунок показує, що ми можемо використовувати поліноми різного порядку для апроксимації одних і тих самих даних. Чим вищий порядок, тим гнучкішою буде крива, яку ми використовуємо для апроксимації даних. Але питання про те, який порядок використовувати, не є простим; це залежить від конкретних задач у науці та інженерії.</p>
@@ -149,4 +149,4 @@
 
 
 
-<img alt="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_15_0.png" src="../_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_15_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_15_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter16.05-Least-Square-Regression-for-Nonlinear-Functions_15_0.png"/>

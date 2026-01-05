@@ -38,7 +38,7 @@
 
 
 
-<img alt="../_images/chapter24.05-Summary-and-Problems_4_0.png" src="../_images/chapter24.05-Summary-and-Problems_4_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.05-Summary-and-Problems_4_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.05-Summary-and-Problems_4_0.png"/>
 
 
 <ol>
@@ -67,4 +67,4 @@
 
 
 
-<img alt="../_images/chapter24.05-Summary-and-Problems_6_0.png" src="../_images/chapter24.05-Summary-and-Problems_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.05-Summary-and-Problems_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.05-Summary-and-Problems_6_0.png"/>

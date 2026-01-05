@@ -58,7 +58,7 @@ P_3(x) &amp;=&amp; \frac{(x - x_1)(x - x_2)}{(x_3-x_1)(x_3-x_2)} = \frac{(x - 0)
 
 
 
-<img alt="../_images/chapter17.04-Lagrange-Polynomial-Interpolation_5_0.png" src="../_images/chapter17.04-Lagrange-Polynomial-Interpolation_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.04-Lagrange-Polynomial-Interpolation_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.04-Lagrange-Polynomial-Interpolation_5_0.png"/>
 
 
 <p><strong>СПРОБУЙТЕ!</strong> Для попереднього прикладу обчисліть та побудуйте графік полінома Лагранжа і перевірте, що він проходить через кожну з точок даних.</p>
@@ -77,7 +77,7 @@ P_3(x) &amp;=&amp; \frac{(x - x_1)(x - x_2)}{(x_3-x_1)(x_3-x_2)} = \frac{(x - 0)
 
 
 
-<img alt="../_images/chapter17.04-Lagrange-Polynomial-Interpolation_7_0.png" src="../_images/chapter17.04-Lagrange-Polynomial-Interpolation_7_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.04-Lagrange-Polynomial-Interpolation_7_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.04-Lagrange-Polynomial-Interpolation_7_0.png"/>
 
 
 <p><strong>УВАГА!</strong> Інтерполяційні поліноми Лагранжа, визначені за межами області інтерполяції, тобто за межами інтервалу <span>\([x_1,x_n]\)</span>, будуть дуже швидко і необмежено зростати за межами цієї області. Це не є бажаною властивістю, оскільки загалом це не відповідає поведінці вихідних даних. Таким чином, інтерполяцію Лагранжа ніколи не слід використовувати для інтерполяції за межами цієї області.</p>
@@ -111,4 +111,4 @@ P_3(x) &amp;=&amp; \frac{(x - x_1)(x - x_2)}{(x_3-x_1)(x_3-x_2)} = \frac{(x - 0)
 
 
 
-<img alt="../_images/chapter17.04-Lagrange-Polynomial-Interpolation_12_0.png" src="../_images/chapter17.04-Lagrange-Polynomial-Interpolation_12_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.04-Lagrange-Polynomial-Interpolation_12_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter17.04-Lagrange-Polynomial-Interpolation_12_0.png"/>

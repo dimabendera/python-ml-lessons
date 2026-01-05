@@ -33,5 +33,5 @@
 
 
 
-<img alt="../_images/chapter08.02-Complexity-Matters_5_0.png" src="../_images/chapter08.02-Complexity-Matters_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter08.02-Complexity-Matters_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter08.02-Complexity-Matters_5_0.png"/>
 ```

@@ -96,7 +96,7 @@
 </tbody>
 </table>
 <p>**Таблиця істинності** логічного оператора або виразу показує результат кожної комбінації істинності <span>\(P\)</span> та <span>\(Q\)</span>. Таблиці істинності для "and" та "or" наведені на наступному рисунку.</p>
-<p><img alt="таблиця істинності" src="../_images/01.05.01-truth_table.png"/></p>
+<p><img alt="таблиця істинності" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/01.05.01-truth_table.png"/></p>
 <p>**СПРОБУЙТЕ!** Припускаючи, що <span>\(P\)</span> є істинним, використайте Python, щоб визначити, чи вираз <span>\((P\ AND\ NOT(Q))\ OR\ (P\ AND\ Q)\)</span> завжди істинний незалежно від того, чи є <span>\(Q\)</span> істинним. Логічно, чи можете ви зрозуміти, чому це так? Спочатку припустимо, що <span>\(Q\)</span> є істинним:</p>
 
 

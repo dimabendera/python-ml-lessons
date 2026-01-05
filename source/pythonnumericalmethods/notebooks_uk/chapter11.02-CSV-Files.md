@@ -27,9 +27,9 @@
 
 <p>Спочатку ми генеруємо випадкові дані для 100 рядків і 5 стовпців за допомогою функції <em>np.random</em> і присвоюємо їх змінній <em>data</em>. Ми використовуємо функцію <em>np.savetxt</em> для збереження даних у файл csv. Ми бачимо, що перші 3 аргументи такі ж, як і ті, що використовувалися в попередньому розділі, але тут ми встановлюємо аргумент `delimiter` на `,`, що вказує на те, що ми хочемо розділити дані за допомогою коми.</p>
 <p>Ми можемо відкрити файл csv за допомогою Microsoft Excel.</p>
-<p><img alt="Відкрити_csv" src="../_images/11.02.01-Write_csv.png"/></p>
+<p><img alt="Відкрити_csv" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/11.02.01-Write_csv.png"/></p>
 <p>Ми також можемо відкрити файл csv за допомогою текстового редактора, де ми побачимо, що значення розділені комами.</p>
-<p><img alt="Відкрити_csv_текст" src="../_images/11.02.02-Open_csv_text.png"/></p>
+<p><img alt="Відкрити_csv_текст" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/11.02.02-Open_csv_text.png"/></p>
 
 
 <h2>Читання CSV файлу<a href="#read-a-csv-file" title="Постійне посилання на цей заголовок"></a></h2>

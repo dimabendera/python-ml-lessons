@@ -142,7 +142,7 @@ f(x_{j+2}) &amp;=&amp; f(x_j) + 2hf^{\prime}(x_j) + \frac{4h^2f''(x_j)}{2} + \fr
 
 
 
-<img alt="../_images/chapter20.02-Finite-Difference-Approximating-Derivatives_5_0.png" src="../_images/chapter20.02-Finite-Difference-Approximating-Derivatives_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.02-Finite-Difference-Approximating-Derivatives_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.02-Finite-Difference-Approximating-Derivatives_5_0.png"/>
 <pre><span></span>0.049984407218554114
 </pre>
 
@@ -191,7 +191,7 @@ f(x_{j+2}) &amp;=&amp; f(x_j) + 2hf^{\prime}(x_j) + \frac{4h^2f''(x_j)}{2} + \fr
 
 
 
-<img alt="../_images/chapter20.02-Finite-Difference-Approximating-Derivatives_7_0.png" src="../_images/chapter20.02-Finite-Difference-Approximating-Derivatives_7_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.02-Finite-Difference-Approximating-Derivatives_7_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter20.02-Finite-Difference-Approximating-Derivatives_7_0.png"/>
 
 
 <p>Нахил лінії в логарифмічному масштабі дорівнює 1; отже, похибка пропорційна <span>\(h^1\)</span>, що означає, що, як і очікувалося, формула прямої різниці є <span>\(O(h)\)</span>.</p>

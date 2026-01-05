@@ -40,7 +40,7 @@
 
 
 
-<img alt="../_images/chapter23.05-Python-ODE-Solvers_5_0.png" src="../_images/chapter23.05-Python-ODE-Solvers_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.05-Python-ODE-Solvers_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.05-Python-ODE-Solvers_5_0.png"/>
 
 
 
@@ -220,7 +220,7 @@
 
 
 
-<img alt="../_images/chapter23.05-Python-ODE-Solvers_13_0.png" src="../_images/chapter23.05-Python-ODE-Solvers_13_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.05-Python-ODE-Solvers_13_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.05-Python-ODE-Solvers_13_0.png"/>
 
 
 <p>На практиці деякі ОДЄ мають погану поведінку, відому як **жорсткість**. У широкому сенсі, жорсткість стосується систем, які можуть мати дуже різкі зміни похідної. Прикладом жорсткої системи є м'яч, що відскакує, який раптово змінює напрямок, коли вдаряється об землю. Залежно від властивостей ОДЄ, яку ви розв'язуєте, та бажаного рівня точності, вам може знадобитися використовувати різні методи для *solve_ivp*. Існує багато методів, які ви можете вибрати для аргументу *method* у *solve_ivp*, перегляньте <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html#scipy.integrate.solve_ivp">документацію</a>, щоб дізнатися більше. Як пропонує документація, слід використовувати метод ‘RK45` або ‘RK23` для нежорстких задач та ‘Radau` або ‘BDF` для жорстких задач. Якщо ви не впевнені, спочатку спробуйте запустити ‘RK45`. Якщо потрібно надзвичайно багато ітерацій, розходиться або не вдається, ваша задача, ймовірно, є жорсткою, і вам слід використовувати ‘Radau` або ‘BDF`. ‘LSODA` також може бути хорошим універсальним вибором, але з ним може бути дещо менш зручно працювати, оскільки він обгортає старий код Fortran.</p>

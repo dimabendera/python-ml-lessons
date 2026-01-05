@@ -72,34 +72,34 @@
  <span>plot_results</span><span>(</span><span>f</span><span>,</span> <span>N</span><span>)</span>
 </pre>
 
-<p><img alt="" src="../_images/21.06.01-Solution_for_Question_4.jpg"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/21.06.01-Solution_for_Question_4.jpg"/></p>
 <pre><span></span> <span>N</span> <span>=</span> <span>2</span>
  <span>plot_results</span><span>(</span><span>f</span><span>,</span> <span>N</span><span>)</span>
 </pre>
 
-<p><img alt="" src="../_images/21.06.02-Solution_for_Question_4.jpg"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/21.06.02-Solution_for_Question_4.jpg"/></p>
 <pre><span></span> <span>f</span> <span>=</span> <span>lambda</span> <span>x</span><span>:</span> <span>np</span><span>.</span><span>mod</span><span>(</span><span>x</span><span>,</span> <span>np</span><span>.</span><span>pi</span><span>/</span><span>2</span><span>)</span>
  <span>N</span> <span>=</span> <span>5</span>
  <span>plot_results</span><span>(</span><span>f</span><span>,</span> <span>N</span><span>)</span>
 </pre>
 
-<p><img alt="" src="../_images/21.06.03-Solution_for_Question_4.jpg"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/21.06.03-Solution_for_Question_4.jpg"/></p>
 <pre><span></span> <span>N</span> <span>=</span> <span>20</span>
  <span>plot_results</span><span>(</span><span>f</span><span>,</span> <span>N</span><span>)</span>
 </pre>
 
-<p><img alt="" src="../_images/21.06.04-Solution_for_Question_4.jpg"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/21.06.04-Solution_for_Question_4.jpg"/></p>
 <pre><span></span> <span>f</span> <span>=</span> <span>lambda</span> <span>x</span><span>:</span> <span>(</span><span>x</span> <span>&gt;</span> <span>-</span><span>np</span><span>.</span><span>pi</span><span>/</span><span>2</span><span>)</span> <span>&amp;</span> <span>(</span><span>x</span> <span>&lt;</span> <span>np</span><span>.</span><span>pi</span><span>/</span><span>2</span><span>)</span>
  <span>N</span> <span>=</span> <span>2</span>
  <span>plot_results</span><span>(</span><span>f</span><span>,</span> <span>N</span><span>)</span>
 </pre>
 
-<p><img alt="" src="../_images/21.06.05-Solution_for_Question_4.jpg"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/21.06.05-Solution_for_Question_4.jpg"/></p>
 <pre><span></span> <span>N</span> <span>=</span> <span>20</span>
  <span>plot_results</span><span>(</span><span>f</span><span>,</span> <span>N</span><span>)</span>
 </pre>
 
-<p><img alt="" src="../_images/21.06.06-Solution_for_Question_4.jpg"/></p>
+<p><img alt="" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/21.06.06-Solution_for_Question_4.jpg"/></p>
 <ol>
 <li><p>Для числової сітки з кроком <span>\(h\)</span>, Правило Буля для наближення інтегралів стверджує, що</p></li>
 </ol>

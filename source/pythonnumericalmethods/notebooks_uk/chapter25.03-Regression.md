@@ -41,7 +41,7 @@
 <pre><span></span>&lt;ErrorbarContainer object of 3 artists&gt;
 </pre>
 
-<img alt="../_images/chapter25.03-Regression_5_1.png" src="../_images/chapter25.03-Regression_5_1.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.03-Regression_5_1.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.03-Regression_5_1.png"/>
 
 
 <p>Потім ми можемо використовувати ШНМ для апроксимації даних; основна ідея полягає в тому, щоб використовувати кожну точку даних у <span>\(x\)</span> як вхідну ознаку для ШНМ, а виходом буде послідовність - <span>\(y\)</span>. У scikit-learn модель ШНМ для регресії називається <em>MLPRegressor</em>, що розшифровується як регресор багатошарового перцептрона. Використаємо вищезгадані зашумлені дані як вхідні для алгоритму ШНМ.</p>
@@ -75,7 +75,7 @@
 
 
 
-<img alt="../_images/chapter25.03-Regression_8_0.png" src="../_images/chapter25.03-Regression_8_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.03-Regression_8_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.03-Regression_8_0.png"/>
 
 
 <p>Ми бачимо, що апроксимація даних насправді непогана. Для вищезгаданої моделі ми використали 3 приховані шари, і в кожному шарі ми використали 200 нейронів. Ми використовуємо алгоритм оптимізації — 'lbfgs', який є оптимізатором із сімейства квазіньютонівських методів. Параметр <em>max_iter</em> визначає, що ми виконаємо щонайбільше 2000 ітерацій.</p>

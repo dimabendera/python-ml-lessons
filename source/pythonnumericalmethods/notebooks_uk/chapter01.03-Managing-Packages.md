@@ -4,7 +4,7 @@
 <h2>Керування пакетами за допомогою менеджерів пакетів<a href="#managing-packages-using-package-managers" title="Постійне посилання на цей заголовок"></a></h2>
 <p>На початку ми встановили деякі пакети за допомогою pip, ввівши <em>pip install package_name</em>. Це найпоширеніший і найпростіший спосіб встановлення пакетів Python у наші дні. Pip — це менеджер пакетів, який автоматизує процес встановлення, оновлення та видалення пакетів. Він може встановлювати пакети, опубліковані в <a href="https://pypi.org/">Python Package Index (PyPI)</a>. Коли ми встановили інсталятор Miniconda, він також встановив pip для вашого використання.</p>
 <p>Перш за все, ви можете використовувати <em>pip help</em>, щоб отримати допомогу щодо різних команд, як показано нижче.</p>
-<p><img alt="Довідка Pip" src="../_images/01.03.01-pip_help.png"/></p>
+<p><img alt="Довідка Pip" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/01.03.01-pip_help.png"/></p>
 <p>Але найчастіше використовувані команди зазвичай включають: встановлення, оновлення та видалення пакета.</p>
 
 <h3>Встановлення пакета<a href="#install-a-package" title="Постійне посилання на цей заголовок"></a></h3>
@@ -41,12 +41,12 @@
 <pre><span></span>pip list
 </pre>
 
-<p><img alt="Список Pip" src="../_images/01.03.02-pip_list.png"/></p>
+<p><img alt="Список Pip" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/01.03.02-pip_list.png"/></p>
 <p>Якщо ви хочете дізнатися більше про встановлений пакет, наприклад, його місцезнаходження, необхідні залежності тощо, ви можете використати:</p>
 <pre><span></span>pip show package_name
 </pre>
 
-<p><img alt="Показати Pip" src="../_images/01.03.03-pip_show.png"/></p>
+<p><img alt="Показати Pip" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/01.03.03-pip_show.png"/></p>
 <p>Існують інші менеджери пакетів, як-от conda, що постачається з дистрибутивом Anaconda, але за використанням він схожий на pip, тому ми не будемо тут багато про це говорити, ви можете знайти більше інформації, прочитавши <a href="https://conda.io/docs/user-guide/getting-started.html">документацію</a>.</p>
 
 

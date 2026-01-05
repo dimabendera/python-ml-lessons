@@ -21,7 +21,7 @@
 
 
 
-<img alt="../_images/chapter12.02-3D-Plotting_6_0.png" src="../_images/chapter12.02-3D-Plotting_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_6_0.png"/>
 
 
 <p>The <em>ax = plt.axes(projection=`3d`)</em> created a 3D axes object, and to add data to it, we could use <em>plot3D</em> function. And we could change the title, set the x,y,z labels for the plot as well.</p>
@@ -860,7 +860,7 @@ if (IPython.notebook.kernel != null) {
 
 
 
-<img alt="../_images/chapter12.02-3D-Plotting_12_0.png" src="../_images/chapter12.02-3D-Plotting_12_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_12_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_12_0.png"/>
 
 
 <p>Many times we would like a surface plot rather than a line plot when plotting in three dimensions. In three-dimensional surface plotting, we wish to make a graph of some relationship <em>f (x, y)</em>. In surface plotting all (x,y) pairs must be given. This is not straightforward to do using vectors. Therefore, in surface plotting, the first data structure you must create is called a mesh. Given lists/arrays of x and y values, a mesh is a listing of all the possible combinations of x and y. In Python, the mesh is given as two arrays X and Y where X (i,j) and Y (i,j) define possible (x,y) pairs. A third array, Z, can then be created such that Z (i,j) = f (X (i,j), Y (i,j)). A mesh can be created using the <em>np.meshgrid</em> function in Python. The <em>meshgrid</em> function has the inputs x and y are lists containing the independent data set. The output variables X and Y are as described earlier.</p>
@@ -924,7 +924,7 @@ if (IPython.notebook.kernel != null) {
 
 
 
-<img alt="../_images/chapter12.02-3D-Plotting_17_0.png" src="../_images/chapter12.02-3D-Plotting_17_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_17_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_17_0.png"/>
 
 
 <p>You will notice that the surface plot shows different colors for different elevations, yellow for higher and blue for lower, since we used the colormap <em>plt.cm.cividis</em> in the surface plot. You can change to different color schemes for the surface plot. These are left as exercises. We also plotted a colorbar to show the corresponding colors to different values.</p>
@@ -951,7 +951,7 @@ if (IPython.notebook.kernel != null) {
 
 
 
-<img alt="../_images/chapter12.02-3D-Plotting_19_0.png" src="../_images/chapter12.02-3D-Plotting_19_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_19_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.02-3D-Plotting_19_0.png"/>
 
 
 <p>There are many more functions related to plotting in Python and this is in no way an exhaustive list. However, it should be enough to get you started so that you can find the plotting functions in Python that suit you best and provide you with enough background to learn how to use them when you encounter them. You can find more examples of  different type 3D plots on the <a href="https://matplotlib.org/mpl_toolkits/mplot3d/tutorial.html">mplot3d tutorial website</a>.</p>

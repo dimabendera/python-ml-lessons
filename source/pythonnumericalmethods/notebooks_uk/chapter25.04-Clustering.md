@@ -63,7 +63,7 @@
 
 
 
-<img alt="../_images/chapter25.04-Clustering_5_0.png" src="../_images/chapter25.04-Clustering_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.04-Clustering_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.04-Clustering_5_0.png"/>
 
 
 <p>Тепер ми можемо використовувати K-середніх, як і раніше, тобто ініціалізувати модель і використати функцію <em>fit</em> для навчання алгоритму.</p>
@@ -119,7 +119,7 @@
 
 
 
-<img alt="../_images/chapter25.04-Clustering_9_0.png" src="../_images/chapter25.04-Clustering_9_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.04-Clustering_9_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.04-Clustering_9_0.png"/>
 
 
 <p>З наведеного вище малюнка ми бачимо, що результати непогані, вони насправді досить схожі на справжні класи. Але пам’ятайте, ми отримали ці результати без міток, лише на основі подібності між точками даних. Ми також можемо прогнозувати приналежність нових точок даних до кластерів за допомогою функції <em>predict</em>. Нижче наведено прогноз мітки кластера для двох нових точок.</p>

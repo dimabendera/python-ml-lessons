@@ -29,7 +29,7 @@
 
 
 <p>Ми бачимо з коду вище, що ми спочатку відкрили об'єкт файлу <em>f</em> з ім'ям файлу ‘test.txt`. Ми використали "w+" для режиму, що вказує на запис. Потім ми записуємо 5 рядків (зверніть увагу на символ нового рядка ‘\n` в кінці рядка), а потім закриваємо об'єкт файлу. Вміст файлу можна побачити на наступному малюнку.</p>
-<p><img alt="Запис_тексту" src="../_images/11.01.01-Write_text_file.png"/></p>
+<p><img alt="Запис_тексту" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/11.01.01-Write_text_file.png"/></p>
 <p><strong>ПРИМІТКА!</strong> Рекомендується закривати файл за допомогою <code><span>f.close()</span></code> в кінці. Якщо ви не закриєте їх самостійно, Python зрештою закриє їх за вас. Але іноді, при записі у файл, дані можуть не бути записані на диск, доки ви не закриєте файл. Тому, чим довше ви тримаєте файл відкритим, тим більші шанси втратити ваші дані.</p>
 
 
@@ -44,7 +44,7 @@
 
 
 
-<p><img alt="Дозапис_тексту" src="../_images/11.01.02-Append_text_file.png"/></p>
+<p><img alt="Дозапис_тексту" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/11.01.02-Append_text_file.png"/></p>
 
 
 <h2>Читання файлу<a href="#read-a-file" title="Постійне посилання на цей заголовок"></a></h2>
@@ -144,7 +144,7 @@ This is another line
 
 
 <p>З наведеного вище прикладу ми бачимо, як зберегти 2D-масив у текстовий файл за допомогою <em>np.savetxt</em>. Перший аргумент — це ім'я файлу, другий аргумент — це об'єкт масиву, який ми хочемо зберегти, а третій аргумент — це визначення формату для виводу (я використовую ‘%.2f`, щоб вказати, що ми хочемо виводити числа з 2 десятковими знаками). Четвертий аргумент — це заголовок, який ми хочемо записати у файл.</p>
-<p><img alt="Запис_масиву" src="../_images/11.01.03-Write_array.png"/></p>
+<p><img alt="Запис_масиву" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/11.01.03-Write_array.png"/></p>
 
 
 <pre><span></span><span>my_arr</span> <span>=</span> <span>np</span><span>.</span><span>loadtxt</span><span>(</span><span>'my_arr.txt'</span><span>)</span>

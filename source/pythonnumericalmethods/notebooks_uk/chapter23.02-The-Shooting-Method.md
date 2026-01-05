@@ -64,7 +64,7 @@ F\left(x, f(x), \frac{df(x)}{dx}\right) = \frac{d^{2}f(x)}{dx^{2}}
 
 
 
-<img alt="../_images/chapter23.02-The-Shooting-Method_6_0.png" src="../_images/chapter23.02-The-Shooting-Method_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.02-The-Shooting-Method_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.02-The-Shooting-Method_6_0.png"/>
 
 
 <p>З малюнка видно, що перше припущення трохи замале, оскільки з цією швидкістю через 5 с висота ракети менша за 10 м. Червона точка на малюнку — це ціль, яку ми хочемо вразити. Тепер скоригуємо наше припущення та збільшимо швидкість до 40 м/с.</p>
@@ -85,7 +85,7 @@ F\left(x, f(x), \frac{df(x)}{dx}\right) = \frac{d^{2}f(x)}{dx^{2}}
 
 
 
-<img alt="../_images/chapter23.02-The-Shooting-Method_8_0.png" src="../_images/chapter23.02-The-Shooting-Method_8_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.02-The-Shooting-Method_8_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.02-The-Shooting-Method_8_0.png"/>
 
 
 <p>Цього разу ми бачимо, що швидкість переоцінена. Отже, це випадкове припущення не дозволяє легко знайти найкращий результат. Як ми вже згадували вище, якщо ми розглядатимемо цю процедуру як пошук коренів, то матимемо хороший спосіб знайти найкращий результат. Використаємо функцію <em>fsolve</em> з Python, щоб знайти корінь. З наступного прикладу видно, що ми знаходимо правильну відповідь безпосередньо.</p>
@@ -126,7 +126,7 @@ F\left(x, f(x), \frac{df(x)}{dx}\right) = \frac{d^{2}f(x)}{dx^{2}}
 
 
 
-<img alt="../_images/chapter23.02-The-Shooting-Method_11_0.png" src="../_images/chapter23.02-The-Shooting-Method_11_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.02-The-Shooting-Method_11_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter23.02-The-Shooting-Method_11_0.png"/>
 
 
 <p>**СПРОБУЙТЕ!** Змінимо початкове припущення і подивимося, чи це змінить наш результат.</p>

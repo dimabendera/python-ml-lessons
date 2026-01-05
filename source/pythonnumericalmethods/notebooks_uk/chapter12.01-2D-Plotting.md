@@ -21,7 +21,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_6_0.png" src="../_images/chapter12.01-2D-Plotting_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_6_0.png"/>
 
 
 <p>На наведеному вище малюнку ви помітите, що за замовчуванням функція plot з'єднує кожну точку синьою лінією. Щоб функція виглядала плавно, використовуйте дрібніші точки дискретизації. Функція *plt.plot* виконала основну роботу з побудови фігури, а *plt.show()* повідомляє Python, що ми закінчили побудову і просимо показати фігуру. Крім того, ви можете побачити кілька кнопок під графіком, які можна використовувати для переміщення лінії, збільшення або зменшення масштабу, збереження фігури. Зверніть увагу, що перед побудовою наступної фігури вам потрібно вимкнути інтерактивний графік, натиснувши кнопку *stop interaction* у верхньому правому куті фігури. В іншому випадку наступна фігура буде побудована в тому ж кадрі. Або ми можемо просто використовувати магічну функцію *%matplotlib inline*, щоб вимкнути інтерактивні функції.</p>
@@ -42,7 +42,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_9_0.png" src="../_images/chapter12.01-2D-Plotting_9_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_9_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_9_0.png"/>
 
 
 <p>Щоб змінити маркер або лінію, ви можете додати третій вхідний аргумент до функції plot, який є рядком, що вказує колір та стиль лінії, які будуть використовуватися на графіку. Наприклад, *plot(x,y,`ro`)* побудує елементи x відносно елементів y, використовуючи червоні, r, кола, ‘o`. Можливі специфікації наведені нижче в таблиці.</p>
@@ -132,7 +132,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_11_0.png" src="../_images/chapter12.01-2D-Plotting_11_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_11_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_11_0.png"/>
 
 
 <p>Перед оператором *plt.show()* ви можете додати та побудувати більше наборів даних в одній фігурі.</p>
@@ -147,7 +147,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_13_0.png" src="../_images/chapter12.01-2D-Plotting_13_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_13_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_13_0.png"/>
 
 
 <p>У техніці та науці прийнято завжди давати графіку заголовок та підписи осей, щоб люди розуміли, про що ваш графік. Крім того, іноді ви також хочете змінити розмір фігури. Ви можете додати заголовок до свого графіка за допомогою функції *title*, яка приймає рядок як вхідні дані та встановлює його як заголовок графіка. Функції *xlabel* та *ylabel* працюють так само для назви підписів осей. Щоб змінити розмір фігури, ми можемо створити об'єкт фігури та змінити його розмір. Зауважте, що кожного разу, коли ми викликаємо функцію *plt.figure*, ми створюємо новий об'єкт фігури для малювання на ньому.</p>
@@ -167,7 +167,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_15_0.png" src="../_images/chapter12.01-2D-Plotting_15_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_15_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_15_0.png"/>
 
 
 <p>Ми бачимо, що ми можемо змінити будь-яку частину фігури, наприклад, розмір підписів осей x та y, вказавши аргумент *fontsize* у функції *plt.xlabel*. Але є деякі попередньо визначені стилі, які ми можемо використовувати для автоматичної зміни стилю. Ось список стилів.</p>
@@ -206,7 +206,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_20_0.png" src="../_images/chapter12.01-2D-Plotting_20_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_20_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_20_0.png"/>
 
 
 <p>Ви можете додати легенду до свого графіка, використовуючи функцію *legend*. І додати аргумент *label* у функцію *plot*. Функція legend також приймає аргумент *loc*, щоб вказати, де розмістити легенду; спробуйте змінити його від 0 до 10.</p>
@@ -226,7 +226,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_22_0.png" src="../_images/chapter12.01-2D-Plotting_22_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_22_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_22_0.png"/>
 
 
 <p>Нарешті, ви можете додатково налаштувати вигляд свого графіка, щоб змінити межі кожної осі за допомогою функцій *xlim* або *ylim*. Також ви можете використовувати функцію *grid*, щоб увімкнути сітку на фігурі.</p>
@@ -250,7 +250,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_24_0.png" src="../_images/chapter12.01-2D-Plotting_24_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_24_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_24_0.png"/>
 
 
 <p>Ми можемо створити таблицю графіків на одній фігурі за допомогою функції *subplot*. Функція *subplot* приймає три вхідні дані: кількість рядків графіків, кількість стовпців графіків та номер підграфіка, на який мають бути спрямовані всі виклики функцій побудови графіків. Ви можете перейти до іншого підграфіка, викликавши subplot знову з іншим значенням для розташування графіка.</p>
@@ -312,7 +312,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_26_0.png" src="../_images/chapter12.01-2D-Plotting_26_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_26_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_26_0.png"/>
 
 
 <p>Ми бачимо, що в кінці нашого графіка ми використали <code><span>plt.tight_layout</span></code>, щоб підфігури не перекривалися одна з одною. Ви можете спробувати і побачити ефект без цього оператора.</p>
@@ -328,7 +328,7 @@
 
 
 
-<img alt="../_images/chapter12.01-2D-Plotting_28_0.png" src="../_images/chapter12.01-2D-Plotting_28_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_28_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.01-2D-Plotting_28_0.png"/>
 
 
 <p>Нарешті, існують інші функції для побудови 2D-даних. Функція <code><span>errorbar</span></code> будує дані x відносно y, але з смугами похибок для кожного елемента. Функція <code><span>polar</span></code> будує θ відносно r, а не x відносно y. Функція <code><span>stem</span></code> будує стовпчики в точках x з висотою y. Функція <code><span>hist</span></code> створює гістограму набору даних; <code><span>boxplot</span></code> надає статистичний опис набору даних; а <code><span>pie</span></code> створює кругову діаграму. Використання цих функцій залишається для вашого дослідження. Не забудьте перевірити приклади в <a href="https://matplotlib.org/gallery/index.html#gallery">галереї matplotlib</a>.</p>

@@ -34,7 +34,7 @@
 
 
 
-<img alt="../_images/chapter18.02-Approximations-with-Taylor-Series_6_0.png" src="../_images/chapter18.02-Approximations-with-Taylor-Series_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter18.02-Approximations-with-Taylor-Series_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter18.02-Approximations-with-Taylor-Series_6_0.png"/>
 
 
 <p>Як бачите, апроксимація швидко наближається до аналітичної функції, навіть для <span>\(x\)</span>, що не знаходиться близько до <span>\(a=0\)</span>. Зауважте, що у наведеному вище коді ми також використали нову функцію - <em>zip</em>, яка дозволяє нам перебирати два параметри <em>range(4)</em> та <em>labels</em> і використовувати їх у нашому графіку.</p>
@@ -84,7 +84,7 @@
 
 
 
-<img alt="../_images/chapter18.02-Approximations-with-Taylor-Series_10_0.png" src="../_images/chapter18.02-Approximations-with-Taylor-Series_10_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter18.02-Approximations-with-Taylor-Series_10_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter18.02-Approximations-with-Taylor-Series_10_0.png"/>
 
 
 <p><strong>СПРОБУЙТЕ!</strong> Візьміть лінійну апроксимацію для <span>\(e^x\)</span> навколо точки <span>\(a = 0\)</span>. Використайте лінійну апроксимацію для <span>\(e^x\)</span>, щоб апроксимувати значення <span>\(e^1\)</span> та <span>\(e^{0.01}\)</span>. Використайте функцію Numpy <em>exp</em> для обчислення <em>exp(1)</em> та <em>exp(0.01)</em> для порівняння.</p>

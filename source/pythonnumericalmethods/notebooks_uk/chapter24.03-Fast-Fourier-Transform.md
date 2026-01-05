@@ -92,7 +92,7 @@ X_{k} &amp;=&amp; \sum_{n=0}^{N-1}{x_n\cdot e^{-i2\pi{kn/N}}} \\
 
 
 
-<img alt="../_images/chapter24.03-Fast-Fourier-Transform_6_0.png" src="../_images/chapter24.03-Fast-Fourier-Transform_6_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.03-Fast-Fourier-Transform_6_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.03-Fast-Fourier-Transform_6_0.png"/>
 
 
 <p><strong>СПРОБУЙТЕ!</strong> Використайте функцію FFT для обчислення перетворення Фур'є наведеного вище сигналу. Побудуйте амплітудний спектр для двосторонніх та односторонніх частот.</p>
@@ -132,7 +132,7 @@ X_{k} &amp;=&amp; \sum_{n=0}^{N-1}{x_n\cdot e^{-i2\pi{kn/N}}} \\
 
 
 
-<img alt="../_images/chapter24.03-Fast-Fourier-Transform_8_0.png" src="../_images/chapter24.03-Fast-Fourier-Transform_8_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.03-Fast-Fourier-Transform_8_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter24.03-Fast-Fourier-Transform_8_0.png"/>
 
 
 <p><strong>СПРОБУЙТЕ!</strong> Згенеруйте простий сигнал довжиною 2048, заміряйте час виконання ШПФ та порівняйте швидкість з ДПФ.</p>

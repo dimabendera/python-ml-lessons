@@ -42,7 +42,7 @@
 
 
 
-<img alt="../_images/chapter12.04-Animations-and-Movies_5_0.png" src="../_images/chapter12.04-Animations-and-Movies_5_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.04-Animations-and-Movies_5_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter12.04-Animations-and-Movies_5_0.png"/>
 
 
 

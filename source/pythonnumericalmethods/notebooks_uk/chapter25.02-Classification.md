@@ -140,7 +140,7 @@
 
 
 
-<img alt="../_images/chapter25.02-Classification_11_0.png" src="../_images/chapter25.02-Classification_11_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.02-Classification_11_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.02-Classification_11_0.png"/>
 
 
 <p>Тепер ми використовуємо SVM у scikit-learn. API досить простий, для більшості алгоритмів він схожий. Використання різних алгоритмів зазвичай складається з наступних кроків:</p>
@@ -224,7 +224,7 @@
 
 
 
-<img alt="../_images/chapter25.02-Classification_17_0.png" src="../_images/chapter25.02-Classification_17_0.png"/>
+<img alt="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.02-Classification_17_0.png" src="https://raw.githubusercontent.com/dimabendera/python-ml-lessons/main/source/pythonnumericalmethods/_images/chapter25.02-Classification_17_0.png"/>
 
 
 <p>Ми бачимо, що лінійні межі, знайдені SVM для 3 класів, загалом хороші і можуть розділити більшість зразків.</p>

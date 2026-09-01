@@ -1,54 +1,49 @@
-<h1> Лекції python </h1>
+# Інтерактивні курси з програмування та машинного навчання — українською
 
-<h2> План лекцій</h2>
+**→ [Відкрити курси](https://dimabendera.github.io/python-ml-lessons/)**
 
-Основа взята з <a src="https://docs.google.com/document/d/1SgVPHOoGtm_hdNZP5YL_zCDlT11F-SY0_fnqGdfj2-U/edit">документу</a>
+Чотири курси: мова, потім моделі на ній, потім дві спеціалізації.
+Кожна тема — окрема сторінка, яку можна читати підряд або відкрити з пошуку:
+все потрібне пояснено на місці.
 
-<ul>
-  <li type="I">Введення. Короткі тести, сесії запитань і відповідей [1.5 h]
-    <ol>
-      <li type="1">Визначення цілей, відповідальності;</li>
-      <li type="1">Хід розробки, вимоги до продукту, робота в команді, відстеження завдань, таймінг;</li>
-      <li type="1">Основи Git, розміщення репозиторіїв (GitHub, GitLab);</li>
-      <li type="1">IDE, Установка python, bash (Домашне завдання встановити python, встановити IDE)</li>
-    </ol>
-  </li>
+| Курс | Теми | Потрібно знати | Глосарій |
+|---|---|---|---|
+| [Python](courses/01-python/index.html) | 35 із 35 | нічого | [91 термін](courses/01-python/glossary.html) |
+| [Машинне навчання](courses/02-ai-ml/index.html) | 40 із 40 | Python | [136 термінів](courses/02-ai-ml/glossary.html) |
+| [Комп'ютерний зір](courses/03-computer-vision/index.html) | 2 із 40 | машинне навчання | [110 термінів](courses/03-computer-vision/glossary.html) |
+| [Обробка природної мови](courses/04-nlp/index.html) | 0 із 40 | машинне навчання | [109 термінів](courses/04-nlp/glossary.html) |
 
-  <li type="I">Частина 1. Python. [4.5h].
+Два перші курси готові повністю. Спеціалізації в роботі — теми з'являються поступово,
+глосарії вже складені.
 
-#### Section 1: General Programming Basics
-#### Section 2: Strings
-#### Section 3: Conditionals
-#### Section 4: Lists
-#### Section 5: Loops
-#### Section 6: Functions
-#### Section 7: Classes
-#### Section 8: File handling
-#### Section 9: Exception Handling
-#### Section 10: Modules
-#### Section 11: Standard Modules
-#### Section 12: REST API
-  
-<li type="I">Частина 2. External Libs. [4.5h].
-<li type="I">Частина 3. ML. [4.5h].
-</ul>
+## Із чого складається тема
 
+| | |
+|---|---|
+| **Лекція** | теорія з інтерактивними візуалізаціями: не картинка, а те, що можна покрутити |
+| **Практика** | зошит із кодом, який запускається без правок |
+| **Тест** | самоперевірка з поясненням до кожної відповіді, і правильної, і хибної |
+| **Домашнє завдання** | три рівні: повторити, застосувати до свого, зробити з нуля |
 
-<h2>джерела</h2>
-* https://github.com/microsoft/ML-For-Beginners
-* https://github.com/microsoft/Data-Science-For-Beginners
-* https://github.com/GnuriaN/Python-Roadmap
-* https://github.com/Moataz-Elmesmary/Data-Science-Roadmap
-* https://github.com/mrankitgupta/Python-Roadmap
-* https://github.com/matyushkin/lessons
-* http://www.mmf.lnu.edu.ua/ar/1739
+Математика пояснюється, а не використовується: біля формули завжди сказано, що вона
+означає словами, що означає кожен символ і навіщо вона тут. Плюс маленький приклад
+із реальними числами.
 
+## Як читати
 
+Лекції, тести й домашні завдання — звичайні HTML-сторінки. Відкриваються в браузері,
+нічого встановлювати не треба.
 
-<h2> Конвертація  </h2>
+Практичні зошити — `.ipynb`. Щоб запускати їх у себе:
 
-notebbok в html
-<code>
-jupyter nbconvert --to html ./your_notebook.ipynb
-</code>
+```bash
+pip install -r requirements.txt
+jupyter notebook
+```
 
+Кожен зошит має вигляд-двійник `practice.html` — його можна просто переглянути
+в браузері разом із результатами виконання, без запуску.
+
+## Ліцензія
+
+Матеріали курсу — CC BY 4.0. Код у зошитах — MIT.

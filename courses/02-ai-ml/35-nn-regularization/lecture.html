@@ -1,0 +1,1618 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Регуляризація нейромереж</title>
+<meta name="description" content="Регуляризація нейромереж: чому мережа з 1801 параметра запамʼятовує 120 прикладів разом із випадковими мітками, спад ваг як L2 на новому місці, чим weight decay відрізняється від L2 у втратах і навіщо AdamW, dropout із масштабуванням на передбаченні, пакетна нормалізація та шум від складу пакета, рання зупинка з терпінням, аугментація і таблиця сумісності способів.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code>.
+   Формули (.eq), лістинги (.code), табло (.cellv), підписи фігур і таблиці
+   набрані тим самим JetBrains Mono — гасимо лігатури скрізь разом. */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+
+/* таблиця оптимізаторів: перша колонка — імʼя методу, решта звичайним текстом */
+.opt td:first-child{color:var(--rose); font-family:"JetBrains Mono",monospace;
+  font-size:13px; white-space:nowrap}
+.opt td{font-size:14.5px}
+.opt td.n{font-family:"JetBrains Mono",monospace; text-align:right; white-space:nowrap}
+.opt th.n{text-align:right}
+
+/* грабля №3: .cellv b теж під uppercase, і β там перетворювалась на Β —
+   на екрані це латинська «B». Скидаємо регістр так само, як у підписах повзунків. */
+.cellv b .raw{text-transform:none}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Машинне навчання · Блок 7 · Тема 35</p>
+    <h1>Регуляризація нейромереж</h1>
+    <p class="stand">Мережа на тисячу вісімсот параметрів здатна вивчити напам'ять сто
+      двадцять прикладів разом із їхніми випадковими помилками. Питання не в тому, чи
+      вона перенавчиться, а в тому, що ми з цим зробимо.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Мережа, що вчить напам'ять</a></li>
+        <li><a href="#s2">Спад ваг: старий штраф на новому місці</a></li>
+        <li><a href="#s3">Чому спад ваг — не завжди L2</a></li>
+        <li><a href="#s4">Dropout</a></li>
+        <li><a href="#s5">Пакетна нормалізація</a></li>
+        <li><a href="#s6">Рання зупинка</a></li>
+        <li><a href="#s7">Більше даних і аугментація</a></li>
+        <li><a href="#s8">Що з чим поєднувати</a></li>
+        <li><a href="#s9">Куди далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../34-optimizers/lecture.html">← 34. Оптимізатори</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../36-double-descent/lecture.html">36. Подвійний спуск →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Попередні чотири теми блоку вчили мережу <em>вчитись</em>: як влаштований
+<a href="../31-neural-networks/lecture.html">граф із нейронів</a>, як
+<a href="../32-backpropagation/lecture.html">порахувати градієнт</a>, які
+<a href="../33-activations-init/lecture.html">активації й початкові ваги</a> не дають
+градієнту згаснути, і як <a href="../34-optimizers/lecture.html">оптимізатор</a>
+перетворює градієнт на крок. Усе разом дає одну здатність: довести навчальну втрату
+майже до нуля.</p>
+
+<p>Ця тема — про те, що з цієї здатності нічого доброго само по собі не випливає.
+Навчальна втрата нуль означає рівно одне: мережа відтворює відповіді на тих прикладах,
+які бачила. Про нові приклади вона при цьому не сказала нічого. Розрив між двома цими
+речами — центральна проблема, яка лишилась нерозвʼязаною, і остання тема блоку
+займається саме нею.</p>
+
+<h2 id="s1"><span class="num">01 / Діагноз</span>Мережа, що вчить напам'ять</h2>
+
+<p>Ми вже проходили <a href="../20-overfitting/lecture.html">перенавчання</a> на
+многочлені п'ятнадцятого степеня й шістнадцяти оголошеннях. Там усе було наочно:
+параметрів шістнадцять, точок шістнадцять, і крива фізично мала змогу пройти через
+кожну. У мережі ситуація та сама, лише в іншому масштабі.</p>
+
+<p>Візьмімо задачу з попередніх тем блоку — відрізнити шахрайське оголошення про продаж
+телефона від чесного за двома ознаками. Мережа з двома прихованими шарами по сорок
+нейронів має <strong>1801 параметр</strong>. Навчальна вибірка — <strong>120
+оголошень</strong>. Тобто на кожен приклад припадає пʼятнадцять вільних чисел, які можна
+крутити як завгодно. Це не екзотика, а звичайна пропорція глибокого навчання: у справжніх
+мережах параметрів буває більше, ніж прикладів, у сотні разів.</p>
+
+<p>Що з цього виходить, видно на числах. За триста епох навчальна крос-ентропія падає до
+<strong>0.0562</strong>, а точність на навчальних оголошеннях доходить до
+<strong>0.9833</strong> — мережа помиляється на двох прикладах зі ста двадцяти. Втрата на
+відкладеній валідації за той самий час не падає, а <em>росте</em>: <strong>0.4565</strong>
+проти найкращого значення <strong>0.2637</strong>, досягнутого аж на 51-й епосі. Розрив
+між навчальною й валідаційною втратою — 0.40. Це і є перенавчання, тільки замість кривої,
+що пірнає в мінус, ми бачимо дві розбіжні криві.</p>
+
+<h3>Експеримент, який вирішив суперечку</h3>
+
+<p>Довго вважалося, що мережі якось «самі» уникають запамʼятовування: мовляв, градієнтний
+спуск шукає прості розвʼязки й тому не чіпляється за окремі точки. Перевірити це можна
+жорстко — і перевірка стала одним із найвідоміших експериментів у галузі.</p>
+
+<p>Беруть звичайний набір даних і <strong>перемішують мітки</strong>. Тепер між ознаками
+й відповіддю немає геть жодного звʼязку: мітка кожного прикладу випадкова. Вивчити тут
+нема чого — закономірності просто не існує. І мережу навчають на цьому.</p>
+
+<p>Вона навчається. Навчальна втрата спадає майже до нуля, точність доходить до ста
+відсотків. Наша мережа на перемішаних мітках за дві тисячі епох дає навчальну втрату
+<strong>0.0128</strong> і точність <strong>1.0000</strong> — жодної помилки на ста
+двадцяти прикладах, у яких відповіді проставлені навмання. Тобто мережа не «шукає
+закономірність»: коли закономірності немає, вона спокійно запамʼятовує таблицю.</p>
+
+<figure>
+  <p class="fig-head">Схема 1 · Та сама мережа, два набори міток</p>
+  <p class="fig-sub">Ліворуч — справжні мітки, праворуч — ті самі мітки, випадково перемішані між прикладами. Мережа, дані й код однакові.</p>
+  <div><canvas id="cRnd" width="620" height="300" aria-label="Чотири стовпчики: точність на навчальних і нових даних для справжніх і для перемішаних міток"></canvas></div>
+  <figcaption><b>Що читати:</b> ліва пара — нормальне навчання: майже ідеально на
+    навчальних, непогано на нових. Права пара — те саме навчання на безглуздих мітках:
+    навчальна точність <b>1.0000</b>, а на нових даних <b>0.7141</b>, тобто гірше за
+    найтупішу відповідь «усі оголошення чесні», яка дає 0.8372. Мережа вивчила шум
+    досконало — і цим зіпсувала собі все інше.</figcaption>
+</figure>
+
+<p>Висновок звідси не «мережі погані», а точніший і незручніший. <strong>Здатність
+запамʼятати весь навчальний набір закладена в архітектуру.</strong> Ніщо всередині
+мережі не заважає їй це зробити, і ніщо в градієнтному спуску не обіцяє, що вона цього
+не робитиме. Отже, стриманість має прийти ззовні — з того, як ми ставимо задачу, як
+подаємо дані й коли зупиняємось. Це і є регуляризація.</p>
+
+<div class="note"><b>Порядок дій, який економить дні.</b> Спершу переконайся, що мережа
+взагалі <em>здатна</em> перенавчитись на твоїх даних: доведи навчальну втрату майже до
+нуля без жодної регуляризації. Якщо не виходить — проблема в оптимізації (крок,
+ініціалізація, архітектура), і жоден dropout її не полагодить. Регуляризувати модель,
+яка ще не вміє вчитись, безглуздо.</div>
+
+<h2 id="s2"><span class="num">02 / Перенесення</span>Спад ваг: старий штраф на новому місці</h2>
+
+<p>Перший спосіб ми вже знаємо повністю. У <a href="../23-regularization/lecture.html">темі
+про регуляризацію</a> ми додали до функції втрат другий доданок — суму квадратів ваг,
+помножену на силу штрафу — і перенавчений многочлен сам собою став спокійним. Та сама
+конструкція без жодних змін працює для мережі:</p>
+
+<div class="eq">L<span class="sub">повна</span> = L<span class="sub">даних</span>
+&nbsp;+&nbsp; λ · Σ w<span class="sup">2</span></div>
+
+<p>Читається так само, як раніше. Перший доданок — крос-ентропія, яка міряє, наскільки
+мережа промахується. Другий — сума квадратів усіх ваг мережі (зсуви зазвичай не
+штрафують, як не штрафували вільний член у лінійній моделі). <code>λ</code> — одне
+додатне число, ціна одиниці «розгону». У світі мереж цей самий прийом частіше називають
+<strong>спадом ваг</strong> (weight decay), і назва пояснюється похідною: доданок
+<code>λ·Σw²</code> дає в градієнті <code>2λw</code>, тож кожен крок навчання додатково
+стягує кожну вагу до нуля на частку, пропорційну їй самій. Ваги <em>спадають</em>.</p>
+
+<p>Чому це лікує саме мережу, а не лише многочлен, теж зрозуміло геометрично. Великі ваги
+означають різкі перепади виходу: маленький зсув входу дає великий стрибок відповіді. Саме
+з таких стрибків складається межа рішень, що обростає острівцями навколо окремих точок.
+Стримуючи ваги, ми стримуємо кривизну межі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Сила спаду ваг на мережі</p>
+  <p class="fig-sub">Мережа 2 → 10 → 1 на 70 навчальних точках, з яких 14 % розмічені неправильно. Змінюється одне число — <code>λ</code>.</p>
+  <div class="panel">
+    <div><canvas id="cLam" width="620" height="370" aria-label="Межа рішень нейромережі при різній силі спаду ваг: від острівців навколо окремих точок до майже прямої"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="lam2"><span>спад ваг <span class="raw">λ</span></span> <output id="lam2o">0</output></label>
+        <input type="range" id="lam2" min="0" max="7" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>помилка навч.</b><i id="lamTr">—</i></div>
+        <div class="cellv"><b>помилка тест.</b><i id="lamTe">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>норма ваг</b><i id="lamN">—</i></div>
+        <div class="cellv"><b>розрив</b><i id="lamG">—</i></div>
+      </div>
+      <div class="verdict" id="lamVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Прожени всі вісім положень.</b> При <span class="raw">λ</span> = 0 мережа
+    помиляється на одній навчальній точці з сімдесяти (1.4 %) і на 28.2 % нових — вона
+    обхопила кожну неправильно розмічену точку окремим острівцем. При
+    <span class="raw">λ</span> = 0.01 навчальна помилка виросла до 15.7 %, а тестова впала
+    до 17.8 %: мережа перестала сперечатися з викидами. При
+    <span class="raw">λ</span> = 0.3 норма ваг дорівнює нулю, межа зникла зовсім, і обидві
+    помилки — близько половини. Це той самий сюжет, що в темі 23, і саме тому він тут:
+    ідея не змінилась від переходу до мереж.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Тонкість</span>Чому спад ваг — не завжди L2</h2>
+
+<p>Тепер деталь, яку зазвичай проминають, а вона коштувала галузі окремої статті й
+окремого оптимізатора в кожній бібліотеці.</p>
+
+<p>Є два способи реалізувати ту саму, здавалося б, ідею. <strong>Перший</strong> —
+дописати <code>λ·Σw²</code> у функцію втрат. Тоді до градієнта кожної ваги додається
+<code>2λw</code>, і далі цей доданок іде звичайним шляхом — крізь оптимізатор.
+<strong>Другий</strong> — не чіпати втрату взагалі, а після кроку оптимізатора окремо
+відняти від кожної ваги <code>η·λ·w</code>.</p>
+
+<p>Для <a href="../16-gradient-descent/lecture.html">простого градієнтного спуску</a> ці
+два способи дають абсолютно однакові числа. Крок першого способу —
+<code>w − η·(g + 2λw)</code>, крок другого — <code>w − η·g − η·λ'·w</code>. Розкрий дужки
+в першому: те саме, тільки <code>λ' = 2λ</code>. Різниця в позначенні, не в поведінці.</p>
+
+<p>Для <a href="../34-optimizers/lecture.html">Adam</a> це вже <em>різні</em> методи.
+Adam ділить крок на власний масштаб градієнта: <code>m̂/(√ŝ + ε)</code>. Якщо доданок
+<code>2λw</code> потрапив у градієнт, він проходить крізь обидва накопичувачі й крізь це
+ділення. Значить, фактична сила стягування до нуля залежить від того, наскільки великі
+градієнти отримувала <em>ця конкретна вага</em>. Параметр із дрібними градієнтами має
+малий знаменник — і його стягує сильно; параметр із великими градієнтами стягує ледь-ледь.
+Одне число <code>λ</code> перетворюється на різну силу для різних ваг, і залежність ця
+випадкова.</p>
+
+<p>Другий спосіб від цього вільний: <code>η·λ·w</code> віднімається окремо і ділення не
+бачить. Оптимізатор, у якому спад ваг реалізовано саме так, зветься
+<strong>AdamW</strong> — літера W від weight decay. Практичний наслідок простий: у
+бібліотеках параметр <code>weight_decay</code> в Adam і в AdamW означає різні речі, і
+значення, підібране для одного, для другого не годиться.</p>
+
+<div class="note warn"><b>Що з цього запамʼятати.</b> «Спад ваг» і «L2 у функції втрат» —
+це <em>той самий</em> метод лише для методів без адаптивного масштабу: простий спуск,
+момент. Щойно з'явився поділ на <code>√ŝ</code> — це два різні методи з однаковою назвою.
+Якщо ти вчиш мережу на Adam і регуляризація не працює так, як очікувалось, першим ділом
+перевір, який саме із двох варіантів у тебе ввімкнено.</div>
+
+<h2 id="s4"><span class="num">04 / Dropout</span>Dropout</h2>
+
+<p>Спад ваг — прийом, який мережа успадкувала від лінійних моделей. Наступний прийом
+успадковувати не було звідки: він придуманий для мереж і має сенс тільки в них.</p>
+
+<p>Ідея звучить так, ніби це помилка в коді. <strong>На кожному кроці навчання випадково
+вимикаємо частину нейронів</strong> — просто ставимо їхній вихід у нуль. Вимкнені
+нейрони на цьому кроці ні в чому не беруть участі: ні в прямому проході, ні в градієнті.
+Наступного кроку жереб кидається наново, і вимикається вже інша частина. Частка вимкнених
+<code>p</code> — параметр методу, звичайні значення від 0.1 до 0.5.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Dropout наочно</p>
+  <p class="fig-sub">Два приховані шари по дванадцять нейронів. Повзунок задає частку вимкнених; кнопка кидає жереб заново.</p>
+  <div class="panel">
+    <div><canvas id="cDrop" width="620" height="410" aria-label="Схема мережі з двома прихованими шарами, частина нейронів вимкнена і перекреслена"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="drop4"><span>частка вимкнених p</span> <output id="drop4o">0.30</output></label>
+        <input type="range" id="drop4" min="0" max="0.9" step="0.05" value="0.3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>активних / 24</b><i id="dpN">—</i></div>
+        <div class="cellv"><b>цей крок ÷ (1−p)</b><i id="dpD">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>середнє за 200 кроків</b><i id="dpM" class="sm">—</i></div>
+        <div class="cellv"><b>повна сума</b><i id="dpF">—</i></div>
+      </div>
+      <button id="dpNext">Наступний крок навчання</button>
+      <div class="verdict" id="dpVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Що читати:</b> кожен нейрон має своє число — його активацію; перекреслені
+    вимкнені на цьому кроці. Наступний шар отримує суму активних, поділену на
+    <code>1 − p</code> — це третя комірка табло. Тисни «наступний крок» кілька разів:
+    на окремому кроці це число гуляє навколо повної суми, іноді помітно. А <b>середнє за
+    200 кроків</b> тримається біля повної суми майже точно — ділення вирівнює саме
+    середнє, і більшого від нього не вимагають.</figcaption>
+</figure>
+
+<h3>Чому це працює: дві інтуїції</h3>
+
+<p><strong>Перша: неможливо покластись на сусіда.</strong> Уяви нейрон, який навчився
+розпізнавати «дуже низька ціна» і передавати це далі одним каналом. Наступний шар
+природно вибудує все своє рішення навколо цього каналу — навіщо шукати щось інше, коли є
+готовий надійний сигнал. Так виникає <em>співадаптація</em>: група нейронів працює
+злагодженим механізмом, у якому кожна деталь незамінна, а вся конструкція тримається на
+особливостях конкретних навчальних прикладів. Dropout цю розкіш забирає. Будь-який
+нейрон, на який ти зібрався покластись, з імовірністю <code>p</code> зникне саме на цьому
+кроці. Єдина стратегія, що виживає, — дублювати: тримати кілька частково надлишкових
+шляхів до тієї самої відповіді.</p>
+
+<p><strong>Друга: це прихований ансамбль.</strong> Кожен крок навчання ми фактично
+навчаємо <em>іншу</em> мережу — ту, що лишилась після викидання вимкнених нейронів.
+Мереж таких астрономічно багато: якщо прихованих нейронів 24, різних підмереж —
+2<span class="sup">24</span>, тобто понад шістнадцять мільйонів. Усі вони ділять між
+собою одні й ті самі ваги, тому навчання однієї підмережі покращує решту. А коли ми
+вимикаємо dropout на передбаченні, повна мережа поводиться приблизно як
+<em>усереднення</em> всіх цих підмереж. Це рівно та ідея, з якої в темі про
+<a href="../26-random-forest/lecture.html">випадковий ліс</a> виріс сам ліс: багато
+навмисне різних моделей, усереднених разом, помиляються менше за одну. Різниця лише в
+тому, що ліс тримає тисячу окремих дерев у памʼяті, а dropout — одну мережу, яка грає
+роль усіх підмереж одразу.</p>
+
+<h3>Найважливіше місце: що робиться на передбаченні</h3>
+
+<p>Ось де реалізації помиляються найчастіше. На етапі передбачення dropout
+<strong>вимикають</strong>: усі нейрони працюють, нічого не обнуляється. І тут виникає
+розбіжність, яку треба виправити руками.</p>
+
+<p>Порахуймо на числах. Нехай нейрон наступного шару отримує суму від дванадцяти
+попередніх, і за повного складу ця сума дорівнює <strong>6.00</strong>. При
+<code>p = 0.25</code> під час навчання в середньому активні девʼять із дванадцяти, тож
+сума в середньому дорівнює <strong>4.50</strong> — три чверті від повної. Мережа
+налаштовувала свої ваги під <em>цей</em> рівень сигналу. Якщо на передбаченні подати їй
+повні 6.00, кожен наступний нейрон отримає на третину більше, ніж очікує. У глибокій
+мережі така похибка множиться від шару до шару, і на виході з'являється систематичний
+зсув.</p>
+
+<p>Лікується це масштабуванням, і робити його можна з двох боків:</p>
+
+<ul>
+  <li><strong>Масштабувати на передбаченні.</strong> Помножити виходи шару на
+    <code>1 − p</code>: 6.00 × 0.75 = 4.50, рівно те, під що мережа налаштована. Це
+    класичний варіант із першої статті про dropout.</li>
+  <li><strong>Масштабувати на навчанні</strong> (inverted dropout). Ділити виходи тих
+    нейронів, що лишились, на <code>1 − p</code>: 4.50 ÷ 0.75 = 6.00. Тоді на
+    передбаченні не треба робити <em>нічого</em> — і саме тому так роблять усі сучасні
+    бібліотеки. Код передбачення не залежить від того, який був <code>p</code>.</li>
+</ul>
+
+<figure>
+  <p class="fig-head">Схема 2 · Навчання проти передбачення</p>
+  <p class="fig-sub">Той самий шар у двох режимах. Числа — активації нейронів; унизу — що дістається наступному шару.</p>
+  <div><canvas id="cScale" width="620" height="310" aria-label="Схема: під час навчання частина нейронів вимкнена і сума ділиться на один мінус p, під час передбачення всі нейрони активні і нічого не робиться"></canvas></div>
+  <figcaption><b>Головне:</b> обидва режими мусять давати наступному шару сигнал
+    <b>однакового розміру</b>. Ліворуч частина нейронів мовчить, тож суму, що лишилась,
+    ділять на <code>1 − p</code>. Праворуч мовчить лише сам dropout — і саме
+    тому там нічого ділити не треба. Забудеш будь-яку з двох половин — і мережа на
+    передбаченні працює не в тому масштабі, у якому вчилась.</figcaption>
+</figure>
+
+<div class="note warn"><b>Помилка, яку не видно по точності.</b> У практиці цієї теми ми
+навчимо мережу з простим dropout при <code>p = 0.5</code> і забудемо масштабування на
+передбаченні. Точність від цього майже не змінюється: <b>0.8897</b> проти
+<b>0.8910</b> — межа рішень зсунулась мало. А от крос-ентропія псується вдвічі:
+<b>0.5132</b> замість <b>0.2981</b>, і середній прогноз падає з 0.1582 до 0.1033 при
+справжній частці шахрайських оголошень 0.1628. Тобто мережа лишилась приблизно правою у
+відповідях «так / ні», але стала систематично занижувати ймовірності. Якщо ти дивишся
+лише на точність, ця помилка проживе в проєкті роками.</div>
+
+<h2 id="s5"><span class="num">05 / BatchNorm</span>Пакетна нормалізація</h2>
+
+<p>Наступний прийом до регуляризації взагалі не планувався. Його придумали, щоб мережі
+швидше вчились, а те, що він заодно трохи стримує перенавчання, — побічний ефект.</p>
+
+<p>Ідея проста. Ми вже нормуємо <em>входи</em> мережі: віднімаємо середнє, ділимо на
+стандартне відхилення, щоб усі ознаки жили в одному масштабі. Але глибока мережа — це
+ланцюжок шарів, і вхід кожного наступного шару — це вихід попереднього, який ніхто не
+нормує. Він може поїхати куди завгодно: розтягнутись, зсунутись, стиснутись у точку. <strong>Пакетна
+нормалізація</strong> (batch normalization) робить із внутрішніми активаціями те саме, що
+ми робимо з входом: усередині шару бере поточний пакет (batch) прикладів, рахує по ньому
+середнє й розкид кожної активації й приводить її до середнього нуль і розкиду одиниця.
+А щоб мережа не втратила свободу, після цього її пропускають крізь двійку власних
+навчальних параметрів — множник і зсув, — які мережа підбирає сама.</p>
+
+<figure>
+  <p class="fig-head">Схема 3 · Що робить пакетна нормалізація</p>
+  <p class="fig-sub">Розподіл однієї активації по прикладах пакета: до нормалізації й після неї. Праворуч — та сама активація одного прикладу в трьох різних пакетах.</p>
+  <div><canvas id="cBN" width="620" height="300" aria-label="Два розподіли активацій до і після нормалізації, і значення одного прикладу в трьох різних пакетах"></canvas></div>
+  <figcaption><b>Що читати:</b> ліворуч активація зсунута й розтягнута, після
+    нормалізації вона центрована й має одиничний розкид — наступному шару працювати
+    легше. Праворуч ключова деталь: <b>нормалізоване значення прикладу залежить від
+    того, з ким він потрапив у пакет</b>. Один і той самий приклад отримує різні числа в
+    різних пакетах — це шум, а шум під час навчання і є регуляризація.</figcaption>
+</figure>
+
+<p>Звідси й регуляризаційна дія. Приклад більше не обробляється сам по собі: його
+нормалізоване значення залежить від випадкового складу пакета, у який він потрапив. Це
+той самий механізм, що й у dropout, лише слабший і не такий керований — мережа щоразу
+бачить трошки інакшу версію того самого прикладу й тому не може вчепитись за точні
+числа. Побічний наслідок: на передбаченні пакетів немає, і статистики брати нізвідки —
+тому їх накопичують під час навчання ковзним середнім і на передбаченні використовують
+збережені. <strong>BatchNorm на навчанні й на передбаченні працює по-різному</strong>,
+і забути перемкнути режим — класична причина того, що модель у продакшені поводиться не
+так, як у зошиті.</p>
+
+<div class="note"><b>Чесно про пояснення.</b> Автори методу пояснили його дію через
+«зсув внутрішніх коваріат» (internal covariate shift): мовляв, розподіл входів кожного
+шару постійно їде, бо попередні шари вчаться, і нормалізація його утримує. Пізніші
+роботи це пояснення поставили під сумнів: вдавалось навмисно <em>додати</em> зсуву після
+нормалізації, і метод усе одно працював. Нинішнє пояснення інше — нормалізація згладжує
+поверхню втрат і робить її поведінку передбачуванішою. Ситуація, коли прийом упевнено
+працює, а причина досі обговорюється, для машинного навчання нормальна, і не варто
+вдавати, ніби її немає.</div>
+
+<h2 id="s6"><span class="num">06 / Зупинка</span>Рання зупинка</h2>
+
+<p>Найдешевший прийом у цій темі не додає до мережі нічого. Він лише каже, коли
+припинити.</p>
+
+<p>У <a href="../20-overfitting/lecture.html">темі про перенавчання</a> ми бачили
+U-подібну криву: зі зростанням складності помилка на нових даних спершу падає, потім
+розвертається вгору. З мережею ту саму криву дає <strong>час навчання</strong>. Перші
+епохи мережа вчить закономірність, і обидві втрати спадають разом. З якогось моменту
+закономірність вичерпана, і мережа береться за шум конкретних навчальних прикладів:
+навчальна втрата спадає далі, валідаційна розвертається. Точка розвороту — момент, коли
+треба зупинитись.</p>
+
+<p>Механіка проста: після кожної епохи міряємо втрату на валідаційній вибірці й
+запамʼятовуємо ваги, коли вона найменша. Проблема одна — крива шумна, і одне випадкове
+погіршення ще нічого не означає. Тому вводять <strong>терпіння</strong> (patience):
+скільки епох поспіль дозволено не покращувати рекорд, перш ніж зупинитись. І зупинившись,
+повертають <em>найкращі</em> ваги, а не останні. Це важливо: інакше терпіння в двадцять
+епох означає, що ти віддаєш модель, яка двадцять епох поспіль ставала гіршою.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Де саме зупинитись</p>
+  <p class="fig-sub">Дві криві втрат протягом 300 епох. Повзунок ставить «стоп» на обрану епоху; кнопки — терпіння.</p>
+  <div class="panel">
+    <div><canvas id="cES" width="620" height="340" aria-label="Криві навчальної і валідаційної втрати з позначкою найкращої епохи і точками зупинки для різного терпіння"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="ep6"><span>зупинка на епосі</span> <output id="ep6o">300</output></label>
+        <input type="range" id="ep6" min="1" max="300" step="1" value="300">
+      </div>
+      <div class="ctl">
+        <span class="cap">терпіння</span>
+        <div class="seg" id="pat6">
+          <button data-p="5">5</button>
+          <button data-p="10">10</button>
+          <button data-p="20" aria-pressed="true">20</button>
+          <button data-p="50">50</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вал. тут</b><i id="esV">—</i></div>
+        <div class="cellv"><b>вал. найкраща</b><i id="esB">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>терпіння спинить</b><i id="esP" class="sm">—</i></div>
+        <div class="cellv"><b>зекономлено епох</b><i id="esS">—</i></div>
+      </div>
+      <div class="verdict" id="esVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Спробуй три речі.</b> Постав повзунок на кінець — побачиш, наскільки
+    гіршу модель віддаєш, довчивши до останньої епохи. Постав на дно кривої (епоха 53) —
+    це найкраще, що взагалі можна взяти. І перемкни терпіння на 5: на 19-й епосі
+    валідаційна втрата ненадовго підскочила, і нетерплячий сторож спиняє навчання
+    вже на 20-й, віддаючи ваги 15-ї — задовго до справжнього дна. Терпіння 10 цей
+    самий стрибок перечікує.</figcaption>
+</figure>
+
+<p>На нашій мережі рання зупинка дає найбільший ефект за найменші зусилля. Навчання до
+кінця (300 епох) дає валідаційну втрату <strong>0.4565</strong>. Зупинка з терпінням 20
+спрацьовує на 71-й епосі й повертає ваги 51-ї, де валідаційна втрата
+<strong>0.2637</strong> — майже вдвічі краще, і при цьому 229 епох із 300 просто не
+виконуються. Терпіння 5 на цій самій кривій зупиняється аж на девʼятій епосі й віддає
+ваги четвертої: втрата 0.3629, помітно гірша за досяжну. Занадто нетерплячий сторож
+шкодить.</p>
+
+<div class="note"><b>Про чесність оцінки.</b> Валідаційна вибірка, за якою ти обираєш
+момент зупинки, після цього вибору перестає бути незалежною — це рівно та сама пастка, що
+й у <a href="../22-cross-validation/lecture.html">темі про крос-валідацію</a>. Ти обрав
+епоху з трьохсот за найменшою помилкою, а мінімум із трьохсот спроб систематично
+оптимістичний. Тому фінальну цифру бери на третій вибірці, до якої не торкався жоден
+твій вибір.</div>
+
+<h2 id="s7"><span class="num">07 / Дані</span>Більше даних і аугментація</h2>
+
+<p>Усі попередні прийоми стримують модель. Є один, який замість цього посилює другий бік
+рівняння, і він найнадійніший: <strong>більше даних</strong>. Перенавчання — це завжди
+співвідношення між тим, скільки в моделі свободи, і тим, скільки прикладів цю свободу
+обмежують. Подвоївши вибірку, ти вдвічі здешевив кожен параметр.</p>
+
+<p>Проблема відома: справжні приклади коштують грошей і часу, а розмічені — ще й
+уваги людини. Коли додати справжніх не можна, роблять <strong>аугментацію</strong>
+(augmentation) — варіації наявних прикладів, які змінюють вигляд, але не змінюють
+відповіді.</p>
+
+<ul>
+  <li><strong>Зображення.</strong> Відображення зліва направо, повороти на кілька
+    градусів, випадкове обрізання, зміна яскравості й контрасту, легкий шум. Кіт
+    лишається котом після всього переліченого — а мережа бачить його щоразу інакше й
+    перестає запамʼятовувати розташування конкретних пікселів. Обережно з тим, що змінює
+    суть: перевернуте догори дриґом «6» стає «9».</li>
+  <li><strong>Текст.</strong> Заміна слів синонімами, викидання випадкових слів,
+    переклад на іншу мову й назад. Тут ризик більший: одне слово легко перевертає зміст
+    речення, тож аугментації тексту завжди перевіряють очима на вибірці.</li>
+  <li><strong>Таблиці.</strong> Найважчий випадок — довільно змінене число просто
+    зіпсує приклад. Працює хіба що додавання малого шуму до неперервних ознак у межах
+    їхньої природної похибки вимірювання.</li>
+</ul>
+
+<p>Спільний принцип один: аугментація — це спосіб <em>розповісти мережі, що саме не має
+значення</em>. Кожне перетворення, яке ти дозволяєш, — це твердження «відповідь від цього
+не залежить». Тому набір аугментацій завжди залежить від задачі й ніколи не буває
+універсальним.</p>
+
+<h2 id="s8"><span class="num">08 / Вибір</span>Що з чим поєднувати</h2>
+
+<figure>
+  <p class="fig-head">Таблиця 1 · Пʼять способів поруч</p>
+  <p class="fig-sub">Числа — точність на відкладеній вибірці для мережі з практики цієї теми: 1801 параметр, 120 навчальних оголошень. Без жодної регуляризації вона дорівнює 0.8795.</p>
+  <div class="scroll-x">
+  <table class="opt">
+    <thead><tr><th>спосіб</th><th>коли брати першим</th><th class="n">точність на тесті</th><th>з чим обережно</th></tr></thead>
+    <tbody>
+      <tr><td>рання зупинка</td><td>завжди — вона майже безкоштовна</td><td class="n">0.9038</td><td>ні з чим не конфліктує; вимагає валідації</td></tr>
+      <tr><td>спад ваг</td><td>коли розрив великий і мережа явно розігналась</td><td class="n">0.9103</td><td>в Adam це не те саме, що L2; бери AdamW</td></tr>
+      <tr><td>dropout</td><td>широкі повнозвʼязні шари, багато даних</td><td class="n">0.8846</td><td>душить малу мережу; ставити перед BatchNorm не можна</td></tr>
+      <tr><td>BatchNorm</td><td>глибока мережа, яка погано вчиться</td><td class="n">—</td><td>інша поведінка на передбаченні; малі пакети ламають</td></tr>
+      <tr><td>більше даних</td><td>завжди, якщо можна купити</td><td class="n">—</td><td>аугментація мусить зберігати відповідь</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption><b>Про порожні клітинки:</b> BatchNorm і аугментацію ми на цих даних не
+    міряли — дві числові ознаки й повнозвʼязна мережа на 120 прикладів не той стенд, де
+    ці прийоми показують себе. Ставити туди вигадане число було б гірше, ніж прочерк.</figcaption>
+</figure>
+
+<p>Три правила поєднання, які варто знати наперед.</p>
+
+<p><strong>Dropout перед BatchNorm — типова помилка.</strong> BatchNorm рахує середнє й
+розкид по пакету. Якщо перед ним стоїть dropout, ці статистики зняті з
+<em>прорідженого</em> сигналу — а на передбаченні dropout вимкнено, і в BatchNorm
+приходить сигнал іншого розміру, ніж той, за яким він накопичував свої збережені
+середні. Розбіжність між навчанням і передбаченням подвоюється. Правильний порядок —
+спершу BatchNorm, потім активація, потім dropout; або взагалі не поєднувати ці два в
+одному блоці.</p>
+
+<p><strong>Регуляризація не лікує недонавчання.</strong> Діагноз читається за двома
+помилками поруч, як у темі 20: великий розрив між навчальною й валідаційною — можна
+додати штрафу; обидві однаково високі — штраф навпаки треба <em>зменшити</em>, а модель
+ускладнити. Наш dropout це показав буквально: при <code>p = 0.1</code> точність на тесті
+виросла з 0.8795 до 0.8846, при <code>p = 0.2</code> вона впала до 0.8205, а при
+<code>p = 0.3</code> і <code>0.5</code> мережа з двома ознаками й ста двадцятьма
+прикладами задихнулась зовсім. Її прогнози злиплись у вузьку смужку навколо базової
+частки, жоден не перетнув поріг, і точність стала рівно 0.8372 — стільки дає відповідь
+«усі оголошення чесні». Навчальна втрата при цьому 0.4475 проти 0.4506 у справжньої
+сталої відповіді. Це не поламаний код, це недонавчання від надлишку регуляризації.</p>
+
+<p><strong>Більше — не краще.</strong> На наших даних спад ваг найкраще спрацював при
+<code>λ = 0.3</code> (точність 0.9103), а при <code>λ = 3.0</code> валідаційна втрата
+знову виросла до 0.3435. Ця крива має дно, і воно посередині — так само, як мала дно
+крива <code>α</code> в темі 23. Загальний висновок цієї теми, якщо звести його до одного
+рядка: <strong>сила регуляризації — гіперпараметр, а не константа</strong>, і підбирати
+його треба вимірюванням, а не переконанням.</p>
+
+<h2 id="s9"><span class="num">09 / Далі</span>Куди далі</h2>
+
+<p>Блок про нейромережі на цьому закінчується. Пʼять тем склались в одну робочу схему:
+<a href="../31-neural-networks/lecture.html">будова мережі</a> →
+<a href="../32-backpropagation/lecture.html">градієнт</a> →
+<a href="../33-activations-init/lecture.html">активації й старт</a> →
+<a href="../34-optimizers/lecture.html">крок</a> → стриманість. Останній пункт тримається
+на пʼятьох прийомах:</p>
+
+<ul>
+  <li><strong>спад ваг</strong> — той самий L2, що й у лінійних моделях, але в Adam
+    реалізований інакше, ніж штраф у втратах;</li>
+  <li><strong>dropout</strong> — випадкове вимикання нейронів на навчанні; масштабування
+    обовʼязкове, інакше передбачення зміщене;</li>
+  <li><strong>пакетна нормалізація</strong> — прискорює навчання, регуляризує побічно
+    шумом від складу пакета;</li>
+  <li><strong>рання зупинка</strong> — найдешевша й найдієвіша: дно валідаційної кривої
+    плюс терпіння;</li>
+  <li><strong>дані й аугментація</strong> — єдиний спосіб, який не забирає в моделі
+    свободу, а додає обмежень ззовні.</li>
+</ul>
+
+<p>І тепер найцікавіше. Уся ця тема — і вся тема 20 — стоять на одному твердженні:
+складність треба стримувати, бо надлишкова складність псує узагальнення. Твердження
+правильне, перевірене й підтверджене всіма числами вище. Але воно не є повною правдою.</p>
+
+<p>Якщо продовжувати нарощувати мережу далі — за точку, де вона вже ідеально запамʼятала
+навчальні дані, — помилка на нових даних після піку починає <em>знову падати</em>, і
+падає нижче за найкраще значення класичної U-подібної кривої. Явище зветься
+<strong>подвійним спуском</strong> (double descent), і воно пояснює, чому сучасні мережі
+з мільярдами параметрів працюють усупереч усьому, що ми щойно розібрали. Наступний блок
+починається саме з цього: <a href="../36-double-descent/lecture.html">тема 36</a>
+показує криву на числах, а <a href="../37-double-descent-2/lecture.html">тема 37</a> —
+її математику.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти навмисно
+перенавчиш мережу на 120 прикладах і побачиш розрив 0.40 власними очима; додаси спад ваг
+і подивишся, як розрив стискається до 0.08; напишеш <strong>dropout з нуля</strong> —
+маску на навчанні й масштабування на передбаченні — і забудеш масштабування, щоб
+побачити ціну; поставиш ранню зупинку з терпінням і порахуєш зекономлені епохи; а
+наприкінці зведеш усі способи в одну таблицю на тих самих даних.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../34-optimizers/lecture.html"><span class="dir">попередня</span><span class="ttl">34. Оптимізатори</span></a>
+    <a class="next" href="../36-double-descent/lecture.html"><span class="dir">наступна</span><span class="ttl">36. Подвійний спуск</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function LCG(s){if(!isFinite(s))s=1;return function(){s=(s*1664525+1013904223)%4294967296;return s/4294967296;};}
+function mkNorm(r){return function(){var u=0,v=0;while(!u)u=r();while(!v)v=r();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px){return px+'px "JetBrains Mono",monospace';}
+function minus(x,d){var s=Math.abs(x).toFixed(d); return (x<0?'−':'')+s;}
+/* «51 епоха», «2 епохи», «5 епох» — інакше вердикт читається калікою */
+function епохи(n){
+  var d=n%10, dd=n%100;
+  if(dd>=11&&dd<=14) return n+' епох';
+  if(d===1) return n+' епоха';
+  if(d>=2&&d<=4) return n+' епохи';
+  return n+' епох';
+}
+function нейрони(n){
+  var d=n%10, dd=n%100;
+  if(dd>=11&&dd<=14) return n+' нейронів';
+  if(d===1) return n+' нейрон';
+  if(d>=2&&d<=4) return n+' нейрони';
+  return n+' нейронів';
+}
+function mkAx(cv,x0,x1,y0,y1,pad){
+  var W=LW(cv),H=LH(cv);
+  var L=pad.l,R=W-pad.r,T=pad.t,B=H-pad.b;
+  return {L:L,R:R,T:T,B:B,x0:x0,x1:x1,y0:y0,y1:y1,
+    px:function(x){return L+(x-x0)/(x1-x0)*(R-L);},
+    py:function(y){return B-(y-y0)/(y1-y0)*(B-T);}};
+}
+
+/* ═════════════════════════════════════════════════════════
+   A · схема: та сама мережа на справжніх і на перемішаних мітках
+   Числа взяті з practice.ipynb цієї теми (грабля №13): правлячи
+   генерацію даних у зошиті, перечитай ці чотири значення.
+   ═════════════════════════════════════════════════════════ */
+var RND_BARS=[
+  {g:0,t:'на навчальних',v:0.9833},
+  {g:0,t:'на нових',v:0.8795},
+  {g:1,t:'на навчальних',v:1.0000},
+  {g:1,t:'на нових',v:0.7141}
+];
+function drawRnd(){
+  var cv=I('cRnd'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+      hair=css('--hair'), amber=css('--amber');
+  var ax=mkAx(cv,0,1,0,1.0,{l:46,r:14,t:78,b:66});
+  /* сітка */
+  g.strokeStyle=hair; g.lineWidth=1; g.fillStyle=soft; g.font=mono(10);
+  g.textAlign='right'; g.textBaseline='middle';
+  var k,yv;
+  for(k=0;k<=5;k++){
+    yv=k/5;
+    g.beginPath(); g.moveTo(ax.L,ax.py(yv)); g.lineTo(ax.R,ax.py(yv)); g.stroke();
+    g.fillText(yv.toFixed(1),ax.L-8,ax.py(yv));
+  }
+  /* рівень «усі оголошення чесні» */
+  var base=0.8372;
+  g.strokeStyle=amber; g.setLineDash([5,4]); g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(ax.L,ax.py(base)); g.lineTo(ax.R,ax.py(base)); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle=amber; g.font=mono(10); g.textAlign='right'; g.textBaseline='bottom';
+  g.fillText('0.8372 — «усі чесні»',ax.R-4,ax.py(base)-4);
+  /* стовпчики */
+  var XS=[110,230,400,520], bw=62, i, x, hgt;
+  for(i=0;i<4;i++){
+    x=XS[i];
+    hgt=ax.py(0)-ax.py(RND_BARS[i].v);
+    g.fillStyle=(i%2===0)?teal:rose;
+    rr(g,x-bw/2,ax.py(RND_BARS[i].v),bw,hgt,4); g.fill();
+    g.fillStyle=ink; g.font='700 '+mono(13); g.textAlign='center'; g.textBaseline='bottom';
+    g.fillText(RND_BARS[i].v.toFixed(4),x,ax.py(RND_BARS[i].v)-6);
+    g.fillStyle=soft; g.font=mono(10.5); g.textBaseline='top';
+    g.fillText(RND_BARS[i].t,x,ax.py(0)+8);
+  }
+  /* заголовки груп */
+  g.textAlign='center'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font='600 13px Unbounded,sans-serif';
+  g.fillText('справжні мітки',170,26);
+  g.fillText('перемішані мітки',460,26);
+  g.fillStyle=soft; g.font=mono(10.5);
+  g.fillText('мережа вчить закономірність',170,44);
+  g.fillText('вчити нема чого — вчить напамʼять',460,44);
+  /* підпис осі */
+  g.save(); g.translate(13,(ax.T+ax.B)/2); g.rotate(-Math.PI/2);
+  g.textAlign='center'; g.textBaseline='middle'; g.fillStyle=soft; g.font=mono(10.5);
+  g.fillText('частка правильних відповідей',0,0); g.restore();
+}
+
+/* ═════════════════════════════════════════════════════════
+   B · інтерактив: сила спаду ваг на мережі 2 → 10 → 1
+   Мережу навчаємо просто тут, у браузері: 70 точок, 1200 епох
+   повного спуску з моментом. Числа детерміновані — той самий LCG.
+   ═════════════════════════════════════════════════════════ */
+var H_LAM=10, LAMS=[0,0.0003,0.001,0.003,0.01,0.03,0.1,0.3];
+function mkData(n,seed,flip){
+  var r=LCG(seed), X=[], y=[], i, x1, x2, межа, c;
+  for(i=0;i<n;i++){
+    x1=r()*4-2; x2=r()*3-1.5;
+    межа=0.55*x1*x1-0.55;
+    c=(x2>межа)?1:0;
+    if(r()<flip) c=1-c;
+    X.push([x1,x2]); y.push(c);
+  }
+  return {X:X,y:y};
+}
+var DTR=mkData(70,4242,0.14), DTE=mkData(400,999,0.14);
+function trainLam(lam){
+  /* усе тримаємо в пласких масивах: масив масивів на 1200 епохах
+     коштував секунди блокування сторінки при завантаженні */
+  var r=LCG(23), nrm=mkNorm(r), H=H_LAM, j, k, e;
+  var W1=new Float64Array(2*H), b1=new Float64Array(H), W2=new Float64Array(H), b2=0;
+  for(j=0;j<H;j++) W1[j]=nrm()*0.9;          /* спершу весь перший рядок */
+  for(j=0;j<H;j++) W1[H+j]=nrm()*0.9;        /* потім другий */
+  for(j=0;j<H;j++) W2[j]=nrm()*0.9;
+  var mW1=new Float64Array(2*H), mb1=new Float64Array(H), mW2=new Float64Array(H), mb2=0;
+  var gW1=new Float64Array(2*H), gb1=new Float64Array(H), gW2=new Float64Array(H), gb2=0;
+  var n=DTR.X.length, lr=0.35;
+  var XA=new Float64Array(n), XB=new Float64Array(n), Y=new Float64Array(n);
+  for(k=0;k<n;k++){ XA[k]=DTR.X[k][0]; XB[k]=DTR.X[k][1]; Y[k]=DTR.y[k]; }
+  var A1=new Float64Array(H);
+  for(e=0;e<1200;e++){
+    gW1.fill(0); gb1.fill(0); gW2.fill(0); gb2=0;
+    for(k=0;k<n;k++){
+      var xa=XA[k], xb=XB[k], z=b2;
+      for(j=0;j<H;j++){
+        A1[j]=Math.tanh(xa*W1[j]+xb*W1[H+j]+b1[j]);
+        z+=A1[j]*W2[j];
+      }
+      var p=1/(1+Math.exp(-(z>40?40:(z<-40?-40:z))));
+      var d2=(p-Y[k])/n;
+      gb2+=d2;
+      for(j=0;j<H;j++){
+        gW2[j]+=A1[j]*d2;
+        var d1=d2*W2[j]*(1-A1[j]*A1[j]);
+        gW1[j]+=xa*d1; gW1[H+j]+=xb*d1; gb1[j]+=d1;
+      }
+    }
+    for(j=0;j<H;j++){
+      gW1[j]+=lam*W1[j]; gW1[H+j]+=lam*W1[H+j]; gW2[j]+=lam*W2[j];
+      mW1[j]=0.9*mW1[j]+gW1[j];       W1[j]-=lr*mW1[j];
+      mW1[H+j]=0.9*mW1[H+j]+gW1[H+j]; W1[H+j]-=lr*mW1[H+j];
+      mb1[j]=0.9*mb1[j]+gb1[j];       b1[j]-=lr*mb1[j];
+      mW2[j]=0.9*mW2[j]+gW2[j];       W2[j]-=lr*mW2[j];
+    }
+    mb2=0.9*mb2+gb2; b2-=lr*mb2;
+  }
+  return {W1:W1,b1:b1,W2:W2,b2:b2};
+}
+function netOut(w,x1,x2){
+  var z=w.b2, j, a, H=H_LAM;
+  for(j=0;j<H;j++){
+    a=Math.tanh(x1*w.W1[j]+x2*w.W1[H+j]+w.b1[j]);
+    z+=a*w.W2[j];
+  }
+  return 1/(1+Math.exp(-(z>40?40:(z<-40?-40:z))));
+}
+function errOn(w,D){
+  var bad=0,k;
+  for(k=0;k<D.X.length;k++) if((netOut(w,D.X[k][0],D.X[k][1])>0.5)!==(D.y[k]>0.5)) bad++;
+  return bad/D.X.length;
+}
+function normOf(w){
+  var s=0,j,H=H_LAM;
+  for(j=0;j<H;j++) s+=w.W1[j]*w.W1[j]+w.W1[H+j]*w.W1[H+j]+w.W2[j]*w.W2[j];
+  return Math.sqrt(s);
+}
+var LAMFIT=null, LAMBEST=0;
+function fitAllLam(){
+  if(LAMFIT) return;
+  LAMFIT=[];
+  var i,best=1e9;
+  for(i=0;i<LAMS.length;i++){
+    var w=trainLam(LAMS[i]);
+    var rec={w:w,tr:errOn(w,DTR),te:errOn(w,DTE),n:normOf(w)};
+    LAMFIT.push(rec);
+    if(rec.te<best-1e-12){best=rec.te; LAMBEST=i;}
+  }
+}
+function drawLam(){
+  var cv=I('cLam'); if(!cv) return;
+  fitAllLam();
+  var idx=+I('lam2').value, rec=LAMFIT[idx], lam=LAMS[idx];
+  I('lam2o').textContent=lam===0?'0':String(lam);
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+      hair=css('--hair'), paper=css('--paper');
+  var ax=mkAx(cv,-2,2,-1.5,1.5,{l:44,r:16,t:30,b:44});
+  /* область рішень: малюємо прямокутниками, putImageData тут не потрібен */
+  var NX=112, NY=84, ix, iy, cw=(ax.R-ax.L)/NX, ch=(ax.B-ax.T)/NY;
+  /* клітинки не мають перекриватись: під напівпрозорою заливкою кожне
+     перекриття малюється двічі й дає видиму сітку швів на всій області */
+  for(ix=0;ix<NX;ix++){
+    var xa=Math.round(ax.L+ix*cw), xb=Math.round(ax.L+(ix+1)*cw);
+    for(iy=0;iy<NY;iy++){
+      var ya=Math.round(ax.T+iy*ch), yb=Math.round(ax.T+(iy+1)*ch);
+      var xx=ax.x0+(ix+0.5)/NX*(ax.x1-ax.x0);
+      var yy=ax.y1-(iy+0.5)/NY*(ax.y1-ax.y0);
+      var p=netOut(rec.w,xx,yy);
+      g.fillStyle=(p>0.5?teal:rose);
+      g.globalAlpha=0.10+0.26*Math.abs(p-0.5)*2;
+      g.fillRect(xa,ya,xb-xa,yb-ya);
+    }
+  }
+  g.globalAlpha=1;
+  /* межа рішень: лінія рівня 0.5 */
+  var lvl=[], step=0.02;
+  g.strokeStyle=ink; g.lineWidth=1.6; g.beginPath();
+  for(ix=0;ix<NX;ix++) for(iy=0;iy<NY;iy++){
+    var xa=ax.x0+ix/NX*(ax.x1-ax.x0), xb=ax.x0+(ix+1)/NX*(ax.x1-ax.x0);
+    var ya=ax.y0+iy/NY*(ax.y1-ax.y0), yb=ax.y0+(iy+1)/NY*(ax.y1-ax.y0);
+    var v=[netOut(rec.w,xa,ya),netOut(rec.w,xb,ya),netOut(rec.w,xb,yb),netOut(rec.w,xa,yb)];
+    var pt=[[xa,ya],[xb,ya],[xb,yb],[xa,yb]], seg=[], q, a, b, t;
+    for(q=0;q<4;q++){
+      a=v[q]; b=v[(q+1)%4];
+      if((a<0.5)!==(b<0.5)){
+        t=(0.5-a)/(b-a);
+        seg.push([pt[q][0]+t*(pt[(q+1)%4][0]-pt[q][0]), pt[q][1]+t*(pt[(q+1)%4][1]-pt[q][1])]);
+      }
+    }
+    if(seg.length===2){
+      g.moveTo(ax.px(seg[0][0]),ax.py(seg[0][1]));
+      g.lineTo(ax.px(seg[1][0]),ax.py(seg[1][1]));
+    }
+  }
+  g.stroke();
+  /* навчальні точки; неправильно класифіковані обводимо */
+  var k;
+  for(k=0;k<DTR.X.length;k++){
+    var px=ax.px(DTR.X[k][0]), py=ax.py(DTR.X[k][1]);
+    var правильно=(netOut(rec.w,DTR.X[k][0],DTR.X[k][1])>0.5)===(DTR.y[k]>0.5);
+    g.fillStyle=DTR.y[k]>0.5?teal:rose;
+    g.beginPath(); g.arc(px,py,4,0,6.284); g.fill();
+    g.strokeStyle=paper; g.lineWidth=1.2; g.stroke();
+    if(!правильно){
+      g.strokeStyle=css('--amber'); g.lineWidth=1.8;
+      g.beginPath(); g.arc(px,py,7.5,0,6.284); g.stroke();
+    }
+  }
+  g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(ax.L,ax.T,ax.R-ax.L,ax.B-ax.T);
+  /* підписи */
+  g.fillStyle=soft; g.font=mono(10.5); g.textAlign='center'; g.textBaseline='top';
+  g.fillText('ознака 1',(ax.L+ax.R)/2,ax.B+22);
+  g.save(); g.translate(13,(ax.T+ax.B)/2); g.rotate(-Math.PI/2);
+  g.textAlign='center'; g.textBaseline='middle'; g.fillText('ознака 2',0,0); g.restore();
+  g.textAlign='left'; g.textBaseline='alphabetic'; g.fillStyle=ink;
+  g.font='600 13px Unbounded,sans-serif';
+  g.fillText('межа рішень при спаді ваг '+(lam===0?'0':String(lam)),ax.L,20);
+  g.fillStyle=css('--amber'); g.font=mono(10.5); g.textAlign='right';
+  g.fillText('бурштиновим — навчальні точки не з того боку',ax.R,20);
+  /* табло */
+  I('lamTr').textContent=(rec.tr*100).toFixed(1)+' %';
+  I('lamTe').textContent=(rec.te*100).toFixed(1)+' %';
+  I('lamN').textContent=rec.n.toFixed(2);
+  I('lamG').textContent=minus((rec.te-rec.tr)*100,1)+' п.п.';
+  var best=LAMFIT[LAMBEST];
+  var хвіст=' Найкраще з восьми значень — '+String(LAMS[LAMBEST])+
+            ', там тестова помилка '+(best.te*100).toFixed(1)+' %.';
+  if(idx===LAMBEST){
+    verd('lamVd','t-ok','ДНО КРИВОЇ',
+      'Навчальна помилка '+(rec.tr*100).toFixed(1)+' %, тестова '+(rec.te*100).toFixed(1)+
+      ' % — розрив усього '+((rec.te-rec.tr)*100).toFixed(1)+' п.п. Мережа перестала '+
+      'сперечатися з неправильно розміченими точками, але межу ще бачить.');
+  }else if(rec.n<0.5){
+    verd('lamVd','t-no','ШТРАФ РОЗЧАВИВ МЕРЕЖУ',
+      'Норма ваг '+rec.n.toFixed(2)+' — ваг фактично немає, мережа відповідає те саме на '+
+      'все. Помилка на навчанні '+(rec.tr*100).toFixed(1)+' %, на тесті '+
+      (rec.te*100).toFixed(1)+' %: обидві близько половини, тобто монетка.'+хвіст);
+  }else if(rec.te-rec.tr>0.08){
+    verd('lamVd','t-no','ПЕРЕНАВЧАННЯ',
+      'На навчальних точках помилка '+(rec.tr*100).toFixed(1)+' %, на нових — '+
+      (rec.te*100).toFixed(1)+' %. Розрив '+((rec.te-rec.tr)*100).toFixed(1)+
+      ' п.п.: мережа обхопила окремі точки, а не закономірність.'+хвіст);
+  }else{
+    verd('lamVd','t-mid','НЕ ДНО',
+      'Навчальна помилка '+(rec.tr*100).toFixed(1)+' %, тестова '+(rec.te*100).toFixed(1)+
+      ' %. Це вже не катастрофа, але й не найкраще, що є.'+хвіст);
+  }
+}
+
+/* ═════════════════════════════════════════════════════════
+   C · інтерактив: dropout наочно
+   ═════════════════════════════════════════════════════════ */
+var DP_N=12;                       /* нейронів у кожному з двох шарів */
+var DP_A=[];                       /* активації — фіксовані на весь інтерактив */
+(function(){
+  var r=LCG(31337), i;
+  for(i=0;i<DP_N*2;i++) DP_A.push(0.10+Math.round(r()*85)/100);
+})();
+var DP_STEP=1;
+function dpMask(p){
+  var r=LCG(1000+DP_STEP*7919), m=[], i;
+  for(i=0;i<DP_N*2;i++) m.push(r()>=p);
+  return m;
+}
+function drawDrop(){
+  var cv=I('cDrop'); if(!cv) return;
+  var p=+I('drop4').value;
+  I('drop4o').textContent=p.toFixed(2);
+  var m=dpMask(p);
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+      hair=css('--hair'), raise=css('--raise');
+  var colX=[62,232,402,558], top=64, bot=372, R=13;
+  function yOf(i,n){ return n===1? (top+bot)/2 : top+(bot-top)*i/(n-1); }
+  /* ребра: лише між активними вузлами */
+  var i,j;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.globalAlpha=0.5;
+  for(i=0;i<3;i++) for(j=0;j<DP_N;j++){
+    if(!m[j]) continue;
+    g.beginPath(); g.moveTo(colX[0]+R,yOf(i,3)); g.lineTo(colX[1]-R,yOf(j,DP_N)); g.stroke();
+  }
+  g.globalAlpha=0.22;
+  for(i=0;i<DP_N;i++) for(j=0;j<DP_N;j++){
+    if(!m[i]||!m[DP_N+j]) continue;
+    g.beginPath(); g.moveTo(colX[1]+R,yOf(i,DP_N)); g.lineTo(colX[2]-R,yOf(j,DP_N)); g.stroke();
+  }
+  g.globalAlpha=0.5;
+  for(j=0;j<DP_N;j++){
+    if(!m[DP_N+j]) continue;
+    g.beginPath(); g.moveTo(colX[2]+R,yOf(j,DP_N)); g.lineTo(colX[3]-R,yOf(0,1)); g.stroke();
+  }
+  g.globalAlpha=1;
+  /* вузли входу й виходу */
+  function вузол(x,y,fill,stroke,txt,txtcol){
+    g.beginPath(); g.arc(x,y,R,0,6.284);
+    g.fillStyle=fill; g.fill();
+    g.strokeStyle=stroke; g.lineWidth=1.4; g.stroke();
+    if(txt){
+      g.fillStyle=txtcol; g.font=mono(9); g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(txt,x,y);
+    }
+  }
+  for(i=0;i<3;i++) вузол(colX[0],yOf(i,3),raise,soft,'',ink);
+  вузол(colX[3],yOf(0,1),raise,soft,'',ink);
+  /* приховані нейрони */
+  var активних=0, сума=0, повна=0;
+  for(i=0;i<DP_N*2;i++){
+    var col=(i<DP_N)?1:2, k=(i<DP_N)?i:i-DP_N;
+    var x=colX[col], y=yOf(k,DP_N);
+    повна+=DP_A[i];
+    if(m[i]){
+      активних++; сума+=DP_A[i];
+      вузол(x,y,(i<DP_N)?css('--teal-w'):css('--rose-w'),(i<DP_N)?teal:rose,
+            DP_A[i].toFixed(2),ink);
+    }else{
+      вузол(x,y,raise,hair,'',ink);
+      g.strokeStyle=hair; g.lineWidth=1.6;
+      g.beginPath();
+      g.moveTo(x-R*0.62,y-R*0.62); g.lineTo(x+R*0.62,y+R*0.62);
+      g.moveTo(x+R*0.62,y-R*0.62); g.lineTo(x-R*0.62,y+R*0.62);
+      g.stroke();
+    }
+  }
+  /* заголовки колонок */
+  g.fillStyle=soft; g.font=mono(10.5); g.textAlign='center'; g.textBaseline='alphabetic';
+  g.fillText('вхід',colX[0],44);
+  g.fillText('шар 1',colX[1],44);
+  g.fillText('шар 2',colX[2],44);
+  g.fillText('вихід',colX[3],44);
+  g.fillStyle=ink; g.font='600 13px Unbounded,sans-serif'; g.textAlign='left';
+  g.fillText('крок навчання № '+DP_STEP,14,22);
+  g.fillStyle=soft; g.font=mono(10.5); g.textAlign='center'; g.textBaseline='top';
+  g.fillText('перекреслені вимкнені на цьому кроці',(colX[1]+colX[2])/2,bot+16);
+  /* табло */
+  var поділ=(p<0.999)?сума/(1-p):0;
+  /* середнє за 200 кроків: саме воно, а не окремий крок, має збігатися
+     з повною сумою — ділення вирівнює математичне сподівання */
+  var серед=0, крок, ri, mm;
+  for(крок=1;крок<=200;крок++){
+    ri=LCG(1000+крок*7919); mm=0;
+    for(i=0;i<DP_N*2;i++){ if(ri()>=p) mm+=DP_A[i]; }
+    серед+=(p<0.999)?mm/(1-p):0;
+  }
+  серед/=200;
+  I('dpN').textContent=активних+' / '+(DP_N*2);
+  I('dpD').textContent=поділ.toFixed(2);
+  I('dpM').textContent=серед.toFixed(2);
+  I('dpF').textContent=повна.toFixed(2);
+  var відхилСер=Math.abs(серед-повна)/повна*100;
+  var відхилКрок=Math.abs(поділ-повна)/повна*100;
+  var спільне='На цьому кроці сума активних '+сума.toFixed(2)+', після ділення на '+
+              (1-p).toFixed(2)+' — '+поділ.toFixed(2)+'. ';
+  if(p<0.001){
+    verd('dpVd','t-no','DROPOUT ВИМКНЕНО',
+      'Активні всі '+(DP_N*2)+' нейрони, сума дорівнює повній ('+повна.toFixed(2)+
+      '), ділити нема на що. Регуляризації тут немає взагалі: це звичайна мережа, '+
+      'яка вільно співадаптує нейрони між собою.');
+  }else if(p<=0.15){
+    verd('dpVd','t-mid','ЛЕГКИЙ ШУМ',
+      'Працює '+нейрони(активних)+' із '+(DP_N*2)+'. '+спільне+
+      'Середнє за 200 кроків — '+серед.toFixed(2)+' проти повної '+повна.toFixed(2)+
+      ' (розбіжність '+відхилСер.toFixed(1)+' %). Ефект є, але слабкий: '+
+      'мережа майже не помічає, що когось вимкнули.');
+  }else if(p<=0.55){
+    verd('dpVd','t-ok','РОБОЧИЙ ДІАПАЗОН',
+      'Працює '+нейрони(активних)+' із '+(DP_N*2)+'. '+спільне+
+      'Окремий крок гуляє (тут відхилення '+відхилКрок.toFixed(0)+
+      ' %), зате середнє за 200 кроків дорівнює '+серед.toFixed(2)+
+      ' проти повної суми '+повна.toFixed(2)+' — розбіжність '+відхилСер.toFixed(1)+
+      ' %. Ділення вирівнює саме середнє, і саме це потрібно наступному шару.');
+  }else if(p<=0.75){
+    verd('dpVd','t-mid','ЗАБАГАТО',
+      'Лишилось '+нейрони(активних)+' із '+(DP_N*2)+'. '+спільне+
+      'Середнє тримається ('+серед.toFixed(2)+' проти '+повна.toFixed(2)+
+      '), але окремі кроки розкидані на десятки відсотків. Мережа вчиться, '+
+      'проте повільно й нерівно.');
+  }else{
+    verd('dpVd','t-no','КАТАСТРОФА З ІНШОГО БОКУ',
+      'Працює '+нейрони(активних)+' із '+(DP_N*2)+'. '+спільне+
+      'Ділення на '+(1-p).toFixed(2)+' роздуває будь-яку випадковість у кілька разів, '+
+      'і сигнал на кроці має мало спільного з повною сумою '+повна.toFixed(2)+
+      '. Це вже не регуляризація, а знищення сигналу: вчитись нема на чому.');
+  }
+}
+
+/* ═════════════════════════════════════════════════════════
+   D · схема: навчання проти передбачення
+   Вісім активацій підібрані так, щоб арифметика була точною:
+   повна сума 6.00, дві вимкнені дають рівно 1.50, 4.50 / 0.75 = 6.00.
+   ═════════════════════════════════════════════════════════ */
+var SC_A=[0.90,0.35,1.05,0.60,0.75,1.20,0.45,0.70];
+var SC_OFF=[0,3];
+function drawScale(){
+  var cv=I('cScale'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+      hair=css('--hair'), raise=css('--raise'), amber=css('--amber');
+  var pw=292, gap=30, ox=[6,6+pw+gap];
+  var titles=['навчання','передбачення'];
+  var subs=['частину нейронів вимкнено','працюють усі'];
+  var k,i;
+  for(k=0;k<2;k++){
+    g.fillStyle=ink; g.font='600 14px Unbounded,sans-serif';
+    g.textAlign='center'; g.textBaseline='alphabetic';
+    g.fillText(titles[k],ox[k]+pw/2,28);
+    g.fillStyle=soft; g.font=mono(10.5);
+    g.fillText(subs[k],ox[k]+pw/2,46);
+    g.strokeStyle=hair; g.lineWidth=1;
+    rr(g,ox[k],58,pw,204,10); g.stroke();
+    /* вісім нейронів у ряд */
+    var R=15, y=100, x0=ox[k]+30, dx=(pw-60)/7;
+    for(i=0;i<8;i++){
+      var x=x0+i*dx;
+      var вимк=(k===0)&&(SC_OFF.indexOf(i)>=0);
+      g.beginPath(); g.arc(x,y,R,0,6.284);
+      g.fillStyle=вимк?raise:css('--teal-w'); g.fill();
+      g.strokeStyle=вимк?hair:teal; g.lineWidth=1.4; g.stroke();
+      if(вимк){
+        g.strokeStyle=hair; g.lineWidth=1.6; g.beginPath();
+        g.moveTo(x-9,y-9); g.lineTo(x+9,y+9);
+        g.moveTo(x+9,y-9); g.lineTo(x-9,y+9); g.stroke();
+      }else{
+        g.fillStyle=ink; g.font=mono(9.5); g.textAlign='center'; g.textBaseline='middle';
+        g.fillText(SC_A[i].toFixed(2),x,y);
+      }
+    }
+    /* стрілка вниз */
+    g.strokeStyle=soft; g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(ox[k]+pw/2,y+R+8); g.lineTo(ox[k]+pw/2,y+R+30); g.stroke();
+    g.beginPath();
+    g.moveTo(ox[k]+pw/2-4,y+R+24); g.lineTo(ox[k]+pw/2,y+R+31); g.lineTo(ox[k]+pw/2+4,y+R+24);
+    g.stroke();
+    /* арифметика */
+    g.textAlign='center'; g.textBaseline='alphabetic';
+    var рядки = (k===0)
+      ? ['сума активних  4.50','поділити на 1 − 0.25','4.50 / 0.75 = 6.00']
+      : ['сума всіх  6.00','нічого не ділимо','6.00 = 6.00'];
+    g.fillStyle=soft; g.font=mono(11);
+    g.fillText(рядки[0],ox[k]+pw/2,y+R+52);
+    g.fillText(рядки[1],ox[k]+pw/2,y+R+70);
+    g.fillStyle=k===0?amber:teal; g.font='700 '+mono(13);
+    g.fillText(рядки[2],ox[k]+pw/2,y+R+92);
+  }
+  /* нижній рядок */
+  g.fillStyle=ink; g.font=mono(11.5); g.textAlign='center';
+  g.fillText('наступний шар в обох режимах отримує 6.00 — саме це й треба',W/2,288);
+}
+
+/* ═════════════════════════════════════════════════════════
+   E · схема: пакетна нормалізація
+   ═════════════════════════════════════════════════════════ */
+function drawBN(){
+  var cv=I('cBN'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+      hair=css('--hair'), amber=css('--amber');
+  /* ліва панель: обидва розподіли на ОДНІЙ осі — інакше різниці не видно */
+  var L=30, Rr=300, T=76, B=200;
+  var x0=-3.8, x1=7.0;
+  function px(v){ return L+(v-x0)/(x1-x0)*(Rr-L); }
+  var n=44, i, bw=(Rr-L)/n;
+  function дзвін(mu,sd,col){
+    var vals=[], mx=0, t, v;
+    for(i=0;i<n;i++){
+      t=x0+(i+0.5)/n*(x1-x0);
+      v=Math.exp(-0.5*Math.pow((t-mu)/sd,2))/sd;
+      vals.push(v); if(v>mx) mx=v;
+    }
+    g.fillStyle=col; g.globalAlpha=0.62;
+    for(i=0;i<n;i++) g.fillRect(L+i*bw+0.5,B-vals[i]/1.0*(B-T)*0.92,bw-1,vals[i]/1.0*(B-T)*0.92);
+    g.globalAlpha=1;
+  }
+  дзвін(1.8,1.55,rose);
+  дзвін(0,1.0,teal);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(L,B); g.lineTo(Rr,B); g.stroke();
+  g.strokeStyle=soft; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(px(0),T-4); g.lineTo(px(0),B); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle=soft; g.font=mono(10); g.textAlign='center'; g.textBaseline='top';
+  var тік;
+  for(тік=-2;тік<=6;тік+=2){
+    g.beginPath(); g.strokeStyle=hair;
+    g.moveTo(px(тік),B); g.lineTo(px(тік),B+4); g.stroke();
+    g.fillText(String(тік),px(тік),B+7);
+  }
+  g.fillStyle=ink; g.font='600 13px Unbounded,sans-serif';
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillText('одна активація по прикладах пакета',12,26);
+  g.font=mono(11);
+  g.fillStyle=rose; g.fillText('до: середнє 1.80 · розкид 1.55',12,48);
+  g.fillStyle=teal; g.fillText('після: середнє 0.00 · розкид 1.00',12,64);
+  g.fillStyle=soft; g.font=mono(10.5); g.textAlign='center'; g.textBaseline='top';
+  g.fillText('значення активації',(L+Rr)/2,B+24);
+  /* права панель: один приклад у трьох пакетах */
+  var qx=352;
+  g.strokeStyle=hair; g.lineWidth=1; rr(g,qx-16,52,W-qx+8,196,10); g.stroke();
+  g.fillStyle=ink; g.font='600 13px Unbounded,sans-serif';
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillText('той самий приклад,',qx,22);
+  g.fillText('три різні пакети',qx,40);
+  g.fillStyle=soft; g.font=mono(10.5);
+  g.fillText('сира активація: 1.20',qx,76);
+  var пакети=[['A','1.62','1.30','−0.32'],
+              ['B','2.05','1.71','−0.50'],
+              ['C','1.55','1.42','−0.25']];
+  g.font=mono(9.5); g.fillStyle=soft; g.textAlign='left';
+  g.fillText('пакет',qx,100);
+  g.textAlign='right';
+  g.fillText('середнє',qx+108,100);
+  g.fillText('розкид',qx+164,100);
+  g.fillText('вихід',qx+228,100);
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(qx,108); g.lineTo(qx+228,108); g.stroke();
+  for(i=0;i<3;i++){
+    var yy=130+i*30;
+    g.fillStyle=soft; g.font=mono(11); g.textAlign='left';
+    g.fillText(пакети[i][0],qx,yy);
+    g.textAlign='right';
+    g.fillText(пакети[i][1],qx+108,yy);
+    g.fillText(пакети[i][2],qx+164,yy);
+    g.fillStyle=amber; g.font='700 '+mono(12);
+    g.fillText(пакети[i][3],qx+228,yy);
+  }
+  g.fillStyle=ink; g.font=mono(10); g.textAlign='left';
+  g.fillText('одне значення —',qx,228);
+  g.fillStyle=amber;
+  g.fillText('три різні числа',qx+104,228);
+}
+
+/* ═════════════════════════════════════════════════════════
+   F · інтерактив: криві навчання й рання зупинка
+   Криві детерміновані: гладка частина плюс шум із LCG.
+   ═════════════════════════════════════════════════════════ */
+var ES_N=300, ES_TR=[], ES_VA=[];
+(function(){
+  var r=LCG(20250831), e, шум;
+  for(e=1;e<=ES_N;e++){
+    шум=(r()-0.5)*0.030;
+    ES_TR.push(0.055+0.62*Math.exp(-e/22)+шум*0.5);
+    шум=(r()-0.5)*0.030;
+    ES_VA.push(0.238+0.55*Math.exp(-e/16)+0.00090*e
+                +0.11*Math.exp(-Math.pow((e-19)/3.3,2))+шум);
+  }
+})();
+var ES_BEST=0;
+(function(){
+  var e;
+  for(e=1;e<ES_N;e++) if(ES_VA[e]<ES_VA[ES_BEST]) ES_BEST=e;
+})();
+function стопЕпоха(терпіння){
+  var найк=1e9, коли=0, e;
+  for(e=0;e<ES_N;e++){
+    if(ES_VA[e]<найк){ найк=ES_VA[e]; коли=e; }
+    else if(e-коли>=терпіння) return {stop:e+1, back:коли+1};
+  }
+  return {stop:ES_N, back:коли+1};
+}
+var ES_PAT=20;
+function drawES(){
+  var cv=I('cES'); if(!cv) return;
+  var e=+I('ep6').value;
+  I('ep6o').textContent=String(e);
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+      hair=css('--hair'), amber=css('--amber');
+  var ax=mkAx(cv,1,ES_N,0.05,0.85,{l:52,r:16,t:34,b:46});
+  var k;
+  g.strokeStyle=hair; g.lineWidth=1; g.fillStyle=soft; g.font=mono(10);
+  g.textAlign='right'; g.textBaseline='middle';
+  for(k=0;k<=8;k++){
+    var yv=0.05+k*0.10;
+    g.beginPath(); g.moveTo(ax.L,ax.py(yv)); g.lineTo(ax.R,ax.py(yv)); g.stroke();
+    g.fillText(yv.toFixed(2),ax.L-8,ax.py(yv));
+  }
+  g.textAlign='center'; g.textBaseline='top';
+  for(k=0;k<=6;k++){
+    var xv=1+k*(ES_N-1)/6;
+    g.fillText(String(Math.round(xv)),ax.px(xv),ax.B+8);
+  }
+  function крива(arr,col,wide){
+    var i, x, y, pen=false;
+    g.save(); g.beginPath(); g.rect(ax.L,ax.T,ax.R-ax.L,ax.B-ax.T); g.clip();
+    g.strokeStyle=col; g.lineWidth=wide; g.beginPath();
+    for(i=0;i<ES_N;i++){
+      y=arr[i];
+      if(y<ax.y0||y>ax.y1){ pen=false; continue; }
+      x=ax.px(i+1);
+      if(!pen){ g.moveTo(x,ax.py(y)); pen=true; } else g.lineTo(x,ax.py(y));
+    }
+    g.stroke(); g.restore();
+  }
+  крива(ES_TR,teal,1.6);
+  крива(ES_VA,rose,1.8);
+  /* дно валідаційної */
+  var bx=ax.px(ES_BEST+1), by=ax.py(ES_VA[ES_BEST]);
+  g.strokeStyle=amber; g.lineWidth=1.5; g.setLineDash([4,3]);
+  g.beginPath(); g.moveTo(bx,ax.T); g.lineTo(bx,ax.B); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle=amber; g.beginPath(); g.arc(bx,by,4.5,0,6.284); g.fill();
+  /* обрана епоха */
+  var ex=ax.px(e);
+  g.strokeStyle=ink; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(ex,ax.T); g.lineTo(ex,ax.B); g.stroke();
+  g.fillStyle=ink; g.beginPath(); g.arc(ex,ax.py(ES_VA[e-1]),4,0,6.284); g.fill();
+  /* точка зупинки за поточним терпінням */
+  var st=стопЕпоха(ES_PAT);
+  var sx=ax.px(st.stop);
+  g.strokeStyle=css('--teal'); g.lineWidth=1.2; g.setLineDash([2,3]);
+  g.beginPath(); g.moveTo(sx,ax.T); g.lineTo(sx,ax.B); g.stroke();
+  g.setLineDash([]);
+  /* легенда й підписи */
+  g.font=mono(11); g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=teal; g.fillText('навчальна втрата',ax.L,22);
+  g.fillStyle=rose; g.fillText('валідаційна втрата',ax.L+150,22);
+  g.fillStyle=amber; g.fillText('дно: епоха '+(ES_BEST+1),ax.L+310,22);
+  g.fillStyle=soft; g.font=mono(10.5); g.textAlign='center'; g.textBaseline='top';
+  g.fillText('епоха',(ax.L+ax.R)/2,ax.B+26);
+  g.save(); g.translate(14,(ax.T+ax.B)/2); g.rotate(-Math.PI/2);
+  g.textAlign='center'; g.textBaseline='middle'; g.fillText('втрата',0,0); g.restore();
+  /* табло */
+  I('esV').textContent=ES_VA[e-1].toFixed(4);
+  I('esB').textContent=ES_VA[ES_BEST].toFixed(4)+' @ '+(ES_BEST+1);
+  I('esP').textContent='епоха '+st.stop+' → ваги '+st.back;
+  I('esS').textContent=String(ES_N-st.stop);
+  /* вердикт: ціна зупинки саме тут, у числах */
+  var тут=ES_VA[e-1], дно=ES_VA[ES_BEST];
+  var надлишок=(тут/дно-1)*100;
+  var пв=ES_VA[st.back-1];
+  var пат=' Саме терпіння '+ES_PAT+' спинило б навчання на епосі '+st.stop+
+          ' і віддало ваги епохи '+st.back+' із втратою '+пв.toFixed(4)+
+          (Math.abs(пв-дно)<0.004?' — це і є дно.':' — це на '+
+           ((пв/дно-1)*100).toFixed(0)+' % гірше за дно.');
+  if(надлишок<1.5){
+    verd('esVd','t-ok','ТУТ І ТРЕБА СПИНЯТИСЬ',
+      'Валідаційна втрата '+тут.toFixed(4)+' проти найкращої '+дно.toFixed(4)+
+      ' на епосі '+(ES_BEST+1)+'.'+пат);
+  }else if(надлишок<12){
+    verd('esVd','t-mid','МАЙЖЕ',
+      'Тут валідаційна втрата '+тут.toFixed(4)+', а на дні (епоха '+(ES_BEST+1)+
+      ') — '+дно.toFixed(4)+'. Різниця '+надлишок.toFixed(0)+
+      ' %: модель уже трохи гірша за досяжну, але ще не зіпсована.'+пат);
+  }else if(e<ES_BEST+1){
+    verd('esVd','t-no','ЗАРАНО',
+      'Валідаційна втрата '+тут.toFixed(4)+' проти '+дно.toFixed(4)+' на епосі '+
+      (ES_BEST+1)+' — на '+надлишок.toFixed(0)+' % гірше. Мережа ще не довчилась: '+
+      'зупинившись тут, ти платиш не за перенавчання, а за нетерплячість.'+пат);
+  }else{
+    verd('esVd','t-no','ПІЗНО',
+      'Довчивши до епохи '+e+', ти віддаєш модель із валідаційною втратою '+
+      тут.toFixed(4)+' замість '+дно.toFixed(4)+' — це на '+надлишок.toFixed(0)+
+      ' % гірше, і за це заплачено '+епохи(e-ES_BEST-1)+' зайвих обчислень.'+пат);
+  }
+}
+
+/* ═══════ запуск і перемальовування ═══════ */
+function drawAll(){
+  drawRnd(); drawDrop(); drawScale(); drawBN(); drawES();
+  /* мережу для інтерактиву 1 навчаємо тут-таки, у браузері, і це десята частка
+     секунди. Відкладаємо на наступний тік, щоб сторінка встигла намалюватись. */
+  if(LAMFIT) drawLam(); else setTimeout(drawLam,30);
+}
+on('lam2','input',drawLam);
+on('drop4','input',drawDrop);
+on('dpNext','click',function(){ DP_STEP++; drawDrop(); });
+on('ep6','input',drawES);
+(function(){
+  var box=I('pat6'); if(!box) return;
+  box.addEventListener('click',function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    ES_PAT=+b.dataset.p;
+    var i, bs=box.querySelectorAll('button');
+    for(i=0;i<bs.length;i++) bs[i].setAttribute('aria-pressed', bs[i]===b?'true':'false');
+    drawES();
+  });
+})();
+window.addEventListener('resize',drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change',drawAll);
+}
+drawAll();
+})();
+</script>
+</body>
+</html>

@@ -1,3 +1,0 @@
-* FLASK 
-* DJANGO
-* FastAPI

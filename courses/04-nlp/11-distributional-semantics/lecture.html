@@ -1,0 +1,1889 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дистрибутивна семантика</title>
+<meta name="description" content="Блок 2 закінчився стіною: два речення однакового змісту, написані різними словами, дістають у TF-IDF косинус 0.2230, а 22.0 % таких пар — рівно нуль. Ця тема пробиває стіну без жодної нейромережі. Заміряно на 93 392 українських перекладах інтерфейсів, три зерна: матриця «слово × контекст» на 3 588 918 парах, PPMI і SVD піднімають розрив між змістом і випадковістю з 0.2101 до 0.4432 при 64 вимірах і 0.4596 при 32 — у два з гаком раза, і 82 % того, що дають навчені ембединги (0.5372, тема 12). Сира частота при цьому гірша за TF-IDF: розрив 0.0987, бо 41.49 % найчастіших контекстів — службові слова; PPMI ронить їх до 0.25 %. Гіпотеза Гарріса перевірена на 38 парах слів, здобутих із корпусу: AUC 0.8771. Вікно міняє не якість, а вид схожості — при ±2 і ±10 збігається лише 0.1988 сусідів, а повне вікно ±5 має тільки 12.98 % позицій. І межа підходу: антоніми «увімкнути · вимкнути» дають 0.4282 — більше за будь-яку пару синонімів.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* сегменти цієї теми переносяться по два в рядок */
+.seg.wrap button{flex:1 1 46%}
+/* довгі рядки іграшкового корпусу не мусять розпирати сторінку */
+.eq.left{overflow-x:auto}
+</style>
+
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 3 · Тема 11</p>
+    <h1>Дистрибутивна семантика</h1>
+    <p class="stand">Блок 2 закінчився стіною: два речення однакового змісту, написані
+      різними словами, дістають косинус <b>0.2230</b>, а кожна пʼята така пара — рівно
+      нуль. Ця тема пробиває стіну <b>без жодної нейромережі</b>. Ми порахуємо, хто з
+      ким стоїть поруч, поділимо на очікуване й стиснемо — і розрив між змістом і
+      випадковістю виросте <b>вдвічі</b>.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Стіна, і чим її міряти</a></li>
+        <li><a href="#s2">Слово пізнається за компанією</a></li>
+        <li><a href="#s3">Матриця «слово × контекст»</a></li>
+        <li><a href="#s4">Чому сира частота не годиться</a></li>
+        <li><a href="#s5">PMI: ділимо на очікуване</a></li>
+        <li><a href="#s6">Гіпотеза Гарріса числом</a></li>
+        <li><a href="#s7">Вікно як ручка</a></li>
+        <li><a href="#s8">Короткі документи</a></li>
+        <li><a href="#s9">Розрідженість матриці</a></li>
+        <li><a href="#s10">SVD: 6074 колонки в 64 числа</a></li>
+        <li><a href="#s11">Замір: чи пробито стіну</a></li>
+        <li><a href="#s12">Чого підрахунок не вміє</a></li>
+        <li><a href="#s13">Що з цим робить наступна тема</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../10-rules-regex/lecture.html">← 10. Правила й регулярні вирази</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../12-word2vec/lecture.html">12. Word2Vec →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Десять тем ми будували подання тексту, яке тримається на одному —
+на збігу написань. Мішок слів рахує, скільки разів трапився рядок символів. TF-IDF
+зважує ті самі рядки. BM25 зважує їх розумніше. І всі троє однаково сліпі до того,
+що «регулярний вираз» і «формальний вираз» — це одне й те саме. Ця тема ламає
+залежність від написання, і найцікавіше в ній те, що для цього не потрібно нічого
+вчити: досить порахувати, хто з ким стоїть поруч.</p>
+
+<h2 id="s1"><span class="num">01 / Розрив</span>Стіна, і чим її міряти</h2>
+
+<p>Нам пощастило з корпусом: у ньому є пари документів, про які <b>точно</b> відомо,
+що вони означають одне й те саме. Один англійський рядок інтерфейсу різні
+перекладачі переклали по-різному, і обидва переклади лежать поруч у наших файлах.
+<a href="../05-tfidf/lecture.html">Тема 05</a> відібрала <b>209</b> таких пар, у яких
+спільних слів майже немає, і заміряла на них косинус.</p>
+
+<p>Вийшло <b>0.2230</b>. Для двох речень одного змісту. А <b>22.0 %</b> цих пар
+дістали <b>рівно нуль</b> — стільки ж, скільки два навмання взяті документи корпусу.
+<a href="../09-search/lecture.html">Тема 09</a> перевірила, чи лікує це BM25, і
+відповіла числом: <b>0.1513</b> проти <b>0.1327</b> у TF-IDF на її власній,
+жорсткішій постановці. Приріст є, але задачу він не розвʼязує.</p>
+
+<p>Причина структурна, і її варто назвати прямо. Обидві формули складають внески
+<b>однакових слів</b>. У мішку слів «регулярний» — це колонка номер 4127, а
+«формальний» — колонка номер 5980, і між двома номерами колонок немає жодного
+звʼязку. Ніяким добором ваг цього не виправити: зміст у поданні просто відсутній.</p>
+
+<div class="note warn"><b>Чим міряти чесно.</b> Дві цифри самі по собі нічого не
+варті. Якщо новий спосіб підніме синонімам косинус із 0.22 до 0.85, а заразом підніме
+й випадковим парам з 0.01 до 0.31 — він не став бачити зміст, він просто зробив усе
+схожим на все. Тому весь цей блок міряє <b>розрив</b>: наскільки середній косинус
+пар однакового змісту вищий за середній косинус випадкових пар. У TF-IDF розрив —
+<b>0.2100</b> (усереднено по трьох зернах; тема 05 друкує 0.2230 і 0.0103 для
+зерна 0). Це число й треба перемогти.</div>
+
+<h2 id="s2"><span class="num">02 / Ідея</span>Слово пізнається за компанією</h2>
+
+<p>Уяви, що ти читаєш текст незнайомою мовою й натрапляєш на слово, якого не знаєш.
+Словника немає. Але ти бачиш його двадцять разів, і щоразу поруч стоять «налити»,
+«гарячий», «чашка», «випити». Ти досі не знаєш, як це слово перекладається, — але
+вже знаєш про нього майже все, що потрібно. І якщо трапиться друге незнайоме слово
+з тим самим оточенням, ти впевнено скажеш, що ці двоє близькі за змістом.</p>
+
+<p>Це і є <b>дистрибутивна гіпотеза</b> (distributional hypothesis): слова, що
+трапляються в схожих контекстах, мають схоже значення. Її сформулював лінгвіст
+Зеллінг Гарріс 1954 року, а найвідоміше формулювання належить Джону Ферту:
+«ти пізнаєш слово за компанією, яку воно тримає» (1957). Обидві дати — цитовані з
+літератури, а не заміряні нами.</p>
+
+<p>Зверни увагу, наскільки це формулювання обережне. Воно <b>не каже</b>, що схожі
+слова стоять поруч одне з одним. Навпаки: «файл» і «документ» у наших даних майже
+ніколи не трапляються в одному реченні — вони одне одного <b>заміщають</b>. Схожими
+має бути не сусідство цих двох слів, а <b>їхні списки сусідів</b>.</p>
+
+<div class="note"><b>Що таке контекст.</b> Домовимось про слова, бо далі вони будуть
+скрізь. <b>Цільове слово</b> — те, для якого ми будуємо подання. <b>Контекст</b> —
+слово, що стоїть біля нього в тексті. <b>Вікно</b> — скільки саме сусідів праворуч і
+ліворуч ми погоджуємось вважати контекстом. Запис «вікно ±5» означає пʼять слів
+ліворуч і пʼять праворуч; про те, як цю ручку крутити, буде окремий розділ.</div>
+
+
+<h2 id="s3"><span class="num">03 / Побудова</span>Матриця «слово × контекст»</h2>
+
+<p>Гіпотезу треба перетворити на числа. Робимо найпряміше, що можна придумати:
+будуємо таблицю, де рядок — слово, колонка — теж слово, а в клітинці стоїть,
+<b>скільки разів друге трапилось у вікні навколо першого</b>.</p>
+
+<p>Порахуймо руками на крихітному корпусі з шести рядків. Це справжні рядки з
+нашого домену, тільки я їх скоротив, щоб таблиця вміщалася на екран.</p>
+
+<div class="eq left">не вдалося відкрити файл
+не вдалося відкрити документ
+файл не знайдено
+документ не знайдено
+відкрити файл лише для читання
+відкрити документ лише для читання</div>
+
+<p>Візьмімо вікно ±2 і рядок для слова «файл». У першому рядку корпусу «файл» стоїть
+останнім, тож у вікні ліворуч від нього — «вдалося» і «відкрити». У третьому рядку
+праворуч від нього — «не» і «знайдено». У пʼятому — «відкрити» ліворуч, «лише» і
+«для» праворуч. Складаємо все й дістаємо рядок таблиці:</p>
+
+<div class="eq left">файл     : вдалося 1 · відкрити 2 · для 1 · знайдено 1 · лише 1 · не 1
+документ : вдалося 1 · відкрити 2 · для 1 · знайдено 1 · лише 1 · не 1</div>
+
+<p>Рядки збіглися <b>повністю</b>. Косинус між ними — рівно <b>1.0000</b>. І зверни
+увагу, чого в цих рядках немає: клітинка «файл — документ» порожня, бо ці двоє
+жодного разу не трапились поруч. Ми дістали максимальну схожість двох слів, які
+ніколи не бачили одне одного. Саме це TF-IDF зробити не може за побудовою.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 1 · Матриця співвіднесень на шести рядках</div>
+  <p class="fig-sub">Та сама іграшкова таблиця, яку ми щойно рахували руками.
+    Повзунок міняє ширину вікна, перемикач — те, що стоїть у клітинці.
+    Підсвічено рядки «файл» і «документ».</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="400" data-lw="700" data-lh="400"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="w1">вікно <span class="raw">±W</span> <output id="w1o">2</output></label>
+        <input id="w1" type="range" min="1" max="3" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <span class="cap">у клітинці</span>
+        <div class="seg" id="seg1">
+          <button data-i="0" aria-pressed="true">частота</button>
+          <button data-i="1" aria-pressed="false">PPMI</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>файл · документ</b><i id="v1a">—</i></div>
+        <div class="cellv"><b>не · для</b><i id="v1b">—</i></div>
+        <div class="cellv"><b>файл · читання</b><i id="v1c">—</i></div>
+        <div class="cellv"><b>усього пар</b><i id="v1d">—</i></div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>«файл» і «документ» дають <b>1.0000</b> за будь-якого вікна — вони
+    повні взаємозамінники в цьому корпусі. А от пара службових слів
+    <b>не · для</b> на сирих частотах росте з <b>0.1690</b> до <b>0.4781</b>, коли
+    вікно розширюється: службові слова стоять біля всього. PPMI тримає їх на
+    <b>0.0154</b> і <b>0.0306</b>.</figcaption>
+</figure>
+
+<p>На повному корпусі таблиця та сама, тільки більша. Беремо всі <b>93 392</b>
+документи, лишаємо слова, що трапились щонайменше <b>10</b> разів — це <b>6074</b>
+слова, які покривають <b>92.09 %</b> усіх слововживань, — і рахуємо співвіднесення
+у вікні ±5.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>Матриця «слово × контекст», вікно ±5</th><th>значення</th></tr>
+  <tr><td>розмір</td><td>6074 × 6074</td></tr>
+  <tr><td>клітинок усього</td><td>36 893 476</td></tr>
+  <tr class="hot"><td>пар (слово, контекст)</td><td>3 588 918</td></tr>
+  <tr><td>ненульових клітинок</td><td>1 064 218</td></tr>
+  <tr><td>заповнено</td><td>2.8846 %</td></tr>
+</table></div>
+
+<div class="note"><b>Дрібниця, що міняє число.</b> Рідкісні слова ми викидаємо
+<b>до</b> того, як накладати вікно, — так робить і Word2Vec. Якщо викидати їх після,
+пар виходить <b>3 451 388</b> замість 3 588 918: слова, між якими стояло викинуте,
+перестають бути сусідами. Різниця — <b>137 530</b> пар; на висновки вона не впливає, але
+знати про неї варто, бо інакше твоє число не зійдеться з чужим.</div>
+
+<h2 id="s4"><span class="num">04 / Пастка</span>Чому сира частота не годиться</h2>
+
+<p>Здавалося б, матрицю збудовано — бери рядки й міряй косинус. Спробуймо. Ось
+десять контекстів, які найчастіше стоять біля слова «файл» у нашому корпусі:</p>
+
+<div class="eq left">не 1371 · вдалося 848 · файл 776 · у 404 · відкрити 338
+з 310 · для 301 · є 237 · або 220 · налаштувань 202</div>
+
+<p>Шість із цих десяти — службові слова. Вони нічого не кажуть про «файл», бо стоять
+біля <b>всього</b>. І це не особливість одного слова: якщо взяти топ-10 контекстів
+для кожного з 6074 слів словника, службовими виявляться <b>41.49 %</b> позицій.
+Майже половина того, що ми «знаємо» про кожне слово, — це знання про те, що текст
+українською.</p>
+
+<p>Наслідок катастрофічний, і він вимірний. Якщо взяти сирі рядки матриці як
+подання слів, розрив між парами однакового змісту й випадковими парами становить
+<b>0.0987</b> — <b>удвічі гірше за TF-IDF</b>, яку ми намагаємось перемогти.
+Синоніми дістають високий косинус (0.8190), але й випадкові пари дістають
+<b>0.7203</b>: усе схоже на все, бо всі рядки матриці — це переважно рядок
+«поруч стояло слово „не“».</p>
+
+<div class="note warn"><b>Ось де ховається головна помилка новачка.</b> Число 0.8190
+виглядає чудово. Побачивши його без контролю, легко оголосити перемогу — і саме так
+роблять у половині туторіалів. Контрольний замір коштує три рядки коду й рятує від
+хибного висновку: 0.8190 при 0.7203 у випадкових парах не означає нічого.</div>
+
+<figure>
+  <div class="fig-head">Інтерактив 2 · Частота проти PMI</div>
+  <p class="fig-sub">Топ-10 контекстів одного слова. Перемикач міняє те, за чим
+    їх упорядковано. Число в дужках праворуч — місце цього ж контексту в іншому
+    впорядкуванні; службові слова позначено.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">слово</span>
+        <div class="seg wrap" id="seg2a">
+          <button data-i="0" aria-pressed="true">файл</button>
+          <button data-i="1" aria-pressed="false">помилка</button>
+          <button data-i="2" aria-pressed="false">вікно</button>
+          <button data-i="3" aria-pressed="false">мережі</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">упорядкувати за</span>
+        <div class="seg" id="seg2b">
+          <button data-i="0" aria-pressed="true">частотою</button>
+          <button data-i="1" aria-pressed="false">PPMI</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>службових у топ-10</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>сусідств усього</b><i id="v2b">—</i></div>
+        <div class="cellv"><b>по всьому словнику</b><i id="v2c">—</i></div>
+        <div class="cellv"><b>перший контекст</b><i id="v2d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>По всьому словнику частка службових слів у топ-10 контекстів падає
+    з <b>41.49 %</b> до <b>0.25 %</b>. Одна формула прибирає майже всі службові
+    слова — і жодного списку стоп-слів для цього не знадобилось.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Формула</span>PMI: ділимо на очікуване</h2>
+
+<p>Питання, на яке треба відповісти, звучить так: слово «не» трапилось біля «файл»
+1371 раз — це багато чи мало? Без точки відліку відповіді немає. Точку відліку дає
+проста думка: <b>а скільки б їх стояло поруч, якби вони взагалі не мали одне до
+одного стосунку?</b></p>
+
+<p>Якщо «не» становить 4 % усіх слів корпусу, то й серед 18 980 сусідств слова
+«файл» ми очікували б побачити «не» приблизно в 4 % випадків. Порівнюємо фактичне
+з очікуваним — і дістаємо міру, яка зветься <b>PMI</b>, поточкова взаємна інформація
+(pointwise mutual information).</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · три ймовірності</span>
+    <p>Позначимо через <i>a</i> цільове слово, через <i>b</i> — контекст.
+    <span class="raw"><i>P</i>(<i>a</i>, <i>b</i>)</span> — частка пар, у яких разом
+    трапились саме ці двоє. <span class="raw"><i>P</i>(<i>a</i>)</span> — частка пар,
+    де ліворуч стоїть <i>a</i> (байдуже з ким). <span class="raw"><i>P</i>(<i>b</i>)</span>
+    — так само для <i>b</i>. Усі три рахуються діленням на загальну кількість пар.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · що було б за незалежності</span>
+    <p>Якби слова стояли поруч навмання, ймовірність побачити пару дорівнювала б
+    добутку: <span class="raw"><i>P</i>(<i>a</i>)·<i>P</i>(<i>b</i>)</span>. Це
+    базове правило: ймовірність двох незалежних подій разом — це добуток їхніх
+    імовірностей, як із двома монетами.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · відношення</span>
+    <div class="eq"><i>P</i>(<i>a</i>, <i>b</i>) ÷ ( <i>P</i>(<i>a</i>) · <i>P</i>(<i>b</i>) )</div>
+    <p>Одиниця означає «стільки, скільки й мало би бути». Двійка — «удвічі частіше,
+    ніж випадково». Половина — «удвічі рідше».</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · логарифм</span>
+    <div class="eq">PMI(<i>a</i>, <i>b</i>) = log ( <i>P</i>(<i>a</i>, <i>b</i>) ÷ ( <i>P</i>(<i>a</i>) · <i>P</i>(<i>b</i>) ) )</div>
+    <p>Логарифм — це функція, що перетворює множення на додавання: log(2×2)=log 2 + log 2.
+    Він потрібен із двох причин. По-перше, він робить шкалу симетричною: «удвічі
+    частіше» і «удвічі рідше» стають <span class="raw">+0.69</span> і
+    <span class="raw">−0.69</span>, а не 2 і 0.5. По-друге, він приборкує розмах:
+    без логарифма відношення для рідкісних пар сягає сотень, і одна клітинка
+    забирає весь вектор — рівно та сама біда, яку тема 05 показала для TF-IDF без
+    логарифма.</p>
+  </div>
+</div>
+
+<p>Порахуймо руками, і одразу на двох прикладах — вони дадуть протилежні
+відповіді.</p>
+
+<p><b>Приклад перший.</b> Слово «не» займає <b>4.02 %</b> усіх контекстних позицій
+корпусу. У слова «файл» <b>18 980</b> сусідств, тож «не» мало б трапитись біля нього
+приблизно <b>763.9</b> раза, якби ці двоє не мали одне до одного стосунку.
+Трапилось <b>1371</b>. Ділимо: 1371 ÷ 763.9 = 1.79, беремо логарифм —
+<b>PMI = 0.5848</b>. Найчастіший сусід «файла» виявляється лише на дві третини
+цікавішим за випадковий.</p>
+
+<p><b>Приклад другий.</b> Слово «вікно» має всього 1366 сусідств, і «діалогове»
+серед них трапилось <b>32</b> рази. Але «діалогове» — слово рідкісне, і очікування
+для цієї пари — <b>0.082</b> раза, тобто менше однієї зустрічі на весь корпус.
+Ділимо: 32 ÷ 0.082 ≈ 390, логарифм дає <b>PMI = 5.9642</b> — найвище значення в
+рядку. За сирою частотою «діалогове» стояло аж на четвертому місці, після «на»,
+«перемістити» і «у».</p>
+
+<p>Тридцять два входження сказали про слово вдесятеро більше, ніж тисяча триста
+сімдесят одне. Саме це PMI й робить: він міряє не кількість, а <b>несподіванку</b>.</p>
+
+<h3>Чому відрізаємо відʼємне</h3>
+
+<p>PMI буває відʼємним: це означає «ці двоє трапляються поруч <b>рідше</b>, ніж
+випадково». Звучить як корисна інформація — і в теорії так і є. На практиці її
+беруть і викидають, замінюючи всі відʼємні значення нулем. Отриману міру звуть
+<b>PPMI</b>, додатна поточкова взаємна інформація (positive PMI).</p>
+
+<p>Причина не в лінощах, а в тому, що відʼємний PMI майже неможливо надійно
+заміряти. Щоб упевнено сказати «ці два слова уникають одне одного», треба побачити,
+що вони не стоять поруч <b>значно частіше, ніж мали б</b>. Але наш корпус — 3.6
+мільйона пар на 36.9 мільйона клітинок. Переважна більшість пар слів не трапилась
+разом жодного разу — і не тому, що вони уникають одне одного, а тому, що тексту
+замало. Відʼємні значення тут міряють не мову, а брак даних.</p>
+
+<div class="eq">PPMI(<i>a</i>, <i>b</i>) = max( 0, PMI(<i>a</i>, <i>b</i>) )</div>
+
+<p>Побічний ефект відсікання приємний: матриця стає ще розрідженішою. Ненульових
+клітинок було 1 064 218, лишилось <b>912 374</b> — заповненість падає з 2.8846 %
+до <b>2.4730 %</b>. Викинули ми при цьому саме ті клітинки, де зустріч була
+рідшою за випадкову, тобто найменш надійні.</p>
+
+<p>Тепер міряємо. Беремо рядки PPMI-матриці як подання слів — і той самий контроль,
+що й раніше:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>подання слова</th><th>синоніми</th><th>випадкові</th><th>розрив</th></tr>
+  <tr><td>TF-IDF (тема 05)</td><td>0.2198</td><td>0.0098</td><td>0.2101</td></tr>
+  <tr><td>сира частота, повний рядок</td><td>0.8190</td><td>0.7203</td><td>0.0987</td></tr>
+  <tr class="hot"><td>PPMI, повний рядок</td><td>0.5328</td><td>0.2917</td><td>0.2411</td></tr>
+</table></div>
+
+<p>PPMI обійшла TF-IDF, але ледве: <b>0.2411</b> проти <b>0.2101</b>. Уся робота,
+яку ми зробили, дала приріст у <b>0.0310</b>. Це чесний проміжний результат, і його
+варто затримати в голові: сама по собі матриця співвіднесень задачу не розвʼязує.
+Розвʼязує її наступний крок — але без PPMI він теж не спрацював би, і ми це
+перевіримо числом.</p>
+
+<div class="note"><b>Ручка, про яку варто знати наперед.</b> Іноді від PMI віднімають
+сталу, перш ніж відсікати відʼємне: <span class="raw">max(0, PMI − log <i>k</i>)</span>.
+Це не примха — у літературі показано, що така <b>зсунута</b> PPMI відповідає тому,
+що робить Word2Vec із негативним семплюванням на <i>k</i> прикладів. Ми заміряли й
+це. На нашому корпусі зсув <b>шкодить</b>: без зсуву розрив 0.4432, при
+<span class="raw">log 2</span> — 0.4334, при <span class="raw">log 5</span> —
+<b>0.4083</b>. Тобто механізм, який тема 12 матиме за замовчуванням, тут працює
+проти нас — і це перше, чого не варто чекати від наступної теми.</div>
+
+<h2 id="s6"><span class="num">06 / Перевірка</span>Гіпотеза Гарріса числом</h2>
+
+<p>Дотепер ми брали гіпотезу Гарріса на віру. Перевірмо її прямо: чи справді слова
+однакового змісту мають схожі контекстні розподіли — і наскільки схожі порівняно з
+випадковими словами.</p>
+
+<p>Пари синонімів треба звідкись узяти, і брати їх з голови не можна: підібраний
+список доводить лише смак того, хто підбирав. Ми здобули їх із корпусу
+механічно. Беремо два переклади одного англійського рядка, які відрізняються
+<b>рівно одним словом з кожного боку</b> — і оголошуємо ці два слова парою
+однакового змісту. Викидаємо пари, що відрізняються лише апострофом або першими
+чотирма літерами (це форми одного слова, а не синоніми). Лишається <b>38</b> пар:</p>
+
+<div class="eq left">регулярний · формальний        некоректний · неправильний
+вимагає · потребує             номер · число
+вивести · показати             мітки · тег
+завершення · закінчення        дескриптор · обробник
+автентифікації · засвідчення   довжина · тривалість</div>
+
+<p>Список не бездоганний — механічний спосіб пропустив кілька пар на кшталт
+«запамʼятати · змінити», які синонімами не є. Але саме тому він і чесний: ми його
+не чистили руками.</p>
+
+<p>Тепер контроль. Порівнювати синоніми з <b>будь-якими</b> випадковими словами
+було б нечесно: наші синоніми переважно частотні, а частотні слова мають щільніші
+контекстні рядки й через це вищі косинуси самі по собі. Тому для кожної пари ми
+беремо випадкове слово <b>такої самої частоти</b>, як друге слово пари.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>контекстні рядки</th><th>пари синонімів</th><th>контроль за частотою</th><th><span class="raw">AUC</span></th></tr>
+  <tr><td>сира частота</td><td>0.6015</td><td>0.3664 ±0.0079</td><td>0.7866 ±0.0090</td></tr>
+  <tr class="hot"><td>PPMI</td><td>0.1662</td><td>0.0609 ±0.0039</td><td>0.8771 ±0.0118</td></tr>
+</table></div>
+
+<p>Останню колонку варто пояснити. <span class="raw">AUC</span> тут відповідає на
+питання: якщо взяти навмання одну пару синонімів і одну контрольну пару, наскільки
+часто синоніми виявляться схожішими? Половина означала б «навмання», одиниця —
+«завжди». Вийшло <b>0.8771</b>: у <b>87.7 %</b> випадків контекстна схожість ставить
+пару однакового змісту вище за випадкову.</p>
+
+<p><b>Це і є гіпотеза Гарріса, перетворена на число.</b> Вона не абсолютна — у
+12.3 % випадків підрахунок помиляється, — але вона працює, і працює на сирому
+підрахунку, без жодного навчання. Зверни увагу й на те, що PPMI піднімає
+<span class="raw">AUC</span> з 0.7866 до 0.8771, хоча <b>знижує</b> абсолютні
+косинуси втричі. Абсолютне число впало, здатність розрізняти виросла — ще одна
+причина ніколи не цитувати косинус без контролю.</p>
+
+
+<p>Звідки саме береться косинус, видно, якщо розкласти його на доданки. Косинус двох
+слів — це сума добутків по всіх 6074 контекстах, і майже всі ці доданки нульові: два
+слова мають спільними лише кілька контекстів із тисяч. У пари
+<b>регулярний · формальний</b> спільних контекстів усього <b>девʼять</b>, і одного
+слова «вираз» вистачає, щоб дати чверть усього косинуса.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 3 · Звідки береться косинус</div>
+  <p class="fig-sub">Косинус двох слів — це сума добутків по всіх 6074 контекстах.
+    Смуги показують десять доданків, що дають найбільше. Ліве число — вага контексту
+    в першому слові, праве — у другому, довжина смуги — їхній добуток.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">пара слів</span>
+        <div class="seg wrap" id="seg3">
+          <button data-i="0" aria-pressed="true">регулярний · формальний</button>
+          <button data-i="1" aria-pressed="false">вимагає · потребує</button>
+          <button data-i="2" aria-pressed="false">номер · число</button>
+          <button data-i="3" aria-pressed="false">увімкнути · вимкнути</button>
+          <button data-i="4" aria-pressed="false">файл · пароль</button>
+          <button data-i="5" aria-pressed="false">вікно · мережі</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>косинус</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>контроль</b><i id="v3b">0.0609</i></div>
+        <div class="cellv"><b>спільних контекстів</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>у топ-10 доданків</b><i id="v3d">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Контроль <b>0.0609</b> — стільки дає пара слів, дібраних навмання з
+    тією самою частотою (три зерна, розкид 0.0039). Пари однакового змісту стоять
+    утричі вище. Але найвище стоїть <b>увімкнути · вимкнути</b> — <b>0.4282</b>, і це
+    не помилка, а межа самої ідеї: див. розділ 12.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Ручка</span>Вікно як ручка</h2>
+
+<p>Ширина вікна виглядає дрібним параметром, який беруть за замовчуванням і забувають.
+Насправді це найважливіша ручка методу, і вона міняє не якість результату, а
+<b>вид схожості</b>, який ти дістаєш.</p>
+
+<p>Ось найближчі сусіди слова «файл», знайдені тим самим способом, тільки з різним
+вікном:</p>
+
+<div class="eq left">±2  : архів · вхідний · тимчасовий · каталог · об'єктний · індексний
+±10 : відкрити · тимчасовий · прочитати · створити · записати · файла</div>
+
+<p>Різниця очевидна на око. При вузькому вікні сусіди «файла» — це те, чим його
+<b>можна замінити</b> в реченні: архів, каталог, образ. При широкому — те, що з ним
+<b>роблять</b>: відкрити, прочитати, створити, записати. Перше — схожість за роллю
+в реченні, друге — схожість за темою.</p>
+
+<p>Те саме на дієслові «зберегти»:</p>
+
+<div class="eq left">±2  : відновити · скинути · зробити · очистити · спорожнити · експортувати
+±10 : очистити · збережено · смітника · документ · відновити · збереження</div>
+
+<p>Але «очевидно на око» — не аргумент. Заміряймо.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>вікно</th><th>та сама частина мови</th><th>трапляються в одному документі</th></tr>
+  <tr class="hot"><td>±2</td><td>54.88 %</td><td>36.94 %</td></tr>
+  <tr><td>±5</td><td>45.42 %</td><td>58.38 %</td></tr>
+  <tr class="hot"><td>±10</td><td>43.31 %</td><td>64.35 %</td></tr>
+</table></div>
+
+<p>Обидві колонки рухаються, і рухаються в різні боки. Вузьке вікно частіше ставить
+поруч слова <b>однієї частини мови</b> (54.88 % проти 43.31 % — частини мови розібрав
+<code>pymorphy3</code> із <a href="../03-morphology/lecture.html">теми 03</a>). Широке
+вікно частіше ставить поруч слова, які <b>справді трапляються в одному
+повідомленні</b> (64.35 % проти 36.94 %). Перше — синтаксис, друге — тема.</p>
+
+<p>А наскільки взагалі різні ці два списки? Візьмімо для кожного з 6074 слів топ-10
+сусідів при ±2 і при ±10 і порахуймо, яка частка збігається. Вийшло <b>0.1988</b> —
+<b>вісім сусідів із десяти міняються</b>. При ±2 проти ±5 збігається 0.2712, при ±5
+проти ±10 — 0.4888.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 4 · Вікно міняє сусідів, а не якість</div>
+  <p class="fig-sub">Найближчі сусіди одного слова за трьох різних вікон. Сусід,
+    якого немає в списку при ±2, позначено іншим кольором.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="370" data-lw="700" data-lh="370"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">слово</span>
+        <div class="seg wrap" id="seg4a">
+          <button data-i="0" aria-pressed="true">файл</button>
+          <button data-i="1" aria-pressed="false">помилка</button>
+          <button data-i="2" aria-pressed="false">вікно</button>
+          <button data-i="3" aria-pressed="false">мережі</button>
+          <button data-i="4" aria-pressed="false">зберегти</button>
+          <button data-i="5" aria-pressed="false">пароль</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="w4">вікно <span class="raw">±W</span> <output id="w4o">2</output></label>
+        <input id="w4" type="range" min="0" max="2" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>та сама частина мови</b><i id="v4a">—</i></div>
+        <div class="cellv"><b>в одному документі</b><i id="v4b">—</i></div>
+        <div class="cellv"><b>нових проти ±2</b><i id="v4c">—</i></div>
+        <div class="cellv"><b>розрив на парах</b><i id="v4d">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Головне тут — остання клітинка. Розрив на 209 парах однакового змісту
+    майже не залежить від вікна: <b>0.4424</b> · <b>0.4432</b> · <b>0.4254</b> при
+    розкиді 0.004-0.008. Вікно міняє <b>кого</b> метод вважає схожим, а не
+    <b>наскільки добре</b> він це робить.</figcaption>
+</figure>
+
+<div class="note warn"><b>Не роби з цього правила «бери яке завгодно».</b> Наш замір
+міряє одну задачу — пари речень однакового змісту, зібрані в один вектор
+усередненням. Задача, де важать саме взаємозамінники (виправлення одруківок,
+підказка синоніма), вимагатиме вузького вікна; задача про тему (рубрикація,
+рекомендації) — широкого. Правильний висновок не «вікно не важить», а
+<b>«вікно треба добирати на своїй задачі, бо на нашій воно не видно»</b>.</div>
+
+<h2 id="s8"><span class="num">08 / Корпус</span>Короткі документи</h2>
+
+<p>У нашого корпусу є властивість, яку не можна оминути. Це переклади інтерфейсів,
+і вони короткі: медіана — <b>6 слів</b>, а після викидання рідкісних лишається
+<b>5</b>. Усього після викидання маємо <b>621 542</b> токени в 93 392 документах.</p>
+
+<p>Запитаймо: скільки позицій узагалі мають <b>повне</b> вікно — тобто пʼять слів
+ліворуч і пʼять праворуч, не впираючись у край документа?</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>вікно</th><th>позицій із повним вікном</th><th>сусідів на позицію</th><th>з максимуму</th></tr>
+  <tr><td>±1</td><td>70.29 %</td><td>1.7008</td><td>2</td></tr>
+  <tr class="hot"><td>±2</td><td>43.62 %</td><td>3.1067</td><td>4</td></tr>
+  <tr class="hot"><td>±5</td><td>12.98 %</td><td>5.7742</td><td>10</td></tr>
+  <tr><td>±10</td><td>6.08 %</td><td>7.6201</td><td>20</td></tr>
+</table></div>
+
+<p><b>При вікні ±5 повне вікно має лише кожна восьма позиція.</b> Замість десяти
+сусідів кожне слово бачить у середньому 5.77 — трохи більше за половину. При ±10
+формальна ширина подвоюється, а сусідів додається всього на третину: 7.62 замість
+5.77 при номінальних двадцяти.</p>
+
+<p>Із цього випливає практичний висновок, і він не той, якого чекаєш. Розширювати
+вікно на такому корпусі <b>майже безкоштовно й майже безкорисно</b>: пари ростуть
+повільно, бо їх просто нема звідки взяти. Межа вікна тут — не параметр, а край
+документа.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 5 · Вікно, яке не заповнюється</div>
+  <p class="fig-sub">Ліворуч — розподіл довжин документів корпусу. Праворуч —
+    справжній документ медіанної довжини з накладеним вікном обраної ширини.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="w5">вікно <span class="raw">±W</span> <output id="w5o">5</output></label>
+        <input id="w5" type="range" min="1" max="10" step="1" value="5">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>повне вікно</b><i id="v5a">—</i></div>
+        <div class="cellv"><b>сусідів на позицію</b><i id="v5b">—</i></div>
+        <div class="cellv"><b>пар усього</b><i id="v5c">—</i></div>
+        <div class="cellv"><b>з максимуму</b><i id="v5d">—</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>Половина документів корпусу має від чотирьох до семи слів. Вікно ±5
+    на такому тексті майже завжди впирається в край: повних вікон — <b>12.98 %</b>,
+    сусідів на позицію — <b>5.7742</b> замість десяти.</figcaption>
+</figure>
+
+<div class="note warn"><b>Спокуса, якої треба уникнути.</b> Напрошується склеїти всі
+рядки однієї програми в один довгий текст — тоді документи стануть довгими й вікна
+заповняться. Робити цього не можна. Сусідні рядки в файлі перекладу — це різні
+повідомлення різних частин програми, між ними немає жодного звʼязку. Склеївши їх,
+ми <b>вигадаємо сусідство, якого в мові немає</b>, і матриця почне вчити нас
+випадковому порядку рядків у файлі. Коротка довжина — властивість даних, а не
+дефект, який треба обійти.</div>
+
+<h2 id="s9"><span class="num">09 / Памʼять</span>Розрідженість матриці</h2>
+
+<p><a href="../04-bag-of-words/lecture.html">Тема 04</a> уже показала, що матриця
+«документ × слово» заповнена на 0.066 % і що щільне зберігання коштувало б 1.84 ГБ
+проти 1.90 МБ у форматі CSR — у 968 разів більше. Наша матриця влаштована так само,
+тільки квадратна.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>матриця 6074 × 6074, вікно ±5</th><th>значення</th></tr>
+  <tr><td>клітинок</td><td>36 893 476</td></tr>
+  <tr><td>заповнено</td><td>2.8846 %</td></tr>
+  <tr><td>щільно, <code>float64</code></td><td>295.15 МБ</td></tr>
+  <tr class="hot"><td>розріджено, CSR</td><td>12.79 МБ</td></tr>
+  <tr><td>відношення</td><td>23.1×</td></tr>
+</table></div>
+
+<p>Виграш у 23 рази — значно скромніший за 968 із теми 04, і причина в тому, що ця
+матриця <b>щільніша</b>: 2.88 % проти 0.066 %. Це закономірно. У матриці «документ ×
+слово» рядок — коротке повідомлення на шість слів із 11 тисяч можливих. Тут рядок —
+усі сусідства слова за весь корпус, і в частотних слів їх тисячі.</p>
+
+<p>Формат той самий CSR із теми 04: три масиви замість таблиці. Нового тут немає
+нічого, крім однієї думки: <b>розрідженість — це те, що ми зараз знищимо</b>.
+Наступний крок перетворить 6074 колонки на 64 щільні числа, і разом із порожнечею
+зникне можливість зберігати матрицю дешево. Натомість зʼявиться інше — 3.11 МБ
+щільних векторів, з якими можна працювати матричним множенням.</p>
+
+<h2 id="s10"><span class="num">10 / Стиснення</span>SVD: 6074 колонки в 64 числа</h2>
+
+<p>PPMI-рядок слова «файл» — це 6074 числа, з яких ненульових кілька сотень.
+Він точний, але поганий як подання: два синоніми, що вживаються в схожих, але не
+тих самих контекстах, дістануть майже нульовий косинус просто тому, що їхні
+ненульові клітинки не збіглися. Матриця <b>занадто дрібно</b> описує світ.</p>
+
+<p>Лікування зветься <b>сингулярний розклад</b> (singular value decomposition, SVD).
+Пояснити його без математики можна так. Уяви, що 6074 колонки — це 6074 запитання
+про слово: «чи стоїш ти біля „не“?», «чи стоїш ти біля „діалогове“?». Більшість
+відповідей зайві, бо запитання повторюють одне одного: хто стоїть біля «відкрити»,
+той майже напевно стоїть і біля «відкриття». SVD знаходить <b>64 нові запитання</b>,
+кожне з яких — суміш старих, і ці 64 відповіді описують слово майже так само добре,
+як усі 6074.</p>
+
+<div class="eq">M ≈ U · Σ · V<span class="sup">T</span></div>
+
+<p>Розшифруймо. <b>M</b> — наша PPMI-матриця. <b>U</b> — таблиця, де рядок це слово,
+а колонка — одне з нових запитань; саме її ми й заберемо як ембединги.
+<b>Σ</b> (велика грецька «сигма») — список чисел, які кажуть, наскільки важливе кожне
+нове запитання; вони йдуть від найбільшого до найменшого. <b>V</b> описує, як нові
+запитання складено зі старих колонок; нам вона не знадобиться. Знак «≈» стоїть
+не випадково: рівності немає, ми навмисно викидаємо все, що не влізло в 64 колонки.</p>
+
+<p>Наші перші пʼять чисел <b>Σ</b>: 501.17, 201.44, 178.24, 162.37, 161.74. Перше
+різко більше за решту — це «запитання», що відповідає загальній частотності слова,
+і саме тому далі буде важлива подробиця.</p>
+
+<div class="note warn"><b>Подробиця, що коштує половини результату.</b> Природно взяти
+за вектор слова добуток <span class="raw">U · Σ</span> — так робить
+<code>TruncatedSVD.fit_transform</code>, і так написано в більшості прикладів. На
+нашій задачі це <b>вдвічі гірше</b>, ніж узяти саму лише <b>U</b>:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>вектор слова</th><th>синоніми</th><th>випадкові</th><th>розрив</th></tr>
+  <tr class="hot"><td>U (без ваг)</td><td>0.6079</td><td>0.1647</td><td>0.4432 ±0.0069</td></tr>
+  <tr><td>U · Σ<span class="sup">0.5</span></td><td>0.6882</td><td>0.3157</td><td>0.3725 ±0.0038</td></tr>
+  <tr><td>U · Σ</td><td>0.8184</td><td>0.5805</td><td>0.2379 ±0.0014</td></tr>
+</table></div>
+
+<p>Подивись на цю таблицю уважно — вона повторює урок розділу 04 в найчистішому
+вигляді. Рядок <span class="raw">U · Σ</span> має <b>найвищий</b> косинус синонімів:
+0.8184. Це число, яке хочеться показати. І воно нічого не варте, бо випадкові пари
+там дістають 0.5805. Множення на Σ підсилює перший, найчастотніший напрям — і всі
+вектори повертаються в один бік. Ділення на Σ його гасить.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 6 · Скільки вимірів брати</div>
+  <p class="fig-sub">Дві криві: середній косинус пар однакового змісту й середній
+    косинус випадкових пар. Обидві падають зі зростанням <span class="raw">k</span>.
+    Смуга між ними — розрив, і саме він має бути найбільшим.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="k6">вимірів <span class="raw">k</span> <output id="k6o">64</output></label>
+        <input id="k6" type="range" min="0" max="6" step="1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>синоніми</b><i id="v6a">—</i></div>
+        <div class="cellv"><b>випадкові</b><i id="v6b">—</i></div>
+        <div class="cellv"><b>розрив</b><i id="v6c">—</i></div>
+        <div class="cellv"><b>проти TF-IDF</b><i id="v6d">—</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>Обидві криві падають монотонно, а розрив між ними має максимум
+    посередині: <b>0.4596</b> ±0.0106 при <span class="raw">k</span> = 32 і
+    <b>0.4432</b> ±0.0069 при 64. Різниця <b>0.0164</b> менша за суму розкидів, тож
+    ці дві точки нерозрізненні; далі беремо 64, бо стільки ж має skip-gram теми 12.
+    А от краї сітки різняться певно: чотирьох вимірів замало (0.2971 — вони описують
+    лише частотність слова, і всі пари злипаються), двохсот пʼятдесяти шести
+    забагато (0.3965).</figcaption>
+</figure>
+
+<p>Крива має максимум, і це не випадковість. Мало вимірів — модель не встигає
+описати різницю між словами; багато — вона знову починає запамʼятовувати випадкові
+збіги окремих клітинок, тобто перестає узагальнювати. Це та сама рівновага, яку
+курс машинного навчання називає компромісом між зміщенням і дисперсією, тільки
+тут вона видима на одному повзунку.</p>
+
+<p>Але вершина цієї кривої <b>пласка</b>, і чесно сказати це важливіше, ніж назвати
+переможця. Між 32 і 64 вимірами різниця <b>0.0164</b> при розкидах 0.0106 і 0.0069 —
+тобто її немає. Далі в темі стоїть <b>64</b>, і не тому, що воно краще, а тому, що
+стільки ж вимірів має skip-gram, з яким ми будемо порівнюватись.</p>
+
+<div class="note"><b>Скільки це коштує.</b> Увесь розклад на 256 вимірів для матриці
+6074 × 6074 займає близько <b>пʼяти секунд</b> процесорного часу, а вся крива
+з семи точок по три зерна — близько <b>півхвилини</b>. Для порівняння: навчання skip-gram на тих самих даних коштує
+<b>36.2 с</b> — це число заміряла тема 12, тут воно цитоване. Тобто підрахунок і
+навчання на нашому корпусі коштують приблизно однаково; різниця почнеться на
+корпусі, де матриця перестане вміщатись у памʼять.</div>
+
+<h2 id="s11"><span class="num">11 / Замір</span>Замір: чи пробито стіну</h2>
+
+<p>Повертаємось до тих самих 209 пар, з яких почалась тема. Кожен документ подаємо
+одним вектором — середнім із векторів його слів, — і міряємо косинус. Три зерна;
+зерно міняє і вибірку документів для контролю, і випадковий стан SVD.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>подання</th><th>синоніми</th><th>випадкові</th><th>розрив</th></tr>
+  <tr><td>TF-IDF (тема 05)</td><td>0.2198</td><td>0.0098</td><td>0.2101</td></tr>
+  <tr><td>сира частота, повний рядок</td><td>0.8190</td><td>0.7203</td><td>0.0987</td></tr>
+  <tr><td>PPMI, повний рядок</td><td>0.5328</td><td>0.2917</td><td>0.2411</td></tr>
+  <tr class="hot"><td>PPMI + SVD, 64 виміри</td><td>0.6079</td><td>0.1647</td><td>0.4432</td></tr>
+  <tr class="hot"><td>PPMI + SVD, 32 виміри</td><td>0.6665</td><td>0.2069</td><td>0.4596</td></tr>
+  <tr><td>skip-gram, 64 виміри (тема 12)</td><td>0.8453</td><td>0.3081</td><td>0.5372</td></tr>
+</table></div>
+
+<p><b>Відповідь: так, пробито.</b> Розрив виріс із <b>0.2101</b> до <b>0.4432</b> —
+у <b>2.11 раза</b>, і розкид по зернах (0.0069) на два порядки менший за приріст.
+Причому <b>нічого не навчалось</b>: ми порахували, поділили, взяли логарифм,
+відсікли відʼємне й розклали матрицю. Уся «магія ембедингів» на цьому корпусі на
+82 % відтворюється арифметикою.</p>
+
+<p>Останній рядок таблиці — число теми 12, і воно цитоване, а не заміряне тут.
+Порівнювати з ним треба саме розриви: <b>0.5372</b> проти <b>0.4432</b>. Навчання
+дає ще <b>0.0940</b> зверху — приріст справжній, але вчетверо менший за той, що
+дає сам перехід від збігу написань до підрахунку сусідства.</p>
+
+<div class="note warn"><b>Чому не можна казати «0.2230 → 0.8453».</b> Спокуса
+величезна: обидва числа справжні, обидва надруковані. Але skip-gram піднімає й
+випадкові пари — з 0.0103 до 0.3081. Тобто третину «схожості» він роздає всім
+підряд. Наш PPMI+SVD теж роздає, тільки менше: 0.1647. Порівняння абсолютних
+косинусів між різними поданнями <b>не має сенсу взагалі</b> — вони живуть у різних
+просторах із різною типовою відстанню. Єдине, що можна порівнювати, — це наскільки
+подання відрізняє зміст від випадковості.</div>
+
+<figure>
+  <div class="fig-head">Інтерактив 7 · Дві купи й відстань між ними</div>
+  <p class="fig-sub">Розподіл косинусів на 209 парах однакового змісту (тепла
+    крива) і на 209 випадкових парах (холодна), три зерна разом — 627 значень у
+    кожній купі. Вертикальні риски — середні; смуга між ними — розрив.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">подання слова</span>
+        <div class="seg wrap" id="seg7">
+          <button data-i="0" aria-pressed="true">TF-IDF</button>
+          <button data-i="1" aria-pressed="false">сира частота</button>
+          <button data-i="2" aria-pressed="false">PPMI</button>
+          <button data-i="3" aria-pressed="false">PPMI + SVD 32</button>
+          <button data-i="4" aria-pressed="false">PPMI + SVD 64</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>синоніми</b><i id="v7a">—</i></div>
+        <div class="cellv"><b>випадкові</b><i id="v7b">—</i></div>
+        <div class="cellv"><b>розрив</b><i id="v7c">—</i></div>
+        <div class="cellv"><b>проти TF-IDF</b><i id="v7d">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>У TF-IDF холодна купа стоїть на самому нулі, зате тепла має там же
+    свій найвищий стовпчик: <b>22.01 %</b> пар однакового змісту дістають рівно
+    нуль. У «сирої частоти» купи майже накладаються — вона схожа на все.
+    У PPMI + SVD купи розʼїхались найдалі.</figcaption>
+</figure>
+
+<h2 id="s12"><span class="num">12 / Межа</span>Чого підрахунок не вміє</h2>
+
+<p>Тепер найважливіше застереження теми, і воно стосується не нашої реалізації, а
+самої гіпотези Гарріса. Подивись на пару <b>увімкнути · вимкнути</b>. Це антоніми —
+слова протилежного значення. Їхній косинус за контекстними рядками — <b>0.4282</b>.
+Це <b>більше</b>, ніж у будь-якої пари синонімів із нашого списку.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>пара</th><th>косинус контекстів</th></tr>
+  <tr class="hot"><td>вгору · вниз</td><td>0.5138</td></tr>
+  <tr class="hot"><td>увімкнути · вимкнути</td><td>0.4282</td></tr>
+  <tr><td>та · і (синоніми)</td><td>0.3725</td></tr>
+  <tr><td>регулярного · формального (синоніми)</td><td>0.3070</td></tr>
+  <tr><td>відкрити · закрити</td><td>0.2741</td></tr>
+  <tr><td>успішно · помилково</td><td>0.0857</td></tr>
+</table></div>
+
+<p>Середнє по восьми парах антонімів — <b>0.2647</b> проти <b>0.1662</b> у синонімів
+і <b>0.0662</b> у контрольних пар тієї самої частоти. <b>Антоніми виявляються
+схожішими за синоніми.</b></p>
+
+<p>Це не дефект коду. Це прямий наслідок того, що ми міряємо. «Увімкнути» і
+«вимкнути» стоять у тих самих реченнях, біля тих самих слів, на тому самому місці:
+«увімкнути звук» і «вимкнути звук». Оточення схоплює <b>роль слова</b>, а не його
+знак. Гіпотеза Гарріса каже «схоже оточення — схоже значення», але значення для неї
+означає «про що йдеться», а не «що саме стверджується».</p>
+
+<p>Практичний наслідок різкий: <b>ембединги не можна питати про заперечення</b>.
+Пошук за схожістю на запит «увімкнути автозбереження» знайде інструкцію «як
+вимкнути автозбереження» й покаже її першою. І жодне збільшення корпусу цього не
+виправить — це властивість підходу, а не браку даних. Тема 12 успадкує її повністю,
+бо вчиться на тій самій гіпотезі.</p>
+
+<h2 id="s13"><span class="num">13 / Далі</span>Що з цим робить наступна тема</h2>
+
+<p>Ми зробили ембединги, не навчивши жодної моделі. Постає розумне питання: навіщо
+тоді тема 12?</p>
+
+<p>Відповідь у тому, чого наш спосіб вимагає. Він будує матрицю <b>цілком</b>, перш
+ніж почати. У нас це 6074 × 6074 і 12.79 МБ — дрібниця. На словнику в 400 тисяч слів
+та сама матриця має 160 мільярдів клітинок, і навіть у розрідженому вигляді вона не
+влізе в памʼять звичайної машини. А SVD треба, щоб уся матриця була доступна одразу.</p>
+
+<p><b>Skip-gram із теми 12 робить те саме, але не будує матриці взагалі.</b> Він іде
+текстом і на кожній парі «слово — сусід» трохи посуває два вектори назустріч одне
+одному, а кілька випадкових — навпаки. Памʼять йому потрібна лише під самі вектори,
+і корпус можна лити потоком. Результат виходить кращий — розрив 0.5372 проти нашого
+0.4432, — але головна різниця не в якості, а в тому, що цей спосіб масштабується,
+а наш ні.</p>
+
+<p>І ще одне: у літературі показано, що skip-gram із негативним семплюванням
+неявно розкладає ту саму зсунуту PPMI-матрицю, яку ми будували руками. Тобто тема 12
+не приносить нової ідеї — вона приносить <b>інший спосіб дійти до тієї самої
+відповіді</b>, який не вимагає тримати матрицю в памʼяті. Наш власний замір зсуву,
+до речі, натякає, що на короткому корпусі це наближення не безкоштовне: зсув
+<span class="raw">log 5</span> ронив розрив із 0.4432 до 0.4083.</p>
+
+<p>Далі блок розгортається так. <a href="../12-word2vec/lecture.html">Тема 12</a>
+навчає skip-gram і показує негативне семплювання зсередини.
+<a href="../13-glove-fasttext/lecture.html">Тема 13</a> ріже слово на субслова — і це
+головна тема блоку для української, бо в нас 77.6 % словника модель не бачила
+жодного разу. <a href="../14-vector-arithmetic/lecture.html">Тема 14</a> перевіряє,
+чи працює славнозвісна арифметика «король − чоловік + жінка» на наших даних.
+<a href="../15-embedding-bias/lecture.html">Тема 15</a> питає, що ще, крім значення,
+ембединги вивчили з корпусу — і антоніми з цієї теми виявляться найлагіднішим
+із того, що там знайдеться.</p>
+
+<p>А ще далі, у <a href="../glossary.html">векторних базах</a>, усе це стане
+інженерією: мільйони векторів, наближений пошук найближчого, семантичний пошук
+у продакшені. Але ідея, на якій воно стоїть, уже ціла в цій темі — і вона
+вміщається в одне речення. <b>Порахуй, хто з ким стоїть поруч; поділи на те,
+скільки їх стояло б випадково; стисни.</b></p>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thou(n){
+  var s=String(n), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function cut(g,txt,max,px,bold){
+  g.font=mono(px||11,!!bold);
+  if(g.measureText(txt).width<=max) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+
+/* ═══════ числа з зошита ═══════ */
+/* корпус: 93 392 документи, 674 948 слововживань, словник min_count=10 — 6074 слова */
+var VOCAB_N = 6074, TOKENS = 621542, PAIRS5 = 3588918;
+var CTRL_PAIR = 0.0609;          /* контроль: пари слів тієї самої частоти */
+var TFIDF_GAP = 0.2101;          /* розрив TF-IDF, три зерна */
+var SGNS_GAP  = 0.5372;          /* розрив навчених ембедингів — число теми 12 */
+var STOP_RAW = 41.49, STOP_PMI = 0.25;   /* службових слів у топ-10 контекстів, % */
+
+/* службові слова — той самий список, що в зошиті */
+var STOP = ["не", "для", "у", "з", "і", "та", "в", "на", "що", "це", "як", "до", "за", "від", "є", "або", "якщо", "про", "по", "при", "але", "а", "й", "його", "її", "їх", "ви", "ми", "ти", "я", "він", "вона", "воно", "цей", "ця", "ці", "той", "те", "ті", "бути", "має", "можна", "може"];
+function isStop(w){ return STOP.indexOf(w) >= 0; }
+
+/* фігура 1 · іграшковий корпус із шести рядків (усе рахується тут, у канві) */
+var TOY = [
+  "не вдалося відкрити файл",
+  "не вдалося відкрити документ",
+  "файл не знайдено",
+  "документ не знайдено",
+  "відкрити файл лише для читання",
+  "відкрити документ лише для читання",
+];
+
+/* фігура 2 · топ-10 контекстів: [слово, значення, місце в іншому впорядкуванні] */
+var CTX = {"файл": {"raw": [["не", 1371, 765], ["вдалося", 848, 327], ["файл", 776, 96], ["у", 404, 5508], ["відкрити", 338, 22], ["з", 310, 1558], ["для", 301, 1271], ["є", 237, 809], ["або", 220, 1161], ["налаштувань", 202, 27]], "pmi": [["перетворюємо", 3.8019, 159], ["об'єктний", 3.7606, 294], ["новіший", 3.7568, 235], ["об’єктний", 3.7198, 242], ["вхідний", 3.6095, 24], ["стиснутий", 3.5375, 310], ["виконуваний", 3.4594, 38], ["індексний", 3.4096, 249], ["тимчасовий", 3.3344, 19], ["істинний", 3.3311, 39]], "total": 18980}, "помилка": {"raw": [["час", 1021, 34], ["під", 1008, 26], ["спроби", 548, 8], ["у", 380, 1053], ["не", 348, 2979], ["при", 317, 54], ["внутрішня", 273, 2], ["з", 199, 1547], ["для", 166, 1279], ["на", 163, 2837]], "pmi": [["критична", 4.1388, 31], ["внутрішня", 4.0991, 7], ["синтаксична", 4.0217, 14], ["відкриванні", 3.893, 214], ["сталася", 3.7434, 15], ["розбору", 3.6056, 163], ["переміщенні", 3.4961, 327], ["спроби", 3.4735, 3], ["читанні", 3.4297, 49], ["виникла", 3.4103, 76]], "total": 14370}, "вікно": {"raw": [["на", 59, 306], ["перемістити", 45, 7], ["у", 39, 385], ["діалогове", 32, 1], ["не", 30, 2991], ["робочий", 26, 8], ["простір", 26, 29], ["це", 24, 189], ["клацання", 23, 31], ["чи", 22, 215]], "pmi": [["діалогове", 5.9642, 4], ["гортати", 5.5383, 44], ["край", 5.4758, 24], ["закрито", 5.1657, 32], ["розташовувати", 5.1491, 62], ["відображати", 5.1394, 52], ["перемістити", 5.1194, 2], ["робочий", 4.9876, 6], ["план", 4.8533, 78], ["передній", 4.7492, 71]], "total": 1366}, "мережі": {"raw": [["у", 281, 369], ["для", 137, 572], ["не", 118, 2978], ["з", 56, 1548], ["до", 53, 636], ["вдалося", 51, 638], ["або", 42, 648], ["на", 40, 2837], ["мережі", 36, 122], ["адреси", 31, 144]], "pmi": [["широкосмугової", 5.2202, 73], ["мобільної", 4.9283, 52], ["фільтра", 4.2752, 12], ["маску", 4.1949, 32], ["обов'язкового", 4.0904, 119], ["маска", 4.0274, 72], ["змусити", 3.9448, 237], ["оприлюднення", 3.8967, 109], ["сталі", 3.8156, 243], ["бітах", 3.7567, 235]], "total": 3593}};
+var CTXW = ["файл", "помилка", "вікно", "мережі"];
+
+/* фігура 3 · розклад косинуса на доданки: [контекст, вага в A, вага в B, добуток] */
+var F3 = [{"a": "регулярний", "b": "формальний", "kind": "однаковий зміст", "cos": 0.1626, "rows": [["вираз", 0.219, 0.1958, 0.0429], ["незавершений", 0.2098, 0.1766, 0.0371], ["попередній", 0.2209, 0.1439, 0.0318], ["занадто", 0.1052, 0.1438, 0.0151], ["недійсний", 0.1356, 0.11, 0.0149], ["некоректний", 0.0801, 0.1265, 0.0101], ["рядок", 0.1061, 0.0836, 0.0089], ["це", 0.0501, 0.0333, 0.0017], ["що", 0.0433, 0.0037, 0.0002]], "shared": 9, "top10": 0.1626}, {"a": "вимагає", "b": "потребує", "kind": "однаковий зміст", "cos": 0.2316, "rows": [["велику", 0.0917, 0.0856, 0.0079], ["скалярний", 0.1001, 0.0667, 0.0067], ["рядковий", 0.1026, 0.0612, 0.0063], ["явного", 0.0862, 0.0672, 0.0058], ["опцію", 0.0827, 0.0694, 0.0057], ["сталий", 0.0673, 0.0762, 0.0051], ["логічне", 0.0738, 0.0689, 0.0051], ["потокове", 0.0734, 0.0686, 0.005], ["висока", 0.0804, 0.0618, 0.005], ["цілочисельний", 0.0758, 0.063, 0.0048]], "shared": 152, "top10": 0.0573}, {"a": "номер", "b": "число", "kind": "однаковий зміст", "cos": 0.1585, "rows": [["допустимими", 0.0812, 0.0695, 0.0056], ["модифікації", 0.0766, 0.0652, 0.005], ["вищий", 0.0702, 0.0677, 0.0048], ["об'єктива", 0.0806, 0.0547, 0.0044], ["день", 0.0936, 0.0441, 0.0041], ["представляє", 0.0685, 0.0578, 0.004], ["позицій", 0.0483, 0.0793, 0.0038], ["звідки", 0.0651, 0.0547, 0.0036], ["байт", 0.0433, 0.0708, 0.0031], ["діапазоном", 0.0522, 0.0588, 0.0031]], "shared": 163, "top10": 0.0414}, {"a": "увімкнути", "b": "вимкнути", "kind": "антоніми", "cos": 0.4282, "rows": [["повноекранний", 0.0737, 0.0852, 0.0063], ["прилипання", 0.0729, 0.0856, 0.0062], ["рекурсію", 0.0699, 0.0853, 0.006], ["оптимізацію", 0.0796, 0.0707, 0.0056], ["розфарбовування", 0.0729, 0.0766, 0.0056], ["обхід", 0.0669, 0.0832, 0.0056], ["контрактів", 0.0708, 0.0743, 0.0053], ["рамок", 0.0605, 0.0839, 0.0051], ["невідстежуваний", 0.0689, 0.0722, 0.005], ["відтворенням", 0.0637, 0.0743, 0.0047]], "shared": 381, "top10": 0.0553}, {"a": "файл", "b": "пароль", "kind": "різні слова", "cos": 0.1217, "rows": [["схожий", 0.0654, 0.0805, 0.0053], ["закритого", 0.053, 0.0811, 0.0043], ["вторинного", 0.0463, 0.0834, 0.0039], ["необроблений", 0.045, 0.067, 0.003], ["простим", 0.0374, 0.0754, 0.0028], ["правильний", 0.0311, 0.0851, 0.0026], ["уже", 0.0478, 0.0542, 0.0026], ["символьним", 0.0624, 0.0398, 0.0025], ["змінений", 0.0526, 0.0462, 0.0024], ["користування", 0.0512, 0.0454, 0.0023]], "shared": 157, "top10": 0.0317}, {"a": "вікно", "b": "мережі", "kind": "різні слова", "cos": 0.0496, "rows": [["змусити", 0.0765, 0.0878, 0.0067], ["звітувати", 0.0646, 0.0501, 0.0032], ["кінцева", 0.0624, 0.0477, 0.003], ["віртуальної", 0.0417, 0.0696, 0.0029], ["сповіщення", 0.0498, 0.0427, 0.0021], ["тепер", 0.0451, 0.0439, 0.002], ["скасувати", 0.0361, 0.0464, 0.0017], ["початкова", 0.0497, 0.0336, 0.0017], ["події", 0.0445, 0.0368, 0.0016], ["перемкнути", 0.0791, 0.0199, 0.0016]], "shared": 68, "top10": 0.0265}];
+
+/* фігура 4 · найближчі сусіди за трьох вікон */
+var NEIGH = {"файл": {"2": [["архів", 0.6721], ["вхідний", 0.6236], ["тимчасовий", 0.6202], ["каталог", 0.6075], ["об'єктний", 0.5901], ["індексний", 0.5775], ["замка", 0.5694], ["образ", 0.5529]], "5": [["тимчасовий", 0.6722], ["відкрити", 0.6618], ["вхідний", 0.6353], ["каталог", 0.6187], ["стиснутий", 0.6079], ["архів", 0.6075], ["файла", 0.5864], ["вдалося", 0.5758]], "10": [["відкрити", 0.6922], ["тимчасовий", 0.688], ["прочитати", 0.675], ["створити", 0.674], ["записати", 0.648], ["файла", 0.6476], ["стиснутий", 0.636], ["вдалося", 0.6108]]}, "помилка": {"2": [["при", 0.7487], ["сталася", 0.6933], ["внутрішня", 0.6637], ["критична", 0.6611], ["спробі", 0.6417], ["під", 0.6015], ["відмовлено", 0.6005], ["виникла", 0.5843]], "5": [["під", 0.7666], ["спроби", 0.7591], ["сталася", 0.7494], ["відкриванні", 0.7431], ["критична", 0.6942], ["ініціалізації", 0.6472], ["час", 0.6435], ["читанні", 0.6232]], "10": [["спроби", 0.8206], ["під", 0.8061], ["відкриванні", 0.7349], ["сталася", 0.7136], ["критична", 0.699], ["час", 0.6682], ["читанні", 0.5924], ["ретранслятора", 0.5678]]}, "вікно": {"2": [["діалогове", 0.7863], ["сторінку", 0.6333], ["віджету", 0.6097], ["навігації", 0.5748], ["робочу", 0.5717], ["панель", 0.5646], ["перемістити", 0.563], ["ліворуч", 0.5586]], "5": [["діалогове", 0.7448], ["перемістити", 0.6934], ["розгорнуто", 0.6471], ["робочу", 0.6061], ["показано", 0.5961], ["віджет", 0.5934], ["робоча", 0.5931], ["згори", 0.5919]], "10": [["діалогове", 0.758], ["перемістити", 0.6546], ["вікон", 0.5991], ["показано", 0.5938], ["вікна", 0.5935], ["робоча", 0.5923], ["віджет", 0.5754], ["край", 0.5741]]}, "мережі": {"2": [["містка", 0.6758], ["мережевого", 0.611], ["інтерфейсу", 0.5928], ["адреси", 0.569], ["налаштуваннях", 0.5651], ["маршруту", 0.5455], ["пристрою", 0.5425], ["зону", 0.5185]], "5": [["містка", 0.7043], ["адреси", 0.6627], ["переспрямовування", 0.6585], ["інтерфейсу", 0.6423], ["порту", 0.6028], ["маршруту", 0.5813], ["переспрямування", 0.5723], ["адресу", 0.5681]], "10": [["мережа", 0.6947], ["містка", 0.6807], ["інтерфейсу", 0.6676], ["інтерфейс", 0.6483], ["переспрямовування", 0.6342], ["зону", 0.6316], ["адреси", 0.6176], ["з'єднання", 0.6102]]}, "зберегти": {"2": [["відновити", 0.7586], ["скинути", 0.6038], ["зробити", 0.6022], ["очистити", 0.5909], ["отримати", 0.5906], ["спорожнити", 0.5731], ["експортувати", 0.5537], ["перетворити", 0.5513]], "5": [["відновити", 0.5463], ["вилучити", 0.5314], ["експортувати", 0.5277], ["збережено", 0.5238], ["очистити", 0.4932], ["збережені", 0.4667], ["одержати", 0.4472], ["діагностика", 0.446]], "10": [["очистити", 0.5952], ["збережено", 0.5388], ["смітника", 0.5322], ["документ", 0.5274], ["відновити", 0.5081], ["збереження", 0.4946], ["позначену", 0.4671], ["надрукувати", 0.4632]]}, "пароль": {"2": [["пінкод", 0.7836], ["розблокування", 0.6483], ["ваш", 0.6164], ["адміністративний", 0.6158], ["введіть", 0.6068], ["користувача", 0.6051], ["облікового", 0.5931], ["перемістіть", 0.5787]], "5": [["пінкод", 0.807], ["розблокування", 0.7734], ["облікового", 0.7636], ["в'язки", 0.7136], ["пароля", 0.6946], ["користувача", 0.6939], ["введіть", 0.6913], ["жетон", 0.6856]], "10": [["пінкод", 0.7685], ["жетон", 0.7535], ["розблокування", 0.7483], ["пароля", 0.709], ["облікового", 0.6941], ["користувача", 0.6772], ["в'язки", 0.6646], ["введіть", 0.6621]]}};
+var NEIGHW = ["файл", "помилка", "вікно", "мережі", "зберегти", "пароль"];
+var WSTAT = {"2":{pos:54.88, doc:36.94, gap:0.4424, sd:0.0042},
+             "5":{pos:45.42, doc:58.38, gap:0.4432, sd:0.0069},
+             "10":{pos:43.31, doc:64.35, gap:0.4254, sd:0.0080}};
+var WKEYS = ["2","5","10"];
+var OVERLAP = {"2-5":0.2712, "2-10":0.1988, "5-10":0.4888};
+
+/* фігура 5 · заповненість вікна й розподіл довжин документів */
+var FILL = {"1": {"share": 70.29, "per": 1.7008, "pairs": 1057126}, "2": {"share": 43.62, "per": 3.1067, "pairs": 1930950}, "3": {"share": 26.15, "per": 4.2307, "pairs": 2629588}, "4": {"share": 17.37, "per": 5.1032, "pairs": 3171828}, "5": {"share": 12.98, "per": 5.7742, "pairs": 3588918}, "6": {"share": 10.5, "per": 6.2973, "pairs": 3914034}, "7": {"share": 8.88, "per": 6.7166, "pairs": 4174666}, "8": {"share": 7.71, "per": 7.0639, "pairs": 4390528}, "9": {"share": 6.81, "per": 7.3606, "pairs": 4574894}, "10": {"share": 6.08, "per": 7.6201, "pairs": 4736192}};
+var LENH = {"0": 413, "1": 1328, "2": 4058, "3": 9394, "4": 15624, "5": 16588, "6": 13745, "7": 9857, "8": 6637, "9": 4214, "10": 2910, "11": 1836, "12": 1322, "13": 881, "14": 673, "15": 547, "16": 400, "17": 318, "18": 262, "19": 233, "20": 214, "21": 164, "22": 149, "23": 129, "24": 118, "25": 1378};
+var SAMPLE = ["не", "може", "бути", "крапки", "після", "символу"];
+var NDOCS = 93392;
+
+/* фігура 6 · [k, синоніми, випадкові, розрив, розкид розриву] */
+var KC = [[4, 0.8987, 0.6017, 0.2971, 0.0045], [8, 0.7889, 0.4065, 0.3824, 0.0138], [16, 0.7124, 0.2931, 0.4193, 0.0158], [32, 0.6665, 0.2069, 0.4596, 0.0106], [64, 0.6079, 0.1647, 0.4432, 0.0069], [128, 0.546, 0.1256, 0.4204, 0.0017], [256, 0.4925, 0.0961, 0.3965, 0.0021]];
+
+/* фігура 7 · подання: [назва, {syn, rnd, gap, zeros, hs, hr}]; купи по 24 кошики від -0.2 до 1.0 */
+var METH = [["TF-IDF", {"syn": 0.2198, "rnd": 0.0098, "gap": 0.2101, "zeros": 0.2201, "hs": [0, 0, 0, 0, 171, 35, 64, 50, 42, 57, 45, 30, 39, 49, 16, 14, 10, 1, 4, 0, 0, 0, 0, 0], "hr": [0, 0, 0, 0, 584, 30, 10, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}], ["сира частота", {"syn": 0.819, "rnd": 0.7203, "gap": 0.0987, "zeros": 0.0, "hs": [0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 6, 3, 6, 0, 9, 18, 39, 21, 27, 66, 99, 135, 159, 36], "hr": [0, 0, 0, 0, 13, 3, 0, 0, 1, 1, 3, 7, 12, 17, 18, 32, 48, 50, 81, 114, 99, 93, 34, 1]}], ["PPMI", {"syn": 0.5328, "rnd": 0.2917, "gap": 0.2411, "zeros": 0.0, "hs": [0, 0, 0, 0, 3, 0, 15, 18, 21, 36, 12, 36, 39, 45, 69, 84, 39, 99, 66, 30, 9, 3, 0, 3], "hr": [0, 0, 0, 0, 20, 15, 32, 82, 102, 101, 81, 76, 42, 33, 20, 15, 6, 1, 0, 1, 0, 0, 0, 0]}], ["PPMI + SVD 32", {"syn": 0.6665, "rnd": 0.2069, "gap": 0.4596, "zeros": 0.0, "hs": [2, 1, 0, 0, 2, 2, 2, 1, 1, 8, 18, 28, 27, 28, 39, 49, 45, 60, 62, 74, 69, 73, 30, 6], "hr": [11, 13, 27, 41, 53, 53, 57, 63, 69, 52, 45, 34, 28, 27, 20, 14, 11, 5, 2, 1, 0, 1, 0, 0]}], ["PPMI + SVD 64", {"syn": 0.6079, "rnd": 0.1647, "gap": 0.4432, "zeros": 0.0, "hs": [0, 1, 2, 0, 2, 4, 3, 9, 11, 15, 24, 33, 40, 44, 36, 41, 57, 62, 67, 64, 48, 48, 13, 3], "hr": [7, 9, 32, 55, 66, 68, 81, 78, 58, 42, 42, 26, 23, 17, 10, 6, 3, 3, 0, 0, 1, 0, 0, 0]}]];
+var HB0 = -0.2, HB1 = 1.0, HBN = 24;
+
+
+/* ═══════════ фігура 1 · матриця співвіднесень на шести рядках ═══════════ */
+
+var toyDocs = [], toyVocab = [], toyIdx = {};
+(function(){
+  var i, j, w, seen = {};
+  for(i=0;i<TOY.length;i++){
+    var t = TOY[i].split(' ');
+    toyDocs.push(t);
+    for(j=0;j<t.length;j++){ if(!seen[t[j]]){ seen[t[j]]=1; toyVocab.push(t[j]); } }
+  }
+  toyVocab.sort();
+  for(i=0;i<toyVocab.length;i++) toyIdx[toyVocab[i]] = i;
+})();
+
+function toyCount(W){
+  var n = toyVocab.length, M = [], i, j, d, t, k, lo, hi;
+  for(i=0;i<n;i++){ M.push([]); for(j=0;j<n;j++) M[i].push(0); }
+  for(d=0;d<toyDocs.length;d++){
+    t = toyDocs[d];
+    for(i=0;i<t.length;i++){
+      lo = Math.max(0, i-W); hi = Math.min(t.length-1, i+W);
+      for(k=lo;k<=hi;k++) if(k!==i) M[toyIdx[t[i]]][toyIdx[t[k]]] += 1;
+    }
+  }
+  return M;
+}
+function toyPPMI(M){
+  var n = M.length, i, j, tot = 0, row = [], col = [], P = [];
+  for(i=0;i<n;i++){ row.push(0); col.push(0); }
+  for(i=0;i<n;i++) for(j=0;j<n;j++){ tot += M[i][j]; row[i] += M[i][j]; col[j] += M[i][j]; }
+  for(i=0;i<n;i++){
+    P.push([]);
+    for(j=0;j<n;j++){
+      if(M[i][j] > 0 && row[i] > 0 && col[j] > 0){
+        var v = Math.log(M[i][j] * tot / (row[i] * col[j]));
+        P[i].push(v > 0 ? v : 0);
+      } else P[i].push(0);
+    }
+  }
+  return P;
+}
+function toyCos(A, wa, wb){
+  var a = A[toyIdx[wa]], b = A[toyIdx[wb]], i, s = 0, na = 0, nb = 0;
+  for(i=0;i<a.length;i++){ s += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  if(na === 0 || nb === 0) return 0;
+  return s / Math.sqrt(na*nb);
+}
+function toySum(M){
+  var i, j, s = 0;
+  for(i=0;i<M.length;i++) for(j=0;j<M.length;j++) s += M[i][j];
+  return s;
+}
+
+var w1 = 2, mode1 = 0;
+
+function draw1(){
+  var cv = I('c1'), g = dpr(cv), W = LW(cv), H = LH(cv);
+  var raw = toyCount(w1), P = toyPPMI(raw), A = mode1 ? P : raw;
+  var n = toyVocab.length, i, j;
+  var ink = css('--ink'), soft = css('--soft'), hair = css('--hair');
+  var rose = css('--rose'), teal = css('--teal'), paper = css('--paper');
+
+  /* висоту смуги під повернуті підписи міряємо, а не беремо константою */
+  g.font = mono(10, false);
+  var band = 0;
+  for(i=0;i<n;i++) band = Math.max(band, g.measureText(toyVocab[i]).width);
+  band = Math.ceil(band) + 10;
+
+  var gx = 96, gy = band + 12, cw = Math.floor((W - gx - 10)/n), ch = 28;
+  var hot = {}; hot[toyIdx['файл']] = 1; hot[toyIdx['документ']] = 1;
+
+  var mx = 0;
+  for(i=0;i<n;i++) for(j=0;j<n;j++) if(A[i][j] > mx) mx = A[i][j];
+  if(mx <= 0) mx = 1;
+
+  /* повернуті заголовки колонок: після rotate(-90) локальний +x дивиться вгору,
+     тому вирівнюємо ліворуч, інакше підпис поїде на саму матрицю (грабля №27) */
+  for(j=0;j<n;j++){
+    g.save();
+    g.translate(gx + j*cw + cw/2 + 4, gy - 6);
+    g.rotate(-Math.PI/2);
+    g.font = mono(10, false); g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.fillStyle = hot[j] ? rose : soft;
+    g.fillText(toyVocab[j], 0, 0);
+    g.restore();
+  }
+
+  for(i=0;i<n;i++){
+    g.font = mono(11, !!hot[i]); g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillStyle = hot[i] ? rose : ink;
+    g.fillText(toyVocab[i], gx - 8, gy + i*ch + ch/2);
+    for(j=0;j<n;j++){
+      var v = A[i][j], x = gx + j*cw, y = gy + i*ch;
+      g.fillStyle = paper; g.fillRect(x+1, y+1, cw-2, ch-2);
+      if(v > 0){
+        g.globalAlpha = 0.15 + 0.75*(v/mx);
+        g.fillStyle = hot[i] ? rose : teal;
+        g.fillRect(x+1, y+1, cw-2, ch-2);
+        g.globalAlpha = 1;
+        g.font = mono(11, false); g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillStyle = ink;
+        g.fillText(mode1 ? f2(v) : String(v), x + cw/2, y + ch/2);
+      }
+      g.strokeStyle = hair; g.lineWidth = 1;
+      g.strokeRect(x+0.5, y+0.5, cw-1, ch-1);
+    }
+  }
+
+  var by = gy + n*ch + 20;
+  capt(g, 'рядок — цільове слово, колонка — контекст у вікні ±' + w1, gx - 88, by, soft, 11);
+  capt(g, mode1 ? 'у клітинці — PPMI' : 'у клітинці — скільки разів трапились поруч',
+       gx - 88, by + 16, soft, 11);
+
+  var cfd = toyCos(A, 'файл', 'документ');
+  var cnd = toyCos(A, 'не', 'для');
+  var cfr = toyCos(A, 'файл', 'читання');
+  var pairsN = toySum(raw);
+  I('v1a').textContent = f4(cfd);
+  I('v1b').textContent = f4(cnd);
+  I('v1c').textContent = f4(cfr);
+  I('v1d').textContent = String(pairsN);
+
+  var cnp = toyCos(toyPPMI(raw), 'не', 'для');
+  if(!mode1 && cnd > 0.30)
+    verd('v1v','t-no','СЛУЖБОВІ СЛОВА ЗЛИПАЮТЬСЯ',
+      'На сирих частотах при вікні ±' + w1 + ' пара «не · для» дістає ' + f4(cnd) +
+      ' — вони схожі просто тому, що стоять біля всього. Перемкни на PPMI: там та сама пара дає ' +
+      f4(cnp) + '. А «файл · документ» лишається ' + f4(cfd) + ' і там, і там.');
+  else if(!mode1)
+    verd('v1v','t-mid','СИРА ЧАСТОТА, ВІКНО ±' + w1,
+      '«файл · документ» — ' + f4(cfd) + ', «не · для» — ' + f4(cnd) + ', «файл · читання» — ' +
+      f4(cfr) + '. Розширюй вікно: службова пара «не · для» починає рости, а змістова не може, ' +
+      'бо вона вже на одиниці.');
+  else
+    verd('v1v','t-ok','PPMI ПРИБИРАЄ ЗАЙВЕ',
+      'Ті самі дані з PPMI: «файл · документ» — ' + f4(cfd) + ', «не · для» — ' + f4(cnd) +
+      ', «файл · читання» — ' + f4(cfr) + '. Порівняй із сирою частотою: службова пара й ' +
+      'випадковий сусід просіли, а «файл» і «документ» лишились на одиниці — хоча жодного ' +
+      'разу не стояли поруч.');
+}
+
+
+/* ═══════════ фігура 2 · частота проти PMI ═══════════ */
+
+var word2 = 0, mode2 = 0;
+
+function draw2(){
+  var cv = I('c2'), g = dpr(cv), W = LW(cv), H = LH(cv);
+  var w = CTXW[word2], rec = CTX[w], rows = mode2 ? rec.pmi : rec.raw;
+  var ink = css('--ink'), soft = css('--soft'), hair = css('--hair');
+  var rose = css('--rose'), teal = css('--teal'), amber = css('--amber');
+
+  capt(g, 'слово «' + w + '» · ' + thou(rec.total) + ' сусідств у вікні ±5', 8, 20, ink, 12, true);
+  capt(g, mode2 ? 'упорядковано за PPMI' : 'упорядковано за сирою частотою',
+       W - 8, 20, soft, 11, false, 'right');
+  capt(g, 'контекст', 8, 42, soft, 10);
+  capt(g, mode2 ? 'PPMI' : 'разів', 600, 42, soft, 10, false, 'right');
+  capt(g, mode2 ? 'місце за частотою' : 'місце за PPMI', W - 8, 42, soft, 10, false, 'right');
+
+  var y0 = 54, rh = 29, bx = 168, bw = 400, i;
+  var mx = 0;
+  for(i=0;i<rows.length;i++) if(rows[i][1] > mx) mx = rows[i][1];
+  if(mx <= 0) mx = 1;
+
+  var stops = 0;
+  for(i=0;i<rows.length;i++){
+    var name = rows[i][0], val = rows[i][1], other = rows[i][2];
+    var st = isStop(name); if(st) stops++;
+    var y = y0 + i*rh;
+    g.fillStyle = st ? amber : (mode2 ? teal : rose);
+    var ww = Math.max(2, bw * val/mx);
+    g.fillRect(bx, y + 6, ww, 13);
+    g.font = mono(12, st); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = st ? amber : ink;
+    g.fillText(cut(g, name, 150, 12, st), 8, y + 17);
+    capt(g, mode2 ? f2(val) : thou(val), 600, y + 17, ink, 12, false, 'right');
+    capt(g, '№ ' + other, W - 8, y + 17, soft, 11, false, 'right');
+  }
+
+  var ly = y0 + rows.length*rh + 20;
+  g.fillStyle = amber; g.fillRect(8, ly - 8, 10, 10);
+  capt(g, 'службове слово', 24, ly + 1, soft, 11);
+
+  I('v2a').textContent = stops + ' / 10';
+  I('v2b').textContent = thou(rec.total);
+  I('v2c').textContent = (mode2 ? f2(STOP_PMI) : f2(STOP_RAW)) + ' %';
+  I('v2d').textContent = rows[0][0];
+
+  if(!mode2 && stops >= 4)
+    verd('v2v','t-no','ЧАСТОТА ПОКАЗУЄ МОВУ, А НЕ СЛОВО',
+      stops + ' із десяти найчастіших контекстів «' + w + '» — службові слова. По всьому ' +
+      'словнику їх ' + f2(STOP_RAW) + ' %. Такий рядок описує не слово, а українську мову взагалі.');
+  else if(!mode2)
+    verd('v2v','t-mid','ЧАСТОТА ТУТ МʼЯКША',
+      'У «' + w + '» лише ' + stops + ' службових контексти з десяти — це слово рідкісне, і біля ' +
+      'нього службових просто менше. По всьому словнику їх усе одно ' + f2(STOP_RAW) + ' %.');
+  else
+    verd('v2v','t-ok','PMI ЛИШАЄ ЗМІСТ',
+      'Службових у топ-10: ' + stops + '. По всьому словнику PPMI ронить їхню частку з ' +
+      f2(STOP_RAW) + ' % до ' + f2(STOP_PMI) + ' % — і жодного списку стоп-слів для цього не треба. ' +
+      'Перший контекст «' + rows[0][0] + '» за сирою частотою стояв аж на ' + rows[0][2] + '-му місці.');
+}
+
+
+/* ═══════════ фігура 3 · звідки береться косинус ═══════════ */
+
+var pair3 = 0;
+
+function draw3(){
+  var cv = I('c3'), g = dpr(cv), W = LW(cv), H = LH(cv);
+  var p = F3[pair3], rows = p.rows, i;
+  var ink = css('--ink'), soft = css('--soft'), hair = css('--hair');
+  var rose = css('--rose'), teal = css('--teal'), amber = css('--amber');
+
+  capt(g, p.a + '  ·  ' + p.b, 8, 22, ink, 13, true);
+  capt(g, 'косинус ' + f4(p.cos), W - 8, 22, rose, 13, true, 'right');
+  capt(g, 'контекст', 8, 46, soft, 10);
+  capt(g, 'у «' + cut(g, p.a, 90, 10) + '»', 240, 46, soft, 10, false, 'right');
+  capt(g, 'у «' + cut(g, p.b, 90, 10) + '»', 330, 46, soft, 10, false, 'right');
+  capt(g, 'внесок у косинус', W - 8, 46, soft, 10, false, 'right');
+
+  var y0 = 58, rh = 29, bx = 344, bw = 268;
+  var mx = 0;
+  for(i=0;i<rows.length;i++) if(rows[i][3] > mx) mx = rows[i][3];
+  if(mx <= 0) mx = 1;
+
+  for(i=0;i<rows.length;i++){
+    var y = y0 + i*rh;
+    g.font = mono(12, false); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = ink;
+    g.fillText(cut(g, rows[i][0], 210, 12), 8, y + 17);
+    capt(g, f3(rows[i][1]), 240, y + 17, teal, 11, false, 'right');
+    capt(g, f3(rows[i][2]), 330, y + 17, teal, 11, false, 'right');
+    g.fillStyle = rose;
+    g.fillRect(bx, y + 6, Math.max(2, bw * rows[i][3]/mx), 13);
+    capt(g, f4(rows[i][3]), W - 8, y + 17, ink, 11, false, 'right');
+  }
+
+  var ly = y0 + rows.length*rh + 20;
+  capt(g, 'решта ' + (p.shared - rows.length) + ' спільних контекстів дають разом ' +
+       f4(p.cos - p.top10), 8, ly, soft, 11);
+
+  I('v3a').textContent = f4(p.cos);
+  I('v3b').textContent = f4(CTRL_PAIR);
+  I('v3c').textContent = String(p.shared) + ' / ' + thou(VOCAB_N);
+  I('v3d').textContent = f1(100*p.top10/p.cos) + ' %';
+
+  var ratio = p.cos / CTRL_PAIR;
+  if(p.kind === 'антоніми')
+    verd('v3v','t-mid','НАЙВИЩИЙ КОСИНУС — В АНТОНІМІВ',
+      f4(p.cos) + ' — це у ' + f1(ratio) + ' раза більше за контроль ' + f4(CTRL_PAIR) +
+      ' і більше, ніж у будь-якої пари синонімів. Спільних контекстів аж ' + p.shared +
+      ', і жоден не вирішальний: топ-10 дає лише ' + f1(100*p.top10/p.cos) + ' % косинуса. ' +
+      'Оточення схопило роль слова, а не його знак.');
+  else if(p.cos < CTRL_PAIR)
+    verd('v3v','t-no','НИЖЧЕ ЗА ВИПАДКОВІСТЬ',
+      f4(p.cos) + ' проти контрольних ' + f4(CTRL_PAIR) + '. Спільних контекстів у цих двох ' +
+      'лише ' + p.shared + ' із ' + thou(VOCAB_N) + ', і всі дрібні. Саме так і має виглядати ' +
+      'пара слів, які нічого спільного не мають.');
+  else if(p.kind === 'однаковий зміст')
+    verd('v3v','t-ok','ЗМІСТ ВИДНО',
+      f4(p.cos) + ' проти контрольних ' + f4(CTRL_PAIR) + ' — у ' + f1(ratio) + ' раза вище. ' +
+      'Спільних контекстів ' + p.shared + ', і топ-10 дає ' + f1(100*p.top10/p.cos) + ' % ' +
+      'усього косинуса.');
+  else
+    verd('v3v','t-mid','СПІЛЬНИЙ ДОМЕН, РІЗНИЙ ЗМІСТ',
+      f4(p.cos) + ' — удвічі вище за контроль ' + f4(CTRL_PAIR) + ', хоча зміст різний. ' +
+      'Обидва слова живуть у тих самих повідомленнях інтерфейсу, і підрахунок це чесно ' +
+      'відбиває. Ось чому одну пару цитувати не можна, а треба міряти на всіх 38.');
+}
+
+
+/* ═══════════ фігура 4 · вікно міняє сусідів ═══════════ */
+
+var word4 = 0, wi4 = 0;
+
+function draw4(){
+  var cv = I('c4'), g = dpr(cv), W = LW(cv), H = LH(cv);
+  var w = NEIGHW[word4], key = WKEYS[wi4], rows = NEIGH[w][key], base = NEIGH[w]['2'], i, j;
+  var ink = css('--ink'), soft = css('--soft'), hair = css('--hair');
+  var rose = css('--rose'), teal = css('--teal'), amber = css('--amber');
+
+  var inBase = {};
+  for(i=0;i<base.length;i++) inBase[base[i][0]] = 1;
+
+  capt(g, 'найближчі сусіди слова «' + w + '» · вікно ±' + key, 8, 22, ink, 13, true);
+  capt(g, 'та сама частина мови у ' + f2(WSTAT[key].pos) + ' % випадків', W - 8, 22, soft, 11, false, 'right');
+
+  var y0 = 44, rh = 36, bx = 250, bw = 360, nnew = 0;
+  var mx = rows[0][1];
+  for(i=0;i<rows.length;i++){
+    var y = y0 + i*rh, isNew = (wi4 > 0) && !inBase[rows[i][0]];
+    if(isNew) nnew++;
+    g.font = mono(13, false); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = isNew ? amber : ink;
+    g.fillText(cut(g, rows[i][0], 230, 13), 8, y + 20);
+    g.fillStyle = isNew ? amber : rose;
+    g.fillRect(bx, y + 9, Math.max(2, bw * rows[i][1]/mx), 14);
+    capt(g, f3(rows[i][1]), W - 8, y + 20, ink, 11, false, 'right');
+  }
+
+  var ly = y0 + rows.length*rh + 18;
+  if(wi4 > 0){
+    g.fillStyle = amber; g.fillRect(8, ly - 8, 10, 10);
+    capt(g, 'цього сусіда не було в списку при ±2', 24, ly + 1, soft, 11);
+  } else {
+    capt(g, 'це список-еталон: із ним порівнюються ±5 і ±10', 8, ly + 1, soft, 11);
+  }
+
+  I('v4a').textContent = f2(WSTAT[key].pos) + ' %';
+  I('v4b').textContent = f2(WSTAT[key].doc) + ' %';
+  I('v4c').textContent = nnew + ' / ' + rows.length;
+  I('v4d').textContent = f4(WSTAT[key].gap);
+
+  if(wi4 === 0)
+    verd('v4v','t-ok','ВУЗЬКЕ ВІКНО — СИНТАКСИС',
+      'При ±2 сусід має ту саму частину мови у ' + f2(WSTAT['2'].pos) + ' % випадків — найбільше ' +
+      'з трьох. А от в одному документі такі сусіди трапляються лише в ' + f2(WSTAT['2'].doc) +
+      ' % — це слова-замінники, а не слова-супутники. Розрив на 209 парах: ' + f4(WSTAT['2'].gap) + '.');
+  else if(wi4 === 1)
+    verd('v4v','t-mid','СЕРЕДИНА',
+      'При ±5 однакової частини мови вже ' + f2(WSTAT['5'].pos) + ' %, а спільних документів — ' +
+      f2(WSTAT['5'].doc) + ' %. Із ' + rows.length + ' показаних сусідів ' + nnew + ' нових проти ±2 (по всьому словнику ' +
+      'збігається ' + f2(100*OVERLAP['2-5']) + ' %). Розрив на парах — ' + f4(WSTAT['5'].gap) +
+      ', тобто той самий.');
+  else
+    verd('v4v','t-no','ШИРОКЕ ВІКНО — ТЕМА',
+      'При ±10 частина мови збігається лише у ' + f2(WSTAT['10'].pos) + ' %, зате в одному ' +
+      'документі сусіди трапляються у ' + f2(WSTAT['10'].doc) + ' % — це вже не замінники, а ' +
+      'супутники. По всьому словнику з ±2 збігається лише ' + f2(100*OVERLAP['2-10']) + ' % ' +
+      'сусідів. А розрив на парах — ' + f4(WSTAT['10'].gap) + ' проти ' + f4(WSTAT['2'].gap) +
+      ' при ±2: вікно змінило кого, а не наскільки.');
+}
+
+
+/* ═══════════ фігура 5 · вікно, яке не заповнюється ═══════════ */
+
+var w5 = 5;
+
+function draw5(){
+  var cv = I('c5'), g = dpr(cv), W = LW(cv), H = LH(cv);
+  var ink = css('--ink'), soft = css('--soft'), hair = css('--hair');
+  var rose = css('--rose'), teal = css('--teal'), amber = css('--amber'), paper = css('--paper');
+  var rec = FILL[String(w5)], i, k;
+
+  /* ── гістограма довжин документів ── */
+  capt(g, 'скільки документів має таку довжину (після викидання рідкісних слів)', 8, 18, soft, 11);
+  var hx = 40, hy = 34, hw = W - 60, hh = 120, nb = 26;
+  var mx = 0;
+  for(i=0;i<nb;i++){ var v = LENH[String(i)] || 0; if(v > mx) mx = v; }
+  var bw = hw/nb;
+  for(i=0;i<nb;i++){
+    var v = LENH[String(i)] || 0, hgt = hh * v/mx;
+    var covered = (i > 2*w5);          /* документ довший за повне вікно */
+    g.fillStyle = covered ? teal : rose;
+    g.globalAlpha = covered ? 0.85 : 0.35;
+    g.fillRect(hx + i*bw + 1, hy + hh - hgt, bw - 2, hgt);
+    g.globalAlpha = 1;
+  }
+  g.strokeStyle = hair; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(hx, hy + hh + 0.5); g.lineTo(hx + hw, hy + hh + 0.5); g.stroke();
+  for(i=0;i<nb;i+=5) capt(g, String(i), hx + i*bw + bw/2, hy + hh + 15, soft, 10, false, 'center');
+  capt(g, '25+', hx + 25*bw + bw/2, hy + hh + 15, soft, 10, false, 'center');
+  capt(g, 'слів у документі', hx + hw, hy + hh + 30, soft, 10, false, 'right');
+
+  var cutx = hx + (2*w5 + 1)*bw;
+  if(cutx < hx + hw){
+    g.strokeStyle = amber; g.lineWidth = 2; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(cutx, hy - 4); g.lineTo(cutx, hy + hh); g.stroke();
+    g.setLineDash([]);
+    capt(g, 'документ на ' + (2*w5+1) + ' слів', cutx + 6, hy + 8, amber, 10);
+    capt(g, 'коротші — рожеві', cutx + 6, hy + 22, amber, 10);
+  }
+
+  /* ── справжній документ медіанної довжини з накладеним вікном ── */
+  var sy = hy + hh + 52;
+  capt(g, 'справжній документ корпусу (6 слів) і вікно ±' + w5 + ' навколо третього слова:',
+       8, sy, soft, 11);
+  var tx = 8, ty = sy + 14, cw = 92, ch = 30, center = 2;
+  var lo = center - w5, hi = center + w5;
+  /* показуємо весь документ плюс те, що вікно вимагає, а документ дати не може */
+  var firstDrawn = Math.min(0, Math.max(lo, -3));
+  var lastDrawn  = Math.max(SAMPLE.length - 1, Math.min(hi, SAMPLE.length + 2));
+  var total = lastDrawn - firstDrawn + 1;
+  var cwv = Math.min(cw, Math.floor((W - 16) / total));
+  clip(g, 0, ty - 2, W, ch + 8);
+  for(k=firstDrawn;k<=lastDrawn;k++){
+    var x = tx + (k - firstDrawn)*cwv;
+    var inside = (k >= 0 && k < SAMPLE.length), inWin = (k >= lo && k <= hi);
+    if(inside){
+      if(k === center){ g.fillStyle = rose; g.globalAlpha = 1; }
+      else if(inWin){ g.fillStyle = teal; g.globalAlpha = 0.24; }
+      else { g.fillStyle = hair; g.globalAlpha = 0.5; }
+      g.fillRect(x + 1, ty, cwv - 3, ch); g.globalAlpha = 1;
+      g.font = mono(11, k === center); g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillStyle = (k === center) ? css('--raise') : (inWin ? ink : soft);
+      g.fillText(cut(g, SAMPLE[k], cwv - 8, 11, k === center), x + cwv/2, ty + ch/2);
+    } else {
+      g.strokeStyle = amber; g.lineWidth = 1; g.setLineDash([3,3]);
+      g.strokeRect(x + 1.5, ty + 0.5, cwv - 4, ch - 1); g.setLineDash([]);
+      capt(g, '—', x + cwv/2, ty + ch/2 + 4, amber, 11, false, 'center');
+    }
+  }
+  g.restore();
+  var have = Math.min(SAMPLE.length - 1, hi) - Math.max(0, lo);
+  capt(g, 'сусідів у цьому вікні: ' + have + ' із ' + (2*w5) + ' можливих', 8, ty + ch + 20, ink, 11, true);
+
+  I('v5a').textContent = f2(rec.share) + ' %';
+  I('v5b').textContent = f4(rec.per);
+  I('v5c').textContent = thou(rec.pairs);
+  I('v5d').textContent = f1(100*rec.per/(2*w5)) + ' %';
+
+  if(rec.share > 50)
+    verd('v5v','t-ok','ВІКНО ЗДЕБІЛЬШОГО ПОВНЕ',
+      'При ±' + w5 + ' повне вікно має ' + f2(rec.share) + ' % позицій, а сусідів на позицію — ' +
+      f4(rec.per) + ' із ' + (2*w5) + ' можливих. Поки вікно вузьке, корпус його витримує — але ' +
+      'контекстом тут вважається лише найближчий сусід.');
+  else if(rec.share > 15)
+    verd('v5v','t-mid','ПОЧИНАЄ НЕ ВМІЩАТИСЬ',
+      'При ±' + w5 + ' повне вікно лишається тільки в ' + f2(rec.share) + ' % позицій. Сусідів на ' +
+      'позицію — ' + f4(rec.per) + ' замість ' + (2*w5) + ', тобто ' + f1(100*rec.per/(2*w5)) + ' % ' +
+      'номінальної ширини.');
+  else
+    verd('v5v','t-no','ВІКНО ВПИРАЄТЬСЯ В КРАЙ',
+      'При ±' + w5 + ' повне вікно має лише ' + f2(rec.share) + ' % позицій, а сусідів на позицію — ' +
+      f4(rec.per) + ' із ' + (2*w5) + ' (' + f1(100*rec.per/(2*w5)) + ' %). Розширювати вікно далі ' +
+      'майже нічого не дає: пар ' + thou(rec.pairs) + ', і ростуть вони дедалі повільніше.');
+}
+
+
+/* ═══════════ фігура 6 · скільки вимірів брати ═══════════ */
+
+var ki6 = 4;
+
+function draw6(){
+  var cv = I('c6'), g = dpr(cv), W = LW(cv), H = LH(cv);
+  var ink = css('--ink'), soft = css('--soft'), hair = css('--hair');
+  var rose = css('--rose'), teal = css('--teal'), amber = css('--amber');
+  var i, n = KC.length;
+  var x0 = 62, x1 = W - 22, y0 = 34, y1 = H - 62;
+  function X(i){ return x0 + (x1 - x0) * i/(n-1); }
+  function Y(v){ return y1 - (y1 - y0) * v; }
+
+  /* сітка */
+  g.strokeStyle = hair; g.lineWidth = 1;
+  for(i=0;i<=5;i++){
+    var yv = i/5, y = Y(yv);
+    g.beginPath(); g.moveTo(x0, y+0.5); g.lineTo(x1, y+0.5); g.stroke();
+    capt(g, f1(yv), x0 - 8, y + 4, soft, 10, false, 'right');
+  }
+  for(i=0;i<n;i++) capt(g, String(KC[i][0]), X(i), y1 + 18, soft, 10, false, 'center');
+  capt(g, 'вимірів k', x1, y1 + 34, soft, 10, false, 'right');
+  capt(g, 'середній косинус', x0 - 8, y0 - 12, soft, 10, false, 'right');
+
+  /* смуга розриву */
+  g.beginPath();
+  for(i=0;i<n;i++) g.lineTo(X(i), Y(KC[i][1]));
+  for(i=n-1;i>=0;i--) g.lineTo(X(i), Y(KC[i][2]));
+  g.closePath();
+  g.fillStyle = amber; g.globalAlpha = 0.16; g.fill(); g.globalAlpha = 1;
+
+  function curve(idx, color){
+    g.strokeStyle = color; g.lineWidth = 2.5; g.beginPath();
+    for(i=0;i<n;i++){ if(i===0) g.moveTo(X(i), Y(KC[i][idx])); else g.lineTo(X(i), Y(KC[i][idx])); }
+    g.stroke();
+    for(i=0;i<n;i++){
+      g.fillStyle = color; g.beginPath(); g.arc(X(i), Y(KC[i][idx]), 3.5, 0, 6.284); g.fill();
+    }
+  }
+  curve(1, rose);
+  curve(2, teal);
+
+  /* обрана точка */
+  var xs = X(ki6);
+  g.strokeStyle = ink; g.lineWidth = 1; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(xs, y0 - 6); g.lineTo(xs, y1); g.stroke(); g.setLineDash([]);
+  g.strokeStyle = ink; g.lineWidth = 2;
+  g.beginPath(); g.arc(xs, Y(KC[ki6][1]), 6, 0, 6.284); g.stroke();
+  g.beginPath(); g.arc(xs, Y(KC[ki6][2]), 6, 0, 6.284); g.stroke();
+
+  capt(g, 'пари однакового змісту', X(0) + 6, Y(KC[0][1]) - 12, rose, 11, true);
+  capt(g, 'випадкові пари', X(0) + 6, Y(KC[0][2]) + 20, teal, 11, true);
+  capt(g, 'розрив', xs + 8, (Y(KC[ki6][1]) + Y(KC[ki6][2]))/2 + 4, amber, 11, true);
+
+  /* межа TF-IDF */
+  var best = 0;
+  for(i=0;i<n;i++) if(KC[i][3] > KC[best][3]) best = i;
+
+  I('v6a').textContent = f4(KC[ki6][1]);
+  I('v6b').textContent = f4(KC[ki6][2]);
+  I('v6c').textContent = f4(KC[ki6][3]);
+  I('v6d').textContent = '×' + f2(KC[ki6][3]/TFIDF_GAP);
+
+  var near = (ki6 !== best) &&
+             (Math.abs(KC[best][3] - KC[ki6][3]) < KC[best][4] + KC[ki6][4]);
+  if(ki6 === best)
+    verd('v6v','t-ok','ОПТИМУМ',
+      'k = ' + KC[ki6][0] + ' дає найбільший розрив в усій сітці: ' + f4(KC[ki6][3]) +
+      ' ±' + f4(KC[ki6][4]) + ', тобто у ' + f2(KC[ki6][3]/TFIDF_GAP) + ' раза більше за TF-IDF (' +
+      f4(TFIDF_GAP) + '). Синоніми при цьому мають лише ' + f4(KC[ki6][1]) + ' — і це нормально: ' +
+      'важить не косинус, а відстань до випадковості.');
+  else if(near)
+    verd('v6v','t-ok','НЕ ГІРШЕ ЗА ОПТИМУМ',
+      'k = ' + KC[ki6][0] + ' дає ' + f4(KC[ki6][3]) + ' ±' + f4(KC[ki6][4]) + ' проти ' +
+      f4(KC[best][3]) + ' ±' + f4(KC[best][4]) + ' при k = ' + KC[best][0] + '. Різниця ' +
+      f4(KC[best][3] - KC[ki6][3]) + ' менша за суму розкидів, тож ці дві точки нерозрізненні. ' +
+      'Саме k = ' + KC[ki6][0] + ' ми й беремо за основне: стільки ж вимірів має skip-gram теми 12.');
+  else if(KC[ki6][0] < KC[best][0])
+    verd('v6v','t-mid','ЗАМАЛО ВИМІРІВ',
+      'k = ' + KC[ki6][0] + ': синоніми ' + f4(KC[ki6][1]) + ', але й випадкові пари ' +
+      f4(KC[ki6][2]) + ', тож розрив лише ' + f4(KC[ki6][3]) + '. Перші виміри описують ' +
+      'здебільшого частотність слова, тому всі вектори дивляться в один бік. Оптимум — k = ' +
+      KC[best][0] + ' із розривом ' + f4(KC[best][3]) + '.');
+  else
+    verd('v6v','t-mid','ЗАБАГАТО ВИМІРІВ',
+      'k = ' + KC[ki6][0] + ': розрив ' + f4(KC[ki6][3]) + ' проти ' + f4(KC[best][3]) +
+      ' в оптимумі (k = ' + KC[best][0] + '). Зайві виміри повертають у вектори випадкові ' +
+      'збіги окремих клітинок — стиснення перестає узагальнювати.');
+}
+
+
+/* ═══════════ фігура 7 · дві купи й відстань між ними ═══════════ */
+
+var meth7 = 0;
+
+function draw7(){
+  var cv = I('c7'), g = dpr(cv), W = LW(cv), H = LH(cv);
+  var ink = css('--ink'), soft = css('--soft'), hair = css('--hair');
+  var rose = css('--rose'), teal = css('--teal'), amber = css('--amber');
+  var name = METH[meth7][0], m = METH[meth7][1], i;
+  var x0 = 46, x1 = W - 20, y0 = 62, y1 = H - 56;
+  function X(v){ return x0 + (x1 - x0) * (v - HB0)/(HB1 - HB0); }
+  function BX(i){ return X(HB0 + (HB1 - HB0) * i/HBN); }
+
+  var mx = 0;
+  for(i=0;i<HBN;i++){ if(m.hs[i] > mx) mx = m.hs[i]; if(m.hr[i] > mx) mx = m.hr[i]; }
+  if(mx <= 0) mx = 1;
+  function Y(c){ return y1 - (y1 - y0) * c/mx; }
+
+  g.strokeStyle = hair; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(x0, y1 + 0.5); g.lineTo(x1, y1 + 0.5); g.stroke();
+  for(i=0;i<=6;i++){
+    var v = HB0 + (HB1 - HB0)*i/6;
+    capt(g, f1(v), X(v), y1 + 18, soft, 10, false, 'center');
+  }
+  capt(g, 'косинус пари', x1, y1 + 34, soft, 10, false, 'right');
+  capt(g, 'скільки пар', x0, y0 - 30, soft, 10);
+
+  function area(h, color){
+    g.beginPath(); g.moveTo(BX(0), y1);
+    for(i=0;i<HBN;i++){ g.lineTo(BX(i), Y(h[i])); g.lineTo(BX(i+1), Y(h[i])); }
+    g.lineTo(BX(HBN), y1); g.closePath();
+    g.fillStyle = color; g.globalAlpha = 0.4; g.fill(); g.globalAlpha = 1;
+    g.strokeStyle = color; g.lineWidth = 2; g.stroke();
+  }
+  area(m.hr, teal);
+  area(m.hs, rose);
+
+  function meanLine(v, color, label, up){
+    var x = X(v);
+    g.strokeStyle = color; g.lineWidth = 2; g.setLineDash([5,3]);
+    g.beginPath(); g.moveTo(x, y0 - 8); g.lineTo(x, y1); g.stroke(); g.setLineDash([]);
+    capt(g, label + ' ' + f4(v), x + (up ? 6 : -6), y0 - (up ? 14 : 0), color, 11, true, up ? 'left' : 'right');
+  }
+  /* смуга розриву */
+  var xa = X(m.rnd), xb = X(m.syn);
+  g.fillStyle = amber; g.globalAlpha = 0.18;
+  g.fillRect(Math.min(xa,xb), y0 - 6, Math.abs(xb - xa), y1 - y0 + 6);
+  g.globalAlpha = 1;
+  meanLine(m.rnd, teal, 'випадкові', false);
+  meanLine(m.syn, rose, 'однаковий зміст', true);
+
+  capt(g, name, 8, 22, ink, 13, true);
+  capt(g, 'розрив ' + f4(m.gap), W - 8, 22, amber, 13, true, 'right');
+  capt(g, '627 пар у кожній купі (209 × три зерна)', 8, 40, soft, 11);
+
+  I('v7a').textContent = f4(m.syn);
+  I('v7b').textContent = f4(m.rnd);
+  I('v7c').textContent = f4(m.gap);
+  I('v7d').textContent = '×' + f2(m.gap/TFIDF_GAP);
+
+  if(meth7 === 0)
+    verd('v7v','t-no','ТОЧКА ВІДЛІКУ',
+      'TF-IDF: ' + f4(m.syn) + ' проти ' + f4(m.rnd) + ', розрив ' + f4(m.gap) + '. Найвищий ' +
+      'стовпчик теплої купи стоїть на самому нулі — ' + f1(100*m.zeros) + ' % пар однакового ' +
+      'змісту не мають жодного спільного слова, тож косинус у них рівно нуль.');
+  else if(m.gap < TFIDF_GAP)
+    verd('v7v','t-no','ГІРШЕ ЗА TF-IDF',
+      'Сира частота: синоніми ' + f4(m.syn) + ' — найвище число в усій таблиці. І воно нічого ' +
+      'не варте, бо випадкові пари дають ' + f4(m.rnd) + '. Купи майже накладаються, розрив ' +
+      f4(m.gap) + ' — удвічі менший за TF-IDF (' + f4(TFIDF_GAP) + ').');
+  else if(m.gap < 1.3*TFIDF_GAP)
+    verd('v7v','t-mid','ТРОХИ КРАЩЕ',
+      'PPMI повними рядками: розрив ' + f4(m.gap) + ' проти ' + f4(TFIDF_GAP) + ' у TF-IDF. ' +
+      'Приріст ' + f4(m.gap - TFIDF_GAP) + ' — є, але замалий. Рядок із 6074 колонок надто ' +
+      'дрібний: два синоніми часто не мають спільних клітинок узагалі.');
+  else
+    verd('v7v','t-ok','СТІНУ ПРОБИТО',
+      name + ': розрив ' + f4(m.gap) + ' — у ' + f2(m.gap/TFIDF_GAP) + ' раза більше за TF-IDF. ' +
+      'Купи розʼїхались: холодна сповзла до ' + f4(m.rnd) + ', тепла лишилась на ' + f4(m.syn) +
+      '. Навчені ембединги теми 12 дають ' + f4(SGNS_GAP) + ', тобто підрахунок без жодного ' +
+      'навчання бере ' + f1(100*m.gap/SGNS_GAP) + ' % їхнього результату.');
+}
+
+
+/* ═══════════ керування ═══════════ */
+
+segment('seg1', function(i){ mode1 = i; draw1(); });
+on('w1','input', function(){ w1 = +I('w1').value; I('w1o').textContent = w1; draw1(); });
+segment('seg2a', function(i){ word2 = i; draw2(); });
+segment('seg2b', function(i){ mode2 = i; draw2(); });
+segment('seg3', function(i){ pair3 = i; draw3(); });
+segment('seg4a', function(i){ word4 = i; draw4(); });
+on('w4','input', function(){ wi4 = +I('w4').value; I('w4o').textContent = WKEYS[wi4]; draw4(); });
+on('w5','input', function(){ w5 = +I('w5').value; I('w5o').textContent = w5; draw5(); });
+on('k6','input', function(){ ki6 = +I('k6').value; I('k6o').textContent = KC[ki6][0]; draw6(); });
+segment('seg7', function(i){ meth7 = i; draw7(); });
+
+function drawAll(){ draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7(); }
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+})();
+</script>
+
+</body>
+</html>

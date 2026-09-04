@@ -1,0 +1,1873 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TF-IDF</title>
+<meta name="description" content="Мішок слів рахує, але всі слова в ньому рівні: «не» є в 5711 документах із 20 000 і важить стільки ж, скільки слово, ужите раз. TF-IDF робить слова нерівними. Заміряно на 93 392 українських перекладах інтерфейсів, три зерна: у 90.9 % документів частота взагалі не має думки, а там, де має, IDF перекриває її у 82.8 %. Без логарифма схема зривається — одне слово забирає 0.6147 ваги документа замість 0.2594, а розмах ваг росте з 4.5 до 5711 разів. Без L2 пошук піднімає документи в сім-девʼять разів довші за середні. У пошуку TF-IDF дає 0.7944 MRR проти 0.5732 на реалістичному запиті й виграш усередині розкиду на випадковому. І ламається тричі: два переклади того самого рядка мають косинус 0.2230, а 22.0 % із них — рівно нуль; у документі на три слова одне слово несе 0.7331 довжини вектора; слово «контур» дістає від чужого корпусу вагу 10.9035 замість своїх 4.6284.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .plain td:first-child,
+td:first-child, code, pre, kbd, samp, .mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* три рівні документів у фігурі 7 */
+.seg.three button{flex:1 1 30%}
+</style>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 1 · Тема 05</p>
+    <h1>TF-IDF</h1>
+    <p class="stand">Мішок слів із теми 04 уміє рахувати, але всі слова в ньому рівні:
+      «не» важить стільки ж, скільки «самоперетинах». Ця тема робить слова нерівними —
+      і показує, що <b>очевидний спосіб це зробити ламає все</b>, а правильний
+      виграє рівно там, де в запиті поруч стоять часте й рідкісне слово, — і
+      лишається безсилим проти синонімів.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Мішок рахує, але не зважує</a></li>
+        <li><a href="#s2">Наскільки це взагалі щось міняє</a></li>
+        <li><a href="#s3">Дві половини однієї ваги</a></li>
+        <li><a href="#s4">Чому логарифм, а не N/df</a></li>
+        <li><a href="#s5">Згладжування — не лише про нуль</a></li>
+        <li><a href="#s6">Нормалізація й довжина документа</a></li>
+        <li><a href="#s7">Що каже слово «вдалося»</a></li>
+        <li><a href="#s8">Пошук: де різниця видима</a></li>
+        <li><a href="#s9">Синоніми: те саме іншими словами</a></li>
+        <li><a href="#s10">Дуже короткі документи</a></li>
+        <li><a href="#s11">Рідкісне в корпусі й у мові</a></li>
+        <li><a href="#s12">Що з цим роблять далі</a></li>
+        <li><a href="#s13">Підсумок блоку 1</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../04-bag-of-words/lecture.html">← 04. Мішок слів</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../06-text-classification/lecture.html">06. Класифікація текстів →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У попередній темі ми навчились перетворювати текст на числа. Мішок
+слів рахує, скільки разів кожне слово трапилось у документі, — і на цьому зупиняється.
+Матриця вийшла величезна й порожня: <a href="../04-bag-of-words/lecture.html">тема
+04</a> заміряла, що заповнено в ній лише соті частки відсотка клітинок. Але головна
+проблема не в розмірі.</p>
+
+<p>Проблема в тому, що всі слова в цій матриці <b>рівні</b>. Слово «не», яке є майже
+в кожному третьому документі нашого корпусу, важить рівно стільки ж, скільки слово
+«самоперетинах», яке трапилось один-єдиний раз. Для пошуку, для класифікації, для
+будь-чого — це погано. Ця тема про те, як зробити слова нерівними, і найголовніше —
+як зробити це <b>правильно</b>, бо очевидний спосіб ламає все.</p>
+
+<h2 id="s1"><span class="num">01 / Розрив</span>Мішок рахує, але не зважує</h2>
+
+<p>Візьмімо наш корпус — українські переклади інтерфейсів, той самий, на якому
+працював увесь блок. Це <b>93 392</b> документи з 266 програм: короткі речення на
+кшталт «Не вдалося відкрити файл» або «Показати статистичні дані з цього процесора».
+Далі ми всюди беремо з них випадкові <b>20 000</b> — і робимо це тричі, з зернами
+0, 1 і 2, щоб бачити не лише число, а й розкид навколо нього.</p>
+
+<p>У такій вибірці 14 244 різні слова, і мішок слів дає матрицю 20 000 на 14 244,
+заповнену на <b>0.0487 %</b>.</p>
+
+<p>Найпростіша задача, на якій усе видно, — пошук. Читач пише запит, ми шукаємо
+найсхожіший документ. Схожість двох документів — це скалярний добуток їхніх рядків:
+перемножили відповідні клітинки й додали. Слово, якого немає в одному з них, дає
+нуль; спільне слово дає добуток частот.</p>
+
+<div class="note warn"><b>Що з цим не так.</b> У запиті «не вдалося відкрити файл»
+чотири слова. Слово «не» є в <b>5711</b> із 20 000 документів, слово «відкрити» — у
+кількох сотнях. Скалярний добуток порахує їх однаково, тобто відповідь визначатиме
+переважно те слово, яке нічого не означає. Це не дрібниця: службові слова в будь-якій
+мові — найчастіші, тож у мішку слів <b>більшість ваги завжди лежить на словах без
+змісту</b>.</div>
+
+<p>Класичне лікування — викинути стоп-слова: скласти список службових слів і
+не пускати їх у матрицю. Воно має дві вади. Список треба звідкись узяти, а для
+української готового доброго немає. І рішення двійкове: слово або є, або його немає.
+А «файл» — воно часте чи рідкісне? У корпусі про програми — часте, у корпусі про
+кулінарію — рідкісне.</p>
+
+<p>TF-IDF розвʼязує це інакше: замість викидати, вона <b>зважує</b>. Кожне слово
+дістає число, тим більше, чим у меншій кількості документів воно трапляється, — і
+список складати не треба, ваги рахуються з самого корпусу.</p>
+
+<h2 id="s2"><span class="num">02 / Замір</span>Наскільки це взагалі щось міняє</h2>
+
+<p>Перш ніж розбирати формулу, варто перевірити, чи вона змінює бодай щось. Замір
+простий: візьмемо документ і спитаємо, яке слово в ньому головне. Дві відповіді —
+за самою частотою і за TF-IDF. Чи це те саме слово?</p>
+
+<p>Порахуємо в лоб: беремо найчастіше слово документа, беремо слово з найбільшою
+вагою TF-IDF і дивимось, чи вони збіглись. Зошит каже: збіглись у <b>18.6 %</b>
+документів. Тобто в чотирьох пʼятих документів вага нібито міняє відповідь. Число
+ефектне, і його дуже хочеться поставити в заголовок.</p>
+
+<div class="note warn"><b>Не став. Це число майже нічого не міряє.</b> Наші документи
+короткі: у медіанному документі <b>шість</b> слів, і в переважній більшості з них усі
+слова трапляються рівно по разу. У такому документі «найчастішого слова» просто не
+існує — є нічия. <code>argmax</code> нічию не помічає й мовчки повертає перше слово
+за абеткою. Тобто в чотирьох пʼятих випадків ми порівнювали вибір IDF не з думкою
+частоти, а з <b>алфавітним порядком</b>.</div>
+
+<p>Тому рахуємо інакше — чесно й окремо: у скількох документах у частоти взагалі є
+улюбленець, і в скількох із <b>цих</b> документів IDF його перекриває. Зошит дає:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>зерно</th><th>частота мовчить</th><th>де говорить</th><th>IDF перекриває</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>90.9 %</td><td>1 815 док.</td><td>82.8 %</td></tr>
+    <tr><td>1</td><td>91.2 %</td><td>1 760 док.</td><td>82.4 %</td></tr>
+    <tr><td>2</td><td>90.8 %</td><td>1 831 док.</td><td>82.9 %</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Два числа кажуть різне про одне й те саме. <b>Перше:</b> у 91 із кожних 100
+документів частота не дає жодної підказки, і головне слово обирає сама IDF.
+<b>Друге:</b> у решті документів, де частота має улюбленця, IDF відбирає в нього
+перше місце більш ніж у чотирьох випадках із пʼяти.</p>
+
+<p>Разом це означає: на коротких текстах TF-IDF фактично <b>і є</b> IDF. Множник на
+частоту там майже нічого не робить, бо частота всюди одиниця. Тримай це в голові —
+воно ще стрельне у двох місцях.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Яке слово в документі головне</p>
+  <p class="fig-sub">126 справжніх документів нашого корпусу зі справжніми
+    <code>df</code>, узятими з тих самих 20 000. Ліворуч — сира частота, праворуч —
+    вага TF-IDF. Перші шість документів дібрані спеціально: у них слово повторюється,
+    тож частоті є що сказати.</p>
+  <div class="panel">
+    <div><canvas id="cWeight" width="940" height="300" aria-label="Слова документа зі стовпчиками частоти та ваги TF-IDF і документною частотою кожного слова"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="doc1">документ <output id="doc1Out">1 / 126</output></label>
+        <input type="range" id="doc1" min="0" max="125" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>слововживань</b><i id="w1">—</i></div>
+        <div class="cellv"><b>головне за частотою</b><i id="w2" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>головне за TF-IDF</b><i id="w3" class="sm">—</i></div>
+        <div class="cellv"><b>його df</b><i id="w4">—</i></div>
+      </div>
+      <div class="verdict" id="wVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Потягни повзунок за шосту позицію</b> — і далі майже всюди буде
+    «частота мовчить». Це не вада добірки, а властивість корпусу: у документі із
+    семи слів усі сім різні. У мінікорпусі фігури частота мовчить у <b>118</b>
+    документах зі 126, а у восьми решти IDF перекриває її вибір.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Формула</span>Дві половини однієї ваги</h2>
+
+<p>Назва TF-IDF — це склеєні дві абревіатури, і за кожною стоїть окрема думка.
+Розберімо їх поодинці.</p>
+
+<h3>TF — частота терміна</h3>
+
+<p>Перша половина каже: <b>що частіше слово в документі, то воно для документа
+важливіше</b>. Якщо в тексті пʼять разів написано «принтер», текст, найпевніше, про
+принтер.</p>
+
+<div class="eq">tf(<span class="raw">w</span>, <span class="raw">d</span>) = скільки разів слово <span class="raw">w</span> трапилось у документі <span class="raw">d</span></div>
+
+<p>Це буквально клітинка мішка слів із теми 04. <code>sklearn</code> за
+замовчуванням бере сиру частоту, а довжину документа вирівнює пізніше й інакше
+(розділ 06).</p>
+
+<h3>IDF — обернена документна частота</h3>
+
+<p>Друга половина каже протилежне про <b>колекцію</b>: слово, яке є всюди, нічого
+не розрізняє. Спершу треба одне допоміжне число.</p>
+
+<div class="eq">df(<span class="raw">w</span>) = у скількох документах колекції слово <span class="raw">w</span> трапилось хоч раз</div>
+
+<p>Зверни увагу: <code>df</code> рахує <b>документи</b>, а не вживання. Слово,
+ужите двадцять разів в одному документі й ніде більше, має <code>df</code> = 1:
+нас цікавить, наскільки слово <b>поширене</b>, а не наскільки воно балакуче.</p>
+
+<p>Тепер сама вага. Чим менше <code>df</code>, тим вона більша. Найпростіший запис
+цієї ідеї — поділити:</p>
+
+<div class="eq"><span class="raw">N</span> / df(<span class="raw">w</span>)&nbsp;&nbsp;&nbsp;&nbsp;<span style="opacity:.6">де <span class="raw">N</span> — скільки всього документів у колекції</span></div>
+
+<p>Слово, що є в усіх документах, дістає одиницю; слово з одного документа дістає
+<span class="raw">N</span>. Виглядає розумно — і саме цей запис усе ламає (наступний
+розділ покаже, як саме). Формула, яка працює, така:
+
+<div class="eq">idf(<span class="raw">w</span>) = ln( (1 + <span class="raw">N</span>) / (1 + df(<span class="raw">w</span>)) ) + 1</div>
+
+<p>Розберімо її по шматках, бо кожен тут не випадковий.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">частка</span>
+    <p><span class="raw">N</span> / df — у скільки разів слово рідкісніше за те, що
+    є скрізь. Для «не» це 20 000 / 5 711 ≈ 3.5.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">логарифм</span>
+    <p><code>ln</code> — натуральний логарифм, тобто «у якому степені треба піднести
+    число <span class="raw">e</span> ≈ 2.718, щоб отримати те, що всередині». Єдине,
+    що потрібно про нього знати тут: він <b>перетворює множення на додавання</b>.
+    Слово, вдесятеро рідкісніше, стає не вдесятеро важливішим, а на однакову добавку
+    важливішим — приблизно на 2.3.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">одиниці всередині</span>
+    <p>Плюс один зверху й знизу — <b>згладжування</b>. Воно рятує від ділення на нуль
+    і трохи підрізає верх. Окремий розділ 05 про те, чому ділення на нуль тут
+    трапляється частіше, ніж здається.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">одиниця зовні</span>
+    <p>Останній плюс один — щоб вага не впала в нуль. Без нього слово, яке є в усіх
+    документах, дістало б <code>ln(1) = 0</code> і зникло б із матриці зовсім, наче
+    його ніколи не було.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">разом</span>
+    <p>tf-idf(<span class="raw">w</span>, <span class="raw">d</span>) = tf × idf.
+    Часте <b>в цьому документі</b> й рідкісне <b>в усій колекції</b> слово дістає
+    багато. Часте скрізь — мало. Рідкісне скрізь, але й тут одне — середньо.</p>
+  </div>
+</div>
+
+<p>Порахуймо руками на нашому корпусі, <span class="raw">N</span> = 20 000.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>слово</th><th>df</th><th><span class="raw">N</span>/df</th><th>ln(…)</th><th>idf</th></tr></thead>
+  <tbody>
+    <tr><td>не</td><td>5711</td><td>3.5</td><td>1.25</td><td>2.25</td></tr>
+    <tr><td>для</td><td>3158</td><td>6.3</td><td>1.85</td><td>2.85</td></tr>
+    <tr><td>файл</td><td>673</td><td>29.7</td><td>3.39</td><td>4.39</td></tr>
+    <tr><td>сервер</td><td>77</td><td>259.7</td><td>5.55</td><td>6.55</td></tr>
+    <tr class="hot"><td>самоперетинах</td><td>1</td><td>20000.0</td><td>9.21</td><td>10.21</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ось увесь діапазон ваг нашого корпусу: від <b>2.25</b> до <b>10.21</b>. Верхнє
+число — стеля: його дістають усі слова з одного документа, а таких у словнику
+<b>45.5 %</b>. Майже половина словника має однакову максимальну вагу й нічим
+між собою не відрізняється.</p>
+
+<div class="note"><b>Різниця всього в 4.5 раза — це багато чи мало?</b> Це саме
+стільки, скільки треба. Нижче ми заміряємо схему, у якої розмах у пʼять тисяч разів,
+і побачимо, що вона гірша. «Більше різниці» тут не означає «краще».</div>
+<h2 id="s4"><span class="num">04 / Виведення</span>Чому логарифм, а не просто <span class="raw">N</span>/df</h2>
+
+<p>Повернімось до простої формули <span class="raw">N</span>/df. Вона виражає ту саму
+думку — «рідкісне цінніше» — і не вимагає жодних логарифмів. Заміряймо, що з нею не так.</p>
+
+<p>Мірятимемо так. У кожному документі порахуємо, <b>яку частку всієї ваги документа
+забирає його найважче слово</b>. Якщо схема справедлива, вага розподілена між словами;
+якщо схема зривається — одне слово забирає майже все, а решта тексту перестає впливати
+на будь-що.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>схема ваги</th><th>частка головного слова</th><th>розкид по зернах</th><th>розмах ваг словника</th></tr></thead>
+  <tbody>
+    <tr><td>без IDF</td><td>0.1990</td><td>0.0014</td><td>1.0×</td></tr>
+    <tr class="hot"><td>ln(N/df) + 1</td><td>0.2594</td><td>0.0012</td><td>4.5×</td></tr>
+    <tr><td>√(N/df)</td><td>0.4374</td><td>0.0021</td><td>75.6×</td></tr>
+    <tr><td>N/df</td><td>0.6147</td><td>0.0030</td><td>5711×</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ось число, заради якого все це рахувалось. Без ваги одне слово забирає <b>20 %</b>
+ваги документа — це просто «один зі скількох там слів». Логарифм піднімає цю частку
+до <b>26 %</b>: рідкісне слово стало помітно важливішим, але решта документа далі має
+голос. А лінійна <span class="raw">N</span>/df піднімає її до <b>61 %</b> —
+тобто документ фактично перетворюється на <b>одне слово</b>, найрідкісніше.</p>
+
+<p>Розкид по трьох зернах — третій знак після коми. Різниця між схемами — у першому.
+Тобто це справжня різниця, а не шум вибірки.</p>
+
+<p>Чому так виходить, видно з останньої колонки. У логарифмічної схеми найдорожче
+слово важить у <b>4.5</b> раза більше за найдешевше. У лінійної — у <b>5711</b> разів.
+Коли одне слово важить у тисячі разів більше за сусіда, ніякого «зважування» вже немає:
+є вибір одного слова й викидання решти.</p>
+
+<div class="note"><b>Що саме робить логарифм — одним реченням.</b> Він перетворює
+<b>множення на додавання</b>: слово, вдесятеро рідкісніше за сусіда, стає не вдесятеро
+важливішим, а важливішим на сталу добавку. Саме так ми й уявляємо «цінність» —
+як щось, що додається, а не множиться. Корінь у таблиці робить те саме, але вдвічі
+слабше: розмах падає з 5711 до 75.6, і частка головного слова — з 61 до 44 %.
+Логарифм — це просто найдальша точка того самого руху.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Чотири способи перетворити рідкісність на вагу</p>
+  <p class="fig-sub">Ліворуч — крива «вага від <code>df</code>» у логарифмічній
+    шкалі. Праворуч — як вага обраного документа ділиться між його словами. Табло
+    рахує середню частку по всіх 126 документах мінікорпусу, тому число під кнопками
+    змінюється разом зі схемою, а не разом із документом.</p>
+  <div class="panel">
+    <div><canvas id="cLog" width="940" height="300" aria-label="Крива ваги слова залежно від документної частоти і смуга, що показує, як вага документа ділиться між його словами"></canvas></div>
+    <div>
+      <span class="cap">схема ваги</span>
+      <div class="seg wrap" id="kind2seg">
+        <button data-i="0" aria-pressed="false">без IDF</button>
+        <button data-i="1" aria-pressed="true">ln(N/df)+1</button>
+        <button data-i="2" aria-pressed="false"><span class="raw">√(N/df)</span></button>
+        <button data-i="3" aria-pressed="false">N/df</button>
+      </div>
+      <div class="ctl">
+        <label for="doc2">документ <output id="doc2Out">1 / 126</output></label>
+        <input type="range" id="doc2" min="0" max="125" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>частка в цьому док.</b><i id="l1">—</i></div>
+        <div class="cellv"><b>у середньому</b><i id="l2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розмах ваг</b><i id="l3">—</i></div>
+        <div class="cellv"><b>різних слів</b><i id="l4">—</i></div>
+      </div>
+      <div class="verdict" id="lVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Натисни «N/df» і подивись на праву смугу.</b> Вона майже вся одного
+    кольору: одне слово забрало документ. Середня частка головного слова по мінікорпусу
+    росте <b>0.1967 → 0.2540 → 0.4499 → 0.6285</b> у міру того, як схема стає
+    агресивнішою. Розмах ваг від <code>df</code> = 1 до <code>df</code> = <span class="raw">N</span>
+    росте разом із нею: 1× → 10.2× → 141.4× → 20000×.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Одиниці</span>Згладжування — не лише про ділення на нуль</h2>
+
+<p>У формулі дві одиниці всередині дробу: <code>(1 + N) / (1 + df)</code>. У
+<code>sklearn</code> за це відповідає параметр <code>smooth_idf=True</code>, і
+вмикається він за замовчуванням. Пояснюють його зазвичай одним реченням: «щоб не
+ділити на нуль». Це правда, але неповна.</p>
+
+<p>Спершу про ділення на нуль. Здається, воно неможливе: як слово може бути
+у словнику й не траплятися в жодному документі? Просто — якщо словник узято <b>не
+з цього корпусу</b>. Саме так і роблять: навчають векторизатор один раз, а далі
+застосовують до нових текстів.</p>
+
+<p>Заміряймо, наскільки це часто. Беремо словник із однієї вибірки 20 000 документів
+і дивимось, скільки його слів відсутні в іншій вибірці того самого корпусу. Відповідь:
+<b>4241 слово з 14 446</b>, тобто <b>29.4 %</b>. Майже третина. Для них
+<code>df = 0</code>, і без згладжування виходить <code>ln(N/0)</code> — нескінченність,
+яка після нормалізації перетворює весь рядок на <code>NaN</code>.</p>
+
+<div class="note warn"><b>Це та сама грабля, що з поділом на train і test.</b>
+Поки ти рахуєш IDF і застосовуєш її до того самого корпусу, помилок немає. Ламається
+все на першому новому документі — тобто рівно тоді, коли модель уже в бою.</div>
+
+<p>Друге, що робить згладжування, — трохи підрізає верх. На нашому корпусі:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>&nbsp;</th><th>зі згладжуванням</th><th>без згладжування</th><th>різниця</th></tr></thead>
+  <tbody>
+    <tr><td>найвища IDF</td><td>10.2104</td><td>10.9035</td><td>0.6931</td></tr>
+    <tr><td>найнижча IDF</td><td>2.2532</td><td>2.2533</td><td>0.0001</td></tr>
+    <tr><td>у середньому по словнику</td><td colspan="2">—</td><td>0.4376</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Різниця нерівномірна: для частих слів її фактично немає, для найрідкісніших
+вона максимальна й дорівнює рівно <code>ln 2</code> = 0.6931. А таких у нас багато:
+слова з <code>df</code> = 1 займають <b>45.5 %</b> словника.</p>
+
+<p>Чи впливає це на діло? Заміряємо в розділі 08 — і скажу наперед: на пошуку різниця
+між згладженою і незгладженою IDF виявилась <b>меншою за розкид між зернами</b>.
+Згладжування потрібне, щоб не було <code>NaN</code>, а не щоб було краще.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Дві криві IDF і що між ними</p>
+  <p class="fig-sub">Обидві криві показані завжди; обрана — жирна. Повзунок ставить
+    маркер на конкретне <code>df</code>, і крайня ліва позиція — це <code>df</code> = 0,
+    тобто слово, якого в корпусі немає взагалі.</p>
+  <div class="panel">
+    <div><canvas id="cSmooth" width="940" height="300" aria-label="Криві оберненої документної частоти зі згладжуванням і без нього залежно від документної частоти слова"></canvas></div>
+    <div>
+      <span class="cap">яку схему підсвітити</span>
+      <div class="seg" id="sm3seg">
+        <button data-i="0" aria-pressed="true">зі згладж.</button>
+        <button data-i="1" aria-pressed="false">без нього</button>
+      </div>
+      <div class="ctl">
+        <label for="df3">df слова <output id="df3Out">1</output></label>
+        <input type="range" id="df3" min="0" max="22" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>df</b><i id="sm1">—</i></div>
+        <div class="cellv"><b>зі згладж.</b><i id="sm2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>без нього</b><i id="sm3">—</i></div>
+        <div class="cellv"><b>різниця</b><i id="sm4">—</i></div>
+      </div>
+      <div class="verdict" id="sVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав повзунок на нуль.</b> Це слово, якого в корпусі немає:
+    згладжена формула дає скінченні <b>10.9035</b>, незгладжена — нескінченність.
+    Далі веди повзунок праворуч: уже на <code>df</code> = 20 різниця між кривими
+    менша за соту, і на око вони зливаються. Згладжування живе лише на самому
+    лівому краю.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Довжина</span>Нормалізація: чому довгий документ не має вигравати</h2>
+
+<p>Лишилась третя частина, про яку в назві TF-IDF немає жодної літери, — і без якої
+все розсипається.</p>
+
+<p>Скалярний добуток росте разом із документом: що більше слів, то більше доданків.
+Довгий документ виграє <b>автоматично</b>, незалежно від того, про що він.</p>
+
+<p>Лікування — поділити вектор кожного документа на його власну довжину, яка
+рахується як у школі: корінь із суми квадратів координат. Це <b>L2-нормалізація</b>,
+і <code>TfidfVectorizer</code> робить її за замовчуванням.</p>
+
+<div class="eq">‖<span class="raw">d</span>‖ = √( <span class="raw">w</span><span class="sub">1</span><span class="sup">2</span> + <span class="raw">w</span><span class="sub">2</span><span class="sup">2</span> + … + <span class="raw">w</span><span class="sub">k</span><span class="sup">2</span> )&nbsp;&nbsp;&nbsp;&nbsp;<span class="raw">d</span><span class="sup">′</span> = <span class="raw">d</span> / ‖<span class="raw">d</span>‖</div>
+
+<p>Після цього довжина кожного вектора — рівно одиниця, а скалярний добуток двох
+таких векторів стає <b>косинусом кута</b> між ними: числом від 0 до 1, яке міряє
+напрямок, а не розмір. Ту саму косинусну близькість ми зустрінемо ще не раз.</p>
+
+<p>Заміряймо на чесній задачі. Беремо документ, робимо з нього запит із трьох слів
+і дивимось, на якому місці знайдеться сам документ. Метрика — MRR: якщо документ
+знайшовся першим, це 1, другим — 0.5, десятим — 0.1. Середній документ корпусу має
+<b>6.94</b> слова.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>зерно</th><th>MRR без L2</th><th>MRR з L2</th><th>довжина топ-10 без L2</th><th>з L2</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>0.6768</td><td>0.7966</td><td>48.36</td><td>5.24</td></tr>
+    <tr><td>1</td><td>0.5375</td><td>0.7589</td><td>59.24</td><td>5.39</td></tr>
+    <tr><td>2</td><td>0.5521</td><td>0.8279</td><td>43.98</td><td>5.55</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Без нормалізації пошук піднімає нагору документи по 44-59 слів — <b>у сім-девʼять
+разів довші</b> за середній документ корпусу. Знаходить те, що просили, першим
+приблизно в 38 % випадків замість 68 %. Це не тонке налаштування, а умова, щоб пошук узагалі
+працював.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Довгий чужий документ проти короткого свого</p>
+  <p class="fig-sub">Запит «файл конфігурації». Ліворуч — документ, який справді про
+    це. Праворуч — довгий документ ні про що, у якому просто багато разів трапляється
+    часте слово «файл». Повзунок робить його довшим.</p>
+  <div class="panel">
+    <div><canvas id="cNorm" width="940" height="300" aria-label="Два документи й оцінки, які вони набирають за запитом, з нормалізацією й без неї"></canvas></div>
+    <div>
+      <span class="cap">як рахувати оцінку</span>
+      <div class="seg" id="nm4seg">
+        <button data-i="0" aria-pressed="false">без норми</button>
+        <button data-i="1" aria-pressed="true">з L2</button>
+      </div>
+      <div class="ctl">
+        <label for="len4">довжина чужого <output id="len4Out">12 слів</output></label>
+        <input type="range" id="len4" min="4" max="60" step="1" value="12">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>свій документ</b><i id="n1">—</i></div>
+        <div class="cellv"><b>чужий документ</b><i id="n2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>довжини векторів</b><i id="n3" class="sm">—</i></div>
+        <div class="cellv"><b>повторів слова</b><i id="n4">—</i></div>
+      </div>
+      <div class="verdict" id="nVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Вимкни нормалізацію й тягни повзунок.</b> На <b>21</b> слові чужий
+    документ обходить свій і далі відривається: на 60 словах він набирає
+    <b>192.7480</b> проти <b>69.9599</b>. Увімкни L2 — і він не обходить свій ніколи,
+    на жодній довжині: <b>0.2731</b> проти <b>0.7663</b> на тих самих 60 словах.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Домен</span>Що каже про корпус слово «вдалося»</h2>
+
+<p>Повернімось до списку найдешевших слів нашого корпусу. Ось він, разом із вагами:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>слово</th><th>idf</th><th>ранг за частотою</th><th>ужитків у корпусі</th></tr></thead>
+  <tbody>
+    <tr><td>не</td><td>2.25</td><td>1</td><td>27 934</td></tr>
+    <tr><td>для</td><td>2.85</td><td>2</td><td>15 610</td></tr>
+    <tr><td>у</td><td>3.03</td><td>3</td><td>13 727</td></tr>
+    <tr><td>з</td><td>3.30</td><td>4</td><td>9 837</td></tr>
+    <tr class="hot"><td>вдалося</td><td>3.28</td><td>5</td><td>9 546</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Перші чотири — службові слова, тут усе очікувано. А от пʼяте не має права там
+бути: «вдалося» — звичайне дієслово, у побутовій українській воно ніде близько до
+першої пʼятірки не стоїть. Тут стоїть упевнено: майже десять тисяч ужитків.</p>
+
+<p>Причина проста, щойно її назвати. Наш корпус — переклади інтерфейсів, а інтерфейси
+більшу частину часу повідомляють про <b>невдачі</b>: «не вдалося відкрити», «не
+вдалося зберегти», «не вдалося зʼєднатися з сервером». Слово стало службовим не
+в мові, а <b>в домені</b>.</p>
+
+<div class="note"><b>Це вже друга зустріч із тією самою думкою.</b>
+<a href="../02-tokenization/lecture.html">Тема 02</a> показала її з іншого боку:
+там субслівний токенізатор розрізав слово «телефон» на чотири шматки, а «налаштування»
+лишив цілим — не тому, що одне складніше за друге, а тому, що корпус про програми.
+Тепер те саме вилізло у вагах. <b>Модель знає домен, а не мову</b>, і TF-IDF успадкувала
+цю властивість цілком.</div>
+
+<p>Звідси практичний висновок: коли хтось каже «викиньмо стоп-слова», перше питання
+має бути — <b>чиї</b>. Готовий список не знав би, що «вдалося» тут службове. А IDF
+знає, бо порахувала з корпусу. Це її головна перевага над списком — і водночас, як
+побачимо в розділі 11, її головна вада.</p>
+<h2 id="s8"><span class="num">08 / Пошук</span>Де різниця видима, а де її немає</h2>
+
+<p>Тепер найчесніша перевірка: чи допомагає TF-IDF у справжній задачі. Задача та
+сама, що в розділі 06, але міняємо ми вже не нормалізацію, а саму схему ваг. І
+робимо це на <b>двох різних типах запитів</b>, бо відповідь від них залежить
+сильніше, ніж від схеми.</p>
+
+<p><b>Запит першого типу</b> — «реалістичний»: два найчастіші в корпусі слова
+документа плюс одне найрідкісніше (так люди й пишуть). <b>Другого</b> — три
+випадкові слова документа.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>схема</th><th>MRR, запит 1</th><th>розкид</th><th>MRR, запит 2</th><th>розкид</th></tr></thead>
+  <tbody>
+    <tr><td>без IDF</td><td>0.5732</td><td>0.0357</td><td>0.7406</td><td>0.0101</td></tr>
+    <tr class="hot"><td>TF-IDF</td><td>0.7944</td><td>0.0690</td><td>0.7618</td><td>0.0208</td></tr>
+    <tr><td>без згладжування</td><td>0.7987</td><td>0.0593</td><td>0.7570</td><td>0.0247</td></tr>
+    <tr><td>лінійна N/df</td><td>0.7064</td><td>0.0552</td><td>0.4382</td><td>0.0077</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Три висновки, і один із них незручний.</p>
+
+<p><b>Перший.</b> На реалістичному запиті TF-IDF виграє в простої частоти
+<b>0.22 MRR</b>: +0.2051, +0.2031, +0.2555 по зернах. Виграш утричі більший за
+розкид самої метрики й однаковий на всіх трьох зернах. Різниця справжня й велика.</p>
+
+<p><b>Другий.</b> Лінійна <span class="raw">N</span>/df програє логарифмічній на обох
+типах запитів, а на другому — катастрофічно: 0.4382 проти 0.7618. Те саме, що показала
+частка ваги в розділі 04: коли одне слово забирає документ, шукати нема чим.</p>
+
+<p><b>Третій, незручний.</b> На запиті з трьох випадкових слів виграш падає до
++0.0041, +0.0277, +0.0317 — тобто <b>міняється у вісім разів між зернами</b>, а на
+одному з трьох він фактично нульовий. Це не «трохи менший виграш», а відсутність
+надійного висновку.</p>
+
+<div class="note warn"><b>Різниця, менша за розкид, не є різницею.</b> Спокуса
+написати «TF-IDF трохи краща» велика — середнє ж більше. Але з трьох зерен два дали
+приріст у третьому знаку, тобто нуль у межах шуму. Правильне формулювання інше:
+TF-IDF потрібна не «завжди», а тоді, <b>коли в запиті поруч стоять часте й рідкісне
+слово</b>. Тоді вона й вирішує, яке з них слухати. Якщо всі слова запиту й так
+рідкісні, зважувати нічого.</div>
+
+<p>І те саме про згладжування, обіцяне в розділі 05: 0.7987 проти 0.7944 на першому
+типі запитів і 0.7570 проти 0.7618 на другому — різні знаки, обидві різниці всередині
+розкиду.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Той самий запит двома способами</p>
+  <p class="fig-sub">Пошук по 126 документах мінікорпусу. Ліворуч — ранжування самою
+    частотою, тобто мішком слів із теми 04. Праворуч — TF-IDF. Сірим підсвічено
+    документи, які є в обох списках.</p>
+  <div class="panel">
+    <div><canvas id="cFind" width="940" height="300" aria-label="Два списки по пʼять документів: ранжування за частотою і за TF-IDF для обраного запиту"></canvas></div>
+    <div>
+      <span class="cap">запит</span>
+      <div class="seg wrap" id="q5seg">
+        <button data-i="0" aria-pressed="true">створити ключ</button>
+        <button data-i="1" aria-pressed="false">версія пакунка</button>
+        <button data-i="2" aria-pressed="false">показати файл</button>
+        <button data-i="3" aria-pressed="false">дані про пакунок</button>
+        <button data-i="4" aria-pressed="false">помилка спроби</button>
+        <button data-i="5" aria-pressed="false">отримати список</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>спільних у топ-5</b><i id="r1">—</i></div>
+        <div class="cellv"><b>перший результат</b><i id="r2" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>оцінка №1, TF-IDF</b><i id="r3">—</i></div>
+        <div class="cellv"><b>оцінка №1, частота</b><i id="r4">—</i></div>
+      </div>
+      <div class="verdict" id="rVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Перші три запити міняють перший результат, останні три — ні.</b>
+    Різниця не в схемі, а в запиті: там, де серед слів запиту є і часте, і рідкісне,
+    вага вирішує; там, де всі слова однаково рідкісні, обидва списки збігаються.
+    Це те саме, що показала таблиця вище, тільки на пʼяти рядках замість трьохсот
+    запитів.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Межа</span>Синоніми: те саме іншими словами</h2>
+
+<p>Далі — половина теми, важливіша за формулу: три місця, де TF-IDF ламається.
+Перший найпростіший для розуміння й найважчий для лікування: два тексти кажуть
+одне й те саме різними словами.</p>
+
+<p>Тут нам щастить із корпусом. Він <b>паралельний</b>, а програм у ньому 266 і
+перекладали їх різні люди — тож той самий англійський рядок нерідко перекладено
+по-різному. Це дає пари документів, про які <b>точно</b> відомо, що вони означають
+одне й те саме.</p>
+
+<p>Таких пар із майже несхожими наборами слів у корпусі <b>209</b>, і в <b>46</b> із
+них немає жодного спільного слова. Ось три:</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>переклад A</th><th>переклад B</th></tr></thead>
+  <tbody>
+    <tr><td>Відсутній попередній регулярний вираз</td><td>Не виявлено попереднього формального виразу</td></tr>
+    <tr><td>Показати дані щодо версії і завершити роботу</td><td>Вивести інформацію про версію та вийти</td></tr>
+    <tr><td>Заборонити користувачу виходити з системи</td><td>Забороняє користувачеві завершувати сеанс</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Людина бачить три однакові пари. Заміряймо, що бачить TF-IDF.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>зерно</th><th>косинус синонімів</th><th>рівно нуль</th><th>випадкові пари</th><th>символьні триграми</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>0.2230</td><td>22.0 %</td><td>0.0103</td><td>0.4758</td></tr>
+    <tr><td>1</td><td>0.2165</td><td>22.0 %</td><td>0.0083</td><td>0.4759</td></tr>
+    <tr><td>2</td><td>0.2200</td><td>22.0 %</td><td>0.0107</td><td>0.4764</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ось поломка, і вона повна. Пари, які означають <b>буквально одне й те саме</b>,
+дістають косинус близько <b>0.22</b>. А більш ніж кожна пʼята — <b>рівно нуль</b>,
+тобто рівно стільки, скільки два випадкові документи корпусу, узяті навмання.</p>
+
+<p>Причина не в налаштуваннях і не лікується ними. TF-IDF порівнює <b>написання</b>,
+а не зміст. «Регулярний» і «формальний» для неї — дві незалежні колонки, так само
+далекі одна від одної, як «регулярний» і «принтер». У поданні просто немає місця,
+куди можна покласти інформацію про синонімію.</p>
+
+<p>Колонка з триграмами показує це з несподіваного боку: якщо різати тексти на
+трійки літер, косинус тих самих пар піднімається до <b>0.48</b>. Але це не розуміння
+змісту, а спільні корені й закінчення — «вираз» і «виразу» мають дві однакові
+трійки літер. Той самий трюк, глибший, але принципово такий самий.</p>
+
+<div class="note"><b>Справжня відповідь — у блоці 3.</b> Щоб «регулярний» і
+«формальний» опинились поруч, слово має перестати бути номером колонки й стати
+вектором, який щось знає про свій контекст. Це ембединги: дистрибутивна семантика,
+Word2Vec, GloVe. Той блок починається саме з цієї проблеми, і саме цим числом —
+нуль на однаковому змісті — вона й вимірюється.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Два переклади одного рядка</p>
+  <p class="fig-sub">Пʼять справжніх пар із корпусу: той самий англійський оригінал,
+    два різні українські переклади. Повзунок вручну підміняє слова документа B словами
+    документа A — так видно, чим саме росте косинус.</p>
+  <div class="panel">
+    <div><canvas id="cSyn" width="940" height="300" aria-label="Два речення однакового змісту, підсвічені спільні слова і смуга косинусної близькості між ними"></canvas></div>
+    <div>
+      <span class="cap">пара перекладів</span>
+      <div class="seg wrap" id="p6seg">
+        <button data-i="0" aria-pressed="true">регулярний вираз</button>
+        <button data-i="1" aria-pressed="false">версія і вихід</button>
+        <button data-i="2" aria-pressed="false">вихід із системи</button>
+        <button data-i="3" aria-pressed="false">порівняння символів</button>
+        <button data-i="4" aria-pressed="false">носій сигналу</button>
+      </div>
+      <div class="ctl">
+        <label for="swap6">підмінено слів <output id="swap6Out">0 / 4</output></label>
+        <input type="range" id="swap6" min="0" max="6" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>спільних слів</b><i id="y1">—</i></div>
+        <div class="cellv"><b>косинус TF-IDF</b><i id="y2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>триграми</b><i id="y3">—</i></div>
+        <div class="cellv"><b>слів A / B</b><i id="y4" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="yVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Повзунок на нулі — косинус рівно 0.0000 в усіх пʼятьох парах.</b>
+    Далі кожне підмінене слово додає свій шматок і нічого більше: 0.204, 0.419,
+    0.701, 0.901 для першої пари. Зміст при цьому не змінюється <b>жодного разу</b> —
+    речення й так означали одне й те саме. Росте тільки кількість однакових рядків
+    символів, і саме її TF-IDF міряє.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Межа</span>Дуже короткі документи</h2>
+
+<p>Другий спосіб зламати TF-IDF ми вже зустрічали в розділі 02, коли зʼясувалося, що
+в 87 % документів частота мовчить. Тепер подивимось на це прямо.</p>
+
+<p>Заміряємо дві речі: <b>яку частку довжини вектора несе одне найважче слово</b>
+і наскільки вектор змінюється, якщо з документа <b>прибрати одне слово</b>.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>довжина документа</th><th>частка документів</th><th>несе головне слово</th><th>косинус після втрати слова</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>1-3 слова</td><td>10.4 %</td><td>0.7331</td><td>0.7381</td></tr>
+    <tr><td>4-6 слів</td><td>49.1 %</td><td>0.5959</td><td>0.8888</td></tr>
+    <tr><td>7-10 слів</td><td>28.8 %</td><td>0.5025</td><td>0.9322</td></tr>
+    <tr><td>11-20 слів</td><td>8.9 %</td><td>0.4298</td><td>0.9587</td></tr>
+    <tr><td>21 і більше</td><td>2.5 %</td><td>0.3915</td><td>0.9807</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>У документі на три слова одне слово несе <b>73 %</b> довжини вектора, і втрата
+одного слова роняє схожість документа з самим собою до <b>0.74</b>. У документі на
+21 слово й більше — 39 % і 0.98.</p>
+
+<p>Наслідок простий: на коротких текстах TF-IDF <b>дуже чутлива до випадковості</b>.
+Інша словоформа, синонім, одруківка — і документ поїхав. А коротких текстів навколо
+повно: назви товарів, заголовки, повідомлення в чаті, пошукові запити. У нашому
+корпусі <b>49 %</b> документів мають від чотирьох до шести слів.</p>
+
+<div class="note"><b>Звідси видно, навіщо лематизація.</b>
+<a href="../03-morphology/lecture.html">Тема 03</a> зводила словоформи до лем і
+питала, навіщо. Ось навіщо: без неї «файл», «файла» й «файлу» — три незалежні колонки
+з трьома різними IDF, і вага того самого поняття розмазується на три частини.
+У документі із чотирьох слів це не косметика, а різниця між «знайшлось» і
+«не знайшлось».</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Що з вектором робить довжина тексту</p>
+  <p class="fig-sub">Три справжні документи корпусу — на 5, 13 і 23 слова. Повзунок
+    лишає від документа перші <span class="raw">k</span> слів. Стовпчики — координати
+    одиничного вектора; крива внизу показує частку головного слова на всіх довжинах.</p>
+  <div class="panel">
+    <div><canvas id="cShort" width="940" height="300" aria-label="Стовпчики координат нормалізованого вектора документа і крива частки головного слова залежно від довжини документа"></canvas></div>
+    <div>
+      <span class="cap">документ</span>
+      <div class="seg three" id="d7seg">
+        <button data-i="0" aria-pressed="false">5 слів</button>
+        <button data-i="1" aria-pressed="true">13 слів</button>
+        <button data-i="2" aria-pressed="false">23 слова</button>
+      </div>
+      <div class="ctl">
+        <label for="keep7">лишити слів <output id="keep7Out">1 / 13</output></label>
+        <input type="range" id="keep7" min="1" max="23" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>слів</b><i id="h1">—</i></div>
+        <div class="cellv"><b>несе головне</b><i id="h2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>косинус із повним</b><i id="h3">—</i></div>
+        <div class="cellv"><b>без одного слова</b><i id="h4">—</i></div>
+      </div>
+      <div class="verdict" id="hVd"></div>
+    </div>
+  </div>
+  <figcaption><b>На одному слові частка головного дорівнює одиниці — документ і є
+    це слово.</b> Далі крива падає, але не рівно: коли слово повторюється, вона
+    підстрибує назад угору (видно на документі з 13 слів, де 0.494 на восьми словах
+    переходить у 0.555 на тринадцятьох). Це і є TF у дії — та сама половина формули,
+    якої на коротких текстах просто немає.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Межа</span>Рідкісне в корпусі — не те саме, що рідкісне в мові</h2>
+
+<p>Третій випадок найпідступніший, бо помилки не видно взагалі: числа скінченні,
+матриця нормальна, пошук працює — просто ваги неправильні. IDF не знає мови, вона
+знає рівно один корпус. Слово, якого в цьому корпусі мало, дістане велику вагу,
+навіть якщо в житті його знає кожна дитина.</p>
+
+<p>Перевірка найпростіша: беремо звичайнісінькі українські слова й дивимось на їхню
+<code>df</code> у наших 20 000 документах.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>слово</th><th>df</th><th>idf</th><th>&nbsp;</th></tr></thead>
+  <tbody>
+    <tr><td>мама, хліб, дощ, сонце</td><td>0</td><td>—</td><td>у корпусі немає взагалі</td></tr>
+    <tr><td>кіт, любов, вулиця, пісня, брат</td><td>0</td><td>—</td><td>у корпусі немає взагалі</td></tr>
+    <tr class="hot"><td>дерево</td><td>17</td><td>8.0132</td><td>і то не рослина, а елемент інтерфейсу</td></tr>
+    <tr><td>сервер</td><td>77</td><td>6.5468</td><td>&nbsp;</td></tr>
+    <tr><td>налаштування</td><td>100</td><td>6.2884</td><td>&nbsp;</td></tr>
+    <tr><td>файл</td><td>673</td><td>4.3903</td><td>&nbsp;</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Девʼять із десяти побутових слів не трапляються в корпусі жодного разу. Єдине,
+що прорвалось, — «дерево», і то в значенні елемента інтерфейсу. Воно дістає
+<b>8.0132</b>, тобто важить помітно <b>більше за «сервер»</b>. Для нашої моделі
+дерево — рідкісніше й цінніше поняття, ніж сервер.</p>
+
+<p>Тепер систематично. Візьмемо одну програму з власним доменом — векторний
+редактор Inkscape, 3689 документів — і порівняємо IDF її слів усередині цього домену
+з IDF на решті корпусу.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>слово</th><th>ужитків у Inkscape</th><th>idf свій</th><th>idf чужий</th><th>розрив</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>контур</td><td>109</td><td>4.6284</td><td>10.9035</td><td>+6.2751</td></tr>
+    <tr><td>контурів</td><td>80</td><td>4.8696</td><td>10.9035</td><td>+6.0340</td></tr>
+    <tr><td>контуру</td><td>186</td><td>4.0543</td><td>9.8049</td><td>+5.7506</td></tr>
+    <tr><td>прилипання</td><td>77</td><td>4.8959</td><td>10.2104</td><td>+5.3145</td></tr>
+    <tr><td>штриха</td><td>48</td><td>5.3422</td><td>10.9035</td><td>+5.5614</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Слово «контур» — і звичайне українське слово, і буденний термін у векторному
+редакторі — дістає від зовнішнього корпусу <b>максимальну можливу вагу</b>, бо там
+воно не трапляється взагалі. Середній розрив по чотирьохстах найуживаніших словах
+домену — <b>1.8007</b> одиниці IDF, і це при тому, що весь діапазон ваг у нас
+завширшки вісім одиниць.</p>
+
+<p>Звідси дві практичні речі. <b>IDF не можна переносити між доменами</b>: ваги,
+пораховані на новинах, на медичних картках працюватимуть неправильно, і жодна
+перевірка про це не скаже. І <b>стоп-слова корисно рахувати самим</b> — саме тому,
+що готовий список не знає твого домену.</p>
+<h2 id="s12"><span class="num">12 / Далі</span>Що з цим роблять, і чого не полагодити</h2>
+
+<p>TF-IDF — не остання зупинка навіть усередині свого підходу. Найпоширеніше
+продовження називається <b>BM25</b>, і воно лікує рівно ті вади, які ми щойно
+заміряли, — крім однієї.</p>
+
+<p>BM25 змінює обидві половини. Перша зміна: частота перестає рости без меж.
+У TF-IDF слово, ужите десять разів, важить удесятеро більше за вжите раз; BM25 каже,
+що після третього разу різниці майже немає.</p>
+
+<div class="eq">tf<span class="sub">BM25</span> = tf × (<span class="raw">k</span><span class="sub">1</span> + 1) / ( tf + <span class="raw">k</span><span class="sub">1</span> × (1 − <span class="raw">b</span> + <span class="raw">b</span> × |<span class="raw">d</span>| / avgdl) )</div>
+
+<p>Тут <span class="raw">k</span><span class="sub">1</span> — наскільки швидко
+частота насичується (зазвичай 1.2-2.0), <span class="raw">b</span> — наскільки сильно
+враховувати довжину (зазвичай 0.75), |<span class="raw">d</span>| — довжина документа
+в словах, avgdl — середня довжина документа в колекції. Друга зміна саме в цьому:
+довжину BM25 враховує <b>всередині формули</b> й дозує параметром
+<span class="raw">b</span>, замість того щоб різати вектор на його довжину наприкінці,
+як робить L2.</p>
+
+<p>Що це дає на нашому корпусі, ти заміряєш сам: це домашнє завдання третього
+рівня, разом із вимогою назвати виграш <b>разом із розкидом по зернах</b>. Підказка:
+документи в нас короткі, а BM25 придумували для довгих, тож відповідь «різниці
+немає» тут імовірна й цілком поважна.</p>
+
+<p>Тепер про те, чого не лікує ні BM25, ні будь-яка інша перестановка тих самих
+доданків.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Вада</th><th>Чи лікується вагами</th><th>Чим лікується насправді</th></tr></thead>
+  <tbody>
+    <tr><td>службові слова тягнуть на себе схожість</td><td>так, це і є IDF</td><td>—</td></tr>
+    <tr><td>довгі документи виграють автоматично</td><td>так: L2 або <span class="raw">b</span> у BM25</td><td>—</td></tr>
+    <tr><td>словоформи одного слова — різні колонки</td><td>ні</td><td>лематизація, <a href="../03-morphology/lecture.html">тема 03</a></td></tr>
+    <tr><td>порядок слів утрачено</td><td>ні</td><td>n-грами (<a href="../04-bag-of-words/lecture.html">тема 04</a>), далі — послідовні моделі</td></tr>
+    <tr><td>синоніми не схожі одне на одного</td><td><b>ні, і принципово</b></td><td>ембединги, блок 3</td></tr>
+    <tr><td>ваги не переносяться між доменами</td><td>ні</td><td>рахувати IDF на своєму корпусі</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Три нижні рядки — не недоробки, а <b>межа самого подання</b>: документ у нас
+набір колонок, і між колонками немає жодного звʼязку. Скільки не крути ваги,
+«регулярний» і «формальний» лишатимуться двома різними номерами.</p>
+
+<div class="note"><b>І все ж TF-IDF жива.</b> Вона рахується за один прохід по
+корпусу, не потребує навчання й дає результат, який можна <b>подивитись очима</b>:
+ось слово, ось його вага, ось чому вона велика. BM25 і досі стоїть у більшості
+пошукових систем як перший, найдешевший рівень — і лише те, що він відібрав,
+віддають дорогим нейромережевим моделям. Це не «застаріле», а «дешеве».</p>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Підсумок блоку 1: як текст став числами</h2>
+
+<p>Блок 1 закінчено. Пʼять тем — одна лінія: <b>текст не таблиця → ріжемо на шматки →
+зводимо форми → рахуємо → зважуємо</b>. Кожен крок дав своє число, і разом вони
+складаються в одну картину.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Тема</th><th>Що вона зробила</th><th>Головне число</th></tr></thead>
+  <tbody>
+    <tr><td><a href="../01-text-is-hard/lecture.html">01</a></td><td>показала, що текст не поводиться як таблиця</td><td>показник Гіпса 0.6529: словник росте й не насичується ніколи; 35.78 % словоформ трапились рівно раз</td></tr>
+    <tr><td><a href="../02-tokenization/lecture.html">02</a></td><td>розрізала текст на шматки, які модель уміє рахувати</td><td>націнка на українську падає з 29.7 % до 10.4 %, коли словнику дають місце</td></tr>
+    <tr><td><a href="../03-morphology/lecture.html">03</a></td><td>звела різні форми того самого слова докупи</td><td>26 851 словоформа стискається до 11 122 лем — на 58.6 %</td></tr>
+    <tr><td><a href="../04-bag-of-words/lecture.html">04</a></td><td>перетворила документ на рядок чисел</td><td>матриця заповнена на 0.06599 %, розріджено вона важить у 968 разів менше, і з ростом корпусу гіршає до 0.02548 %</td></tr>
+    <tr class="hot"><td>05</td><td>зробила слова нерівними</td><td>там, де частота має думку, IDF перекриває її у 82.8 % документів; у пошуку це +0.22 MRR — або майже нуль, залежно від запиту</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Токенізатор у всіх пʼятьох тем спільний —
+<code>[а-яїієґ]+(?:['ʼ’][а-яїієґ]+)*</code>, — і саме тому числа блоку сходяться:
+наше зерно 1 дає рівно ті самі 14 446 ознак і 138 665 ненульових, що й контрольний
+прогін теми 04. Наш зошит рахує й решту величин блоку: гапаксів <b>35.9 %</b> проти
+35.78 % у теми 01, лем <b>11 228</b> проти 11 122 у теми 03. Що лишається різним —
+не помилка, а вибірка: тема 04 бере перші 20 000 документів за абеткою програм,
+ми — випадкові, звідси 0.06599 % проти наших 0.0487 %.</p>
+
+<h3>Чотири речі, які варто забрати з блоку</h3>
+
+<ul>
+  <li><b>Довгий хвіст — не деталь, а сама задача.</b> Третина словника трапляється
+    рівно раз (35.78 % за темою 01, 35.9 % за нашим заміром), і словник не насичується
+    зі зростанням корпусу. Звідси субслова в темі 02, лематизація в темі 03,
+    розрідженість у темі 04 і стеля IDF у 10.21, яку ділять між собою <b>45.5 %</b>
+    слів словника.</li>
+  <li><b>Модель знає домен, а не мову.</b> Тема 02 показала це найдешевше:
+    токенізатор розрізав «телефон» на чотири шматки й лишив «налаштування» цілим.
+    Наша тема повторила це вагами: «вдалося» стоїть пʼятим за частотою з IDF 3.28,
+    поряд із «не» й «для», а «мама», «хліб» і «дощ» не трапляються жодного разу.</li>
+  <li><b>Кожен крок щось лікує й щось псує.</b> Лематизація стискає словник на
+    58.6 % — і в темі 03 та сама операція поклала задачу «однина чи множина» з
+    0.8582 на 0.5275, тобто на рівень монетки. Стоп-слова прибирають шум — і
+    одне-єдине «не» коштувало там 0.9360 проти 0.8780. Наша IDF додає 0.22 MRR на
+    реалістичних запитах — і майже нічого на випадкових. <b>Не буває поліпшення
+    без ціни; питання лише в тому, чи ти її заміряв.</b></li>
+  <li><b>Різниця, менша за розкид, не є різницею.</b> Ми тричі впирались у це:
+    у згладжуванні (0.7987 проти 0.7944), у пошуку на випадкових запитах
+    (+0.0041, +0.0277, +0.0317) і в самому головному числі теми, де наївні 18.6 %
+    виявились не заміром IDF, а заміром алфавітного порядку. Три зерна коштують
+    трьох прогонів і рятують від трьох неправдивих тверджень.</li>
+</ul>
+
+<h3>Що ми досі не вміємо</h3>
+
+<p>Текст став числами — але це числа <b>про написання</b>, а не про зміст. Два
+речення однакового змісту мають косинус 0.2230, а більш ніж кожна пʼята така пара —
+рівно нуль. Порядок слів утрачено (тема 04 заміряла, що для української це коштує
+мало — 0.535 % документів, — але втрачено). Про світ модель не знає нічого.</p>
+
+<p><b>Блок 2 «Класичний NLP»</b> вичавлює з цього подання все можливе:
+класифікацію, метрики, тематичне моделювання, пошук і схожість. Виявиться, що можна
+чимало — TF-IDF плюс проста лінійна модель досі є пристойною відправною точкою,
+з якою порівнюють усе нове.</p>
+
+<p>А <b>блок 3 «Векторні представлення»</b> візьметься за те число, на якому ми
+сьогодні зупинились. Він почнеться з питання: що зробити зі словом, щоб «регулярний»
+і «формальний» опинились поруч, а «регулярний» і «принтер» — далеко? Відповідь
+виявиться несподівано простою й дасть інструмент, на якому тримається все, що було
+в NLP після 2013 року.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../04-bag-of-words/lecture.html"><span class="dir">попередня</span><span class="ttl">04. Мішок слів</span></a>
+    <a class="next" href="../06-text-classification/lecture.html"><span class="dir">наступна</span><span class="ttl">06. Класифікація текстів</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+
+/* ═══════ дані: 120 справжніх документів корпусу і справжні df ═══════ */
+var DATA = {"N":20000,"df":{"а":140,"або":1072,"аборигенів":2,"абсолютною":2,"австралійських":1,"автоматичний":11,"автоматично":79,"автоматичного":20,"агентом":4,"адреса":105,"адреси":119,"адресний":7,"але":307,"аргументи":74,"атрибут":138,"атрибутів":25,"аудиту":3,"бажане":3,"базової":4,"без":280,"безпеці":3,"блокову":1,"британські":1,"буде":374,"бульбашки":2,"бути":843,"бібліотек":7,"в":983,"вами":17,"варіант":28,"вашої":14,"ваші":10,"вбудувати":9,"вводу":31,"вдалося":2041,"вдається":106,"версію":50,"версія":75,"версії":137,"вертикально":9,"взяття":1,"ви":225,"виберіть":69,"вибирати":9,"вибрати":37,"виведений":2,"вивести":178,"виводу":52,"вигляд":4,"видобути":11,"визнати":1,"визначає":123,"визначення":147,"визначено":91,"визначень":6,"визначити":129,"вийти":40,"викликати":15,"виключити":5,"виконання":144,"виконувати":29,"виконуються":8,"використано":162,"використовувати":446,"використовуватиметься":16,"використовуються":27,"вилучати":26,"вилучення":44,"вилучені":4,"вилучити":119,"вимкнути":104,"вимірювання":11,"вимірюванням":3,"виникли":4,"виникненні":2,"випадкового":2,"вираз":100,"виразу":35,"витримки":7,"виходити":1,"виявлення":8,"виявлено":127,"вкажіть":61,"вказаний":82,"вказаних":18,"вказано":363,"вказати":164,"вказівник":52,"вміст":55,"внутрішня":57,"встановити":358,"встановлення":187,"вузла":113,"вузол":46,"відбитків":4,"віддзеркалення":10,"відкрити":168,"відновлення":42,"відповідають":17,"відсутня":15,"відсутній":43,"відтворення":26,"вікно":47,"глобальна":3,"гостьової":24,"групах":2,"групи":86,"гілок":11,"гіпервізорі":3,"даних":689,"дані":456,"декодувати":7,"декілька":86,"джерело":48,"диск":40,"диска":76,"для":3158,"до":1431,"довільні":2,"додати":113,"додає":12,"дозволена":8,"дозволеним":2,"дозволити":61,"дозволяти":11,"дозвіл":3,"домен":40,"домену":150,"домені":11,"друку":29,"діапазону":93,"дій":30,"ділення":14,"ділянки":16,"експортування":25,"ефект":27,"жестів":8,"жодних":20,"жодного":41,"з":2006,"за":774,"заборонити":10,"забороняє":24,"завантаження":86,"завантажувані":1,"завдання":40,"завдань":19,"завершити":39,"завершувати":5,"заголовку":22,"загрозу":2,"закачування":1,"закрито":8,"залишились":1,"залишку":3,"заломленням":1,"запис":187,"запису":206,"запити":11,"запитом":7,"захисту":32,"зашифрованого":2,"збережений":10,"збереження":43,"звуження":2,"здатністю":3,"зеленого":8,"зйомка":1,"змонтовано":10,"зміна":27,"змінити":168,"змінних":32,"змінювати":38,"знайдено":179,"знайти":192,"значення":791,"знищення":2,"знищити":10,"зображення":152,"зсуву":35,"зупинення":3,"зупиняти":4,"зі":203,"його":192,"калібрування":13,"картка":3,"картридж":5,"каталог":183,"каталоги":18,"каталогу":109,"кваліфікація":1,"керований":3,"класу":57,"ключ":182,"ключем":25,"коду":94,"кодування":54,"кожен":24,"колекції":3,"кольорового":3,"кольорів":34,"колір":48,"команду":62,"комою":52,"компакт":10,"конверту":1,"константні":2,"контролера":22,"контрольних":19,"контрольної":38,"контуру":36,"конфліктує":33,"конфігурації":43,"концепцію":1,"користувача":208,"користувачам":7,"користувачеві":5,"користувачу":6,"кортежі":4,"кут":20,"кількість":261,"кінець":36,"лапки":8,"лише":582,"лінії":29,"літерами":8,"магічного":2,"майже":3,"малий":6,"мало":100,"мапу":2,"маршрутизація":1,"масштабування":16,"матеріальні":1,"має":596,"мережа":5,"мережі":121,"метадані":27,"мова":9,"модуля":59,"може":467,"можете":61,"можливості":53,"можна":650,"між":136,"мікрофони":2,"мінімальна":19,"містить":150,"місце":31,"місця":51,"мітку":19,"на":1696,"надано":34,"надрукувати":10,"назв":52,"назва":221,"назвами":9,"назвою":91,"назву":144,"найвищою":1,"найкращий":3,"налаштування":100,"налаштувань":109,"напрямок":11,"наступну":9,"не":5711,"невизначений":14,"невідомий":115,"невідому":5,"невідстежуваних":2,"недоступний":16,"недійсна":12,"некоректний":237,"некоректні":41,"немає":248,"неможливо":246,"неправильне":31,"несиметричне":1,"носій":15,"носія":24,"нульовий":19,"обертати":8,"область":37,"образ":19,"обробка":15,"обслуговування":6,"обчислень":1,"один":107,"одиниці":16,"одному":13,"океані":3,"оновлення":107,"останнє":6,"отримати":369,"пакунка":54,"пакунки":53,"папером":2,"параметр":278,"параметри":229,"парних":3,"певні":5,"первинних":1,"перевірити":81,"перевірка":33,"переглядати":7,"перегляду":29,"передбачено":364,"перейти":47,"перекодувати":2,"перервати":6,"перетворенні":9,"переходів":2,"плагін":6,"планує":1,"плитки":11,"повертає":25,"повний":10,"повідомлення":145,"позицію":24,"позначати":11,"позначене":7,"позначено":44,"позначеної":3,"показ":8,"показати":161,"показу":20,"показувати":107,"полотно":2,"помилка":726,"помилок":28,"попередження":184,"попередньо":22,"попереднього":49,"попередній":27,"порту":53,"порівняння":40,"посилання":178,"посилається":31,"послідовного":7,"потоці":6,"поточне":16,"поточний":44,"поточних":7,"потрібної":3,"початкова":11,"початкове":17,"початку":31,"пошук":47,"пошуку":93,"при":294,"придбати":1,"призначення":157,"примусово":23,"припустити":9,"пристрою":260,"пристроїв":71,"пристрій":195,"про":270,"проаналізувати":10,"проблеми":40,"програмам":7,"програми":159,"програмі":24,"пропонують":1,"пропустити":14,"простір":56,"профілактики":1,"процес":43,"процеси":10,"процесу":63,"пріоритетністю":1,"публічних":2,"пунктуація":2,"під":484,"підказки":8,"підписано":7,"підсвіченого":1,"підтримки":270,"підтримує":79,"підтримується":130,"підігнати":2,"після":212,"радіостанції":1,"растрових":8,"револьверного":1,"регулярний":5,"регулярної":1,"регістр":71,"редагувати":12,"режим":144,"режиму":51,"рекомендовані":3,"ресурс":12,"реєстрація":2,"роботу":86,"робочий":27,"розблокувати":15,"розділах":6,"розділи":35,"розмір":294,"розмірів":23,"розмістити":28,"розміщувати":1,"розташовувати":3,"розташування":57,"розширених":5,"розширені":8,"рухомою":31,"рядка":140,"рядку":74,"рядків":83,"рядок":166,"сеанс":21,"секціонованої":1,"сигналу":8,"символ":161,"символи":74,"символу":71,"символів":133,"систем":25,"система":40,"системи":247,"систему":52,"скасувати":42,"скидання":19,"скла":1,"скопіювати":21,"словник":3,"слід":397,"сну":5,"сортування":23,"спалах":8,"списку":142,"список":237,"сповіщення":17,"спрацював":8,"спроби":156,"спробу":23,"спробувати":12,"стадії":1,"стан":92,"стандартне":6,"статистики":12,"статистику":13,"створений":18,"створенні":12,"створено":50,"створити":375,"створювати":43,"стило":2,"стовпці":15,"стовпчик":17,"стовпчика":16,"структури":34,"структуру":8,"сума":20,"суфікс":20,"суфіксів":2,"схемах":2,"сховища":137,"сяйвом":2,"та":488,"таблиці":117,"так":46,"тег":20,"текст":47,"тексту":42,"території":1,"тип":426,"типові":28,"типу":375,"тиску":4,"товари":1,"томів":19,"точка":26,"точки":58,"точок":26,"треба":25,"трикрапки":1,"у":2614,"увімкнути":160,"успадкування":5,"файл":673,"файла":365,"файли":114,"файлова":14,"файлових":18,"файлової":47,"файлу":114,"файлів":211,"фонове":3,"формального":7,"форматі":131,"фотоапарат":17,"фотоапараті":3,"фрагменти":5,"функцію":37,"функції":266,"фільтра":22,"фільтрування":12,"фільтрувати":4,"фільтрує":2,"хеш":26,"це":200,"цей":170,"центрувати":3,"цього":212,"цьому":89,"цілий":3,"цілих":8,"час":587,"черзі":7,"чи":306,"чисел":25,"член":20,"членства":4,"шар":15,"ширина":41,"шляху":64,"ще":73,"що":497,"щодо":374,"ядрі":10,"як":411,"яке":55,"який":216,"якими":10,"якого":65,"якої":30,"якщо":539,"які":264,"є":900,"єдиному":1,"і":729,"ігноруємо":37,"ідентифікатором":34,"ідеографічні":2,"із":406,"ізольована":1,"імʼя":42,"іменованої":3,"імені":42,"індексу":38,"індексів":14,"індійському":1,"інструкції":147,"інтервалу":4,"інтернетної":1,"інтроспекції":3,"інформацію":70,"існуючим":1,"існує":151},"docs":["Не можна вилучати пакунки з групи, якої не існує","Вибрати пакунки за назвою, а не за здатністю.","Визначити час витримки для калібрування для зеленого","Адреса не є абсолютною, і не вказано базової адреси","Атрибут членства у групах у мережі","Довільні дані програми, якими підписано дані","перекодувати метадані в це кодування","Визначає, чи слід розташовувати текст у єдиному рядку","Показати останнє повідомлення сповіщення","скопіювати файли з іменованої стадії","декілька гілок або переходів у одному кортежі","Дозволити дозволеним програмам використовувати мікрофони","У даних конверту відсутня хеш-сума","Зупиняти роботу при виникненні помилок у схемах","під час спроби розмістити таблиці файлової системи","не вдалося знайти запис потрібної контрольної точки","Фотоапарат виведений з режиму сну","Встановлення інтервалу між літерами","в заголовку файлу не знайдено магічного рядка","Увімкнути інструкції ділення та залишку.","Вкажіть назву файла, до якого слід надрукувати дані.","Реєстрація або вилучення відбитків","Ключ конфліктує з існуючим ключем.","Попередження: картридж обслуговування майже повний","Не вдалося отримати назву контролера сховища даних","Ізольована мережа, лише внутрішня маршрутизація","Показ підказки за спроби розблокувати користувача","фільтрувати за назвою пристрою вузла","посилання структури на НЕВІДОМУ структуру","Користувачам пропонують придбати певні матеріальні товари","Помилка при створенні попереднього перегляду","Зйомка цього типу не підтримується","Вбудувати попередньо створений текст у вікно програми","Повертає дані щодо завдань, які виконуються на домені.","Не фільтрує, але додає область фільтрування","Ефект підсвіченого кольорового скла","Неможливо встановити жодного носія","Колір, що використовуватиметься для парних рядків","Показати рекомендовані можливості пакунка.","мало бути вказано регістр цілих чисел","Список публічних суфіксів недоступний.","Виявлення бібліотек, що використовуються","Одиниці, які буде використано для вимірювання","Бажане місце розташування трикрапки у рядку","Вибрати образ диска для відновлення","Чи показувати завантажувані місця","Ідеографічні символи і пунктуація","Початкова точка лінії віддзеркалення","Ігноруємо спробу вийти за кінець діапазону","при перетворенні на вказівник на функцію-член","Систему закрито для регулярної профілактики","Не дозволяти розміщувати константні дані в розділах коду.","Не вдалося змінити компакт-диск","У цьому домені не змонтовано жодних файлових систем","Зміна розмірів зашифрованого пристрою","початкове значення надано для функції","Показати список поточних змінних.","визнати вказаний суфікс як імʼя файлу модуля визначення","Увімкнути інструкції револьверного зсуву.","змінити успадкування секціонованої таблиці не можна","Помилка обчислень з рухомою комою","примусово можна виконувати лише встановлення і оновлення","помилка запису файла налаштувань","помилка вводу-виводу у потоці даних","Знайти пристрій за його ідентифікатором","Визначає, чи можна позначати фрагменти тексту","Не вдалося отримати кількість контрольних точок","Мінімальна дозволена ширина стовпчика","Не змінювати мітку захисту процесу","Центрувати зображення вертикально за папером","Виключити типові каталоги зі шляху пошуку файлів","Вказати плагін для завантаження.","неможливо викликати концепцію як функцію","Відсутня картка у фотоапараті.","мова жестів австралійських аборигенів","вимкнути взяття у лапки вказаних символів","Британські Території в Індійському океані","Невідомий тег у форматі показу:","не дозволяти декілька визначень символу","Обертати плитки на цей кут на кожен стовпчик","домен позначено для автоматичного знищення","Визначити тип файлової системи.","додати вміст невідстежуваних файлів до індексу","Не вдалося вилучити збережений керований образ домену","Назва призначення для інтроспекції","Не вдається отримати поточне імʼя каталогу","Помилка під час збереження даних налаштування користувача.","У гіпервізорі не передбачено вилучення цього пристрою","Видобути вилучені розділи до ФАЙЛа","мало бути вказано цілий або нульовий регістр","Пропустити наступну позицію у списку відтворення","Напрямок звуження на початку контуру","скасувати визначення фільтра мережі","отримати блокову статистику пристроїв для домену","Агентом гостьової системи надано некоректні дані","Підігнати полотно до позначеної ділянки","Помилка під час спроби декодувати мапу кольорів","не вдається змінити поточний каталог","глобальна кваліфікація імені класу недійсна","Обробка розширених атрибутів файлів:","ще один процес планує фонове обслуговування","показати розширені параметри томів","Виберіть словник із найвищою пріоритетністю","невизначений вираз, який має бути визначено","Спалах не спрацював, автоматичний режим","Автоматично вибирати найкращий варіант","Припустити малий адресний простір.","Спробувати перевірити команду і аргументи після виконання","Помилка експортування растрових даних","Немає підтримки послідовного порту","Дозвіл на виконання дій, якщо вікно програми закрито","Ефект бульбашки з заломленням і сяйвом","Файлова система не підтримує закачування файлів.","не вдалося проаналізувати стовпці статистики індексів","Пошук вашої інтернетної радіостанції","Може переглядати, редагувати та створювати файли","Стандартне стило із вимірюванням тиску","Позначене містить несиметричне масштабування","Дані, які створено вами у програмі","Джерело даних для встановлення, яке буде використано","Перевірка може не знайти первинних файлів.","Перейти до випадкового зображення у колекції","Не вдалося відкрити ресурс для запису.","У черзі друку залишились завдання.","Виникли проблеми із запитом щодо скидання модуля:","У ядрі не передбачено підтримки аудиту"],"longs":["перекодувати метадані в це кодування","Рядок посилається як на аргументи з назвами, так і на аргументи без назв.","Зупинення процесу, ви можете знищити ваші дані, перервати робочий сеанс або створити загрозу безпеці. Зупиняти треба лише процеси, які не відповідають на запити."],"queries":["не вдалося створити ключ","встановити версію пакунка","неможливо показати файл","показати дані щодо пакунка","помилка під час спроби","не вдалося отримати список"],"pairs":[["Відсутній попередній регулярний вираз","Не виявлено попереднього формального виразу"],["Показати дані щодо версії і завершити роботу","Вивести інформацію про версію та вийти"],["Заборонити користувачу виходити з системи","Забороняє користувачеві завершувати сеанс"],["Некоректний символ для сортування","Неправильне порівняння символів"],["Не вдалося визначити носій сигналу","Неможливо встановити жодного носія"]],"f4":{"query":"файл конфігурації","good":"Не вдалося відкрити файл конфігурації","spam_word":"файл","filler":"дані каталог значення параметр система версія список процес рядок стан розмір пристрій вузол сеанс запис вікно колір шар точка вигляд"}};
+var NDOC = DATA.N, DF = DATA.df, DOCS = DATA.docs, LONGS = DATA.longs;
+
+/* канонічний токенізатор блоку 1: українські літери,
+   апостроф — звʼязка всередині слова, а не окремий символ */
+var WORD_RE = /[а-яїієґ]+(?:['\u02BC\u2019][а-яїієґ]+)*/gu;
+function tokens(text){
+  var raw = text.toLowerCase().match(WORD_RE) || [], out=[], k;
+  for(k=0;k<raw.length;k++) if(DF[raw[k]]!==undefined) out.push(raw[k]);
+  return out;
+}
+/* чотири способи перетворити «у скількох документах трапилось» на вагу */
+function idfOf(word, kind){
+  var d = DF[word];
+  if(kind==='none') return 1;
+  if(kind==='log')  return Math.log((1+NDOC)/(1+d))+1;
+  if(kind==='root') return Math.sqrt(NDOC/d);
+  return NDOC/d;                                   /* лінійна */
+}
+function bag(text){
+  var t=tokens(text), map={}, k;
+  for(k=0;k<t.length;k++) map[t[k]]=(map[t[k]]||0)+1;
+  return map;
+}
+/* зважений вектор документа; norm=true → довжина рівно одиниця */
+function vecOf(text, kind, norm){
+  var b=bag(text), out={}, w, s=0;
+  for(w in b) out[w]=b[w]*idfOf(w,kind);
+  if(norm){
+    for(w in out) s+=out[w]*out[w];
+    s=Math.sqrt(s)||1;
+    for(w in out) out[w]=out[w]/s;
+  }
+  return out;
+}
+function dot(a,b){var s=0,w; for(w in a) if(b[w]!==undefined) s+=a[w]*b[w]; return s;}
+function sortedWords(v){
+  var arr=[], w;
+  for(w in v) arr.push(w);
+  arr.sort(function(x,y){ return v[y]-v[x] || (x<y?-1:1); });
+  return arr;
+}
+function shortenTo(g, text, px, max){
+  g.font=mono(px,false);
+  if(g.measureText(text).width<=max) return text;
+  var t=text;
+  while(t.length>3 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+
+/* ═══════════════ фігура 1 · ваги в одному документі ═══════════════ */
+function fig1(){
+  var cv=I('cWeight'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var i=+I('doc1').value, text=DOCS[i];
+  I('doc1Out').textContent=(i+1)+' / '+DOCS.length;
+  var b=bag(text), words=[], w;
+  for(w in b) words.push(w);
+  var tfMax=0;
+  for(w in b) if(b[w]>tfMax) tfMax=b[w];
+  var leaders=[];
+  for(w in b) if(b[w]===tfMax) leaders.push(w);
+  var tv=vecOf(text,'log',true);
+  words.sort(function(x,y){ return tv[y]-tv[x] || (x<y?-1:1); });
+  var best=words[0];
+
+  var pad=16, labelW=210, barX=labelW+pad, barW=W-barX-260, rowH=Math.min(30,(H-70)/Math.max(words.length,1));
+  capt(g,'СЛОВО',pad,30,css('--soft'),10.5,true);
+  capt(g,'ЧАСТОТА В ДОКУМЕНТІ',barX,30,css('--soft'),10.5,true);
+  capt(g,'ВАГА TF-IDF',barX+barW/2+18,30,css('--soft'),10.5,true);
+  capt(g,'df У КОРПУСІ',W-pad,30,css('--soft'),10.5,true,'right');
+  var k, y, half=barW/2-10, maxW=0;
+  for(k=0;k<words.length;k++) if(tv[words[k]]>maxW) maxW=tv[words[k]];
+  for(k=0;k<words.length;k++){
+    w=words[k]; y=48+k*rowH;
+    var isBest = (w===best);
+    capt(g,shortenTo(g,w,13,labelW-pad),pad,y+rowH*0.62,isBest?css('--rose'):css('--ink'),13,isBest);
+    /* лівий стовпчик — сира частота */
+    g.fillStyle=css('--hair');
+    g.fillRect(barX,y+rowH*0.22,half*(b[w]/tfMax),rowH*0.5);
+    capt(g,String(b[w]),barX+half*(b[w]/tfMax)+6,y+rowH*0.62,css('--soft'),11);
+    /* правий стовпчик — вага TF-IDF */
+    g.fillStyle=isBest?css('--rose'):css('--teal');
+    g.fillRect(barX+barW/2+18,y+rowH*0.22,half*(tv[w]/maxW),rowH*0.5);
+    capt(g,f3(tv[w]),barX+barW/2+18+half*(tv[w]/maxW)+6,y+rowH*0.62,css('--soft'),11);
+    capt(g,String(DF[w]),W-pad,y+rowH*0.62,css('--soft'),11.5,false,'right');
+  }
+  I('w1').textContent=tokens(text).length;
+  I('w2').textContent=leaders.length>1?'нічия':leaders[0];
+  I('w3').textContent=best;
+  I('w4').textContent=DF[best];
+  if(leaders.length>1)
+    verd('wVd','t-no','частота мовчить',
+      'Усі '+words.length+' слів документа трапились по разу: у частоти немає улюбленця. '+
+      'Головне слово обирає сама IDF — це <b>'+best+'</b>, бо воно є лише в '+DF[best]+
+      ' документах із '+NDOC+'.');
+  else if(leaders[0]===best)
+    verd('wVd','t-ok','збіглось',
+      'Найчастіше слово документа — <b>'+leaders[0]+'</b> ('+tfMax+' рази), і воно ж перемагає за TF-IDF. '+
+      'Тут вага нічого не змінила.');
+  else
+    verd('wVd','t-mid','IDF перекрила',
+      'Найчастіше слово — <b>'+leaders[0]+'</b> ('+tfMax+' рази, df '+DF[leaders[0]]+
+      '), але TF-IDF ставить першим <b>'+best+'</b>: воно рідкісніше (df '+DF[best]+').');
+}
+
+/* ═══════════════ фігура 2 · чому логарифм ═══════════════ */
+var kind2='log';
+function shareOfTop(text, kind){
+  var v=vecOf(text,kind,false), s=0, m=0, w;
+  for(w in v){ s+=v[w]; if(v[w]>m) m=v[w]; }
+  return s>0 ? m/s : 0;
+}
+function fig2(){
+  var cv=I('cLog'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var i=+I('doc2').value, text=DOCS[i];
+  I('doc2Out').textContent=(i+1)+' / '+DOCS.length;
+  var half=W/2-14, pad=44;
+  /* ── ліворуч: крива «вага від df» у логарифмічній шкалі df ── */
+  var x0=pad, x1=half-10, y0=H-46, y1=30;
+  var lo=Math.log(1), hi=Math.log(NDOC);
+  var maxW=idfOf2(1,kind2), k, xx, yy, d;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y1); g.lineTo(x0,y0); g.lineTo(x1,y0); g.stroke();
+  var marks=[1,10,100,1000,20000];
+  for(k=0;k<marks.length;k++){
+    xx=x0+(Math.log(marks[k])-lo)/(hi-lo)*(x1-x0);
+    capt(g,String(marks[k]),xx,y0+16,css('--soft'),10,false,'center');
+  }
+  capt(g,'df — у скількох документах слово трапилось',(x0+x1)/2,y0+32,css('--soft'),10.5,false,'center');
+  capt(g,'ВАГА СЛОВА',x0-6,y1-10,css('--soft'),10.5,true);
+  capt(g,'макс',x0-8,y1+4,css('--soft'),10,false,'right');
+  capt(g,'0',x0-8,y0+4,css('--soft'),10,false,'right');
+  /* сіра лінія — логарифмічна схема для порівняння */
+  var kinds=[['log',css('--hair')],[kind2,css('--rose')]];
+  for(var q=0;q<kinds.length;q++){
+    if(q===0 && kind2==='log') continue;
+    g.strokeStyle=kinds[q][1]; g.lineWidth=q===0?1.5:2.5; g.beginPath();
+    for(k=0;k<=160;k++){
+      d=Math.exp(lo+(hi-lo)*k/160);
+      xx=x0+(k/160)*(x1-x0);
+      yy=y0-(idfOf2(d,kinds[q][0])/idfOf2(1,kind2))*(y0-y1);
+      if(yy<y1-2){ yy=y1-2; }
+      if(k===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+    }
+    g.stroke();
+  }
+  capt(g,'обрана схема',x1,y1+2,css('--rose'),10.5,true,'right');
+  if(kind2!=='log') capt(g,'логарифмічна для порівняння',x1,y1+18,css('--soft'),10.5,false,'right');
+  /* ── праворуч: частки ваги в обраному документі ── */
+  var bx=half+24, bw=W-bx-16;
+  var v=vecOf(text,kind2,false), words=sortedWords(v), sum=0, w;
+  for(w in v) sum+=v[w];
+  capt(g,'ЯК ВАГА ДОКУМЕНТА ДІЛИТЬСЯ МІЖ СЛОВАМИ',bx,30,css('--soft'),10.5,true);
+  var yb=48, hb=34, xc=bx;
+  for(k=0;k<words.length;k++){
+    var frac=v[words[k]]/sum, ww=frac*bw;
+    g.fillStyle = k===0 ? css('--rose') : (k%2 ? css('--teal') : css('--hair'));
+    g.fillRect(xc,yb,Math.max(ww-1,0),hb);
+    xc+=ww;
+  }
+  capt(g,'найважче слово: '+words[0]+' ('+Math.round(100*v[words[0]]/sum)+' %)',bx,yb+hb+22,css('--rose'),12,true);
+  var yl=yb+hb+44;
+  for(k=0;k<words.length && k<7;k++){
+    capt(g,shortenTo(g,words[k],11.5,bw-70)+'  '+Math.round(100*v[words[k]]/sum)+' %',
+         bx,yl+k*17,k===0?css('--rose'):css('--soft'),11.5,k===0);
+  }
+  /* середня частка по всіх 120 документах */
+  var acc=0;
+  for(k=0;k<DOCS.length;k++) acc+=shareOfTop(DOCS[k],kind2);
+  acc/=DOCS.length;
+  var span=idfOf2(1,kind2)/idfOf2(NDOC,kind2);
+  I('l1').textContent=f4(v[words[0]]/sum);
+  I('l2').textContent=f4(acc);
+  I('l3').textContent=(span>=1000? Math.round(span) : f1(span))+'×';
+  I('l4').textContent=words.length;
+  if(kind2==='none')
+    verd('lVd','t-mid','ваги немає',
+      'Усі слова рівні, і найважче слово забирає в середньому <b>'+f2(100*acc)+' %</b> ваги документа. '+
+      'Це база для порівняння: саме стільки дає мішок слів із теми 04.');
+  else if(kind2==='log')
+    verd('lVd','t-ok','рівновага',
+      'Логарифм піднімає частку головного слова з 19 до <b>'+f2(100*acc)+' %</b>: рідкісне стало важливішим, '+
+      'але решта документа далі має голос. Розмах ваг усього '+f1(span)+'×.');
+  else if(kind2==='root')
+    verd('lVd','t-mid','уже завелика',
+      'Корінь дає розмах '+Math.round(span)+'×, і головне слово забирає вже <b>'+f2(100*acc)+' %</b>. '+
+      'Документ наполовину перетворився на одне слово.');
+  else
+    verd('lVd','t-no','зривається',
+      'Без логарифма розмах ваг — <b>'+Math.round(span)+'×</b>, і одне найрідкісніше слово забирає '+
+      '<b>'+f2(100*acc)+' %</b> ваги документа. Решта тексту фактично перестала впливати.');
+}
+function idfOf2(d, kind){
+  if(kind==='none') return 1;
+  if(kind==='log')  return Math.log((1+NDOC)/(1+d))+1;
+  if(kind==='root') return Math.sqrt(NDOC/d);
+  return NDOC/d;
+}
+
+/* ═══════════════ фігура 3 · згладжування ═══════════════ */
+var DFS=[0,1,2,3,5,8,13,20,32,50,80,130,200,320,500,800,1300,2000,3200,5000,8000,13000,20000];
+var smooth3=true;
+function fig3(){
+  var cv=I('cSmooth'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var i=+I('df3').value, d=DFS[i];
+  I('df3Out').textContent=String(d);
+  var pad=52, x0=pad, x1=W-24, y0=H-46, y1=28;
+  var lo=Math.log(1), hi=Math.log(NDOC), top=12;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y1); g.lineTo(x0,y0); g.lineTo(x1,y0); g.stroke();
+  var k, xx, yy, marks=[1,10,100,1000,20000];
+  for(k=0;k<marks.length;k++){
+    xx=x0+(Math.log(marks[k])-lo)/(hi-lo)*(x1-x0);
+    capt(g,String(marks[k]),xx,y0+16,css('--soft'),10,false,'center');
+  }
+  for(k=0;k<=top;k+=3){
+    yy=y0-(k/top)*(y0-y1);
+    g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(x0,yy); g.lineTo(x1,yy); g.stroke();
+    capt(g,String(k),x0-8,yy+4,css('--soft'),10,false,'right');
+  }
+  capt(g,'df — у скількох документах трапилось слово',(x0+x1)/2,y0+32,css('--soft'),10.5,false,'center');
+  capt(g,'IDF',x0-6,y1-8,css('--soft'),10.5,true);
+  function draw(fn,color,width){
+    g.strokeStyle=color; g.lineWidth=width; g.beginPath();
+    var pen=false;
+    for(k=0;k<=200;k++){
+      var dd=Math.exp(lo+(hi-lo)*k/200), val=fn(dd);
+      if(!isFinite(val) || val>top){ pen=false; continue; }
+      xx=x0+(k/200)*(x1-x0); yy=y0-(val/top)*(y0-y1);
+      if(!pen){ g.moveTo(xx,yy); pen=true; } else g.lineTo(xx,yy);
+    }
+    g.stroke();
+  }
+  draw(function(dd){return Math.log(NDOC/dd)+1;}, smooth3?css('--hair'):css('--rose'), smooth3?1.5:2.5);
+  draw(function(dd){return Math.log((1+NDOC)/(1+dd))+1;}, smooth3?css('--rose'):css('--hair'), smooth3?2.5:1.5);
+  var vs=Math.log((1+NDOC)/(1+d))+1, vp=(d===0? Infinity : Math.log(NDOC/d)+1);
+  if(d>0){
+    xx=x0+(Math.log(d)-lo)/(hi-lo)*(x1-x0);
+    g.strokeStyle=css('--amber'); g.lineWidth=1.5; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(xx,y0); g.lineTo(xx,y1); g.stroke(); g.setLineDash([]);
+    var cur=smooth3?vs:vp;
+    if(isFinite(cur) && cur<=top){
+      g.fillStyle=css('--amber'); g.beginPath();
+      g.arc(xx,y0-(cur/top)*(y0-y1),5,0,6.284); g.fill();
+    }
+  } else {
+    capt(g,'df = 0 — слова немає в корпусі взагалі',x0+14,y1+16,css('--amber'),11.5,true);
+    capt(g,'без згладжування тут ділення на нуль',x0+14,y1+32,css('--amber'),11,false);
+  }
+  capt(g,'зі згладжуванням', x1, y1+2, smooth3?css('--rose'):css('--soft'),10.5,smooth3,'right');
+  capt(g,'без згладжування', x1, y1+18, smooth3?css('--soft'):css('--rose'),10.5,!smooth3,'right');
+  I('sm1').textContent=String(d);
+  I('sm2').textContent=f4(vs);
+  I('sm3').textContent=isFinite(vp)?f4(vp):'∞';
+  I('sm4').textContent=isFinite(vp)?f4(vp-vs):'—';
+  if(d===0)
+    verd('sVd','t-no','ділення на нуль',
+      'Слова немає в корпусі жодного разу. Без згладжування це <b>ln(N/0)</b> — нескінченність, '+
+      'а після нормалізації весь рядок стає NaN. Зі згладжуванням виходить скінченні '+f4(vs)+'.');
+  else if(d<=3)
+    verd('sVd','t-mid','згладжування підрізає верх',
+      'Для найрідкісніших слів різниця найбільша: '+f4(vp)+' проти '+f4(vs)+
+      ' — на <b>'+f4(vp-vs)+'</b>. Саме тут згладжування щось робить.');
+  else
+    verd('sVd','t-ok','майже не видно',
+      'df = '+d+': різниця між схемами <b>'+f4(vp-vs)+'</b> при самій вазі близько '+f2(vs)+
+      '. Для частих слів згладжування нічого не міняє — воно потрібне лише на самому краю.');
+}
+
+/* ═══════════════ фігура 4 · нормалізація ═══════════════ */
+var norm4=true;
+function fig4(){
+  var cv=I('cNorm'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var len=+I('len4').value;
+  I('len4Out').textContent=len+' слів';
+  var f=DATA.f4, fill=tokens(f.filler);
+  var repeats=Math.max(1,Math.round(len/6)), k;
+  var spam=[];
+  for(k=0;k<repeats;k++) spam.push(f.spam_word);
+  for(k=0;k<len-repeats;k++) spam.push(fill[k%fill.length]);
+  var spamText=spam.join(' ');
+  var q=vecOf(f.query,'log',norm4);
+  var a=vecOf(f.good,'log',norm4), b=vecOf(spamText,'log',norm4);
+  var sa=dot(q,a), sb=dot(q,b);
+  var la=0, lb=0, w, va=vecOf(f.good,'log',false), vb=vecOf(spamText,'log',false);
+  for(w in va) la+=va[w]*va[w];
+  for(w in vb) lb+=vb[w]*vb[w];
+  la=Math.sqrt(la); lb=Math.sqrt(lb);
+
+  var pad=18, colW=(W-pad*3)/2;
+  function panel(x,title,text,score,len2,winner){
+    g.fillStyle=css('--paper'); g.fillRect(x,26,colW,H-46);
+    capt(g,title,x+12,48,winner?css('--rose'):css('--soft'),11.5,true);
+    var words=tokens(text), line='', lines=[], j;
+    for(j=0;j<words.length;j++){
+      var test=line?line+' '+words[j]:words[j];
+      g.font=mono(11.5,false);
+      if(g.measureText(test).width>colW-24){ lines.push(line); line=words[j]; }
+      else line=test;
+      if(lines.length>=5) break;
+    }
+    if(line && lines.length<5) lines.push(line);
+    for(j=0;j<lines.length;j++) capt(g,lines[j],x+12,70+j*16,css('--ink'),11.5);
+    capt(g,'слів у документі: '+words.length,x+12,H-72,css('--soft'),11);
+    capt(g,'довжина вектора: '+f2(len2),x+12,H-54,css('--soft'),11);
+    var bw=(colW-24)*Math.min(score/Math.max(sa,sb,1e-9),1);
+    g.fillStyle=winner?css('--rose'):css('--teal');
+    g.fillRect(x+12,H-44,bw,14);
+    capt(g,'оцінка '+f4(score),x+12,H-14,winner?css('--rose'):css('--soft'),12,true);
+  }
+  panel(pad,'ДОКУМЕНТ ПРО ЗАПИТ',f.good,sa,la,sa>=sb);
+  panel(pad*2+colW,'ДОВГИЙ ЧУЖИЙ ДОКУМЕНТ',spamText,sb,lb,sb>sa);
+  capt(g,'ЗАПИТ: '+f.query+(norm4?'   ·   з L2-нормалізацією':'   ·   без нормалізації'),
+       pad,18,css('--ink'),12,true);
+  I('n1').textContent=f4(sa);
+  I('n2').textContent=f4(sb);
+  I('n3').textContent=f2(la)+' / '+f2(lb);
+  I('n4').textContent=repeats;
+  if(!norm4 && sb>sa)
+    verd('nVd','t-no','перемагає довжина',
+      'Довгий документ не про запит, але слово «'+f.spam_word+'» трапляється в ньому '+repeats+
+      ' рази — і без нормалізації він набирає <b>'+f4(sb)+'</b> проти '+f4(sa)+
+      '. Пошук видає найдовше, а не найдоречніше.');
+  else if(!norm4)
+    verd('nVd','t-mid','поки що ні',
+      'На такій довжині чужий документ ще програє ('+f4(sb)+' проти '+f4(sa)+
+      '). Потягни повзунок далі — без нормалізації оцінка росте разом із документом.');
+  else if(sa>sb)
+    verd('nVd','t-ok','довжина знешкоджена',
+      'З L2 вектор кожного документа має довжину рівно одиницю, і оцінка стає косинусом кута. '+
+      'Доречний документ тримає <b>'+f4(sa)+'</b> проти '+f4(sb)+' незалежно від довжини сусіда.');
+  else
+    verd('nVd','t-mid','рівність',
+      'Оцінки зрівнялись: '+f4(sa)+' проти '+f4(sb)+'. Навіть із нормалізацією повторення слова '+
+      'запиту щось важить — але вже не автоматично.');
+}
+
+/* ═══════════════ фігура 5 · пошук ═══════════════ */
+var q5=0;
+function rank(query, kind){
+  var q=vecOf(query,kind,true), out=[], k;
+  for(k=0;k<DOCS.length;k++) out.push({i:k, s:dot(q,vecOf(DOCS[k],kind,true))});
+  out.sort(function(a,b){ return b.s-a.s || a.i-b.i; });
+  return out;
+}
+function fig5(){
+  var cv=I('cFind'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var query=DATA.queries[q5];
+  var byCount=rank(query,'none'), byTfidf=rank(query,'log');
+  var topC=byCount.slice(0,5), topT=byTfidf.slice(0,5), k;
+  var setC={}, setT={};
+  for(k=0;k<5;k++){ setC[topC[k].i]=1; setT[topT[k].i]=1; }
+  var shared=0;
+  for(k=0;k<5;k++) if(setT[topC[k].i]) shared++;
+  var pad=16, colW=(W-pad*3)/2, rowH=(H-72)/5;
+  capt(g,'ЗАПИТ: '+query,pad,20,css('--ink'),12.5,true);
+  function column(x,title,rows,other,color){
+    capt(g,title,x,44,css('--soft'),10.5,true);
+    for(var j=0;j<rows.length;j++){
+      var y=54+j*rowH, both=other[rows[j].i]===1;
+      g.fillStyle=both?css('--paper'):(color==='rose'?css('--rose-w'):css('--teal-w'));
+      g.fillRect(x,y,colW,rowH-8);
+      capt(g,String(j+1),x+8,y+rowH*0.42,css('--soft'),11,true);
+      capt(g,f3(rows[j].s),x+26,y+rowH*0.42,both?css('--soft'):(color==='rose'?css('--rose'):css('--teal')),11.5,true);
+      capt(g,shortenTo(g,DOCS[rows[j].i],11.5,colW-80),x+72,y+rowH*0.42,css('--ink'),11.5);
+      capt(g,both?'є й праворуч':'лише тут',x+72,y+rowH*0.75,css('--soft'),10);
+    }
+  }
+  column(pad,'ЗА САМОЮ ЧАСТОТОЮ (мішок слів, тема 04)',topC,setT,'teal');
+  column(pad*2+colW,'ЗА TF-IDF',topT,setC,'rose');
+  I('r1').textContent=shared+' / 5';
+  I('r2').textContent=(topC[0].i===topT[0].i)?'той самий':'інший';
+  I('r3').textContent=f3(topT[0].s);
+  I('r4').textContent=f3(topC[0].s);
+  if(topC[0].i!==topT[0].i)
+    verd('rVd','t-ok','різниця видима',
+      'Перший результат різний. Частота піднімає «'+shortenTo(g,DOCS[topC[0].i],11,240)+'», '+
+      'а TF-IDF — «'+shortenTo(g,DOCS[topT[0].i],11,240)+'». Спільних у топ-5: <b>'+shared+' із 5</b>.');
+  else if(shared<=3)
+    verd('rVd','t-mid','порядок поїхав',
+      'Перший результат той самий, але далі списки розходяться: спільних у топ-5 лише <b>'+shared+
+      ' із 5</b>. На такому запиті вага міняє хвіст видачі, а не голову.');
+  else
+    verd('rVd','t-no','різниці немає',
+      'Списки збігаються на <b>'+shared+' із 5</b>, і перший результат той самий. Усі слова запиту '+
+      'приблизно однаково рідкісні — зважувати нічого.');
+}
+
+/* ═══════════════ фігура 6 · синоніми ═══════════════ */
+var p6=0;
+function trigrams(text){
+  var s=' '+text.toLowerCase().replace(/[^\p{L} ]/gu,'')+' ', out={}, k;
+  for(k=0;k+3<=s.length;k++){ var t=s.slice(k,k+3); out[t]=(out[t]||0)+1; }
+  var n=0, w;
+  for(w in out) n+=out[w]*out[w];
+  n=Math.sqrt(n)||1;
+  for(w in out) out[w]=out[w]/n;
+  return out;
+}
+function fig6(){
+  var cv=I('cSyn'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var pair=DATA.pairs[p6], swap=+I('swap6').value;
+  var A=tokens(pair[0]), B=tokens(pair[1]).slice();
+  var maxSwap=Math.min(A.length,B.length);
+  I('swap6').max=String(maxSwap);
+  if(swap>maxSwap){ swap=maxSwap; I('swap6').value=String(swap); }
+  I('swap6Out').textContent=swap+' / '+maxSwap;
+  var k;
+  for(k=0;k<swap;k++) B[k]=A[k];              /* підміняємо слова другого тексту словами першого */
+  var textA=A.join(' '), textB=B.join(' ');
+  var va=vecOf(textA,'log',true), vb=vecOf(textB,'log',true);
+  var cos=dot(va,vb);
+  var ca=trigrams(textA), cb=trigrams(textB), ccos=dot(ca,cb);
+  var setA={}, common=0;
+  for(k=0;k<A.length;k++) setA[A[k]]=1;
+  var seen={};
+  for(k=0;k<B.length;k++) if(setA[B[k]] && !seen[B[k]]){ common++; seen[B[k]]=1; }
+
+  var pad=18;
+  capt(g,'ДОКУМЕНТ A',pad,24,css('--soft'),10.5,true);
+  capt(g,'ДОКУМЕНТ B — той самий зміст, інші слова',pad,108,css('--soft'),10.5,true);
+  function chips(words,y,mark){
+    var x=pad, j;
+    for(j=0;j<words.length;j++){
+      g.font=mono(12.5,false);
+      var tw=g.measureText(words[j]).width+16;
+      if(x+tw>W-pad){ x=pad; y+=30; }
+      var hit=mark && setA[words[j]]===1;
+      g.fillStyle=hit?css('--rose-w'):css('--paper');
+      g.strokeStyle=hit?css('--rose'):css('--hair'); g.lineWidth=1;
+      g.beginPath(); g.roundRect(x,y,tw,24,6); g.fill(); g.stroke();
+      capt(g,words[j],x+8,y+16,hit?css('--rose'):css('--ink'),12.5,hit);
+      x+=tw+7;
+    }
+    return y;
+  }
+  chips(A,36,false);
+  var lastY=chips(B,120,true);
+  /* смуга косинуса — одразу під фішками, а не в самому низу */
+  var by=Math.max(lastY+52,H-72), bw=W-pad*2;
+  g.fillStyle=css('--paper'); g.fillRect(pad,by,bw,20);
+  g.fillStyle=css('--rose'); g.fillRect(pad,by,bw*cos,20);
+  capt(g,'косинус TF-IDF: '+f4(cos),pad,by+35,css('--rose'),12,true);
+  capt(g,'символьні триграми (без ваг): '+f4(ccos),pad+260,by+35,css('--teal'),12,true);
+  capt(g,'спільних слів: '+common,W-pad,by+35,css('--soft'),12,true,'right');
+  I('y1').textContent=common;
+  I('y2').textContent=f4(cos);
+  I('y3').textContent=f4(ccos);
+  I('y4').textContent=A.length+' / '+B.length;
+  if(swap===0 && common===0)
+    verd('yVd','t-no','нуль на однаковому змісті',
+      'Ці два речення — переклади <b>того самого</b> англійського рядка, тобто означають одне й те саме. '+
+      'Спільних слів нуль, і косинус TF-IDF теж <b>рівно нуль</b> — стільки ж, скільки в двох випадкових '+
+      'документів корпусу. Триграми дають '+f4(ccos)+', бо бачать спільні корені.');
+  else if(cos<0.35)
+    verd('yVd','t-mid','підмінили '+swap+', а схожість усе ще мала',
+      'Ми вручну підклали в документ B '+swap+' слів із документа A, і косинус піднявся лише до <b>'+f4(cos)+
+      '</b>. TF-IDF рахує збіг написань, і кожне нове спільне слово додає рівно свій шматок — не більше.');
+  else
+    verd('yVd','t-ok','збіг написань, а не змісту',
+      'Після підміни '+swap+' слів косинус <b>'+f4(cos)+'</b>. Зміст не змінився жодного разу — '+
+      'змінилось тільки те, скільки однакових рядків символів у двох текстах. Саме це TF-IDF і міряє.');
+}
+
+/* ═══════════════ фігура 7 · короткі документи ═══════════════ */
+var d7=1;
+function fig7(){
+  var cv=I('cShort'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var full=tokens(LONGS[d7]), keep=+I('keep7').value;
+  I('keep7').max=String(full.length);
+  if(keep>full.length){ keep=full.length; I('keep7').value=String(keep); }
+  if(keep<1){ keep=1; I('keep7').value='1'; }
+  I('keep7Out').textContent=keep+' / '+full.length;
+  var part=full.slice(0,keep).join(' ');
+  var v=vecOf(part,'log',true), words=sortedWords(v), k, top=v[words[0]];
+  var vfull=vecOf(full.join(' '),'log',true), cos=dot(v,vfull);
+  var lost=0;
+  if(keep>1){
+    var cut=full.slice(0,keep); cut.splice(keep-1,1);
+    lost=dot(v,vecOf(cut.join(' '),'log',true));
+  }
+  /* ── верх: стовпчики координат одиничного вектора ── */
+  var pad=18, top0=40, chartH=110, base=top0+chartH;
+  capt(g,'ВЕКТОР ДОКУМЕНТА: ЯКУ ЧАСТКУ ДОВЖИНИ НЕСЕ КОЖНЕ СЛОВО',pad,24,css('--soft'),10.5,true);
+  var slot=(W-pad*2)/full.length, barW=Math.min(slot-6,44);
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(pad,base+0.5); g.lineTo(W-pad,base+0.5); g.stroke();
+  for(k=0;k<words.length;k++){
+    var hgt=chartH*v[words[k]], cx=pad+k*slot+slot/2;
+    g.fillStyle=k===0?css('--rose'):css('--teal');
+    g.fillRect(cx-barW/2,base-hgt,barW,hgt);
+    capt(g,f2(v[words[k]]),cx,base-hgt-5,css('--soft'),10,false,'center');
+    capt(g,shortenTo(g,words[k],9.5,slot-2),cx,base+13,k===0?css('--rose'):css('--soft'),9.5,k===0,'center');
+  }
+  /* ── низ: крива «частка головного слова від довжини» ── */
+  var y1=base+50, y0=H-24, x0=pad+34, x1=W-pad;
+  capt(g,'ЧАСТКА ГОЛОВНОГО СЛОВА ЗАЛЕЖНО ВІД ДОВЖИНИ',pad,y1-10,css('--soft'),10.5,true);
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  for(k=0;k<=2;k++){
+    var gy=y0-(k/2)*(y0-y1);
+    g.beginPath(); g.moveTo(x0,gy); g.lineTo(x1,gy); g.stroke();
+    capt(g,(k/2).toFixed(1),x0-8,gy+4,css('--soft'),10,false,'right');
+  }
+  g.strokeStyle=css('--rose'); g.lineWidth=2; g.beginPath();
+  var xs=[], ys=[];
+  for(k=1;k<=full.length;k++){
+    var vv=vecOf(full.slice(0,k).join(' '),'log',true), sw=sortedWords(vv);
+    var xx=x0+(k-1)/Math.max(full.length-1,1)*(x1-x0), yy=y0-vv[sw[0]]*(y0-y1);
+    xs.push(xx); ys.push(yy);
+    if(k===1) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+  }
+  g.stroke();
+  g.fillStyle=css('--amber');
+  g.beginPath(); g.arc(xs[keep-1],ys[keep-1],5,0,6.284); g.fill();
+  capt(g,'слів у документі: '+keep,x1,y0+18,css('--soft'),10.5,false,'right');
+  I('h1').textContent=keep;
+  I('h2').textContent=f4(top);
+  I('h3').textContent=f4(cos);
+  I('h4').textContent=keep>1?f4(lost):'—';
+  if(keep<=3)
+    verd('hVd','t-no','одне слово — весь документ',
+      'На '+keep+' словах головне слово несе <b>'+f2(100*top)+' %</b> довжини вектора. '+
+      (keep>1?'Прибери одне слово — і схожість із собою впаде до '+f4(lost)+'. ':'')+
+      'Такий документ ламається від будь-якої дрібниці: іншої словоформи, одруківки, синоніма.');
+  else if(keep<=8)
+    verd('hVd','t-mid','усе ще крихко',
+      'Головне слово тримає <b>'+f2(100*top)+' %</b> довжини, втрата одного слова роняє схожість '+
+      'до '+f4(lost)+'. Половина документів нашого корпусу саме такої довжини.');
+  else
+    verd('hVd','t-ok','вага розподілилась',
+      'На '+keep+' словах головне слово несе вже <b>'+f2(100*top)+' %</b>, а втрата одного слова '+
+      'коштує мало: схожість лишається '+f4(lost)+'. Довгий текст TF-IDF описує стійко.');
+}
+
+/* ═══════════════ звʼязки керувань ═══════════════ */
+on('doc1','input',fig1);
+on('doc2','input',fig2);
+segment('kind2seg',function(i){ kind2=['none','log','root','lin'][i]; fig2(); });
+on('df3','input',fig3);
+segment('sm3seg',function(i){ smooth3=(i===0); fig3(); });
+on('len4','input',fig4);
+segment('nm4seg',function(i){ norm4=(i===1); fig4(); });
+segment('q5seg',function(i){ q5=i; fig5(); });
+segment('p6seg',function(i){ p6=i; I('swap6').value='0'; fig6(); });
+on('swap6','input',fig6);
+segment('d7seg',function(i){ d7=i; I('keep7').value='1'; fig7(); });
+on('keep7','input',fig7);
+
+function drawAll(){ fig1(); fig2(); fig3(); fig4(); fig5(); fig6(); fig7(); }
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+/* лишаємо доступ для стенда перевірки: усі положення керувань женемо через Node */
+window.__figs = {fig1:fig1,fig2:fig2,fig3:fig3,fig4:fig4,fig5:fig5,fig6:fig6,fig7:fig7,
+  set:function(name,value){
+    if(name==='kind2') kind2=value;
+    if(name==='smooth3') smooth3=value;
+    if(name==='norm4') norm4=value;
+    if(name==='q5') q5=value;
+    if(name==='p6') p6=value;
+    if(name==='d7') d7=value;
+  }};
+})();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,1718 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тематичне моделювання</title>
+<meta name="description" content="Дати LDA і NMF 20 000 українських документів і попросити вісім тем — і дістати вісім списків прийменників: службових слів у топ-10 виходить 0.6500 у LDA і 0.4625 у NMF. Теми не виникають самі. Тема показує, як міряти читабельність числом, і проводить драбину прибирання: стоп-слова збивають частку службових слів до 0.1625, лематизація — до 0.0792, TF-IDF — до 0.0708; один поріг max_df = 0.005 без жодного списку дає 0.1333, тобто не гірше за сам список. Автоматичного критерію кількості тем немає: перплексія монотонно росте з k, помилка відновлення монотонно падає, мінімум обидві мають на краю. І головне: на підвибірках по 80 % того самого пулу теми NMF переживають викидання документів (Жаккар 0.6343, тобто майже вісім спільних слів із десяти), а теми LDA — ні (0.2220), причому LDA пливе навіть від зміни random_state на тих самих даних (0.1282 при випадковому рівні 0.0319). Вісім тем як ознаки дають F1 0.3168 проти 0.5299 у простих слів. І окремий сюжет про час: якщо міряти процесорний, а не стінний, і зафіксувати потоки, LDA виявляється повільнішою за NMF не в десятки разів, а у 108.2 — 25.9 с проти 0.24 с на 20 000 документів.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .plain td:first-child,
+td:first-child, .nums td:first-child, code, pre, kbd, samp, .mono, .wordlist, .wordlist b{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+
+/* списки слів теми у прозі: службові слова відзначені кольором */
+.wordlist{font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.9;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:14px 16px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow)}
+.wordlist div{white-space:nowrap}
+.wordlist b{color:var(--rose); font-weight:400}
+.wordlist span.n{color:var(--soft); display:inline-block; width:74px}
+
+
+/* .mono трапляється у figcaption і в прозі — там, де треба показати ідентифікатор */
+.mono{font-family:"JetBrains Mono",monospace; font-size:.9em}
+</style>
+
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 2 · Тема 08</p>
+    <h1>Тематичне моделювання</h1>
+    <p class="stand">Дати моделі 20 000 документів і попросити вісім тем — і дістати
+      вісім списків прийменників. Ця тема про те, <b>чому теми не виникають самі</b>,
+      як заміряти читабельність числом і чому за ймовірнісну модель платять
+      не лише часом. Наприкінці зʼясується, що <b>на теми однієї з двох моделей
+      можна послатися, а на теми другої — ні</b>.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Що обіцяє тематичне моделювання</a></li>
+        <li><a href="#s2">Перший запуск: обидві дають сміття</a></li>
+        <li><a href="#s3">Читабельність числом, а не оком</a></li>
+        <li><a href="#s4">Що прибирати і в якому порядку</a></li>
+        <li><a href="#s5">max_df замість списку</a></li>
+        <li><a href="#s6">Дві різні речі під однією назвою</a></li>
+        <li><a href="#s7">За що платять сотнею разів</a></li>
+        <li><a href="#s8">Скільки тем брати</a></li>
+        <li><a href="#s9">Теми не мають імен</a></li>
+        <li><a href="#s10">Чи ті самі теми вийдуть удруге</a></li>
+        <li><a href="#s11">Той самий стан і ті самі дані</a></li>
+        <li><a href="#s12">Коли це працює, а коли ні</a></li>
+        <li><a href="#s13">Не «про що», а «що на що схоже»</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../07-metrics/lecture.html">← 07. Метрики й оцінка</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../09-search/lecture.html">09. Пошук і схожість →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У попередніх двох темах ми навчились робити з тексту матрицю. <a
+href="../04-bag-of-words/lecture.html">Мішок слів</a> рахує, скільки разів кожне
+слово трапилось у документі; <a href="../05-tfidf/lecture.html">TF-IDF</a> робить
+слова нерівними за вагою. Обидві відповідають на питання «наскільки цей документ
+схожий на той». Але є питання, якого вони не ставлять узагалі.</p>
+
+<p>У нас 93&nbsp;392 документи. Їх ніхто не читав і не читатиме. Питання просте:
+<b>про що вони?</b> Не «який із них схожий на цей», а «які великі купи тут узагалі
+є». Відповіді у вигляді таблиці 20&nbsp;000 × 3&nbsp;635 не існує — її не можна
+подивитись очима.</p>
+
+<p>Тематичне моделювання (topic modeling) обіцяє саме це: із матриці «документ ×
+слово» дістати кілька <b>тем</b> — списків слів, що ходять разом. Розмітки не
+треба: моделі дають матрицю й число тем, вона повертає списки. Звучить як магія, і
+саме тому цю тему варто починати з провалу.</p>
+
+<h2 id="s1"><span class="num">01 / Постановка</span>Що обіцяє тематичне моделювання</h2>
+
+<p>Домовмось про слова одразу, бо тут легко обманутись.</p>
+
+<p><b>Тема</b> в цьому методі — не назва й не рубрика. Це просто набір ваг на всіх
+словах словника: у теми «друк» слово «принтер» має велику вагу, «акумулятор» —
+малу. Дивимось ми зазвичай на <b>топ-10</b> слів теми, бо решта 3&nbsp;625 ваг
+майже нульові.</p>
+
+<p><b>Документ</b> у цьому методі — не «одна тема», а <b>суміш</b>: рядок
+«Не вдалося надрукувати сторінку» може на 60&nbsp;% належати темі про друк і на
+40&nbsp;% темі про помилки. Це відрізняє тематичне моделювання від
+<a href="../../02-ai-ml/26-kmeans/lecture.html">кластеризації</a>, де кожен обʼєкт
+потрапляє рівно в один кластер.</p>
+
+<p>Отже, з матриці «документ × слово» ми хочемо дістати дві менші таблиці:</p>
+
+<div class="eq left">документ × слово   ≈   документ × тема   ·   тема × слово</div>
+
+<p>Ліва матриця — та, яку ми вже маємо. Права пара — те, чого ми хочемо: для
+кожного документа розклад по темах, для кожної теми розклад по словах. Число тем
+(позначатимемо його <code>k</code>) ми задаємо самі, і це буде окремий біль
+розділу&nbsp;08.</p>
+
+<p>У <code>sklearn</code> для цього є два інструменти:
+<code>LatentDirichletAllocation</code> (далі LDA) і <code>NMF</code>. Вони
+розвʼязують ту саму задачу двома різними способами, і різницю ми розберемо в
+розділі&nbsp;06. Поки що беремо обидва як чорні скриньки й дивимось, що вийде.</p>
+
+<h2 id="s2"><span class="num">02 / Провал</span>Перший запуск: обидві дають сміття</h2>
+
+<p>Беремо 20&nbsp;000 випадкових документів корпусу й будуємо мішок слів. Два
+порожні параметри тут не порожні: <code>min_df=5</code> викидає слова, що
+трапились менш ніж у пʼяти документах, а <code>max_df=0.5</code> — ті, що є більш
+ніж у половині. Це стандартні налаштування «за замовчуванням розумно».</p>
+
+<div class="eq left">CountVectorizer(min_df=5, max_df=0.5, token_pattern=TOKEN_PATTERN)</div>
+
+<p>Виходить матриця 20&nbsp;000 × 3&nbsp;635 із 120 252 ненульовими клітинками —
+заповнено 0.1654&nbsp;%. Просимо в обох моделей вісім тем. Ось що вони кажуть.</p>
+
+<div class="wordlist"><div><span class="n">тема 0</span><b>з</b> <b>або</b> помилка <b>для</b> назва значення <b>до</b> системи байтів неможливо</div>
+<div><span class="n">тема 1</span><b>у</b> <b>з</b> <b>для</b> <b>якщо</b> <b>і</b> <b>за</b> вказано значення <b>буде</b> <b>та</b></div>
+<div><span class="n">тема 2</span>дані <b>до</b> <b>за</b> <b>щодо</b> <b>на</b> <b>про</b> <b>щоб</b> будь <b>з</b> <b>ви</b></div>
+<div><span class="n">тема 3</span><b>не</b> <b>для</b> <b>у</b> передбачено <b>є</b> підтримки <b>можна</b> <b>якщо</b> розпізнавання даних</div>
+<div><span class="n">тема 4</span><b>для</b> файл файла розмір <b>у</b> <b>з</b> <b>чи</b> вказати <b>слід</b> помилка</div>
+<div><span class="n">тема 5</span><b>не</b> вдалося <b>для</b> <b>є</b> отримати <b>з</b> створити файл <b>до</b> встановити</div>
+<div><span class="n">тема 6</span><b>на</b> <b>в</b> <b>бути</b> <b>не</b> <b>має</b> <b>може</b> <b>у</b> значення <b>як</b> <b>або</b></div>
+<div><span class="n">тема 7</span>час <b>під</b> <b>для</b> <b>у</b> <b>до</b> <b>лише</b> <b>з</b> використовувати помилка <b>можна</b></div></div>
+
+<p>Тепер NMF на тій самій матриці:</p>
+
+<div class="wordlist"><div><span class="n">тема 0</span><b>не</b> вдалося отримати <b>можна</b> <b>є</b> передбачено файл підтримки створити <b>в</b></div>
+<div><span class="n">тема 1</span><b>для</b> даних <b>слід</b> <b>і</b> ключа встановлення <b>цього</b> використання встановити <b>лише</b></div>
+<div><span class="n">тема 2</span><b>у</b> передбачено форматі даних режимі підтримки <b>і</b> файлі немає <b>можна</b></div>
+<div><span class="n">тема 3</span><b>якщо</b> значення <b>буде</b> <b>і</b> <b>за</b> вказано <b>та</b> <b>має</b> <b>не</b> <b>є</b></div>
+<div><span class="n">тема 4</span><b>з</b> <b>та</b> <b>можна</b> даних <b>що</b> файла час <b>лише</b> помилка файл</div>
+<div><span class="n">тема 5</span><b>на</b> <b>в</b> <b>бути</b> <b>може</b> аргумент посилання основі повинен <b>є</b> функції</div>
+<div><span class="n">тема 6</span><b>або</b> назва адреса з'єднання параметри файл інтерфейсу шаблон пристрій число</div>
+<div><span class="n">тема 7</span><b>до</b> <b>і</b> коміт даних доступ файла <b>щоб</b> <b>слід</b> <b>але</b> <b>за</b></div></div>
+
+<div class="note warn"><b>Це не теми.</b> «не», «для», «у», «з», «до», «є»,
+«може» — це службові слова української мови. Вони є всюди, тому й опинилися
+нагорі в кожній темі. Модель чесно знайшла те, що спільне для всіх документів, —
+але спільне для всіх не розрізняє нічого. Слово «для» стоїть у топ-10
+6 тем із восьми, «з» — теж 6; а теми 4 і 7 ділять аж
+4 слова з десяти: «для», «з», «помилка», «у».</div>
+
+<p>Головна думка теми вміщається в одне речення, і вона протилежна тому, чого
+чекаєш: <b>теми не виникають самі</b>. Спершу треба прибрати те, що є скрізь, і
+аж тоді дивитись. Решта теми — про те, як саме прибирати й як переконатись, що
+стало краще.</p>
+
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Вісім тем, які не є темами</p>
+  <p class="fig-sub">Топ-слова восьми тем на сирому мішку слів: 20&nbsp;000 документів,
+    <code>min_df=5</code>, <code>max_df=0.5</code>. Службові слова позначені кольором.
+    Перемкни модель і посунь повзунок — частка службових майже не залежить від того,
+    скільки слів дивитись.</p>
+  <div class="panel">
+    <div><canvas id="cTop" width="940" height="372" aria-label="Вісім рядків по десять слів: топ-слова кожної теми, службові виділені кольором"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">модель</span>
+      <div class="seg" id="segTop">
+        <button data-i="0" aria-pressed="true">LDA</button>
+        <button data-i="1" aria-pressed="false">NMF</button>
+      </div></div>
+      <div class="ctl">
+        <label for="topn1">слів у топі <output id="topn1Out">10</output></label>
+        <input type="range" id="topn1" min="3" max="10" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>службових</b><i id="t1a">—</i></div>
+        <div class="cellv"><b>різноманіття</b><i id="t1b">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>різних слів</b><i id="t1c">—</i></div>
+        <div class="cellv"><b>час навчання</b><i id="t1d">—</i></div>
+      </div>
+      <div class="verdict" id="t1v"></div>
+    </div>
+  </div>
+  <figcaption><b>Теми 4 і 7 в LDA ділять 4 слова з десяти:
+    «для», «з», «помилка», «у».</b> Це і є той провал, з якого починається тема: модель чесно знайшла
+    спільне для всіх документів, а спільне для всіх нічого не розрізняє.</figcaption>
+</figure>
+
+
+<h2 id="s3"><span class="num">03 / Міра</span>Читабельність числом, а не оком</h2>
+
+<p>«Стало краще» — не замір. Коли списків вісім і кожен по десять слів, око
+бачить те, що хоче бачити. Потрібне число.</p>
+
+<p>Найпростіше, що працює: <b>частка службових слів у топ-10 кожної теми</b>.
+Позначимо її <code>служб@10</code>. Якщо з 80 слів (вісім тем по десять) службових
+50 — це 0.6250. Якщо 4 — це 0.0500.</p>
+
+<p>Лишається сказати, що таке «службове слово», і сказати так, щоб це не залежало
+від того, що саме ми прибираємо. Інакше міра стане круговою: викинули список — і
+частка сама впала до нуля, хоч теми не змінились.</p>
+
+<p>Українська, як і будь-яка мова, ділить слова на <b>відкриті</b> й <b>закриті</b>
+класи. Відкриті поповнюються щодня: іменники, дієслова, прикметники. Закриті — ні:
+прийменників у мові кілька десятків, і нових не зʼявляється століттями. Саме
+закриті класи й дають список службових слів, який не треба складати руками:</p>
+
+<div class="eq left">CLOSED_POS = {'PREP', 'CONJ', 'PRCL', 'NPRO'}
+# прийменник, сполучник, частка, займенник</div>
+
+<p><code>pymorphy3</code> із <a href="../03-morphology/lecture.html">теми 03</a>
+уміє розбирати слово й називати частину мови. Слово вважаємо службовим, якщо
+<b>хоч один</b> його розбір потрапляє в закритий клас. «Хоч один», а не «перший»,
+бо перший розбір часто хибний: для «під» <code>pymorphy3</code> першим дає
+іменник «під» (черінь печі), і лише другим — прийменник.</p>
+
+<div class="note"><b>Що ця міра не ловить.</b> Звʼязка «є», модальні «може»,
+«можна», «має», «слід» формально дієслова, а змісту не несуть — їх довелося додати
+списком із девʼятнадцяти слів. Це чесна вада міри. Друга вада в інший бік: «слід»
+буває іменником («слід на снігу»), і в іншому корпусі ми викидали б потрібне
+слово.</div>
+
+<p>Друга міра дешевша й не потребує морфології взагалі: <b>різноманіття</b> —
+скільки різних слів у зведеному топ-10 усіх тем. Вісім тем по десять слів дають
+80 позицій; якщо всі 80 слів різні, різноманіття дорівнює одиниці, якщо різних
+лише 40 — половині. Погані теми повторюють одні й ті самі прийменники, тому
+різноманіття падає разом із якістю.</p>
+
+<p>На нашому провальному запуску обидві міри кажуть те саме:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>модель</th><th>служб@10</th><th>різноманіття</th><th>час</th></tr></thead>
+  <tbody>
+    <tr><td>LDA</td><td>0.6500</td><td>0.6250</td><td>25.4 с</td></tr>
+    <tr><td>NMF</td><td>0.4625</td><td>0.7375</td><td>0.233 с</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Уже тут видно дві речі, до яких ми повернемось. NMF дає менше службових слів,
+ніж LDA, — і робить це в 108.9 раза швидше. Так, у сто разів: це не помилка
+друку, і розділ 07 пояснює, звідки береться така прірва.</p>
+<h2 id="s4"><span class="num">04 / Драбина</span>Що прибирати і в якому порядку</h2>
+
+<p>Тепер, коли є число, можна прибирати не наосліп. Чотири кроки, кожен наступний
+додається до попередніх:</p>
+
+<ol>
+<li><b>Стоп-слова.</b> Готового доброго списку для української немає, тому беремо
+його з самого корпусу: <b>сорок</b> найчастіших словоформ. Той самий прийом
+робила <a href="../03-morphology/lecture.html">тема 03</a>.</li>
+<li><b>Жорсткіший <code>max_df</code>.</b> Було 0.5, ставимо 0.02: слово, що є
+більш ніж у двох відсотках документів, у словник не потрапляє.</li>
+<li><b>Лематизація.</b> «файла», «файлу», «файли» зводяться до «файл» —
+<code>pymorphy3</code>, знову ж таки з теми 03.</li>
+<li><b>TF-IDF замість частот.</b> Замість «скільки разів» — вага з
+<a href="../05-tfidf/lecture.html">теми 05</a>.</li>
+</ol>
+
+<p>Кожну точку міряємо на <b>трьох зернах</b> — трьох різних випадкових вибірках
+по 1&nbsp;200 документів. Різниця, менша за розкид між зернами, різницею не є.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>крок</th><th>ознак</th><th>LDA служб@10</th><th>NMF служб@10</th><th>різноман. LDA</th></tr></thead>
+  <tbody>
+    <tr><td>сирий мішок слів</td><td>1&nbsp;064</td><td>0.6750 ±0.0306</td><td>0.5125 ±0.0540</td><td>0.5500</td></tr>
+    <tr class="hot"><td>+ стоп-слова (40)</td><td>1&nbsp;024</td><td>0.1625 ±0.0306</td><td>0.2292 ±0.0156</td><td>0.9583</td></tr>
+    <tr><td>+ max_df = 0.02</td><td>1&nbsp;023</td><td>0.1708 ±0.0212</td><td>0.2292 ±0.0156</td><td>0.9542</td></tr>
+    <tr><td>+ лематизація</td><td>847</td><td>0.0792 ±0.0358</td><td>0.1125 ±0.0177</td><td>0.9708</td></tr>
+    <tr><td>+ TF-IDF</td><td>847</td><td>0.0708 ±0.0059</td><td>0.0458 ±0.0212</td><td>0.9917</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Читаємо цю таблицю по рядках.</p>
+
+<p><b>Перший крок робить майже все.</b> Сорок слів — це 0.15&nbsp;% словника, а
+служб@10 у LDA падає з 0.6750 до 0.1625, тобто <b>вчетверо</b>, при розкиді
+±0.0306. Ознак стало 1&nbsp;024 замість 1&nbsp;064 — ми викинули сорок слів із тисячі й
+перевернули результат.</p>
+
+<div class="note warn"><b>Другий крок не робить нічого — і це теж результат.</b>
+<code>max_df=0.02</code> після стоп-слів прибрав рівно одне слово, а служб@10
+змінився з 0.1625 на 0.1708 при розкиді ±0.0212. Це не поламаний експеримент:
+<b>стоп-список і <code>max_df</code> — той самий важіль</b>, узятий із двох
+боків. Що часте в корпусі, те й потрапило в топ-40; після нього різати за
+частотою вже нічого. Наступний розділ показує, що буває, коли тягнути за цей
+важіль <b>замість</b> списку, а не після нього.</div>
+
+<p><b>Лематизація дає другий справжній стрибок:</b> 0.1708 → 0.0792 у LDA і
+0.2292 → 0.1125 у NMF, а словник стиснувся з 1&nbsp;023 до 847 форм. Ефект непрямий:
+злиття форм піднімає частоту змістовних слів, і вони перебивають службові, яких
+лематизація майже не чіпає — у прийменника «для» немає відмінків.</p>
+
+<p><b>TF-IDF доводить справу до кінця</b> — до 0.0708 у LDA і 0.0458 у NMF: слово,
+яке є всюди, дістає малу вагу автоматично, без жодного списку.</p>
+
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Драбина прибирання</p>
+  <p class="fig-sub">Пʼять щаблів, три зерна на кожному, 1&nbsp;200 документів.
+    Ліворуч — служб@10 обох моделей із розкидом по зернах; праворуч — топ-10 першої
+    теми на вибраному щаблі. Кольором позначені службові слова.</p>
+  <div class="panel">
+    <div><canvas id="cLad" width="940" height="360" aria-label="Крива частки службових слів по пʼятьох щаблях прибирання і список слів першої теми"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="step2">щабель <output id="step2Out">0</output></label>
+        <input type="range" id="step2" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="ctl"><span class="cap">чиї слова показувати</span>
+      <div class="seg" id="segLad">
+        <button data-i="0" aria-pressed="true">LDA</button>
+        <button data-i="1" aria-pressed="false">NMF</button>
+      </div></div>
+      <div class="readout">
+        <div class="cellv"><b>ознак</b><i id="t2a">—</i></div>
+        <div class="cellv"><b>служб@10</b><i id="t2b">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розкид</b><i id="t2c">—</i></div>
+        <div class="cellv"><b>різноманіття</b><i id="t2d">—</i></div>
+      </div>
+      <div class="verdict" id="t2v"></div>
+    </div>
+  </div>
+  <figcaption><b>Перший щабель робить майже все.</b> Сорок слів — це десяті частки
+    відсотка словника, а служб@10 падає вчетверо. Другий щабель не робить нічого,
+    і це не поламаний експеримент, а розділ 05.</figcaption>
+</figure>
+
+
+<h2 id="s5"><span class="num">05 / Той самий важіль</span>max_df замість списку</h2>
+
+<p>Розділ 04 показав, що <code>max_df</code> після стоп-слів марний. Питання, яке
+з цього випливає: а чи потрібен тоді список узагалі?</p>
+
+<p>Замір прямий: беремо сирий мішок слів <b>без жодного списку</b> й крутимо саме
+<code>max_df</code> від 0.5 до 0.005. Модель — NMF, бо вона швидка й дозволяє
+пройти сім положень на трьох зернах за секунди.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>max_df</th><th>ознак</th><th>служб@10</th><th>різноманіття</th></tr></thead>
+  <tbody>    <tr class="hot"><td>0.005</td><td>877</td><td>0.1333 ±0.0118</td><td>0.9708</td></tr>
+    <tr><td>0.01</td><td>984</td><td>0.1250 ±0.0306</td><td>0.9417</td></tr>
+    <tr><td>0.02</td><td>1 035</td><td>0.2292 ±0.0059</td><td>0.9167</td></tr>
+    <tr><td>0.05</td><td>1 055</td><td>0.3958 ±0.0524</td><td>0.8542</td></tr>
+    <tr><td>0.1</td><td>1 060</td><td>0.4458 ±0.0118</td><td>0.8250</td></tr>
+    <tr><td>0.25</td><td>1 063</td><td>0.4667 ±0.0257</td><td>0.7833</td></tr>
+    <tr><td>0.5</td><td>1 064</td><td>0.5125 ±0.0540</td><td>0.7958</td></tr></tbody>
+</table>
+</div>
+
+<p>При <code>max_df=0.005</code> — тобто «слово не має бути більш ніж у шести
+документах із 1&nbsp;200» — служб@10 дорівнює 0.1333. Стоп-список із сорока слів
+дав 0.2292 на тій самій моделі. <b>Один параметр без жодного списку працює не
+гірше</b>, а на нашому корпусі навіть трохи краще.</p>
+
+<div class="note"><b>Чому не завжди так.</b> <code>max_df</code> не знає, що
+викидає. Слово, яке справді описує ваш корпус, теж може бути в кожному другому
+документі — у корпусі медичних виписок таким буде «пацієнт». Список ви складаєте
+свідомо, поріг — наосліп. Практичний висновок простий: <b>беріть
+<code>max_df</code> як перше наближення, а потім подивіться, що саме воно
+викинуло</b>. Це один рядок коду і найдешевша перевірка в усій темі.</div>
+
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Один поріг замість списку</p>
+  <p class="fig-sub">Жодних стоп-слів: крутимо саме <code>max_df</code> від 0.5 до
+    0.005. Стовпчики — служб@10 (три зерна, NMF), лінія — розмір словника.
+    Пунктир показує, що дав стоп-список із сорока слів.</p>
+  <div class="panel">
+    <div><canvas id="cMdf" width="940" height="330" aria-label="Стовпчики частки службових слів для семи значень max_df і лінія розміру словника"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="mdf3"><span class="raw">max_df</span> <output id="mdf3Out">0.5</output></label>
+        <input type="range" id="mdf3" min="0" max="6" step="1" value="6">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ознак</b><i id="t3a">—</i></div>
+        <div class="cellv"><b>служб@10</b><i id="t3b">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розкид</b><i id="t3c">—</i></div>
+        <div class="cellv"><b>різноманіття</b><i id="t3d">—</i></div>
+      </div>
+      <div class="verdict" id="t3v"></div>
+    </div>
+  </div>
+  <figcaption><b>Слово, яке є більш ніж у шести документах із 1&nbsp;200, у словник не
+    потрапляє</b> — і цього досить, щоб обійтися без списку взагалі. Але поріг не
+    знає, що саме викидає: у корпусі виписок так зникло б слово «пацієнт».</figcaption>
+</figure>
+
+
+<h2 id="s6"><span class="num">06 / Механіка</span>Дві різні речі під однією назвою</h2>
+
+<p>Обидві моделі роблять те саме перетворення з розділу 01, але приходять до
+нього з різних боків. Це не косметична різниця, і саме з неї ростуть і час, і
+перплексія, і все інше.</p>
+
+<h3>NMF: це просто розклад матриці</h3>
+
+<p>Читач бачив розклад матриць у <a href="../../02-ai-ml/11-pca/lecture.html">темі
+про метод головних компонент</a>. Там велику таблицю наближали добутком двох
+менших, і напрямки, що виходили, називали компонентами. NMF робить те саме з
+однією-єдиною додатковою умовою.</p>
+
+<div class="eq">знайти W ≥ 0 і H ≥ 0, щоб ‖ V − W·H ‖<span class="sub">F</span> було найменшим</div>
+
+<p>Тут <b>V</b> — наша матриця «документ × слово», <b>W</b> — «документ × тема»,
+<b>H</b> — «тема × слово». Значок ‖·‖<span class="sub">F</span> читається «норма
+Фробеніуса» і означає найпростішу річ: візьми різницю двох матриць, піднеси кожну
+клітинку до квадрата, додай усе й візьми корінь. Тобто ми міряємо, наскільки
+добуток двох маленьких таблиць схожий на велику.</p>
+
+<p>Умова «≥ 0» (звідси <i>non-negative</i> в назві) — уся сіль. Без неї розклад
+дозволяє віднімати: тема могла б бути «слова A і B, <b>мінус</b> слово C», і
+прочитати такий список неможливо. Із забороною відʼємних чисел кожна тема може
+лише <b>додавати</b> слова, і тому виглядає як список.</p>
+
+<p>Перевірити це можна руками, і зошит це робить: беремо <code>W</code> і
+<code>H</code>, множимо, віднімаємо від <code>V</code>, рахуємо корінь із суми
+квадратів — і отримуємо 66.7211572028 там, де <code>sklearn</code> каже
+<code>reconstruction_err_ = 66.7211572028</code>. Ніякої магії всередині немає.</p>
+
+<h3>LDA: це історія про те, як зʼявився текст</h3>
+
+<p>LDA заходить із зовсім іншого боку. Вона <b>вигадує історію</b> про те, як
+писався кожен документ, і потім підбирає параметри так, щоб історія найкраще
+пояснювала те, що ми бачимо:</p>
+
+<ol class="steps">
+<li>у кожної теми є свій розподіл слів — «у темі про друк слово „принтер“
+випадає з імовірністю 0.04»;</li>
+<li>для кожного документа кидається жереб, який дає суміш тем — «цей документ
+на 60&nbsp;% про друк, на 40&nbsp;% про помилки»;</li>
+<li>кожне слово документа народжується двома жеребами: спершу обираємо тему за
+цією сумішшю, потім слово за розподілом теми.</li>
+</ol>
+
+<p>Обидва жереби беруться з <b>розподілу Діріхле</b> — звідси «Dirichlet» у назві.
+Це спосіб випадково вибрати набір часток, які сумуються в одиницю; його параметр
+керує тим, наскільки суміші «гострі» (майже вся вага на одній темі) чи
+«розмазані».</p>
+
+<div class="note"><b>Одна перевірка вартує абзацу пояснень.</b> У LDA рядок теми
+після нормування сумується <b>рівно в одиницю</b>: це справжні ймовірності слів.
+У NMF той самий рядок сумується в 12.6205 — це просто ваги, які нічого не
+означають поодинці. Звідси й головна практична різниця: LDA вміє сказати,
+наскільки ймовірний <b>новий, небачений</b> документ. NMF не вміє.</div>
+
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Що саме означає «розклад матриці»</p>
+  <p class="fig-sub">Велика таблиця «документ × слово» наближається добутком двох
+    маленьких. Посунь повзунок — і подивись, скільки чисел лишається від
+    72 мільйонів клітинок. Ширини прямокутників на схемі логарифмічні: при лінійних
+    стовпчик на <span class="raw">k</span> тем був би тоншим за волосину.</p>
+  <div class="panel">
+    <div><canvas id="cDec" width="940" height="352" aria-label="Схема: широкий прямокутник V наближається добутком вузького W і низького H"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="k4">тем <span class="raw">k</span> <output id="k4Out">8</output></label>
+        <input type="range" id="k4" min="1" max="60" step="1" value="8">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>клітинок у <span class="raw">V</span></b><i id="t4a">—</i></div>
+        <div class="cellv"><b>чисел у розкладі</b><i id="t4b">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>стиснення</b><i id="t4c">—</i></div>
+        <div class="cellv"><b>ненульових у <span class="raw">V</span></b><i id="t4d">—</i></div>
+      </div>
+      <div class="verdict" id="t4v"></div>
+    </div>
+  </div>
+  <figcaption>Матриця <span class="mono">V</span> має 20&nbsp;000 рядків і 3&nbsp;635
+    стовпців, але ненульових клітинок у ній лише 120 тисяч. <b>Розклад стає дорожчим
+    за саму ненульову частину даних уже при пʼятьох темах</b> — стиснення в сотні
+    разів рахується від повної матриці, у якій майже все нулі.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Ціна</span>За що платять сотнею разів</h2>
+
+<p>Різниця в часі не косметична. На тих самих 20&nbsp;000 документах NMF
+управляється за 0.233 с, LDA — за 25.4 с. Це <b>108.9 раза</b>, і причина
+прямо випливає з розділу 06.</p>
+
+<div class="note warn"><b>Спершу про те, яким годинником міряти — інакше число
+брехатиме.</b> <code>time.time()</code> каже, скільки ти чекав: на зайнятій машині
+«чекав» довше, хоча роботи зроблено стільки ж. <code>time.process_time()</code>
+каже, скільки процесорного часу спалила саме твоя програма, і від чужих задач не
+залежить. Тут стінний час LDA — 38.6 с проти 25.4 с процесорного, а
+відношення до NMF за стінним годинником виходить 124.4 замість 108.9 —
+і в наступному прогоні воно буде вже інше, бо залежить від чужих задач, а не від
+алгоритму. Усі числа нижче — <b>процесорні</b>. І ще одне, що ламає замір мовчки: бібліотеки
+лінійної алгебри розкидають роботу по всіх ядрах, а потоки, які чекають, теж
+спалюють процесорний час, — тому зошит фіксує <code>OMP_NUM_THREADS=1</code>
+<b>до</b> імпорту <code>numpy</code>.</div>
+
+<p>NMF на кожній ітерації робить кілька множень матриць. Це операція, яку
+процесор виконує на всій матриці одразу, векторно, — тому 26 ітерацій
+коштують чверть секунди.</p>
+
+<p>LDA не може так. Її внутрішній цикл іде <b>по кожному документу окремо</b>: для
+документа треба підібрати його суміш тем, а це саме по собі ітеративна задача
+(у <code>sklearn</code> вона крутиться до ста разів на документ, поки зміни не
+стануть меншими за <code>1e-3</code>). Помножте це на 20&nbsp;000 документів і на
+10 зовнішніх проходів — і ось звідки 25.4 секунди.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>документів</th><th>LDA</th><th>NMF</th><th>відношення</th></tr></thead>
+  <tbody>    <tr><td>500</td><td>0.41 с</td><td>0.019 с</td><td>22.4×</td></tr>
+    <tr><td>1 000</td><td>0.93 с</td><td>0.012 с</td><td>78.1×</td></tr>
+    <tr><td>2 000</td><td>2.04 с</td><td>0.020 с</td><td>104.0×</td></tr>
+    <tr><td>4 000</td><td>4.38 с</td><td>0.048 с</td><td>92.2×</td></tr>
+    <tr class="hot"><td>20 000</td><td>25.42 с</td><td>0.233 с</td><td>108.9×</td></tr></tbody>
+</table>
+</div>
+
+<p>Час LDA росте з розміром корпусу приблизно лінійно — бо цикл по документах
+лінійний. Час NMF росте теж, але з такої малої бази, що на графіку його майже не
+видно.</p>
+
+<p>Цікаве тут не саме відношення, а те, як воно <b>росте</b>: на 500 документах
+LDA дорожча за NMF у 22.4 раза, на 20&nbsp;000 — у 108.9. Причина в
+тому, що чверть секунди NMF на великій матриці — це майже все фіксовані витрати:
+розкладання матриці для початкового наближення й кілька десятків множень. Кожен
+наступний документ додає до них мало. LDA ж платить за кожен документ окремо, і
+чим їх більше, тим сильніше вона відстає.</p>
+
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Скільки коштує ймовірнісна модель</p>
+  <p class="fig-sub"><b>Процесорний</b> час навчання на однакових матрицях, вісім
+    тем; кожна точка — середнє з трьох прогонів. Процесорний, а не стінний: інакше
+    число міряло б не алгоритм, а завантаженість машини. Вертикальна шкала логарифмічна, інакше крива NMF
+    злилася б із віссю; по горизонталі точки стоять рівномірно, а не пропорційно
+    до кількості документів.</p>
+  <div class="panel">
+    <div><canvas id="cTime" width="940" height="320" aria-label="Дві криві часу навчання: LDA і NMF залежно від кількості документів, логарифмічна шкала"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="n5">документів <output id="n5Out">500</output></label>
+        <input type="range" id="n5" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>LDA</b><i id="t5a">—</i></div>
+        <div class="cellv"><b>NMF</b><i id="t5b">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>у скільки разів довше</b><i id="t5c">—</i></div>
+      </div>
+      <div class="verdict" id="t5v"></div>
+    </div>
+  </div>
+  <figcaption>Внутрішній цикл LDA іде по <b>кожному документу окремо</b> й крутиться
+    до ста разів на кожному, поки зміни не стануть меншими за <code>1e-3</code>.
+    NMF замість цього робить кілька множень матриць — операцію, яку процесор виконує
+    на всіх даних одразу.</figcaption>
+</figure>
+
+
+<h3>Що дають натомість</h3>
+
+<p>Правильна відповідь: <b>імовірнісну модель</b>. LDA вміє порахувати, наскільки
+ймовірний документ, якого вона не бачила, — на цьому тримається наступний розділ.
+NMF так не вміє: у неї немає ймовірностей, лише ваги.</p>
+
+<p>Питання чесніше: <b>чи видно цю перевагу на наших даних?</b> Перевіримо
+прямо. Візьмемо задачу, яку розбирає <a
+href="../06-text-classification/lecture.html">тема 06</a>: відрізнити повідомлення
+про помилку від решти. Мітку беремо з <b>англійського</b> оригіналу, а ознаки — з
+українського перекладу, тож модель не бачить того, з чого зроблено мітку. Замість
+слів дамо класифікатору вісім чисел — розклад документа по темах.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>ознаки</th><th>скільки їх</th><th>F1 по класу «помилка»</th></tr></thead>
+  <tbody>
+    <tr><td>вісім тем LDA</td><td>8</td><td>0.3168 ±0.0346</td></tr>
+    <tr><td>вісім тем NMF</td><td>8</td><td>0.3536 ±0.0120</td></tr>
+    <tr><td>усі слова</td><td>1494</td><td>0.5299 ±0.0093</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Різниця між LDA і NMF становить 0.0368 при розкидах ±0.0346 і ±0.0120.
+<b>Купи перетинаються, тобто різниці немає.</b> За критерієм курсу це не «LDA
+трохи краще», а «на цих даних не видно нічого». Різниця в часі на два порядки
+куплена властивістю, якої тут не помітно.</p>
+
+<div class="note warn"><b>І ще одне число з тієї самої таблиці.</b> Вісім тем
+програють простому мішку слів: 0.3168 проти 0.5299. Стиснути документ до восьми
+чисел — це викинути майже все. Тематична модель не інструмент для класифікації;
+вона інструмент, щоб <b>подивитись</b> на корпус, якого не читав.</div>
+
+<h2 id="s8"><span class="num">08 / Головне питання</span>Скільки тем брати</h2>
+
+<p>Досі ми всюди писали вісім. Звідки вісім? Нізвідки — це число обрано,
+бо круглe. І це найчастіше практичне питання теми: <b>скільки тем просити?</b></p>
+
+<p>Здається, що має бути критерій. Два кандидати лежать на поверхні, і кожен
+приходить від своєї моделі.</p>
+
+<p><b>Перплексія</b> (perplexity) — міра LDA. Вона питає: наскільки модель
+здивована документом, якого не бачила? Формально це експонента від середньої
+негативної логарифмічної правдоподібності слова; неформально — «серед скількох
+однаково ймовірних слів модель фактично вибирає». Перплексія 1000 означає, що
+модель наче навмання тицяє в тисячу варіантів. <b>Менше — краще.</b></p>
+
+<p><b>Помилка відновлення</b> — міра NMF. Та сама норма Фробеніуса з розділу 06,
+поділена на норму самої матриці, щоб число не залежало від розміру. Нуль —
+ідеальне відновлення, одиниця — «модель не пояснює нічого». <b>Менше — краще.</b></p>
+
+<p>Обидві рахуємо на <b>відкладеній</b> частині (25&nbsp;% документів, які модель
+не бачила), три зерна, корпус 800 документів:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>k</th><th>перплексія LDA</th><th>помилка NMF</th><th>служб@10 LDA</th><th>служб@10 NMF</th></tr></thead>
+  <tbody>    <tr><td>2</td><td>2567.3 ±262</td><td>0.9975</td><td>0.0500</td><td>0.0833</td></tr>
+    <tr><td>4</td><td>7797.3 ±1124</td><td>0.9940</td><td>0.0583</td><td>0.0917</td></tr>
+    <tr><td>8</td><td>34365.6 ±5625</td><td>0.9882</td><td>0.0958</td><td>0.1250</td></tr>
+    <tr><td>16</td><td>248421.6 ±61723</td><td>0.9780</td><td>0.0771</td><td>0.1333</td></tr></tbody>
+</table>
+</div>
+
+<p>Перплексія росте від 2567.3 при двох темах до 248421.6 при шістнадцяти — тобто
+<b>чим більше тем, тим гірше</b>, і найкраще за цим критерієм <code>k = 2</code>.
+Помилка відновлення падає з 0.9975 до 0.9780 — <b>чим більше тем, тим
+краще</b>, і найкраще <code>k</code> найбільше з можливих. Служб@10 при цьому гуляє
+між 0.0500 і 0.0958 без жодного напрямку — тобто теж мовчить.</p>
+
+<div class="note warn"><b>Два критерії дивляться в протилежні боки, і жоден не
+має мінімуму.</b> Це не збіг і не помилка заміру: помилка відновлення <b>мусить</b>
+падати з ростом <code>k</code> — більше компонент завжди наближає матрицю краще.
+А перплексія на наших коротких документах росте, бо модель із багатьма темами
+переучується на шести словах документа. Ліктя, за який можна вхопитись, немає ні
+там, ні там.</div>
+
+<p>Це не артефакт крихітного корпусу: на 3&nbsp;000 і 8&nbsp;000 документів
+картина та сама, лише зростання повільніше.</p>
+
+<p><b>Чесна відповідь на питання «скільки тем»: автоматичного критерію немає.</b>
+Є практичний спосіб, і він не математичний: візьми три різні <code>k</code> —
+скажімо 5, 10 і 20, — надрукуй топ-10 кожної теми й подивись, скільки з них ти
+можеш <b>назвати</b>. Це і є критерій; він потребує людини, і зекономити на ній
+не вийде.</p>
+
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Два критерії, які дивляться в різні боки</p>
+  <p class="fig-sub">Перплексія LDA і помилка відновлення NMF на відкладеній чверті
+    документів, три зерна. Перемикай метрику — і шукай лікоть, за який можна
+    вхопитись.</p>
+  <div class="panel">
+    <div><canvas id="cK" width="940" height="340" aria-label="Криві перплексії, помилки відновлення й частки службових слів залежно від кількості тем"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">метрика</span>
+      <div class="seg wrap" id="segK">
+        <button data-i="0" aria-pressed="true">перплексія</button>
+        <button data-i="1" aria-pressed="false">помилка</button>
+        <button data-i="2" aria-pressed="false">служб@10</button>
+      </div></div>
+      <div class="ctl">
+        <label for="k6">тем <span class="raw">k</span> <output id="k6Out">2</output></label>
+        <input type="range" id="k6" min="0" max="3" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>значення</b><i id="t6a" class="sm">—</i></div>
+        <div class="cellv"><b>розкид</b><i id="t6b" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>де мінімум</b><i id="t6c" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="t6v"></div>
+    </div>
+  </div>
+  <figcaption>Помилка відновлення <b>мусить</b> падати з ростом
+    <span class="mono">k</span>: більше компонент завжди наближає матрицю краще.
+    Перплексія на коротких документах, навпаки, росте. Мінімум обидві мають на краю —
+    тобто не мають.</figcaption>
+</figure>
+
+
+<h2 id="s9"><span class="num">09 / Назви</span>Теми не мають імен</h2>
+
+<p>Ось найкраще, що вдалося витиснути: NMF на всіх 20&nbsp;000 документах, топ-40
+викинуто, лематизовано, <code>max_df=0.02</code>. 2215 ознак, служб@10 0.1125,
+різноманіття 0.8500 — у пʼять разів чистіше за перший запуск.</p>
+
+<div class="wordlist"><div><span class="n">тема 0</span>використання вказаний створити служба модуль повідомлення робот код шлях фоновий</div>
+<div><span class="n">тема 1</span>адреса з'єднання інтерфейс користувач число батьківський <b>чи</b> пароль основний доступ</div>
+<div><span class="n">тема 2</span>шаблон повідомлення вираз відповідати коментар початок отриманий один регулярний домна</div>
+<div><span class="n">тема 3</span>коміт <b>але</b> допис використати посилання мітка злиття команда допомога попередній</div>
+<div><span class="n">тема 4</span>ключ властивість закритий об'єкт схема використовуватися шлях ключі пароль двійковий</div>
+<div><span class="n">тема 5</span>команда змінний код оболонка завершення вказаний <b>чи</b> властивість кількість слово</div>
+<div><span class="n">тема 6</span>каталог список посилання показувати використовуватися <b>по</b> виводити <b>ви</b> один <b>без</b></div>
+<div><span class="n">тема 7</span>система <b>ви</b> розділ програма файловий <b>ваш</b> встановлення <b>інший</b> зміна версія</div></div>
+
+<p>Тепер спробуймо їх назвати — і зробімо це чесно, разом із невдачами.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>тема</th><th>назва</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Мережа й доступ: адреса, зʼєднання, користувач, пароль. Назвати легко.</td></tr>
+    <tr><td>2</td><td>Регулярні вирази: шаблон, вираз, відповідати, «регулярний». Теж легко.</td></tr>
+    <tr><td>3</td><td>Git: коміт, злиття, мітка, посилання. Впізнається з першого слова.</td></tr>
+    <tr><td>4</td><td>Ключі й шифрування: ключ, закритий, пароль, двійковий.</td></tr>
+    <tr><td>7</td><td>Встановлення системи: система, розділ, програма, встановлення, версія.</td></tr>
+    <tr><td>0</td><td><b>Не вдалося.</b> «використання вказаний створити служба модуль код шлях» — це не тема, а середнє арифметичне корпусу.</td></tr>
+    <tr><td>5</td><td><b>Наполовину.</b> «команда оболонка завершення» тягне на командний рядок, але «властивість» і «кількість» туди не лізуть.</td></tr>
+    <tr><td>6</td><td><b>Не вдалося.</b> «каталог список показувати виводити ви один без» — набір слів із різних місць.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Пʼять із восьми назвати вдалося, одну наполовину, дві — ні. Це нормальний
+результат, і саме так тематичне моделювання виглядає в роботі: <b>частина тем
+завжди сміття</b>, і його не «доналаштовують», а просто не використовують.</p>
+
+<div class="note"><b>Два сліди лематизації, які видно просто в списках.</b>
+У темі 2 стоїть слово «домна» — це <code>pymorphy3</code> звів «домену» до
+«домна» (піч), а не до «домен». А в темі 4 поруч стоять «ключ» і «ключі»: одну
+форму лематизатор звів, другу лишив. Про обидві вади чесно попереджала
+<a href="../03-morphology/lecture.html">тема 03</a>; тут вони просто вилізли на
+поверхню, бо ми дивимось на слова очима.</div>
+
+<p>І головне, що варто засвоїти з цього розділу: <b>назви придумали ми, а не
+модель</b>. Модель дала вісім списків. Слово «Git» у корпусі не трапляється
+жодного разу — воно зʼявилось у нас у голові, коли ми побачили «коміт» і
+«злиття». Будь-який продукт, що обіцяє «автоматично визначити теми ваших
+документів», робить рівно те саме й підставляє назву або з першого слова списку,
+або з великої мовної моделі поверх.</p>
+<h2 id="s10"><span class="num">10 / Стійкість</span>Чи ті самі теми вийдуть удруге</h2>
+
+<p>Питання, яке варто ставити будь-якій моделі без розмітки: <b>а якщо запустити
+ще раз, вийде те саме?</b> Перевірка найдешевша з усіх можливих і майже ніколи не
+буває втішною.</p>
+
+<p>Порівнювати теми не так просто, як здається: модель нумерує їх довільно, тож
+тема 3 першого прогону може відповідати темі 7 другого. Спершу <b>зіставляємо</b>
+теми в пари так, щоб сумарна схожість була найбільшою (класична задача про
+призначення, у <code>scipy</code> є готова функція), а тоді міряємо схожість пари
+коефіцієнтом Жаккара: скільки слів спільні, поділити на скільки слів разом.</p>
+
+<p>Тепер найважливіше, і воно легко губиться. <b>Три зерна курсу міняють дані, а
+не прогін.</b> Це два різні джерела нестійкості, і питати треба про обидва
+окремо:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>що міняємо</th><th>модель</th><th>Жаккар</th><th>спільних слів із 10</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>лише <code>random_state</code>, дані ті самі</td><td>LDA</td><td>0.1282 ±0.0263</td><td>≈ 2.3</td></tr>
+    <tr class="hot"><td>80 % того самого пулу, словник спільний</td><td>LDA</td><td>0.2220 ±0.0251</td><td>≈ 3.6</td></tr>
+    <tr><td>80 % того самого пулу, словник спільний</td><td>NMF</td><td>0.6343 ±0.0692</td><td>≈ 7.8</td></tr>
+    <tr><td>зовсім інша вибірка документів</td><td>LDA</td><td>0.2220 ±0.0251</td><td>≈ 3.6</td></tr>
+    <tr><td>зовсім інша вибірка, 20 000 документів</td><td>NMF</td><td>0.6343 ±0.0692</td><td>≈ 7.8</td></tr>
+    <tr><td>випадкові списки слів</td><td>—</td><td>0.0319 ±0.0084</td><td>≈ 0.6</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Останній рядок головний: без нього решта нічого не означає. Він каже, скільки
+Жаккара дають два <b>випадкові</b> набори по десять слів із того самого словника, —
+це рівень нуля, від якого відраховувати.</p>
+
+<div class="note"><b>Чому підвибірки 80 % — найчесніший із цих дослідів.</b> Коли
+беремо зовсім іншу вибірку, разом із документами міняється й <b>словник</b>: темам
+просто нічим збігтися. Тому рядки з 80 % влаштовані інакше: один пул із
+1&nbsp;200 документів, словник побудований <b>на всьому пулі</b>, а моделі вчаться
+на трьох різних підвибірках по 80 %. Простір ознак той самий, міняються лише
+документи. Якщо теми — це «прихована структура корпусу», вони мусять пережити
+викидання пʼятої частини документів.</div>
+
+<div class="note warn"><b>Результат невтішний, і прикрашати його нема сенсу.</b>
+Змінивши тільки <code>random_state</code> — на <b>тих самих</b> документах, тій
+самій матриці, тому самому <code>k</code> — LDA лишає в топ-10 приблизно
+2.3 спільних слова з десяти. Це втричі більше за випадковий рівень, тобто
+щось спільне таки є, але «ті самі теми» так назвати не можна. Якщо ти покажеш
+колезі список тем, а він перезапустить із іншим зерном — він побачить інші слова.</div>
+
+<p>І тут результат нарешті розділяє дві моделі, причому дуже різко.</p>
+
+<p><b>NMF витримує.</b> Викидання пʼятої частини документів лишає в зіставлених
+парах 7.8 спільних слова з десяти — Жаккар 0.6343 ±0.0692. Це вже
+можна називати «ті самі теми»: список читається так само, з нього видно те саме,
+назва не міняється.</p>
+
+<p><b>LDA не витримує.</b> На тих самих підвибірках, із тим самим словником і тим
+самим <code>random_state</code>, вона лишає 3.6 слова з десяти — Жаккар
+0.2220 ±0.0251. Різниця між моделями — близько 0.4123 Жаккара при
+розкидах ±0.0692 і ±0.0251; купи не перетинаються навіть близько.</p>
+
+<div class="note warn"><b>Два висновки, і обидва треба сказати прямо.</b>
+Перший: <b>теми NMF можна цитувати, теми LDA — ні.</b> Список NMF переживає і
+зміну зерна, і викидання двадцяти відсотків документів. Список LDA не переживає ні
+того, ні того: навіть на <b>тих самих</b> документах інший
+<code>random_state</code> лишає від нього 2.3 слова з десяти.<br><br>
+Другий: <b>рядки «зовсім інша вибірка» (0.2220 і 0.6343) звинувачують модель
+у тому, чого вона не робила.</b> Там міняється ще й словник, тож низьке число
+міряє не стійкість, а розбіжність двох словників. Замір, поставлений неакуратно,
+дає правдоподібне число не про те.</div>
+
+<p>Практичний висновок: <b>потрібні теми, на які можна послатися, — бери NMF і
+фіксуй вибірку</b>. Береш LDA — не цитуй «тему 3 нашої моделі» як факт: у
+наступному прогоні теми 3 вже не буде, і навіть не через інші дані, а просто через
+інше зерно. І застереження до самого заміру: ми перевіряли стійкість до викидання
+двадцяти відсотків із 1&nbsp;200 документів, а не до іншого корпусу чи домену —
+тих дослідів ми не робили.</p>
+
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Ті самі теми вдруге?</p>
+  <p class="fig-sub">Два прогони, теми зіставлені в пари найвигіднішим чином.
+    Ліворуч — топ-10 першого прогону, праворуч — його пари з другого. Спільні слова
+    підсвічені; повзунок гортає всі вісім пар. Режим «80 % пулу» — найчесніший
+    із дослідів: словник спільний, міняються лише документи.</p>
+  <div class="panel">
+    <div><canvas id="cStab" width="940" height="330" aria-label="Дві колонки по десять слів: тема першого прогону і зіставлена з нею тема другого, спільні слова підсвічені"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">що змінили</span>
+      <div class="seg wrap" id="segStab">
+        <button data-i="0" aria-pressed="true"><span class="raw">random_state</span></button>
+        <button data-i="1" aria-pressed="false">80 % · LDA</button>
+        <button data-i="2" aria-pressed="false">80 % · NMF</button>
+        <button data-i="3" aria-pressed="false">іншу вибірку</button>
+      </div></div>
+      <div class="ctl">
+        <label for="pair7">пара тем <output id="pair7Out">1 / 8</output></label>
+        <input type="range" id="pair7" min="0" max="7" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>спільних слів</b><i id="t7a">—</i></div>
+        <div class="cellv"><b>Жаккар пари</b><i id="t7b">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>середній Жаккар</b><i id="t7c">—</i></div>
+        <div class="cellv"><b>рівень нуля</b><i id="t7d">—</i></div>
+      </div>
+      <div class="verdict" id="t7v"></div>
+    </div>
+  </div>
+  <figcaption><b>Ліва й права колонки — це «та сама» тема двох прогонів.</b>
+    Перемкни режими й порівняй: у «80 % пулу» NMF тримає майже вісім слів із
+    десяти, LDA — три з половиною, а від зміни самого лише
+    <span class="mono">random_state</span> у LDA виживає два. Рівень нуля — стільки
+    ж Жаккара дають два випадкові набори слів із того самого словника.</figcaption>
+</figure>
+
+
+<h2 id="s11"><span class="num">11 / Пастка</span>Той самий стан і ті самі дані</h2>
+
+<p>Попередній розділ міряв нестійкість <b>моделі</b>. Але є ще одне джерело, якого
+три зерна не бачать взагалі: невідтворюваність <b>самої бібліотеки</b>. Зерно
+міняє дані; а якщо код щоразу дає інше на однакових даних, три зерна цього не
+викриють — вони покажуть розкид по даних, і все.</p>
+
+<p>Перевірка займає чотири рядки й мусить стояти в кожній роботі, де є
+випадковість:</p>
+
+<div class="eq left">a = LDA(n_components=8, random_state=0).fit(X).components_
+b = LDA(n_components=8, random_state=0).fit(X).components_
+assert np.array_equal(a, b)</div>
+
+<p>Для <code>LatentDirichletAllocation</code> перевірка проходить: два прогони з
+тим самим <code>random_state</code> на тій самій матриці дають результат
+<b>побітово</b> однаковий. Не «майже», а рівно — <code>np.array_equal</code>
+повертає <code>True</code>. Тобто числа розділу 10 — це справжня чутливість до
+зерна, а не шум бібліотеки.</p>
+
+<div class="note"><b>NMF поводиться інакше.</b> За замовчуванням
+<code>sklearn</code> ініціалізує її розкладом самої матриці
+(<code>nndsvda</code>), а не випадковими числами, тож <code>random_state</code>
+майже не впливає: два прогони з різними станами відрізняються не більш ніж на
+2.42e-02 у кожній вазі.</div>
+
+<h2 id="s12"><span class="num">12 / Межі</span>Коли це працює, а коли ні</h2>
+
+<p>Зберімо разом усе, що ця тема заміряла, — і скажімо, з чого це складається.</p>
+
+<p><b>Головна біда наших даних — довжина документа.</b> Медіанний документ має
+шість слів (заміряла <a href="../01-text-is-hard/lecture.html">тема 01</a>).
+Тематична модель шукає слова, що <b>ходять разом</b>; у документі з шести слів пар
+усього пʼятнадцять, і половина з них — із прийменником.
+<a href="../05-tfidf/lecture.html">Тема 05</a> показувала цю саму стіну з іншого
+боку: на коротких документах TF-IDF зводиться до IDF, бо частота всюди одиниця.</p>
+
+<p>Тому найчесніший опис результату: <b>ми показали метод на даних, для яких він
+не призначений</b>, — і саме тому всі його слабкі місця стало видно одразу.</p>
+
+<p>Коротка памʼятка, чого чекати:</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>ситуація</th><th>що буде</th></tr></thead>
+  <tbody>
+    <tr><td>довгі документи, сотні слів</td><td>працює як обіцяно; це рідний випадок методу</td></tr>
+    <tr><td>короткі рядки, до десяти слів</td><td>теми розмиті; частина завжди сміття</td></tr>
+    <tr><td>не прибрано часті слова</td><td>теми будуть зі службових слів — розділ 02</td></tr>
+    <tr><td>треба назвати теми</td><td>називає людина; моделі байдуже</td></tr>
+    <tr><td>треба вибрати <code>k</code></td><td>критерію немає; дивись очима на кілька значень</td></tr>
+    <tr><td>треба відтворюваність</td><td>фіксуй <code>random_state</code> <b>і</b> вибірку; інакше теми поїдуть</td></tr>
+    <tr><td>треба на теми послатись</td><td>тільки NMF: 0.6343 проти 0.2220 у LDA на підвибірках</td></tr>
+    <tr><td>треба ознаки для класифікатора</td><td>краще не треба: вісім тем дали 0.3168 проти 0.5299 у слів</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>І один вибір, який після цієї теми має бути простим. <b>Починай з NMF.</b> Вона
+в 108.9 раза швидша, на нашому корпусі дає не гірші теми, майже не залежить від
+зерна, пояснюється однією формулою — і, найголовніше, <b>її теми переживають
+викидання пʼятої частини документів</b> (0.6343 проти 0.2220 у LDA). LDA бери
+тоді, коли тобі справді потрібна ймовірність нового документа, — і тоді ж плати за
+неї і часом, і нестійкістю.</p>
+
+<h2 id="s13"><span class="num">13 / Місток</span>Не «про що», а «що на що схоже»</h2>
+
+<p>У цій темі ми брали матрицю «документ × слово» і питали: <b>про що ці
+документи?</b> Відповідь вийшла хиткою: теми пливуть від вибірки, назв у них
+немає, а число тем нема з чого вибрати.</p>
+
+<p><a href="../09-search/lecture.html">Наступна тема</a> бере <b>ту саму
+матрицю</b> — ту саму, що будував <code>CountVectorizer</code> у розділі 02, — і
+ставить їй інше питання: <b>що схоже на що?</b> Не «які тут купи», а «дай мені
+документ, найближчий до цього рядка». Це питання виявиться значно ліпше
+поставленим: у нього є правильна відповідь, її можна заміряти числом, і те число
+не пливе від вибірки.</p>
+
+<p>Заразом зʼясується, що прибирання, яке ми щойно робили руками, там частково
+не потрібне: формула BM25 сама розбирається з надто частими словами — і робить це
+краще, ніж наш список із сорока.</p>
+
+<p>А поки що варто запамʼятати одну річ із цієї теми. Модель без розмітки нічого
+не «знаходить сама». Вона знаходить те, що є в даних найпомітнішим, — і якщо
+найпомітніше в них слово «не», саме його вона тобі й покаже.</p>
+
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../07-metrics/lecture.html"><span class="dir">попередня</span><span class="ttl">07. Метрики й оцінка</span></a>
+    <a class="next" href="../09-search/lecture.html"><span class="dir">наступна</span><span class="ttl">09. Пошук і схожість</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+var DATA = {"head":{"n":20000,"nfeat":3635,"nnz":120252,"tl":25.42,"tn":0.233,"lda":[["з","або","помилка","для","назва","значення","до","системи","байтів","неможливо"],["у","з","для","якщо","і","за","вказано","значення","буде","та"],["дані","до","за","щодо","на","про","щоб","будь","з","ви"],["не","для","у","передбачено","є","підтримки","можна","якщо","розпізнавання","даних"],["для","файл","файла","розмір","у","з","чи","вказати","слід","помилка"],["не","вдалося","для","є","отримати","з","створити","файл","до","встановити"],["на","в","бути","не","має","може","у","значення","як","або"],["час","під","для","у","до","лише","з","використовувати","помилка","можна"]],"nmf":[["не","вдалося","отримати","можна","є","передбачено","файл","підтримки","створити","в"],["для","даних","слід","і","ключа","встановлення","цього","використання","встановити","лише"],["у","передбачено","форматі","даних","режимі","підтримки","і","файлі","немає","можна"],["якщо","значення","буде","і","за","вказано","та","має","не","є"],["з","та","можна","даних","що","файла","час","лише","помилка","файл"],["на","в","бути","може","аргумент","посилання","основі","повинен","є","функції"],["або","назва","адреса","з'єднання","параметри","файл","інтерфейсу","шаблон","пристрій","число"],["до","і","коміт","даних","доступ","файла","щоб","слід","але","за"]],"fl":[[1,1,0,1,0,0,1,0,0,0],[1,1,1,1,1,1,0,0,1,1],[0,1,1,1,1,1,1,0,1,1],[1,1,1,0,1,0,1,1,0,0],[1,0,0,0,1,1,1,0,1,0],[1,0,1,1,0,1,0,0,1,0],[1,1,1,1,1,1,1,0,1,1],[0,1,1,1,1,1,1,0,0,1]],"fn":[[1,0,0,1,1,0,0,0,0,1],[1,0,1,1,0,0,1,0,0,1],[1,0,0,0,0,0,1,0,0,1],[1,0,1,1,1,0,1,1,1,1],[1,1,1,0,1,0,0,1,0,0],[1,1,1,1,0,0,0,0,1,0],[1,0,0,0,0,0,0,0,0,0],[1,1,0,0,0,0,1,1,1,1]]},"ladder":[{"name":"сирий мішок слів","nf":1064,"fl":0.6750000000000002,"fld":0.030618621784789753,"fn":0.5125000000000001,"fnd":0.05400617248673217,"dl":0.5499999999999999,"dn":0.7958333333333333,"wl":["не","вдалося","до","для","у","з","створити","на","файла","або"],"wn":["не","вдалося","отримати","у","в","створити","підтримки","що","можна","передбачено"],"gl":[1,0,1,1,1,1,0,1,0,1],"gn":[1,0,0,1,1,0,0,1,1,0]},{"name":"+ стоп-слова (топ-40)","nf":1024,"fl":0.1625,"fld":0.030618621784789732,"fn":0.22916666666666666,"fnd":0.015590239111558091,"dl":0.9583333333333334,"dn":0.9166666666666666,"wl":["а","аргумент","вимкнено","попередження","цього","інші","після","домену","цій","вилучити"],"wn":["а","вимкнено","інші","ввімкнено","від","параметри","формату","текст","виводу","простий"],"gl":[1,0,0,0,1,1,1,0,1,0],"gn":[1,0,1,0,1,0,0,0,0,0]},{"name":"+ max_df = 0.02","nf":1023,"fl":0.1708333333333333,"fld":0.021245914639969943,"fn":0.22916666666666666,"fnd":0.015590239111558091,"dl":0.9541666666666666,"dn":0.9208333333333333,"wl":["а","аргумент","вимкнено","попередження","цього","інші","після","домену","цій","вилучити"],"wn":["а","вимкнено","інші","ввімкнено","від","параметри","формату","текст","виводу","простий"],"gl":[1,0,0,0,1,1,1,0,1,0],"gn":[1,0,1,0,1,0,0,0,0,0]},{"name":"+ лематизація","nf":847,"fl":0.07916666666666666,"fld":0.035843021946010946,"fn":0.1125,"fnd":0.01767766952966369,"dl":0.9708333333333332,"dn":0.9041666666666667,"wl":["об'єкт","інший","а","вимкнути","вказаний","вказівник","форматування","створювати","ввімкнути","помилковий"],"wn":["інший","а","вимкнути","створювати","ввімкнути","увімкнути","формат","від","текст","умовний"],"gl":[0,1,1,0,0,0,0,0,0,0],"gn":[1,1,0,0,0,0,0,1,0,0]},{"name":"+ TF-IDF замість частот","nf":847,"fl":0.07083333333333335,"fld":0.005892556509887895,"fn":0.04583333333333334,"fnd":0.021245914639969936,"dl":0.9916666666666667,"dn":0.9375,"wl":["вказаний","пакунок","вказівник","показати","спроба","процесор","індекс","вимкнути","елемент","архітектура"],"wn":["використання","користувач","версія","атрибут","ключ","повинний","містити","один","адреса","об'єкт"],"gl":[0,0,0,0,0,0,0,0,0,0],"gn":[0,0,0,0,0,0,0,0,0,0]}],"stopNmf":0.22916666666666666,"mdf":[{"m":0.005,"nf":877.3333333333334,"fs":0.13333333333333333,"sd":0.01178511301977579,"dv":0.9708333333333332},{"m":0.01,"nf":984.3333333333334,"fs":0.125,"sd":0.030618621784789732,"dv":0.9416666666666668},{"m":0.02,"nf":1035.0,"fs":0.22916666666666666,"sd":0.005892556509887888,"dv":0.9166666666666666},{"m":0.05,"nf":1055.3333333333333,"fs":0.3958333333333333,"sd":0.05237418787490223,"dv":0.8541666666666666},{"m":0.1,"nf":1060.3333333333333,"fs":0.4458333333333333,"sd":0.011785113019775802,"dv":0.8250000000000001},{"m":0.25,"nf":1063.0,"fs":0.4666666666666666,"sd":0.025685058345704066,"dv":0.7833333333333333},{"m":0.5,"nf":1064.0,"fs":0.5125000000000001,"sd":0.05400617248673217,"dv":0.7958333333333333}],"dec":{"rows":20000,"cols":3635,"nnz":120252},"kk":[{"k":2,"pp":2567.30695698358,"ppd":261.6986141524545,"err":0.997451683293422,"errd":0.0010528848493232235,"fl":0.05000000000000001,"fn":0.08333333333333333},{"k":4,"pp":7797.334662984545,"ppd":1124.2348107407615,"err":0.9940148901143346,"errd":0.0011994551963817111,"fl":0.05833333333333333,"fn":0.09166666666666667},{"k":8,"pp":34365.57413416377,"ppd":5624.727024991223,"err":0.9881884209647867,"errd":0.003381769094023454,"fl":0.09583333333333333,"fn":0.125},{"k":16,"pp":248421.6493836037,"ppd":61722.81189158828,"err":0.9780000011590104,"errd":0.004063562331673059,"fl":0.07708333333333332,"fn":0.13333333333333333}],"time":[{"n":500,"l":0.41,"m":0.019,"r":22.4},{"n":1000,"l":0.93,"m":0.012,"r":78.1},{"n":2000,"l":2.04,"m":0.02,"r":104.0},{"n":4000,"l":4.38,"m":0.048,"r":92.2},{"n":20000,"l":25.42,"m":0.233,"r":108.9}],"named":{"tops":[["використання","вказаний","створити","служба","модуль","повідомлення","робот","код","шлях","фоновий"],["адреса","з'єднання","інтерфейс","користувач","число","батьківський","чи","пароль","основний","доступ"],["шаблон","повідомлення","вираз","відповідати","коментар","початок","отриманий","один","регулярний","домна"],["коміт","але","допис","використати","посилання","мітка","злиття","команда","допомога","попередній"],["ключ","властивість","закритий","об'єкт","схема","використовуватися","шлях","ключі","пароль","двійковий"],["команда","змінний","код","оболонка","завершення","вказаний","чи","властивість","кількість","слово"],["каталог","список","посилання","показувати","використовуватися","по","виводити","ви","один","без"],["система","ви","розділ","програма","файловий","ваш","встановлення","інший","зміна","версія"]],"flags":[[0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,0,0,0,0,0],[0,1,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,1,0,0,0],[0,0,0,0,0,1,0,1,0,1],[0,1,0,0,0,1,0,1,0,0]]},"stab":{"chance":0.03190789473684212,"cases":[{"left":"ПРОГІН 1 · random_state = 0","right":"ПРОГІН 2 · random_state = 1","mean":0.12821780759087262,"sd":0.02627316564168314,"pairs":[[["об'єкт","інший","а","вимкнути","вказаний","вказівник","форматування","створювати","ввімкнути","помилковий"],["код","вимкнути","інший","виконати","вказаний","увімкнути","використання","а","створювати","всі"]],[["пакунок","спроба","створити","інформація","містити","сервер","завантажити","записати","існувати","код"],["версія","діапазон","сервер","колір","поза","поточний","показати","межа","коміт","містити"]],[["використання","повинний","увімкнути","змінити","список","обмеження","з'єднання","відношення","інструкція","підтримуватися"],["список","канал","регістр","з'єднання","один","префікс","програма","забезпечення","директива","вхідний"]],[["діапазон","розширення","від","інтерфейс","перевірка","канал","завершення","оптимізація","неприпустимий","знайти"],["підтримка","заголовок","але","вбудований","розширення","оператор","знайти","інтерфейс","а","невідомий"]],[["виконати","колір","копія","неможливо","посилання","резервний","команда","байт","допомога","сторінка"],["немати","команда","спроба","порт","номер","сокет","завантажити","вдаватися","знайти","файловий"]],[["при","визначати","номер","індекс","користувач","чи","поза","встановлення","використати","властивість"],["об'єкт","користувач","при","формат","створення","інструкція","копія","клацання","змінити","виконання"]],[["заголовок","немати","ключ","каталог","формат","отримання","відкрити","джерело","створити","таблиця"],["каталог","неможливо","властивість","пакунок","створити","відкрити","записати","перетворення","пройти","формат"]],[["підтримка","вікно","зміна","атрибут","код","доступ","невідомий","клавіша","клацання","операція"],["адреса","атрибут","доступ","підтримуватися","дія","мережа","неправильний","клавіша","джерело","вираз"]]]},{"left":"LDA · ПІДВИБІРКА 80 % №1","right":"LDA · ПІДВИБІРКА 80 % №2","mean":0.22200312873687486,"sd":0.025112157994913707,"pairs":[[["каталог","інший","вимкнути","а","вказаний","створювати","доступ","форматування","використання","ввімкнути"],["режим","знайти","ідентифікатор","налаштування","довжина","вказаний","ключ","пакунок","програма","вхідний"]],[["користувач","пакунок","канал","об'єкт","спроба","база","блокування","новий","код","мало"],["користувач","версія","пакунок","сервер","ключі","при","існувати","створення","дія","записати"]],[["невідомий","використання","повідомлення","підтримуватися","список","зміна","версія","з'єднання","про","коміт"],["повинний","використання","створити","формат","підтримуватися","список","змінити","інструкція","каталог","інформація"]],[["сервер","перевірка","довжина","команда","вузол","прочитати","сканування","потребувати","немати","знайти"],["діапазон","вказівник","команда","розширення","від","поза","перевірка","пересування","межа","невідомий"]],[["неможливо","ідентифікатор","допомога","номер","копія","порт","резервний","від","відповідати","змінити"],["допомога","колір","повідомлення","байт","копія","виконати","блок","номер","каталог","резервний"]],[["діапазон","чи","поза","містити","властивість","створити","позначити","визначати","вираз","індекс"],["містити","чи","властивість","неможливо","при","атрибут","визначати","адреса","використати","захист"]],[["немати","файловий","заголовок","місце","відкрити","адреса","ім'я","отримання","попередження","зсув"],["заголовок","немати","джерело","зсув","кількість","ресурс","ім'я","увімкнути","адреса","використання"]],[["вікно","підтримка","клавіша","всі","операція","після","регістр","код","клацання","розширення"],["підтримка","зміна","клавіша","вікно","клацання","секунда","індекс","префікс","регістр","всі"]]]},{"left":"NMF · ПІДВИБІРКА 80 % №1","right":"NMF · ПІДВИБІРКА 80 % №2","mean":0.63430885634833,"sd":0.06920666356331359,"pairs":[[["а","інший","вимкнути","створювати","ввімкнути","увімкнути","формат","від","текст","умовний"],["колір","поточний","йога","вибрати","вибраний","обраний","порівняння","раніше","зараза","документ"]],[["копія","резервний","створювати","допомога","змінний","простий","середовище","суфікс","такий","номер"],["копія","резервний","створювати","допомога","змінний","простий","середовище","суфікс","такий","існувати"]],[["клацання","вікно","кнопка","клавіша","модифікатор","середній","дія","зміна","мень","при"],["клацання","вікно","кнопка","клавіша","модифікатор","середній","дія","допомога","мень","при"]],[["захист","сегмент","імʼь","макс","немати","містити","доступ","максимальний","вказаний","віртуальний"],["захист","сегмент","імʼь","макс","містити","немати","доступ","вказаний","віртуальний","максимальний"]],[["сканування","зі","читання","сканер","сервер","відповідати","кількість","допомога","процес","а"],["останній","формат","зміна","секунда","читання","початок","користувач","невідомий","доступ","створення"]],[["каталог","змінний","стандартний","домна","середовище","текст","повідомлення","вказаний","допомога","інший"],["каталог","змінний","стандартний","домна","середовище","допомога","вказаний","повідомлення","інший","текст"]],[["ключ","мережа","довжина","пароль","формат","від","розпізнавання","число","отримання","користувач"],["ключ","мережа","пароль","довжина","формат","від","число","отримання","розпізнавання","зашифрований"]],[["версія","програма","список","з'єднання","один","заголовок","поточний","підтримка","позначити","умова"],["користувач","використання","заголовок","версія","список","але","програма","позначити","префікс","з'єднання"]]]},{"left":"LDA · ВИБІРКА 0","right":"LDA · ВИБІРКА 1","mean":0.0772847150556129,"sd":0.003851344124109735,"pairs":[[["об'єкт","інший","а","вимкнути","вказаний","вказівник","форматування","створювати","ввімкнути","помилковий"],["атрибут","програма","вказаний","формат","рядок","типове","вимкнути","спроба","використовуватися","вузол"]],[["пакунок","спроба","створити","інформація","містити","сервер","завантажити","записати","існувати","код"],["підтримка","пакунок","повинний","додати","монітор","зображення","віртуальний","пересування","користувач","віддалений"]],[["використання","повинний","увімкнути","змінити","список","обмеження","з'єднання","відношення","інструкція","підтримуватися"],["помилковий","блок","підтримуватися","дія","каталог","ідентифікатор","журнал","повідомлення","база","ігнорувати"]],[["діапазон","розширення","від","інтерфейс","перевірка","канал","завершення","оптимізація","неприпустимий","знайти"],["версія","використання","домен","неприпустимий","додатковий","неочікуваний","спробувати","текст","інформація","режим"]],[["виконати","колір","копія","неможливо","посилання","резервний","команда","байт","допомога","сторінка"],["посилання","інструкція","без","шаблон","диск","отримати","діапазон","мітка","клас","допомога"]],[["при","визначати","номер","індекс","користувач","чи","поза","встановлення","використати","властивість"],["система","точок","вираз","пароль","псевдонім","чи","вікно","попередній","перетворення","змінити"]],[["заголовок","немати","ключ","каталог","формат","отримання","відкрити","джерело","створити","таблиця"],["один","таблиця","сертифікат","рядок","об'єкт","оператор","визначити","код","немати","шрифт"]],[["підтримка","вікно","зміна","атрибут","код","доступ","невідомий","клавіша","клацання","операція"],["про","невідомий","попередження","відповідний","індекс","ласка","встановлювати","неможливо","адреса","налаштування"]]]}],"sub":{"lda":[0.21415364391370584,0.25592320261437906,0.19593253968253968],"nmf":[0.6169685577580315,0.7263986013986015,0.5595594098883573]}}};
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+var REDRAW=[];
+function keep(fn){REDRAW.push(fn); return fn;}
+function thou(n){
+  var s=String(Math.round(n)), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s[i]+out; if(++k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function frame(g,x,y,w,h){
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(Math.round(x)+.5, Math.round(y)+.5, Math.round(w), Math.round(h));
+}
+
+/* ═══════ 1 · вісім тем, які не є темами ═══════ */
+(function(){
+  var cv=I('cTop'); if(!cv) return;
+  var model=0;
+  function words(){ return model? DATA.head.nmf : DATA.head.lda; }
+  function flags(){ return model? DATA.head.fn  : DATA.head.fl;  }
+  function draw(){
+    var g=dpr(cv), W=LW(cv), n=+I('topn1').value;
+    I('topn1Out').textContent=n;
+    var rose=css('--rose'), ink=css('--ink'), soft=css('--soft');
+    var ws=words(), fl=flags(), x0=86, avail=W-x0-14, i, j;
+    /* підбираємо кегль так, щоб найдовший рядок помістився (грабля №12) */
+    var px=13, widest=0;
+    g.font=mono(px,false);
+    for(i=0;i<ws.length;i++){
+      var sum=0;
+      for(j=0;j<n;j++) sum+=g.measureText(ws[i][j]).width+11;
+      if(sum>widest) widest=sum;
+    }
+    if(widest>avail) px=Math.max(8.5, px*avail/widest);
+    var hits=0, uniq={}, total=ws.length*n;
+    capt(g,'ТЕМА',10,22,soft,10,true);
+    capt(g,'ТОП-'+n+' СЛІВ',x0,22,soft,10,true);
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(10,29.5); g.lineTo(W-10,29.5); g.stroke();
+    for(i=0;i<ws.length;i++){
+      var y=56+i*41;
+      capt(g,'#'+i,14,y,soft,12,true);
+      var x=x0;
+      g.font=mono(px,false); g.textAlign='left'; g.textBaseline='alphabetic';
+      for(j=0;j<n;j++){
+        var w=ws[i][j], isf=fl[i][j];
+        if(isf) hits++;
+        uniq[w]=1;
+        if(isf){
+          var tw=g.measureText(w).width;
+          g.fillStyle=css('--rose-w');
+          g.fillRect(x-3,y-px-1,tw+6,px+7);
+        }
+        g.fillStyle=isf?rose:ink;
+        g.fillText(w,x,y);
+        x+=g.measureText(w).width+11;
+      }
+      g.strokeStyle=css('--hair');
+      g.beginPath(); g.moveTo(10,y+13.5); g.lineTo(W-10,y+13.5); g.stroke();
+    }
+    var share=hits/total, div=Object.keys(uniq).length/total;
+    I('t1a').textContent=f4(share);
+    I('t1b').textContent=f4(div);
+    I('t1c').textContent=Object.keys(uniq).length+' з '+total;
+    I('t1d').textContent=(model? f2(DATA.head.tn) : f1(DATA.head.tl))+' с';
+    var name=model?'NMF':'LDA';
+    var every = share>0 ? (1/share) : 99;
+    if(share>0.35)
+      verd('t1v','t-no','сміття',
+        name+': службових '+f4(share)+' — приблизно кожне '+(every<2.5?'друге':(every<3.5?'третє':'четверте'))+
+        ' слово теми не означає нічого. Це не теми.');
+    else if(share>0.15)
+      verd('t1v','t-mid','ще погано',
+        name+': службових '+f4(share)+'. Краще, але половину списку читати марно.');
+    else
+      verd('t1v','t-ok','читабельно',
+        name+': службових лише '+f4(share)+' — теми можна читати.');
+  }
+  segment('segTop', function(i){model=i; draw();});
+  on('topn1','input',draw); keep(draw)();
+})();
+
+/* ═══════ 2 · драбина прибирання ═══════ */
+(function(){
+  var cv=I('cLad'); if(!cv) return;
+  var model=0;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), step=+I('step2').value;
+    I('step2Out').textContent=step;
+    var L=DATA.ladder, i;
+    var x0=52, x1=560, y0=42, y1=H-52;
+    var maxv=0.78;
+    var rose=css('--rose'), teal=css('--teal'), ink=css('--ink'), soft=css('--soft');
+    /* сітка */
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    for(i=0;i<=4;i++){
+      var yy=Math.round(y1-(y1-y0)*(i*0.2)/maxv*1)+.5;
+      yy=Math.round(y1-(y1-y0)*(i*0.2/maxv))+.5;
+      g.beginPath(); g.moveTo(x0,yy); g.lineTo(x1,yy); g.stroke();
+      capt(g,f1(i*0.2),x0-8,yy+4,soft,10,false,'right');
+    }
+    function px(i){return x0+(x1-x0)*i/(L.length-1);}
+    function py(v){return y1-(y1-y0)*v/maxv;}
+    /* підсвітка вибраного щабля */
+    g.fillStyle=css('--amber-w');
+    g.fillRect(px(step)-16,y0-8,32,y1-y0+8);
+    /* дві криві */
+    var series=[{k:'fl',d:'fld',c:rose,n:'LDA'},{k:'fn',d:'fnd',c:teal,n:'NMF'}];
+    for(var s=0;s<series.length;s++){
+      var S=series[s];
+      g.strokeStyle=S.c; g.lineWidth=2; g.beginPath();
+      for(i=0;i<L.length;i++){ var X=px(i), Y=py(L[i][S.k]); if(i)g.lineTo(X,Y); else g.moveTo(X,Y); }
+      g.stroke();
+      for(i=0;i<L.length;i++){
+        var X=px(i), Y=py(L[i][S.k]), d=L[i][S.d];
+        g.strokeStyle=S.c; g.lineWidth=1.5;
+        g.beginPath(); g.moveTo(X,py(L[i][S.k]-d)); g.lineTo(X,py(L[i][S.k]+d)); g.stroke();
+        g.beginPath(); g.moveTo(X-4,py(L[i][S.k]-d)); g.lineTo(X+4,py(L[i][S.k]-d)); g.stroke();
+        g.beginPath(); g.moveTo(X-4,py(L[i][S.k]+d)); g.lineTo(X+4,py(L[i][S.k]+d)); g.stroke();
+        g.fillStyle=S.c; g.beginPath(); g.arc(X,Y,i===step?5:3.5,0,7); g.fill();
+      }
+      capt(g,S.n,x1+6,py(L[L.length-1][S.k])+4,S.c,11,true);
+    }
+    /* підписи щаблів */
+    var SHORT=['сирий','стоп-40','max_df','леми','TF-IDF'];
+    for(i=0;i<L.length;i++) capt(g,SHORT[i],px(i),y1+20,i===step?ink:soft,11,i===step,'center');
+    capt(g,'служб@10',x0-8,y0-14,soft,10,true);
+    capt(g,'щабель прибирання',(x0+x1)/2,H-14,soft,11,false,'center');
+    /* праворуч — слова першої теми */
+    var col=x1+70;
+    g.strokeStyle=css('--hair');
+    g.beginPath(); g.moveTo(col-18,y0-24); g.lineTo(col-18,H-16); g.stroke();
+    capt(g,'ТЕМА 0 · '+(model?'NMF':'LDA'),col,22,soft,10,true);
+    var ws=model?L[step].wn:L[step].wl, fs=model?L[step].gn:L[step].gl, j;
+    for(j=0;j<ws.length;j++){
+      var yy=48+j*27;
+      if(fs[j]){ g.fillStyle=css('--rose-w'); g.fillRect(col-4,yy-13,270,20); }
+      capt(g,ws[j],col,yy,fs[j]?rose:ink,13,false);
+    }
+    I('t2a').textContent=L[step].nf;
+    I('t2b').textContent=f4(model?L[step].fn:L[step].fl);
+    I('t2c').textContent='±'+f4(model?L[step].fnd:L[step].fld);
+    I('t2d').textContent=f4(model?L[step].dn:L[step].dl);
+    var key=model?'fn':'fl', dkey=model?'fnd':'fld';
+    var cur=L[step][key], base=L[0][key];
+    var drop=base-cur, sd=L[step][dkey];
+    var move=Math.abs(L[2][key]-L[1][key]), band=Math.max(L[1][dkey],L[2][dkey]);
+    if(step===0)
+      verd('t2v','t-no','початок','Нічого не прибрано: службових '+f4(cur)+'. Саме звідси починається тема.');
+    else if(step===2 && move<band)
+      verd('t2v','t-mid','важіль той самий','max_df після стоп-слів змінив служб@10 на '+f4(move)+' при розкиді ±'+f4(band)+'. Це менше за розкид — тобто нічого.');
+    else if(drop>3*sd)
+      verd('t2v','t-ok','стало краще','Служб@10 впав із '+f4(base)+' до '+f4(cur)+', тобто на '+f4(drop)+' при розкиді ±'+f4(sd)+'. Падіння більше за розкид.');
+    else
+      verd('t2v','t-mid','у межах розкиду','Служб@10 '+f4(cur)+' проти '+f4(base)+' на початку, розкид ±'+f4(sd)+'.');
+  }
+  segment('segLad', function(i){model=i; draw();});
+  on('step2','input',draw); keep(draw)();
+})();
+
+/* ═══════ 3 · max_df замість списку ═══════ */
+(function(){
+  var cv=I('cMdf'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), sel=+I('mdf3').value, i;
+    var M=DATA.mdf;
+    I('mdf3Out').textContent=M[sel].m;
+    var x0=56, x1=W-70, y0=40, y1=H-52;
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+    var maxs=0.6;
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    for(i=0;i<=6;i++){
+      var yy=Math.round(y1-(y1-y0)*(i*0.1/maxs))+.5;
+      g.beginPath(); g.moveTo(x0,yy); g.lineTo(x1,yy); g.stroke();
+      capt(g,f1(i*0.1),x0-8,yy+4,soft,10,false,'right');
+    }
+    var bw=(x1-x0)/M.length;
+    for(i=0;i<M.length;i++){
+      var bx=x0+bw*i+bw*0.18, bwid=bw*0.64;
+      var h=(y1-y0)*M[i].fs/maxs;
+      g.fillStyle=(i===sel)?rose:css('--rose-w');
+      g.fillRect(bx,y1-h,bwid,h);
+      if(i===sel){ g.strokeStyle=rose; g.lineWidth=1.5; g.strokeRect(bx+.5,y1-h+.5,bwid,h); }
+      capt(g,f4(M[i].fs),bx+bwid/2,y1-h-7,i===sel?ink:soft,10.5,i===sel,'center');
+      capt(g,String(M[i].m),bx+bwid/2,y1+19,i===sel?ink:soft,11,i===sel,'center');
+    }
+    /* пунктир: що дав стоп-список */
+    var yr=Math.round(y1-(y1-y0)*DATA.stopNmf/maxs)+.5;
+    g.strokeStyle=teal; g.lineWidth=1.5; g.setLineDash([6,5]);
+    g.beginPath(); g.moveTo(x0,yr); g.lineTo(x1,yr); g.stroke(); g.setLineDash([]);
+    capt(g,'стоп-список 40 слів · '+f4(DATA.stopNmf),x0+6,yr+15,teal,11,true);
+    /* лінія словника */
+    var mn=1e9,mx=0;
+    for(i=0;i<M.length;i++){ if(M[i].nf<mn)mn=M[i].nf; if(M[i].nf>mx)mx=M[i].nf; }
+    g.strokeStyle=css('--amber'); g.lineWidth=2; g.beginPath();
+    for(i=0;i<M.length;i++){
+      var X=x0+bw*i+bw*0.5, Y=y1-(y1-y0)*0.15-(y1-y0)*0.7*(M[i].nf-mn)/(mx-mn+1);
+      if(i)g.lineTo(X,Y); else g.moveTo(X,Y);
+    }
+    g.stroke();
+    capt(g,'словник: '+thou(mn)+' … '+thou(mx)+' слів',x1,y0-14,css('--amber'),10.5,true,'right');
+    capt(g,'служб@10',x0-8,y0-14,soft,10,true);
+    capt(g,'max_df — частка документів, вище за яку слово викидається',(x0+x1)/2,H-14,soft,11,false,'center');
+    I('t3a').textContent=thou(M[sel].nf);
+    I('t3b').textContent=f4(M[sel].fs);
+    I('t3c').textContent='±'+f4(M[sel].sd);
+    I('t3d').textContent=f4(M[sel].dv);
+    if(Math.abs(M[sel].fs-DATA.stopNmf)<1e-9)
+      verd('t3v','t-mid','рівно стільки ж','При max_df='+M[sel].m+' службових '+f4(M[sel].fs)+' — рівно стільки ж, скільки дав стоп-список із сорока слів. Той самий важіль, узятий з іншого боку.');
+    else if(M[sel].fs<DATA.stopNmf)
+      verd('t3v','t-ok','поріг виграв','При max_df='+M[sel].m+' службових '+f4(M[sel].fs)+' — менше, ніж дав стоп-список ('+f4(DATA.stopNmf)+'), і списку складати не довелось.');
+    else if(M[sel].fs<0.3)
+      verd('t3v','t-mid','посередині','Службових '+f4(M[sel].fs)+' проти '+f4(DATA.stopNmf)+' у стоп-списку. Поріг ще не досить жорсткий.');
+    else
+      verd('t3v','t-no','поріг марний','max_df='+M[sel].m+' майже нічого не викидає: службових '+f4(M[sel].fs)+' зі словника на '+thou(M[sel].nf)+' слів.');
+  }
+  on('mdf3','input',draw); keep(draw)();
+})();
+
+/* ═══════ 4 · що означає розклад матриці ═══════ */
+(function(){
+  var cv=I('cDec'); if(!cv) return;
+  var ROWS=DATA.dec.rows, COLS=DATA.dec.cols, NNZ=DATA.dec.nnz;
+  function wOf(cols){ return 26+190*Math.log(cols)/Math.log(COLS); }
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), k=+I('k4').value;
+    I('k4Out').textContent=k;
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink'), amber=css('--amber');
+    var top=54, hV=150;
+    var x=40;
+    /* V */
+    var wV=wOf(COLS);
+    g.fillStyle=css('--rose-w'); g.fillRect(x,top,wV,hV); frame(g,x,top,wV,hV);
+    capt(g,'V',x+wV/2,top-10,rose,13,true,'center');
+    capt(g,'документ × слово',x,top+hV+18,soft,10.5);
+    capt(g,thou(ROWS)+' × '+thou(COLS),x,top+hV+34,ink,11,true);
+    x+=wV+26;
+    capt(g,'≈',x,top+hV/2+6,ink,20,true); x+=30;
+    /* W */
+    var wW=wOf(Math.max(1,k));
+    g.fillStyle=css('--teal-w'); g.fillRect(x,top,wW,hV); frame(g,x,top,wW,hV);
+    capt(g,'W',x+wW/2,top-10,teal,13,true,'center');
+    capt(g,'документ × тема',x,top+hV+18,soft,10.5);
+    capt(g,thou(ROWS)+' × '+k,x,top+hV+34,ink,11,true);
+    x+=wW+22;
+    capt(g,'·',x,top+hV/2+6,ink,20,true); x+=22;
+    /* H */
+    var wH=wV, hHh=Math.max(10, hV*k/60);
+    g.fillStyle=css('--amber-w'); g.fillRect(x,top,wH,hHh); frame(g,x,top,wH,hHh);
+    capt(g,'H',x+wH/2,top-10,amber,13,true,'center');
+    capt(g,'тема × слово',x,top+hV+18,soft,10.5);
+    capt(g,k+' × '+thou(COLS),x,top+hV+34,ink,11,true);
+    /* смуга порівняння */
+    var by=top+hV+64, bx=40, bw=W-80, bh=20;
+    var cells=ROWS*COLS, wh=k*(ROWS+COLS);
+    var scale=Math.max(wh,NNZ)*1.25;
+    g.fillStyle=css('--teal-w'); g.fillRect(bx,by,bw*NNZ/scale,bh); frame(g,bx,by,bw*NNZ/scale,bh);
+    capt(g,'ненульових у V: '+thou(NNZ),bx+6,by+14,teal,11,true);
+    g.fillStyle=css('--rose-w'); g.fillRect(bx,by+28,bw*wh/scale,bh); frame(g,bx,by+28,bw*wh/scale,bh);
+    capt(g,'чисел у розкладі: '+thou(wh),bx+6,by+42,rose,11,true);
+    I('t4a').textContent=thou(cells);
+    I('t4b').textContent=thou(wh);
+    I('t4c').textContent=f1(cells/wh)+'×';
+    I('t4d').textContent=thou(NNZ);
+    var kcross=NNZ/(ROWS+COLS);
+    if(wh<NNZ)
+      verd('t4v','t-ok','стиснення справжнє','При k='+k+' розклад тримає '+thou(wh)+' чисел — менше, ніж ненульових клітинок у самій матриці ('+thou(NNZ)+').');
+    else if(wh<cells/50)
+      verd('t4v','t-mid','ще стискає, але','Розклад уже більший за ненульову частину даних ('+thou(wh)+' проти '+thou(NNZ)+'), хоча й у '+f1(cells/wh)+' раза менший за повну матрицю. Межа — k≈'+Math.round(kcross)+'.');
+    else
+      verd('t4v','t-no','сенсу мало','При k='+k+' у розкладі '+thou(wh)+' чисел проти '+thou(NNZ)+' ненульових. Ми «стискаємо» дані в щось більше за них.');
+  }
+  on('k4','input',draw); keep(draw)();
+})();
+
+/* ═══════ 5 · час навчання ═══════ */
+(function(){
+  var cv=I('cTime'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), sel=+I('n5').value, i;
+    var T=DATA.time;
+    I('n5Out').textContent=thou(T[sel].n);
+    var x0=64, x1=W-96, y0=40, y1=H-52;
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+    var lo=Math.log(0.01), hi=Math.log(200);
+    function py(v){ return y1-(y1-y0)*(Math.log(Math.max(v,0.01))-lo)/(hi-lo); }
+    function px(i){ return x0+(x1-x0)*i/(T.length-1); }
+    var ticks=[0.01,0.1,1,10,100];
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    for(i=0;i<ticks.length;i++){
+      var yy=Math.round(py(ticks[i]))+.5;
+      g.beginPath(); g.moveTo(x0,yy); g.lineTo(x1,yy); g.stroke();
+      capt(g,(ticks[i]<1?f2(ticks[i]):String(ticks[i]))+' с',x0-8,yy+4,soft,10,false,'right');
+    }
+    g.fillStyle=css('--amber-w'); g.fillRect(px(sel)-17,y0-8,34,y1-y0+8);
+    var S=[{k:'l',c:rose,n:'LDA'},{k:'m',c:teal,n:'NMF'}];
+    for(var s=0;s<S.length;s++){
+      g.strokeStyle=S[s].c; g.lineWidth=2; g.beginPath();
+      for(i=0;i<T.length;i++){ var X=px(i), Y=py(T[i][S[s].k]); if(i)g.lineTo(X,Y); else g.moveTo(X,Y); }
+      g.stroke();
+      for(i=0;i<T.length;i++){
+        g.fillStyle=S[s].c; g.beginPath(); g.arc(px(i),py(T[i][S[s].k]),i===sel?5:3.5,0,7); g.fill();
+      }
+      capt(g,S[s].n,x1+8,py(T[T.length-1][S[s].k])+4,S[s].c,12,true);
+    }
+    for(i=0;i<T.length;i++) capt(g,thou(T[i].n),px(i),y1+20,i===sel?ink:soft,11,i===sel,'center');
+    capt(g,'процесорний час навчання, логарифмічна шкала',x0-8,y0-14,soft,10,true);
+    capt(g,'документів у корпусі',(x0+x1)/2,H-14,soft,11,false,'center');
+    var r=T[sel].r;
+    I('t5a').textContent=f2(T[sel].l)+' с';
+    I('t5b').textContent=T[sel].m.toFixed(3)+' с';
+    I('t5c').textContent=f1(r)+'×';
+    if(r>=50)
+      verd('t5v','t-no','дорого','На '+thou(T[sel].n)+' документах LDA іде '+f2(T[sel].l)+' с процесорного часу проти '+T[sel].m.toFixed(3)+' с у NMF — у '+f1(r)+' раза довше.');
+    else if(r>=15)
+      verd('t5v','t-mid','помітно','LDA у '+f1(r)+' раза довша ('+f2(T[sel].l)+' с проти '+T[sel].m.toFixed(3)+' с). На малому корпусі відрив менший: у NMF майже все — фіксовані витрати, які не залежать від кількості документів.');
+    else
+      verd('t5v','t-ok','майже дарма','На '+thou(T[sel].n)+' документах різниця лише '+f1(r)+'× — обидві встигають за мить.');
+  }
+  on('n5','input',draw); keep(draw)();
+})();
+
+/* ═══════ 6 · скільки тем брати ═══════ */
+(function(){
+  var cv=I('cK'); if(!cv) return;
+  var metric=0;
+  var META=[{k:'pp',d:'ppd',n:'перплексія LDA (відкладена частина)',log:true,better:'менше'},
+            {k:'err',d:'errd',n:'помилка відновлення NMF',log:false,better:'менше'},
+            {k:'fl',d:null,n:'служб@10 LDA',log:false,better:'менше'}];
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), sel=+I('k6').value, i;
+    var K=DATA.kk, M=META[metric];
+    I('k6Out').textContent=K[sel].k;
+    var x0=86, x1=W-60, y0=44, y1=H-54;
+    var rose=css('--rose'), soft=css('--soft'), ink=css('--ink');
+    var vals=[], mn=1e18, mx=-1e18;
+    for(i=0;i<K.length;i++){ vals.push(K[i][M.k]); }
+    for(i=0;i<vals.length;i++){ if(vals[i]<mn)mn=vals[i]; if(vals[i]>mx)mx=vals[i]; }
+    var lo,hi,py;
+    if(M.log){ lo=Math.log(mn)-0.4; hi=Math.log(mx)+0.4;
+      py=function(v){return y1-(y1-y0)*(Math.log(Math.max(v,1e-9))-lo)/(hi-lo);}; }
+    else { lo=mn-(mx-mn)*0.35-1e-9; hi=mx+(mx-mn)*0.35+1e-9;
+      py=function(v){return y1-(y1-y0)*(v-lo)/(hi-lo);}; }
+    function px(i){ return x0+(x1-x0)*i/(K.length-1); }
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    for(i=0;i<=4;i++){
+      var v=M.log? Math.exp(lo+(hi-lo)*i/4) : lo+(hi-lo)*i/4;
+      var yy=Math.round(py(v))+.5;
+      g.beginPath(); g.moveTo(x0,yy); g.lineTo(x1,yy); g.stroke();
+      capt(g, v>=1000? thou(v) : f4(v), x0-8, yy+4, soft,10,false,'right');
+    }
+    g.fillStyle=css('--amber-w'); g.fillRect(px(sel)-17,y0-8,34,y1-y0+8);
+    g.strokeStyle=rose; g.lineWidth=2; g.beginPath();
+    for(i=0;i<K.length;i++){ var X=px(i), Y=py(vals[i]); if(i)g.lineTo(X,Y); else g.moveTo(X,Y); }
+    g.stroke();
+    for(i=0;i<K.length;i++){
+      var X=px(i), Y=py(vals[i]);
+      if(M.d){
+        var d=K[i][M.d];
+        g.strokeStyle=rose; g.lineWidth=1.5;
+        g.beginPath(); g.moveTo(X,py(vals[i]-d)); g.lineTo(X,py(vals[i]+d)); g.stroke();
+        g.beginPath(); g.moveTo(X-4,py(vals[i]-d)); g.lineTo(X+4,py(vals[i]-d)); g.stroke();
+        g.beginPath(); g.moveTo(X-4,py(vals[i]+d)); g.lineTo(X+4,py(vals[i]+d)); g.stroke();
+      }
+      g.fillStyle=rose; g.beginPath(); g.arc(X,Y,i===sel?5:3.5,0,7); g.fill();
+      capt(g,'k='+K[i].k,X,y1+20,i===sel?ink:soft,11,i===sel,'center');
+    }
+    capt(g,M.n,x0-8,y0-16,soft,10,true);
+    capt(g,'кількість тем',(x0+x1)/2,H-14,soft,11,false,'center');
+    var best=0; for(i=1;i<vals.length;i++) if(vals[i]<vals[best]) best=i;
+    var up=true, down=true;
+    for(i=1;i<vals.length;i++){ if(vals[i]<vals[i-1]) up=false; if(vals[i]>vals[i-1]) down=false; }
+    var mono = up||down;
+    I('t6a').textContent= vals[sel]>=1000? thou(vals[sel]) : f4(vals[sel]);
+    I('t6b').textContent= M.d? ('±'+(K[sel][M.d]>=100? thou(K[sel][M.d]) : f4(K[sel][M.d]))) : 'три зерна';
+    I('t6c').textContent='k = '+K[best].k+(best===0||best===K.length-1?' (на краю)':' (усередині)');
+    if(best===0)
+      verd('t6v','t-no','мінімум на краю','Найкраще значення — при найменшому k='+K[0].k+'. '+
+        (mono?'Крива монотонна, ліктя немає':'Крива не монотонна, але й ліктя не утворює')+
+        ': критерій каже «бери дві теми» і більше нічого.');
+    else if(best===K.length-1)
+      verd('t6v','t-no','мінімум на краю','Найкраще — при найбільшому k='+K[K.length-1].k+'. '+
+        (mono?'Крива монотонна':'Мінімум усе одно на краю')+
+        ': критерій каже «бери якнайбільше», що теж не відповідь.');
+    else
+      verd('t6v','t-ok','є мінімум','Найкраще k='+K[best].k+' — мінімум усередині діапазону, за нього можна вхопитись.');
+  }
+  segment('segK', function(i){metric=i; draw();});
+  on('k6','input',draw); keep(draw)();
+})();
+
+/* ═══════ 7 · чи ті самі теми вдруге ═══════ */
+(function(){
+  var cv=I('cStab'); if(!cv) return;
+  var mode=0;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), p=+I('pair7').value, i, j;
+    var S=DATA.stab.cases[mode];
+    I('pair7Out').textContent=(p+1)+' / 8';
+    var A=S.pairs[p][0], B=S.pairs[p][1];
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+    var setB={}; for(i=0;i<B.length;i++) setB[B[i]]=1;
+    var setA={}; for(i=0;i<A.length;i++) setA[A[i]]=1;
+    var shared=0; for(i=0;i<A.length;i++) if(setB[A[i]]) shared++;
+    capt(g,S.left,60,26,soft,10.5,true);
+    capt(g,S.right,520,26,soft,10.5,true);
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(40,34.5); g.lineTo(W-40,34.5); g.stroke();
+    g.beginPath(); g.moveTo(470,44); g.lineTo(470,H-30); g.stroke();
+    for(i=0;i<10;i++){
+      var y=64+i*26;
+      var inB=!!setB[A[i]], inA=!!setA[B[i]];
+      if(inB){ g.fillStyle=css('--teal-w'); g.fillRect(56,y-14,400,21); }
+      capt(g,A[i],60,y,inB?teal:ink,13.5,inB);
+      if(inA){ g.fillStyle=css('--teal-w'); g.fillRect(516,y-14,400,21); }
+      capt(g,B[i],520,y,inA?teal:ink,13.5,inA);
+    }
+    var jac=shared/(20-shared);
+    I('t7a').textContent=shared+' з 10';
+    I('t7b').textContent=f4(jac);
+    I('t7c').textContent=f4(S.mean)+' ±'+f4(S.sd);
+    I('t7d').textContent=f4(DATA.stab.chance);
+    if(shared>=7)
+      verd('t7v','t-ok','та сама тема','Спільних слів '+shared+' із 10 — цю пару справді можна назвати однією темою.');
+    else if(shared>=4)
+      verd('t7v','t-mid','наполовину','Спільних '+shared+' із 10. Щось спільне є, але список читатиметься по-різному.');
+    else
+      verd('t7v','t-no','різні списки','Спільних лише '+shared+' із 10 (Жаккар '+f4(jac)+'). Середнє по всіх вісьмох парах — '+f4(S.mean)+' при рівні нуля '+f4(DATA.stab.chance)+'.');
+  }
+  segment('segStab', function(i){mode=i; I('pair7').value=0; draw();});
+  on('pair7','input',draw); keep(draw)();
+})();
+
+
+window.addEventListener('resize', function(){ location.reload(); });
+})();
+</script>
+</body>
+</html>

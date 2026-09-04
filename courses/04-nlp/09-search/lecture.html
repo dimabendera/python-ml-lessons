@@ -1,0 +1,1719 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пошук і схожість</title>
+<meta name="description" content="Тема 05 навчила міряти схожість косинусом, але пошук — це вибір десяти з двадцяти тисяч. Заміряно на 93 392 українських перекладах інтерфейсів, три зерна по 300 запитів: BM25 дає MRR 0.8440 проти 0.7618 у TF-IDF, і купи по зернах не перетинаються. Увесь виграш дає один механізм із двох — насичення частоти: вимкнути його коштує 0.1514, а вимкнути нормалізацію довжини — лише 0.0029, менше за розкид. Типові параметри на коротких документах не найкращі: k1 = 0.3 і b = 0.25 дають 0.9066. Інвертований індекс обходить 2042.6 документа замість 20 000, а щільна матриця важила б 2279.04 МБ проти 1.74 МБ розрідженої. Одруківка в кожному слові роняє MRR до 0.0035, rapidfuzz повертає 0.5505. А синонімів BM25 не бачить так само, як TF-IDF: 0.1513 проти контрольних 0.7602.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* три рівні документів у фігурі 7 */
+.seg.three button{flex:1 1 30%}
+</style>
+
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 2 · Тема 09</p>
+    <h1>Пошук і схожість</h1>
+    <p class="stand">Тема 05 навчила міряти схожість двох текстів. Пошук — інша задача:
+      обрати десять із двадцяти тисяч, і зробити це за мілісекунди. Тут зʼясується,
+      що <b>швидкість — не оптимізація, а умова</b>, що BM25 виграє в TF-IDF рівно
+      одним своїм механізмом із двох, а «типові» значення її параметрів на наших
+      документах не найкращі.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Порівняти двох і обрати з тисяч</a></li>
+        <li><a href="#s2">Інвертований індекс</a></li>
+        <li><a href="#s3">Що саме шукає косинус</a></li>
+        <li><a href="#s4">Насичення частоти</a></li>
+        <li><a href="#s5">Нормалізація довжини</a></li>
+        <li><a href="#s6">Формула BM25 цілком</a></li>
+        <li><a href="#s7">Замір і розтин виграшу</a></li>
+        <li><a href="#s8">Підбір <span class="raw">k1</span> і <span class="raw">b</span></a></li>
+        <li><a href="#s9">Чим міряти пошук</a></li>
+        <li><a href="#s10">Одруківки й нечіткий пошук</a></li>
+        <li><a href="#s11">Межа: синоніми</a></li>
+        <li><a href="#s12">Куди це веде</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../08-topic-modeling/lecture.html">← 08. Тематичне моделювання</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../10-rules-regex/lecture.html">10. Правила й регулярні вирази →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Пошуковий рядок — найстаріший інтерфейс до тексту, який досі працює.
+Ти пишеш три слова, а система за частку секунди дістає з мільйонів документів
+десять і ставить потрібний першим. У попередніх пʼятьох темах ми зібрали все, щоб
+це повторити: текст став мішком слів, слова дістали ваги, схожість дістала число.
+Лишилось скласти з цього пошук — і зʼясувати, чого в зібраному бракує.</p>
+
+<h2 id="s1"><span class="num">01 / Розрив</span>Порівняти двох і обрати з тисяч</h2>
+
+<p><a href="../05-tfidf/lecture.html">Тема 05</a> закінчилась на косинусній
+близькості: два документи — два вектори ваг, схожість — косинус кута між ними.
+Одиниця означає «дивляться в один бік», нуль — «нічого спільного». Це працює,
+і ми навіть заміряли, наскільки: на задачі «знайди документ за трьома його
+словами» TF-IDF дала <b>0.7618</b> MRR.</p>
+
+<p>Але між «порівняти два тексти» і «побудувати пошук» лежить розрив, і він
+більший, ніж здається. Порівняння двох текстів — одна операція. Пошук по колекції
+з 20 000 документів — це <b>20 000 порівнянь на кожен запит</b>, і робити їх
+доводиться, поки людина дивиться на екран.</p>
+
+<p>Цю тему тримають три питання, і жодне з них у темі 05 не стояло.</p>
+
+<ol>
+  <li><b>Як не порівнювати з усіма.</b> Наївний перебір колекції — не повільний
+    варіант правильного алгоритму, а варіант, який не запускається взагалі.</li>
+  <li><b>Чим саме ранжувати.</b> Косинус TF-IDF — не єдина відповідь і, як
+    зараз побачимо, не найкраща.</li>
+  <li><b>Як зрозуміти, що вийшло краще.</b> «Пошук став кращий» — не число.
+    Чисел тут щонайменше три, і вони бувають протилежні.</li>
+</ol>
+
+<div class="note"><b>Корпус той самий.</b> Українські переклади інтерфейсів
+із системних файлів <code>.mo</code>: <b>93 392</b> документи з <b>266</b> програм.
+Працюємо, як і весь блок, на випадковій вибірці в <b>20 000</b> документів, і
+робимо кожен замір <b>тричі</b> — із зернами 0, 1 і 2. Документи короткі:
+середня довжина — <b>7.2605</b> слововживання.</div>
+
+<h2 id="s2"><span class="num">02 / Швидкість</span>Інвертований індекс</h2>
+
+<p>Почнімо з того, у що впирається кожен, хто пише пошук уперше. Здається, що
+порядок дій очевидний: узяти запит, пройти всі документи, кожному нарахувати
+оцінку, відсортувати. Цей код пишеться за десять хвилин і працює. Питання лише
+в тому, як довго.</p>
+
+<p>Ми заміряли обидва способи однаковим кодом на звичайному Python. Повний
+перебір 20 000 документів іде <b>десятки мілісекунд</b> на один запит: у наших
+прогонах від 32 до 52 мс, залежно від того, чи зайнята машина. Це здається
+терпимим — поки не згадаєш, що заміри цієї теми роблять по 300 запитів на кожну
+з трьох вибірок, і лише одна така таблиця з семи рядків коштувала б кілька
+хвилин. Читач, який чекає на видачу, теж не єдиний: у пошуку зазвичай сотні
+запитів на секунду.</p>
+
+<p><b>Інвертований індекс</b> (inverted index) прибирає цю роботу цілком.
+Ідея одна, і вона проста настільки, що її легко недооцінити.</p>
+
+<div class="note"><b>Що це таке.</b> Звичайна таблиця «документ → його слова»
+називається прямою. Інвертована — навпаки: <b>слово → список документів, у яких
+воно є</b>. Такий список звуть <b>списком входжень</b> (postings list). Щоб
+відповісти на запит, не треба чіпати колекцію: досить взяти списки трьох слів
+запиту й обійти лише їхнє обʼєднання.</div>
+
+<p>Заміряно на тій самій колекції: з індексом той самий запит іде
+<b>у 8-10 разів</b> швидше (одиниці мілісекунд замість десятків). Але
+надійніше за секундомір інше число, яке від машини не залежить зовсім:
+пошук торкається в середньому <b>2042.6</b> документа замість 20 000, а
+<b>медіана</b> взагалі 638.</p>
+
+<p>Але найважливіше в індексі не сам множник, а те, від чого він залежить.
+Не від розміру колекції — від <b>рідкісності слів запиту</b>.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 1 · Скільки документів торкнеться пошук</div>
+  <p class="fig-sub">Чотири справжні запити до тих самих 20 000 документів.
+    Смуги — списки входжень слів запиту; нижня смуга — уся колекція, підсвічено
+    те, що доведеться обійти.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">запит</span>
+        <div class="seg wrap" id="seg1">
+          <button data-i="0" aria-pressed="true">не вдалося файл</button>
+          <button data-i="1" aria-pressed="false">помилка читання диска</button>
+          <button data-i="2" aria-pressed="false">сертифікат недійсний</button>
+          <button data-i="3" aria-pressed="false">роздільність екрана</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>торкнулись</b><i id="v1a">—</i></div>
+        <div class="cellv"><b>частка колекції</b><i id="v1b">—</i></div>
+        <div class="cellv"><b>економія</b><i id="v1c">—</i></div>
+        <div class="cellv"><b>найдовший список</b><i id="v1d">—</i></div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>Зерно 0. <b>«не вдалося файл»</b> — 6095 документів, 30.48 % колекції:
+    індекс економить лише 3.3 раза, бо слово «не» є майже скрізь.
+    <b>«роздільність екрана»</b> — 25 документів, 0.13 %: економія 800 разів.
+    Той самий індекс, та сама колекція, різниця у 240 разів — і вона цілком у
+    запиті.</figcaption>
+</figure>
+
+<p>Ось із цього і виростає половина інженерії пошуку. Слово «не» трапляється в
+5711 документах із 20 000 — його список входжень майже такий самий довгий, як
+уся колекція, і користі від нього ніякої. Саме тому в пошукових системах живуть
+<a href="../03-morphology/lecture.html">стоп-слова</a>: їх викидають не заради
+якості, а заради того, щоб список входжень не був завдовжки з колекцію.</p>
+
+<p>І друга причина, чому індекс — умова, а не оптимізація: памʼять. Матриця
+ваг для наших 20 000 документів і 14 244 слів у щільному вигляді важить
+<b>2279.04</b> МБ. Та сама матриця в розрідженому форматі CSR (тема 04) —
+<b>1.74</b> МБ, тобто у <b>1306</b> разів менше. Щільний варіант не поміститься
+в памʼять ноутбука, а розріджений — це список входжень, записаний трьома
+масивами.</p>
+
+<div class="note warn"><b>Українська деталь, яку легко проґавити.</b>
+Індексувати українські тексти по словоформах майже безглуздо: запит «купити
+машину» не знайде документ зі словом «машини». Індекс будують по
+<a href="../03-morphology/lecture.html">лемах</a> — і для флективної мови
+лематизація тут не покращення якості, а умова того, щоб пошук узагалі
+працював.</div>
+
+<h2 id="s3"><span class="num">03 / Базова лінія</span>Що саме шукає косинус</h2>
+
+<p>Тепер, коли шукати можна швидко, розберімося, <b>що</b> ми, власне, шукаємо.
+Формулу з теми 05 варто перечитати не як формулу, а як твердження про світ.</p>
+
+<div class="eq">схожість(q, d) = cos(q, d) = (q · d) / (|q| × |d|)</div>
+
+<p>Словами: беремо два вектори ваг, множимо їх покоординатно й додаємо, а потім
+ділимо на добуток довжин. Ділення й перетворює скалярний добуток на косинус —
+міру <b>напрямку</b>, а не розміру. Саме тому довгий документ не виграє
+автоматично: після ділення на власну довжину всі вектори стають однакового
+розміру.</p>
+
+<p>У цій конструкції сидять два припущення, і обидва варто назвати вголос,
+бо саме їх BM25 і переглядає.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">припущення 1</span>
+    <p><b>Внесок слова росте лінійно з частотою.</b> Якщо слово трапилось у
+    документі двадцять разів, TF-IDF вважає цей документ у двадцять разів
+    доречнішим за той, де слово трапилось один раз.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">припущення 2</span>
+    <p><b>Довжину треба прибрати повністю.</b> Ділення на <span class="raw">|d|</span>
+    робить усі документи рівними за розміром — і трислівний, і двохсотслівний.
+    Ніякої проміжної позиції тут не передбачено.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">наслідок</span>
+    <p>Обидва припущення виглядають розумно, і жодне з них не обговорюють —
+    вони вбудовані в саму форму запису. BM25 відрізняється від TF-IDF рівно
+    тим, що виносить їх у <b>параметри</b>: <span class="raw">k1</span> для
+    першого, <span class="raw">b</span> для другого.</p>
+  </div>
+</div>
+
+<p>Наша базова лінія заміряна на задачі <b>пошуку відомого документа</b>: беремо
+документ, робимо з нього запит із трьох випадкових слів, дивимось, на якому
+місці пошук поверне саме його. Метрика — <b>MRR</b>: якщо потрібний документ
+перший, запит дає 1, якщо другий — 1/2, якщо десятий — 1/10; MRR — середнє
+таких дробів.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>схема</th><th>зерно 0</th><th>зерно 1</th><th>зерно 2</th><th>середнє</th><th>розкид</th></tr>
+  <tr><td>TF-IDF, косинус</td><td>0.7503</td><td>0.7639</td><td>0.7711</td><td>0.7618</td><td>0.0208</td></tr>
+</table></div>
+
+<p>Число 0.7618 — те саме, що надрукувала тема 05 на цій самій задачі. Це не
+збіг і не везіння: обидві теми беруть один токенізатор, одну вибірку й один
+код побудови запитів. Якби числа розійшлися, першим підозрюваним був би саме
+токенізатор.</p>
+
+<h2 id="s4"><span class="num">04 / Механізм 1</span>Насичення частоти</h2>
+
+<p>Візьмемо перше припущення й подивимось на нього людськими очима. Ти шукаєш
+документ про помилку читання диска. Знайшлися два: у першому слово «диск»
+трапилось один раз, у другому — двадцять. Наскільки другий доречніший?</p>
+
+<p>Точно доречніший. Але <b>не у двадцять разів</b>. Перше входження слова
+повідомляє головне: документ про це. Друге додає впевненості. Пʼяте додає
+менше. Двадцяте не додає майже нічого — швидше за все, це просто довга
+довідка, у якій слово трапляється в кожному абзаці.</p>
+
+<p>BM25 записує цю думку однією дробовою формулою:</p>
+
+<div class="eq">внесок частоти = tf × (k<span class="sub">1</span> + 1) / (tf + k<span class="sub">1</span>)</div>
+
+<p>Розберімо її по символах. <code>tf</code> — скільки разів слово трапилось у
+документі. <code>k1</code> — число, яке ми обираємо самі; воно керує тим, як
+швидко крива вирівнюється. Чисельник і знаменник ростуть разом із
+<code>tf</code>, але знаменник має ще й доданок <code>k1</code>, який не росте —
+через нього дріб не може перевищити <b>k<span class="sub">1</span> + 1</b>.</p>
+
+<p>Порахуймо руками при <code>k1 = 1.5</code>, тобто зі стелею 2.5000.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">tf = 1</span>
+    <div class="eq left">1 × 2.5 / (1 + 1.5) = 2.5 / 2.5 = 1.0000</div>
+  </div>
+  <div class="step">
+    <span class="lbl">tf = 2</span>
+    <div class="eq left">2 × 2.5 / (2 + 1.5) = 5.0 / 3.5 = 1.4286</div>
+  </div>
+  <div class="step">
+    <span class="lbl">tf = 20</span>
+    <div class="eq left">20 × 2.5 / (20 + 1.5) = 50.0 / 21.5 = 2.3256</div>
+  </div>
+  <div class="step">
+    <span class="lbl">що з цього видно</span>
+    <p>Друге входження додало <b>0.4286</b>. Двадцяте — <b>0.0085</b>, тобто
+    у пʼятдесят разів менше. TF-IDF же в цьому місці додала б рівно одиницю
+    і за друге входження, і за двадцяте.</p>
+  </div>
+</div>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>входжень</th><th>внесок у TF-IDF</th><th>внесок у BM25</th><th>приріст BM25</th></tr>
+  <tr><td>1</td><td>1</td><td>1.0000</td><td>—</td></tr>
+  <tr><td>2</td><td>2</td><td>1.4286</td><td>+0.4286</td></tr>
+  <tr><td>3</td><td>3</td><td>1.6667</td><td>+0.2381</td></tr>
+  <tr><td>5</td><td>5</td><td>1.9231</td><td>+0.2564</td></tr>
+  <tr><td>10</td><td>10</td><td>2.1739</td><td>+0.2508</td></tr>
+  <tr class="hot"><td>20</td><td>20</td><td>2.3256</td><td>+0.1517</td></tr>
+</table></div>
+
+<p>Стовпчик «приріст» рахує кроки таблиці, а не окремі входження: від 3 до 5
+слово додається двічі, від 10 до 20 — десять разів. Саме тому приріст у
+передостанньому рядку більший за попередній — це сума десяти дрібних добавок.
+Одне двадцяте входження додає <b>0.0085</b>.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 2 · Криву насичення робить одне число</div>
+  <p class="fig-sub">Пряма — те, у що вірить TF-IDF. Крива — BM25 при обраному
+    <span class="raw">k1</span>. Обидві виміряні в тих самих одиницях: один
+    означає «слово трапилось рівно раз».</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="k2"><span class="raw">k1</span> <output id="k2o">1.5</output></label>
+        <input type="range" id="k2" min="0" max="50" step="1" value="15">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>стеля внеску</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>внесок при tf=2</b><i id="v2b">—</i></div>
+        <div class="cellv"><b>внесок при tf=20</b><i id="v2c">—</i></div>
+        <div class="cellv"><b>двадцяте / друге</b><i id="v2d">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>При <b>k1 = 0</b> крива вироджується в горизонтальну пряму: усі
+    ненульові частоти важать однаково, і BM25 перетворюється на «є слово чи
+    немає». При великих <span class="raw">k1</span> крива випрямляється й
+    наближається до прямої TF-IDF. Значення 1.5 — компроміс, який цитують за
+    замовчуванням; чи він найкращий, ми перевіримо в розділі 08.</figcaption>
+</figure>
+
+<div class="note warn"><b>Перевірка, яку варто зробити одразу.</b> Насичення має
+сенс лише там, де слова взагалі повторюються. У нашому корпусі це не так:
+клітинок із <code>tf &gt; 1</code> усього <b>3.58 %</b>, а документів хоча б з
+одним повтореним словом — <b>11.13 %</b>. Тобто в девʼяти документах із десяти
+насичення нема на чому працювати. Тримай це в голові до розділу 07 — там воно
+дасть найдивніше число теми.</div>
+<h2 id="s5"><span class="num">05 / Механізм 2</span>Нормалізація довжини</h2>
+
+<p>Друге припущення — про довжину. TF-IDF ділить вектор на його довжину й тим
+зрівнює всі документи. BM25 не зрівнює, а <b>дозує</b>: параметр
+<code>b</code> каже, наскільки сильно карати документ за те, що він довгий.</p>
+
+<div class="eq">штраф за довжину = 1 − b + b × |d| / avgdl</div>
+
+<p>Тут <code>|d|</code> — довжина цього документа в словах, <code>avgdl</code> —
+середня довжина документа в колекції (у нас <b>7.2605</b>), а <code>b</code> —
+число від нуля до одиниці. Подивись на два краї:</p>
+
+<ul>
+  <li><b>b = 0.</b> Формула стає <code>1 − 0 + 0 = 1</code>. Довжина зникає
+    з розрахунку взагалі: довгий документ не карають.</li>
+  <li><b>b = 1.</b> Формула стає <code>|d| / avgdl</code>. Документ карають
+    рівно пропорційно до того, наскільки він довший за середній.</li>
+</ul>
+
+<p>Цей штраф стоїть у знаменнику біля <code>k1</code>: що більший штраф, то
+менший внесок кожного слова. Найкраще подивитись, що з цього виходить, на
+справжньому запиті. Візьмімо <b>«файл не знайдено»</b> — рядок, який кожен
+бачив, — і подивімось, який документ виявляється першим із двадцяти тисяч при
+різних <code>b</code>.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 3 · Одне число вирішує, що ти побачиш першим</div>
+  <p class="fig-sub">Запит «файл не знайдено» до 20 000 документів. Чотири
+    справжні документи колекції — саме вони по черзі стають першими, коли
+    рухаєш <span class="raw">b</span>. Довжина смуги — оцінка BM25.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="b3"><span class="raw">b</span> <output id="b3o">0.75</output></label>
+        <input type="range" id="b3" min="0" max="20" step="1" value="15">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>довжина топ-1</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>оцінка топ-1</b><i id="v3b">—</i></div>
+        <div class="cellv"><b>MRR на 300 запитах</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>сер. довжина топ-1</b><i id="v3d">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Два праві стовпчики показані лише в заміряних положеннях
+    <span class="raw">b</span> — 0, 0.25, 0.50, 0.75 і 1.00; між ними стоїть
+    прочерк, бо вигадувати проміжні значення нема з чого. Оцінки чотирьох
+    документів канва рахує сама, за формулою і справжніми
+    <span class="raw">tf</span>, довжинами та IDF з зошита.</figcaption>
+</figure>
+
+<p>Ось що відбувається на цьому повзунку, і це варто прочитати повільно.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th><span class="raw">b</span></th><th>довжина топ-1</th><th>оцінка</th><th>що це за документ</th></tr>
+  <tr class="hot"><td>0.00</td><td>202</td><td>17.1159</td><td>довідка з параметрами командного рядка</td></tr>
+  <tr><td>0.15</td><td>9</td><td>9.6966</td><td>«Не вдалося зберегти файл…»</td></tr>
+  <tr><td>0.25</td><td>5</td><td>9.8161</td><td>«Файл «%s» не знайдено на носії «%s»»</td></tr>
+  <tr><td>0.50</td><td>5</td><td>10.3218</td><td>той самий</td></tr>
+  <tr class="hot"><td>1.00</td><td>3</td><td>12.5084</td><td>«Знайдено Файл: … Містить: …»</td></tr>
+</table></div>
+
+<p><b>При <code>b = 0</code> перемагає найдовший документ.</b> Це двохсотслівна
+довідка з параметрами програми, у якій слово «файл» трапилось сім разів, «не» —
+чотири, «знайдено» — три. Вона не про помилку і взагалі ні про що конкретне —
+просто в ній багато всього, і без штрафу за довжину цього досить.</p>
+
+<p><b>При <code>b = 1</code> перемагає документ, у якому одного зі слів запиту
+взагалі немає.</b> «Знайдено Файл: … Містить: …» — три слова, слова «не» серед
+них нема. Штраф за довжину став таким сильним, що короткість переважила
+відсутність слова. Це другий бік тієї самої помилки.</p>
+
+<p>Посередині, приблизно від 0.2 до 0.7, першим стоїть рядок, який людина й
+шукала. І це не окремий випадок одного запиту: на 300 запитах × три зерна
+середня довжина документа, який став першим, падає з <b>32.93</b> слова при
+<code>b = 0</code> до <b>7.13</b> при <code>b = 1</code>, при середній довжині
+документа колекції <b>7.26</b>.</p>
+
+<h2 id="s6"><span class="num">06 / Формула</span>BM25 цілком</h2>
+
+<p>Тепер складемо обидва механізми. Повна формула виглядає так:</p>
+
+<div class="eq">score(q, d) = Σ<span class="sub">t∈q</span> idf(t) × tf(t,d) × (k<span class="sub">1</span>+1) / ( tf(t,d) + k<span class="sub">1</span> × (1 − b + b × |d| / avgdl) )</div>
+
+<p>Знак <b>Σ</b> (грецька велика «сигма») означає «додай усе, що йде далі, по
+черзі». Підпис <code>t∈q</code> під ним читається «для кожного слова
+<code>t</code>, яке є в запиті <code>q</code>». Тобто: пройди слова запиту,
+для кожного порахуй один доданок і склади все разом. Ніякої іншої математики
+тут немає — це три множення й одне ділення, повторені стільки разів, скільки
+слів у запиті.</p>
+
+<p>IDF у BM25 записують трохи інакше, ніж у <a href="../05-tfidf/lecture.html">темі
+05</a>:</p>
+
+<div class="eq">idf(t) = ln( 1 + (N − df(t) + 0.5) / (df(t) + 0.5) )</div>
+
+<p>Де <code>N</code> — скільки всього документів, <code>df(t)</code> — у
+скількох із них є слово <code>t</code>, <code>ln</code> — натуральний логарифм.
+Половинки в чисельнику й знаменнику роблять те саме, що одиниці у формулі
+sklearn: не дають дробу зірватись, коли слово трапилось у нуль або в усіх
+документах. Зовнішня одиниця гарантує, що IDF не стане відʼємним.</p>
+
+<p>І тепер найкорисніше: порахуймо всю формулу руками на одному справжньому
+документі. Запит — «файл не знайдено», документ — рядок
+<b>«Файл «%s» не знайдено на носії «%s»»</b> завдовжки пʼять слів.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · штраф за довжину</span>
+    <div class="eq left">1 − 0.75 + 0.75 × 5 / 7.2605 = 0.25 + 0.5165 = 0.7665</div>
+    <p>Документ коротший за середній, тож штраф вийшов менший за одиницю —
+    це не покарання, а заохочення.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · знаменник</span>
+    <div class="eq left">tf + k<span class="sub">1</span> × 0.7665 = 1 + 1.5 × 0.7665 = 2.1497</div>
+    <p>Кожне слово запиту трапилось у документі рівно раз, тож
+    <code>tf = 1</code> для всіх трьох, і знаменник у всіх трьох однаковий.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · чисельник</span>
+    <div class="eq left">tf × (k<span class="sub">1</span> + 1) = 1 × 2.5 = 2.5000</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · три доданки</span>
+    <div class="eq left">файл     : 3.3910 × 2.5000 / 2.1497 = 3.9436
+не       : 1.2533 × 2.5000 / 2.1497 = 1.4575
+знайдено : 4.7134 × 2.5000 / 2.1497 = 5.4813</div>
+    <p>Видно, за що документ дістає бали: слово «знайдено» рідкісне й дає
+    5.4813, а слово «не», яке є в 5711 документах із 20 000, дає майже
+    вчетверо менше — 1.4575.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 5 · сума</span>
+    <div class="eq left">3.9436 + 1.4575 + 5.4813 = 10.8824</div>
+    <p>Це і є оцінка BM25 цього документа на цьому запиті. Жодної магії,
+    жодної матриці — пʼять рядків арифметики.</p>
+  </div>
+</div>
+
+<div class="note"><b>Бібліотеки для цього немає — і добре.</b> У середовищі курсу
+пакета <code>rank_bm25</code> немає, тож у зошиті ми пишемо формулу самі: спершу
+повільно, потрійним циклом просто по рядку формули, потім швидко — множенням
+розрідженої матриці. Обидві версії звірені <code>assert</code>-ом, розбіжність
+рівно нульова. Це найкорисніша перевірка з можливих: усередині «швидкої
+реалізації» справді немає нічого, крім тієї самої арифметики.</div>
+
+<h2 id="s7"><span class="num">07 / Замір</span>Розтин виграшу</h2>
+
+<p>Тепер головне число теми. Та сама колекція, ті самі 300 запитів, три зерна.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>схема</th><th>зерно 0</th><th>зерно 1</th><th>зерно 2</th><th>середнє</th><th>розкид</th></tr>
+  <tr><td>TF-IDF, косинус</td><td>0.7503</td><td>0.7639</td><td>0.7711</td><td>0.7618</td><td>0.0208</td></tr>
+  <tr class="hot"><td>BM25, k1=1.5 b=0.75</td><td>0.8342</td><td>0.8416</td><td>0.8564</td><td>0.8440</td><td>0.0222</td></tr>
+  <tr><td>виграш BM25</td><td>+0.0839</td><td>+0.0777</td><td>+0.0852</td><td>+0.0823</td><td>0.0075</td></tr>
+</table></div>
+
+<p>Виграш <b>+0.0823</b> при розкиді самого виграшу <b>0.0075</b> — тобто він
+вдесятеро більший за власне коливання. Але переконливіше інше: <b>купи не
+перетинаються</b>. Найкраще зерно TF-IDF дало 0.7711, найгірше зерно BM25 —
+0.8342. Між ними є проміжок, у який не потрапило жодного прогону. За критерієм
+курсу це доведена різниця, а не «схоже, що трохи краще».</p>
+
+<p>Перевірка на другому типі запитів — «два звичні слова плюс одне змістовне»,
+який тема 05 називала реалістичним: TF-IDF 0.7944, BM25 <b>0.8490</b>. Висновок
+не тримається на способі складати запити.</p>
+
+<p>Тепер найцікавіше: <b>який із двох механізмів дає цей виграш?</b> Вимикаємо
+по одному.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 4 · Розтин: що саме працює в BM25</div>
+  <p class="fig-sub">Сім схем на одній задачі. Кожна відрізняється від сусідньої
+    рівно однією деталлю — так видно ціну кожної.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">показати</span>
+        <div class="seg wrap" id="seg4">
+          <button data-i="0" aria-pressed="true">середнє трьох</button>
+          <button data-i="1" aria-pressed="false">зерно 0</button>
+          <button data-i="2" aria-pressed="false">зерно 1</button>
+          <button data-i="3" aria-pressed="false">зерно 2</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>TF-IDF</b><i id="v4a">—</i></div>
+        <div class="cellv"><b>BM25</b><i id="v4b">—</i></div>
+        <div class="cellv"><b>без насичення</b><i id="v4c">—</i></div>
+        <div class="cellv"><b>без довжини</b><i id="v4d">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Рядок 6 — BM25 із <span class="raw">k1</span> = 1000, тобто майже
+    без насичення: внесок частоти знову майже лінійний. Рядок 7 — навпаки,
+    <span class="raw">k1</span> = 0, тобто насичення повне: усе, що трапилось хоч
+    раз, важить однаково.</figcaption>
+</figure>
+
+<p>Три висновки, і другий із них незручний.</p>
+
+<p><b>Перший.</b> Вимкнути насичення коштує <b>−0.1514</b>: BM25 із
+<code>k1 = 1000</code> дає 0.6926 — гірше не лише за повну BM25, а й за просту
+TF-IDF. Насичення — не оздоблення, а те, на чому все тримається.</p>
+
+<p><b>Другий, незручний.</b> Вимкнути нормалізацію довжини коштує <b>−0.0029</b>.
+Це менше за розкид по зернах (0.0222) — тобто на цій метриці нормалізація
+довжини <b>не дає нічого, що можна довести</b>. І це попри те, що розділ 05
+показав її ефект наочно й різко.</p>
+
+<div class="note warn"><b>Так а що ж тоді показував розділ 05?</b> Правду —
+але про інші запити. У задачі «знайди документ за трьома його словами» слова
+запиту беруться з самого документа, а документи в нас короткі; трапитись усім
+трьом у двохсотслівній довідці майже неможливо, тож довгий сміттєвий документ
+у видачу просто не потрапляє. А от у запиті «файл не знайдено» всі три слова
+частотні, і довідка їх усі містить — тому там провал при <code>b = 0</code>
+видно неозброєним оком. <b>Замір не побачив поломки, яку око бачить одразу.</b>
+Це не привід не вірити заміру — це привід памʼятати, що метрика міряє рівно ту
+задачу, яку ти в неї заклав.</div>
+
+<p><b>Третій.</b> Сама лише заміна формули IDF нічого не дає, ба навіть шкодить:
+−0.0287. Тобто виграш BM25 — не в тому, «як вона рахує рідкісність», а в тому,
+що вона робить із частотою.</p>
+
+<p>І тут з таблиці стирчить число, яке спершу виглядає помилкою.
+<b>BM25 із <code>k1 = 0</code> дає 0.8792</b> — краще за повну BM25 з
+типовими параметрами. При <code>k1 = 0</code> формула вироджується до «сума IDF
+тих слів запиту, які є в документі»: частота не враховується взагалі, довжина
+теж (штраф за довжину входить у формулу лише як множник біля
+<code>k1</code>). Найпростіше, що взагалі можна назвати ранжуванням, обходить
+налаштовану BM25.</p>
+
+<p>Пояснення просте й перевірене в розділі 04: у нашому корпусі повторів майже
+немає — <b>3.58 %</b> клітинок мають <code>tf &gt; 1</code>. Частота тут майже
+завжди дорівнює одиниці, тобто <b>мовчить</b>. А коли вона мовчить, будь-яка
+схема, що бере її до уваги, лише додає шуму. Це не властивість BM25 — це
+властивість корпусу коротких рядків інтерфейсу.</p>
+<h2 id="s8"><span class="num">08 / Параметри</span>Підбір <span class="raw">k1</span> і <span class="raw">b</span></h2>
+
+<p>Значення <code>k1 = 1.5</code> і <code>b = 0.75</code> кочують із тексту в
+текст як «типові». Вони й справді розумні за замовчуванням — але замовчування
+не є законом природи, і перевірити його на своїх даних коштує одного циклу.</p>
+
+<p>Шість значень <code>k1</code> на пʼять значень <code>b</code>, кожна
+клітинка — три зерна.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 5 · Уся сітка одразу</div>
+  <p class="fig-sub">Тридцять клітинок, у кожній — MRR, усереднений по трьох
+    зернах. Повзунки обводять клітинку рамкою; праворуч видно, наскільки вона
+    гірша за найкращу.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="350" data-lw="700" data-lh="350"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="k5"><span class="raw">k1</span> <output id="k5o">1.5</output></label>
+        <input type="range" id="k5" min="0" max="5" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <label for="b5"><span class="raw">b</span> <output id="b5o">0.75</output></label>
+        <input type="range" id="b5" min="0" max="4" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>MRR клітинки</b><i id="v5a">—</i></div>
+        <div class="cellv"><b>до найкращої</b><i id="v5b">—</i></div>
+        <div class="cellv"><b>до типової</b><i id="v5c">—</i></div>
+        <div class="cellv"><b>розкид по зернах</b><i id="v5d">0.0222</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>Верхній рядок (<span class="raw">k1</span> = 0) однаковий по всіх
+    <span class="raw">b</span>, і це не помилка малювання: штраф за довжину
+    входить у формулу лише як множник біля <span class="raw">k1</span>, тож при
+    нулі він зникає разом із ним. Це той самий вироджений випадок із розділу 07,
+    що дає 0.8792.</figcaption>
+</figure>
+
+<p>Читати цю сітку варто в трьох напрямках.</p>
+
+<p><b>Найкраща клітинка — не типова.</b> <code>k1 = 0.3</code>, <code>b = 0.25</code>
+дає <b>0.9066</b> проти 0.8440 у типової пари. Різниця <b>+0.0626</b> — утричі
+більша за розкид по зернах (0.0222), тобто справжня. І напрямок її передбачуваний
+після розділу 07: обидва параметри треба зменшувати, бо частота в наших
+документах майже нічого не каже, а документи й так короткі.</p>
+
+<p><b>Плато широке, але не всюди.</b> Клітинок, які не гірші за найкращу в межах
+розкиду, — <b>7 із 30</b>. Усі вони лежать у лівій верхній частині сітки: малий
+<code>k1</code> при <code>b</code> до 0.5, або <code>b = 0.25</code> при
+будь-якому <code>k1</code>. Тобто пʼятою частиною сітки можна користуватись без
+різниці, а решта чотири пʼятих гірші, і подекуди помітно.</p>
+
+<p><b>Впасти можна глибоко.</b> Найгірша клітинка — <code>k1 = 3.0</code>,
+<code>b = 1.0</code> — дає 0.7105, тобто гірше навіть за базову TF-IDF. Погана
+пара параметрів зʼїдає весь виграш методу й ще трохи згори.</p>
+
+<div class="note warn"><b>Але не роби з цього «завжди беріть 0.3 і 0.25».</b>
+Це число заміряне на колекції коротких рядків інтерфейсу з середньою довжиною
+7.26 слова. На колекції статей чи документації довжини інші, повторів більше —
+і оптимум поїде назад до типових значень. Правильний висновок не «типові
+значення погані», а «сітка з тридцяти клітинок коштує кількох хвилин, і на
+своїх даних її треба прогнати».</div>
+
+<h2 id="s9"><span class="num">09 / Метрики</span>Чим міряти пошук</h2>
+
+<p>Досі ми міряли одним числом — MRR. Настав час сказати, що воно означає й
+чого не означає, бо чисел тут щонайменше три, і вони відповідають на різні
+питання.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">MRR · середній обернений ранг</span>
+    <p><b>Питання:</b> «як швидко я побачу перший доречний результат?»
+    Для одного запиту це <code>1 / місце першого доречного</code>; для набору
+    запитів — середнє таких дробів. Усе, що стоїть після першого доречного,
+    MRR не цікавить взагалі.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">precision@k · точність у топ-k</span>
+    <p><b>Питання:</b> «яка частка показаного мені — доречна?»
+    Це <code>скільки доречних у перших k / k</code>. Якщо доречний документ у
+    колекції один, то precision@10 не може перевищити 0.1 — хоч би як
+    ідеально працював пошук.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">recall@k · повнота в топ-k</span>
+    <p><b>Питання:</b> «яку частку доречного я взагалі побачив?»
+    Це <code>скільки доречних у перших k / скільки їх усього</code>. Якщо
+    доречних 120, то recall@10 не може перевищити 0.0833 — у десять місць
+    сто двадцять документів не влазять.</p>
+  </div>
+</div>
+
+<p>Щоб ці три числа можна було порахувати, потрібна <b>розмітка доречності</b> —
+хтось має сказати, які документи є правильною відповіддю. У нас вона зроблена
+максимально прозоро: <b>доречний документ — той, у якому є всі слова запиту</b>.
+Груба розмітка, зате перевіряється очима й відтворюється точно.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 6 · Три метрики на одній видачі</div>
+  <p class="fig-sub">Справжні видачі BM25 по 20 000 документах. Зеленим —
+    доречні. Повзунок рухає межу <span class="raw">k</span>; три числа під
+    списком міняються по-різному, і це головне, що тут видно.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">запит</span>
+        <div class="seg wrap" id="seg6">
+          <button data-i="0" aria-pressed="true">один доречний</button>
+          <button data-i="1" aria-pressed="false">тринадцять</button>
+          <button data-i="2" aria-pressed="false">сто двадцять</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="k6"><span class="raw">k</span> <output id="k6o">10</output></label>
+        <input type="range" id="k6" min="1" max="10" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>MRR</b><i id="v6a">—</i></div>
+        <div class="cellv"><b>доречних усього</b><i id="v6b">—</i></div>
+        <div class="cellv"><b>precision@k</b><i id="v6c">—</i></div>
+        <div class="cellv"><b>recall@k</b><i id="v6d">—</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>Три запити, один і той самий пошук, <span class="raw">k</span> = 10.
+    <b>«значення колір прозорість»</b>: MRR 0.3333, precision 0.1000,
+    recall 1.0000. <b>«перевищено час очікування»</b>: 1.0000 / 1.0000 / 0.7692.
+    <b>«не вдалося відкрити»</b>: 1.0000 / 1.0000 / 0.0833. Третій запит
+    відпрацьовано бездоганно — і recall каже 0.0833.</figcaption>
+</figure>
+
+<p>Ось у чому пастка, і вона коштує людям дисертацій. Цитувати одну метрику
+без опису задачі — те саме, що назвати температуру, не сказавши, чиє це тіло.</p>
+
+<ul>
+  <li>Якщо доречний документ <b>один</b> (пошук відомого документа, навігаційні
+    запити, довідка), працюють MRR і recall@k, а precision@k <b>структурно
+    обмежена</b> й нічого не міряє: 0.1 при <code>k</code> = 10 — це стеля, а не
+    оцінка.</li>
+  <li>Якщо доречних <b>багато</b> (огляд теми, добірка), працює precision@k, а
+    recall@k упирається у власну стелю: 0.0833 при 120 доречних — це теж стеля.</li>
+  <li>MRR не бачить нічого, крім першого влучання. Пошук, який поставив один
+    доречний документ першим, а решту девʼять — сміттям, дістане від MRR
+    круглу одиницю.</li>
+</ul>
+
+<p>На нашому наборі із 300 запитів це видно в середньому: BM25 дає MRR 0.9148,
+recall@10 <b>0.9070</b> — і водночас precision@10 всього <b>0.1587</b>. Не тому,
+що пошук поганий, а тому, що у <b>71.3 %</b> запитів доречний документ рівно
+один, і більше десятої частки списку зайняти нічим.</p>
+
+<div class="note"><b>Чому тут MRR 0.9148, а в розділі 07 — 0.8440.</b> Метрика
+не мінялася — мінялася <b>розмітка</b>. У розділі 07 доречним вважався рівно
+один документ, з якого зроблено запит. Тут доречний — будь-який, у якому є всі
+три слова, а таких у середньому 3.11. Одна й та сама видача, одна й та сама
+формула метрики, різниця в 0.07 — і вся вона в тому, що ми назвали правильною
+відповіддю. Це перше, що варто питати про будь-яке число якості пошуку.</div>
+
+<h2 id="s10"><span class="num">10 / Одруківки</span>Нечіткий пошук</h2>
+
+<p>Усе, що ми будували, тримається на точному збігу рядка. Слово «зннайдено»
+для індексу — не «знайдено» з помилкою, а окрема колонка, якої в словнику
+немає. Заміряймо, скільки це коштує.</p>
+
+<p>Беремо ті самі 300 запитів і псуємо в них слова: переставляємо дві сусідні
+літери, викидаємо одну або замінюємо на випадкову — тобто робимо рівно те, що
+робить рука на клавіатурі.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>зіпсовано слів із трьох</th><th>MRR без виправлення</th><th>MRR після rapidfuzz</th></tr>
+  <tr><td>0</td><td>0.8440</td><td>0.8440</td></tr>
+  <tr><td>1</td><td>0.5888</td><td>0.7480</td></tr>
+  <tr><td>2</td><td>0.1520</td><td>0.6373</td></tr>
+  <tr class="hot"><td>3</td><td>0.0035</td><td>0.5505</td></tr>
+</table></div>
+
+<p>Одна одруківка в одному слові з трьох роняє MRR з 0.8440 до <b>0.5888</b>.
+Одруківка в кожному слові — до <b>0.0035</b>, тобто пошук перестає працювати
+повністю. Це не поступова деградація, а обрив.</p>
+
+<p><b>Нечіткий пошук</b> (fuzzy search) лікує саме цей випадок. Ідея: якщо слова
+запиту немає у словнику індексу, знайди в словнику найсхожіше й підстав його.
+«Схожість» тут — не про зміст, а про літери: <b>відстань редагування</b>
+(edit distance) рахує, скільки вставок, видалень і замін треба, щоб перетворити
+один рядок на інший. Бібліотека <code>rapidfuzz</code> рахує її швидко.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 7 · Що рятує, а що ні</div>
+  <p class="fig-sub">Ліворуч — одруківки: скільки MRR втрачено й скільки
+    повернув <code>rapidfuzz</code>. Праворуч — та сама міра схожості рядків
+    на трьох видах пар.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показати</span>
+        <div class="seg" id="seg7">
+          <button data-i="0" aria-pressed="true">одруківки</button>
+          <button data-i="1" aria-pressed="false">схожість рядків</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="t7">зіпсовано слів <output id="t7o">3</output></label>
+        <input type="range" id="t7" min="0" max="3" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b id="n7a">без виправлення</b><i id="v7a">—</i></div>
+        <div class="cellv"><b id="n7b">після rapidfuzz</b><i id="v7b">—</i></div>
+        <div class="cellv"><b id="n7c">повернуто</b><i id="v7c">—</i></div>
+        <div class="cellv"><b id="n7d">до чистого</b><i id="v7d">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>У режимі «схожість рядків» повзунок нічого не міняє — там
+    показано три заміряні числа зерна 0: той самий текст з одруківками
+    <b>0.8745</b>, той самий зміст іншими словами <b>0.5699</b>, дві випадкові
+    пари корпусу <b>0.2892</b>. Одруківка й синонім — це два різні явища,
+    і міра відстані між рядками бачить лише перше.</figcaption>
+</figure>
+
+<p>Виправлення повертає багато, але не все: при трьох зіпсованих словах MRR
+піднімається з 0.0035 до 0.5505 — це <b>65 % від чистих 0.8440</b>. Решта —
+слова, які виправились не в те: «код» з одруківкою так само схожий на «кот»,
+«ком» і «коду», а вибрати з них правильне за літерами неможливо.</p>
+
+<p>І окремо про ціну. Ми заміряли дві міри відстані на тих самих даних:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>міра відстані</th><th>вгадано слово точно</th><th>час на 300 слів</th></tr>
+  <tr><td>Левенштейн</td><td>87.3 %</td><td>десяті частки секунди</td></tr>
+  <tr class="hot"><td>Дамерау-Левенштейн</td><td>93.3 %</td><td>одиниці секунд</td></tr>
+</table></div>
+
+<p>Дамерау-Левенштейн вважає перестановку двох сусідніх літер <b>однією</b>
+правкою, а не двома — а це найчастіша одруківка людини. Тому й вгадує краще:
+<b>93.3 %</b> проти <b>87.3 %</b>. Коштує це в кілька десятків разів більше часу
+(у наших прогонах — від 24 до 44 разів; точний множник залежить від машини,
+порядок — ні). Класичний вибір компромісу, у якому немає правильної відповіді
+без контексту: для виправлення запиту, який пише людина, шість зайвих відсотків
+того варті, а для перебирання мільйона рядків у фоні — ні.</p>
+
+<h2 id="s11"><span class="num">11 / Межа</span>Синоніми: BM25 їх не бачить</h2>
+
+<p>Тема 05 закінчилась поломкою, яку не лікували: TF-IDF не бачить синонімів.
+Два переклади того самого англійського рядка мали косинус 0.2230, а більш ніж
+кожна пʼята пара — рівно нуль. Природне питання: <b>чи лікує це BM25?</b></p>
+
+<p>Перевірка пряма. У корпусі є <b>209</b> пар документів, про які точно відомо,
+що вони означають одне й те саме — це різні українські переклади одного
+англійського рядка з різних програм. У <b>46</b> із них немає жодного спільного
+слова. Ось три:</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>переклад A</th><th>переклад B</th></tr>
+  <tr><td>Не вдалося визначити носій сигналу</td><td>Неможливо встановити жодного носія</td></tr>
+  <tr><td>Не виявлено жодного пристрою для роботи у мережі</td><td>Немає доступних мережних пристроїв</td></tr>
+  <tr><td>%s: параметр потребує аргументу — %c</td><td>%s: параметру необхідний аргумент -- %c</td></tr>
+</table></div>
+
+<p>Кладемо всі варіанти B у колекцію з 20 000 документів, запитуємо словами
+варіанта A і дивимось, чи знайдеться потрібне. Контроль обовʼязковий: той самий
+замір, але запит зроблено зі слів <b>самого документа-мішені</b>. Якщо контроль
+високий, а основний замір низький, справа не в задачі й не в колекції.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>схема</th><th>запит іншими словами</th><th>recall@10</th><th>контроль</th></tr>
+  <tr><td>TF-IDF</td><td>0.1327</td><td>0.2791</td><td>0.7610</td></tr>
+  <tr class="hot"><td>BM25</td><td>0.1513</td><td>0.2967</td><td>0.7602</td></tr>
+</table></div>
+
+<p><b>Відповідь: ні, не лікує.</b> BM25 дає 0.1513 замість 0.1327 — приріст є,
+але він мізерний поруч із самою дірою: на тому самому завданні, коли запит
+складено словами самого документа, обидві схеми дають близько 0.76. Тобто
+задача розвʼязна, колекція нормальна, метрика працює — і при зміні слів на
+синоніми якість падає <b>впʼятеро</b>.</p>
+
+<p>Причину видно з формули, і вона не лікується параметрами. І TF-IDF, і BM25
+складають внески <b>однакових слів</b>. «Регулярний» і «формальний» для них —
+дві незалежні колонки, так само далекі одна від одної, як «регулярний» і
+«принтер». Ні <code>k1</code>, ні <code>b</code>, ні індекс, ні
+<code>rapidfuzz</code> не мають куди покласти інформацію про те, що два різні
+рядки означають одне.</p>
+
+<p>Нечіткий пошук тут теж не рятує, і це видно з інтерактиву 7: схожість рядків
+для пар однакового змісту — <b>0.5699</b>, для випадкових пар корпусу —
+<b>0.2892</b>. Різниця є, але вона не про зміст: українські синоніми часто мають
+спільні корені й однакові закінчення, і саме їх ця міра й ловить. Порівняй із
+<b>0.8745</b> для того самого тексту з одруківками — ось як виглядає схожість,
+яку відстань редагування справді бачить.</p>
+
+<h2 id="s12"><span class="num">12 / Далі</span>Куди це веде</h2>
+
+<p>Підсумуймо, що тепер точно відомо.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>твердження</th><th>число</th></tr>
+  <tr><td>Без індексу пошук не запускається: перебір проти списків входжень</td><td>2042.6 документа замість 20 000</td></tr>
+  <tr><td>Скільки економить індекс — залежить від запиту, не від колекції</td><td>від 3.3x до 800x</td></tr>
+  <tr><td>BM25 краща за TF-IDF, і купи по зернах не перетинаються</td><td>0.8440 проти 0.7618</td></tr>
+  <tr><td>Увесь виграш дає насичення частоти, а не нормалізація довжини</td><td>−0.1514 проти −0.0029</td></tr>
+  <tr><td>Типові значення параметрів на цих даних не найкращі</td><td>0.9066 при k1 = 0.3, b = 0.25</td></tr>
+  <tr><td>Одна метрика без опису задачі нічого не означає</td><td>0.1587 і 0.9070 на тій самій видачі</td></tr>
+  <tr><td>Одруківки ламають пошук, rapidfuzz повертає дві третини</td><td>0.0035 → 0.5505</td></tr>
+  <tr><td>Синонімів не бачить ані TF-IDF, ані BM25</td><td>0.1513 проти контрольних 0.7602</td></tr>
+</table></div>
+
+<p>Два з цих рядків ведуть у різні боки, і обидва — наступні теми курсу.</p>
+
+<p><b>Останній рядок веде в блок 3.</b> Щоб «регулярний» і «формальний»
+опинились поруч, слово має перестати бути номером колонки й стати вектором,
+який щось знає про свій контекст. Це ембединги; на них стоїть
+<a href="../glossary.html">семантичний пошук</a> і векторні бази, і саме число
+0.1513 — міра того, скільки вони мають виправити.</p>
+
+<p><b>А передостанній веде в найближчу тему.</b> Ми щойно витратили розділ на
+підбір двох параметрів заради +0.0626 — і в тій самій темі побачили, що на
+коротких документах найпростіша схема без жодного параметра дає 0.8792. Виникає
+незручне питання: чи не буває так, що замість підбирати ваги, простіше написати
+правило? <a href="../10-rules-regex/lecture.html">Тема 10</a> ставить його
+прямо й міряє відповідь — виявиться, що вісім рядків регулярного виразу
+подекуди коштують десяти тисяч розмічених прикладів.</p>
+
+<p>Дорогою варто заглянути й убік:
+<a href="../06-text-classification/lecture.html">тема 06</a> робить із тих самих
+ваг класифікатор, а <a href="../07-metrics/lecture.html">тема 07</a> продовжує
+розмову цього розділу про метрики — там зʼясується, що мікро-F1 у типовій
+задачі тотожно дорівнює точності, і цитувати його як «зважену метрику» так само
+безглуздо, як цитувати precision@10 на пошуку відомого документа.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../08-topic-modeling/lecture.html"><span class="dir">попередня</span><span class="ttl">08. Тематичне моделювання</span></a>
+    <a class="next" href="../10-rules-regex/lecture.html"><span class="dir">наступна</span><span class="ttl">10. Правила й регулярні вирази</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+
+
+/* ═══════ числа з зошита ═══════ */
+var N = 20000;
+
+var IDX = [
+  {q:"не вдалося файл",       w:["не","вдалося","файл"],           df:[5711,2041,673], touched:6095},
+  {q:"помилка читання диска", w:["помилка","читання","диска"],     df:[726,160,76],    touched:926},
+  {q:"сертифікат недійсний",  w:["сертифікат","недійсний"],        df:[56,48],         touched:104},
+  {q:"роздільність екрана",   w:["роздільність","екрана"],         df:[4,21],          touched:25}
+];
+
+var IDF3 = [3.391049555435751, 1.253300586112168, 4.713362343357836];
+var AVGDL = 7.2605;
+var LDOCS = [
+  {len:202, tf:[7,4,3], name:"довідка з параметрами",      note:"202 слова"},
+  {len:9,   tf:[1,2,1], name:"Не вдалося зберегти файл",   note:"9 слів"},
+  {len:5,   tf:[1,1,1], name:"Файл не знайдено на носії",  note:"5 слів"},
+  {len:3,   tf:[1,0,1], name:"Знайдено Файл: Містить:",    note:"3 слова, без слова «не»"}
+];
+/* заміряно на 300 запитах x три зерна */
+var BMEAS = {"0.00":[0.8411,32.93], "0.25":[0.8963,9.50], "0.50":[0.8733,8.39],
+             "0.75":[0.8440,7.85],  "1.00":[0.7923,7.13]};
+
+var ABL = [
+  {n:"TF-IDF косинус",   v:[0.7503,0.7639,0.7711], m:0.7618},
+  {n:"IDF як у BM25",    v:[0.7235,0.7253,0.7505], m:0.7331},
+  {n:"двійковий tf",     v:[0.7230,0.7430,0.7672], m:0.7444},
+  {n:"BM25 1.5 / 0.75",  v:[0.8342,0.8416,0.8564], m:0.8440},
+  {n:"BM25 b = 0",       v:[0.8560,0.8189,0.8485], m:0.8411},
+  {n:"BM25 k1 = 1000",   v:[0.7131,0.6667,0.6980], m:0.6926},
+  {n:"BM25 k1 = 0",      v:[0.8919,0.8576,0.8882], m:0.8792}
+];
+var GAINS = [0.0839, 0.0777, 0.0852], GAIN_MEAN = 0.0823;
+
+var K1S = [0.0,0.3,0.6,1.2,1.5,3.0];
+var BS  = [0.00,0.25,0.50,0.75,1.00];
+var GRID = [
+  [0.8792,0.8792,0.8792,0.8792,0.8792],
+  [0.8691,0.9066,0.9009,0.8940,0.8841],
+  [0.8683,0.9022,0.8902,0.8792,0.8631],
+  [0.8532,0.8997,0.8782,0.8568,0.8119],
+  [0.8411,0.8963,0.8733,0.8440,0.7923],
+  [0.7878,0.8786,0.8543,0.8006,0.7105]
+];
+var GRID_BEST = 0.9066, GRID_DEF = 0.8440, GRID_SPREAD = 0.0222;
+
+var LISTS = [
+ {q:"значення колір прозорість", total:1, first:3, rows:[
+   {t:"Взяти видимий колір і прозорість", r:0, s:16.77},
+   {t:"Встановити колір і прозорість позначок розмірів", r:0, s:15.64},
+   {t:"Визначає, як слід позначати прозорість. Коректні…", r:1, s:11.93},
+   {t:"Колір: %1; Клацання встановить колір залиття…", r:0, s:9.47},
+   {t:"Клацання встановлює колір заливки, Shift+клацання…", r:0, s:8.14},
+   {t:"Визначає прозорість перехрестя, від непрозорого…", r:0, s:7.58},
+   {t:"Встановити помаранчевий колір контуру:", r:0, s:7.55},
+   {t:"Встановити жовтий колір контуру:", r:0, s:7.55},
+   {t:"Колір не відвіданого гіперпосилання", r:0, s:7.55},
+   {t:"Визначає, чи встановлено колір тла", r:0, s:7.00}]},
+ {q:"перевищено час очікування", total:13, first:1, rows:[
+   {t:"Перевищено час очікування після очікування…", r:1, s:18.48},
+   {t:"Перевищено час очікування завершення дії", r:1, s:18.34},
+   {t:"перевищено час очікування відповіді RADIUS від %s", r:1, s:18.34},
+   {t:"перевищено граничний час очікування на пароль", r:1, s:17.10},
+   {t:"Перевищено час очікування вводу-виводу сокета", r:1, s:17.10},
+   {t:"Перевищено час очікування на виконання дії", r:1, s:17.10},
+   {t:"Перевищено час очікування на реєстрацію у мережі", r:1, s:16.03},
+   {t:"перевищено час очікування на запис на сервері", r:1, s:16.03},
+   {t:"перевищено час очікування на завершення запису…", r:1, s:15.08},
+   {t:"Перевищено час очікування на введення-виведення…", r:1, s:15.08}]},
+ {q:"не вдалося відкрити", total:120, first:1, rows:[
+   {t:"не вдалося відкрити /dev/zero: %m", r:1, s:11.29},
+   {t:"@include: не вдалося відкрити %s:", r:1, s:11.29},
+   {t:"%F%P: %s: не вдалося відкрити: %E", r:1, s:11.29},
+   {t:"Не вдалося відкрити /dev/vhost-net: %s", r:1, s:11.29},
+   {t:"Не вдалося відкрити /dev/loop-control", r:1, s:11.29},
+   {t:"file: не вдалося відкрити «%s»: %s", r:1, s:11.29},
+   {t:"e2label: не вдалося відкрити %s", r:1, s:11.29},
+   {t:"не вдалося відкрити label_handle SELinux", r:1, s:11.29},
+   {t:"не вдалося відкрити шлях «%1$s»", r:1, s:10.42},
+   {t:"Не вдалося відкрити файл CA «%s»", r:1, s:10.42}]}
+];
+
+var TYPO = [[0.8440,0.8440],[0.5888,0.7480],[0.1520,0.6373],[0.0035,0.5505]];
+var SIM  = [["той самий текст, одруківки",0.8745],
+            ["той самий зміст, інші слова",0.5699],
+            ["дві випадкові пари корпусу",0.2892]];
+
+/* ═══════ фігура 1 · інвертований індекс ═══════ */
+var q1 = 0;
+function draw1(){
+  var cv=I('c1'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var d=IDX[q1], x0=148, x1=W-70, span=x1-x0;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+  capt(g,'списки входжень слів запиту',x0,26,soft,11,true);
+  var k, y=48;
+  for(k=0;k<d.w.length;k++){
+    var wdt=Math.max(2, span*d.df[k]/N);
+    g.fillStyle=hair; g.fillRect(x0,y,span,16);
+    g.fillStyle=teal; g.fillRect(x0,y,wdt,16);
+    capt(g,d.w[k],x0-10,y+12,ink,12,false,'right');
+    capt(g,d.df[k]+' док.',x0+wdt+8,y+12,soft,11);
+    y+=32;
+  }
+  y=48+32*3+18;
+  capt(g,'уся колекція — 20 000 документів',x0,y,soft,11,true);
+  y+=12;
+  g.fillStyle=hair; g.fillRect(x0,y,span,26);
+  g.fillStyle=rose; g.fillRect(x0,y,Math.max(2,span*d.touched/N),26);
+  g.strokeStyle=soft; g.lineWidth=1; g.strokeRect(x0+.5,y+.5,span-1,25);
+  capt(g,'обійти',x0-10,y+18,ink,12,false,'right');
+  capt(g,'0',x0,y+42,soft,10);
+  capt(g,'20 000',x1,y+42,soft,10,false,'right');
+  y+=76;
+  var share=100*d.touched/N, save=N/d.touched;
+  capt(g,'індекс обходить '+d.touched+' документів замість 20 000',24,y+18,ink,15,true);
+  capt(g,'це '+f2(share)+' % колекції · економія у '+f1(save)+' раза',24,y+40,rose,13,true);
+  var best=Math.max.apply(null,d.df);
+  I('v1a').textContent=d.touched;
+  I('v1b').textContent=f2(share)+' %';
+  I('v1c').textContent=f1(save)+'x';
+  I('v1d').textContent=best;
+  if(save>=100) verd('v1v','t-ok','ІНДЕКС ВИРІШУЄ',
+    'Слова запиту рідкісні: у найдовшому списку входжень '+best+'. Пошук обходить '
+    +f2(share)+' % колекції — це економія у '+f1(save)+' раза.');
+  else if(save>=10) verd('v1v','t-mid','ІНДЕКС ДОПОМАГАЄ',
+    'У найдовшому списку входжень '+best+'. Обходимо '+f2(share)
+    +' % колекції: економія у '+f1(save)+' раза — помітна, але не разюча.');
+  else verd('v1v','t-no','ІНДЕКС МАЙЖЕ БЕЗСИЛИЙ',
+    'У запиті є слово, чий список входжень завдовжки '+best+' — тобто майже з усю '
+    +'колекцію. Обходимо '+f2(share)+' % документів, економія лише у '+f1(save)+' раза.');
+}
+
+/* ═══════ фігура 2 · насичення частоти ═══════ */
+function bmTF(tf,k1){ return k1<=0 ? (tf>0?1:0) : tf*(k1+1)/(tf+k1); }
+function draw2(){
+  var cv=I('c2'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var k1=+I('k2').value/10;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var L=64, R=W-30, T=36, B=H-52, ymax=4, xmax=20;
+  function X(t){ return L+(R-L)*t/xmax; }
+  function Y(v){ return B-(B-T)*v/ymax; }
+  g.strokeStyle=hair; g.lineWidth=1;
+  var i;
+  for(i=0;i<=4;i++){ var yy=Y(i); g.beginPath(); g.moveTo(L,yy); g.lineTo(R,yy); g.stroke();
+    capt(g,i.toFixed(0),L-8,yy+4,soft,10,false,'right'); }
+  for(i=0;i<=20;i+=5){ capt(g,i.toFixed(0),X(i),B+18,soft,10,false,'center'); }
+  capt(g,'входжень слова в документ (tf)',(L+R)/2,B+38,soft,11,false,'center');
+  capt(g,'внесок',L-8,T-10,soft,11,false,'right');
+  clip(g,L,T-6,R-L,B-T+6);
+  g.strokeStyle=soft; g.lineWidth=2; g.setLineDash([5,4]);
+  g.beginPath(); g.moveTo(X(0),Y(0)); g.lineTo(X(20),Y(20)); g.stroke(); g.setLineDash([]);
+  g.strokeStyle=rose; g.lineWidth=2.5; g.beginPath();
+  for(i=0;i<=200;i++){ var t=i*xmax/200, v=bmTF(t,k1);
+    if(i===0) g.moveTo(X(t),Y(v)); else g.lineTo(X(t),Y(v)); }
+  g.stroke();
+  g.restore();
+  var ceil=k1+1;
+  if(ceil<=ymax){ g.strokeStyle=teal; g.lineWidth=1; g.setLineDash([3,4]);
+    g.beginPath(); g.moveTo(L,Y(ceil)); g.lineTo(R,Y(ceil)); g.stroke(); g.setLineDash([]);
+    capt(g,'стеля '+f4(ceil),R,Y(ceil)-6,teal,11,true,'right'); }
+  var pts=[1,2,20], j;
+  for(j=0;j<pts.length;j++){ var tt=pts[j], vv=bmTF(tt,k1);
+    if(vv<=ymax){ g.fillStyle=rose; g.beginPath(); g.arc(X(tt),Y(vv),4,0,6.29); g.fill();
+      if(tt===20) capt(g,'tf=20',X(tt)-7,Y(vv)+17,rose,10,true,'right');
+      else capt(g,'tf='+tt,X(tt)+7,Y(vv)+17,rose,10,true); } }
+  capt(g,'пряма — TF-IDF',L+8,T+12,soft,11,true);
+  capt(g,'крива — BM25',L+8,T+28,rose,11,true);
+  I('k2o').textContent=f1(k1);
+  I('v2a').textContent=f4(ceil);
+  I('v2b').textContent=f4(bmTF(2,k1));
+  I('v2c').textContent=f4(bmTF(20,k1));
+  var ratio = bmTF(2,k1)>0 ? bmTF(20,k1)/bmTF(2,k1) : 1;
+  I('v2d').textContent=f2(ratio)+'x';
+  if(k1===0) verd('v2v','t-no','ЧАСТОТИ НЕМАЄ ВЗАГАЛІ',
+    'При k1 = 0 внесок дорівнює 1 за будь-якої ненульової частоти. Двадцяте входження '
+    +'важить рівно стільки ж, скільки перше: BM25 стала «є слово чи немає».');
+  else if(ratio<1.5) verd('v2v','t-ok','НАСИЧЕННЯ СИЛЬНЕ',
+    'Двадцяте входження важить лише в '+f2(ratio)+' раза більше за друге (стеля '
+    +f4(ceil)+'). Повтори майже не мають ваги.');
+  else if(ratio<2.2) verd('v2v','t-mid','НАСИЧЕННЯ ПОМІРНЕ',
+    'Двадцяте входження важить у '+f2(ratio)+' раза більше за друге. TF-IDF на цьому '
+    +'місці дала б рівно 10 разів.');
+  else verd('v2v','t-no','НАСИЧЕННЯ МАЙЖЕ ЗНИКЛО',
+    'При k1 = '+f1(k1)+' крива майже випрямилась: двадцяте входження важить у '
+    +f2(ratio)+' раза більше за друге, тобто BM25 наближається до TF-IDF.');
+}
+
+/* ═══════ фігура 3 · нормалізація довжини ═══════ */
+function bm25doc(doc,b){
+  var s=0,k1=1.5,j;
+  for(j=0;j<3;j++){ var tf=doc.tf[j]; if(tf===0) continue;
+    s+=IDF3[j]*tf*(k1+1)/(tf+k1*(1-b+b*doc.len/AVGDL)); }
+  return s;
+}
+function draw3(){
+  var cv=I('c3'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var b=+I('b3').value/20;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var sc=[], j;
+  for(j=0;j<LDOCS.length;j++) sc.push({d:LDOCS[j], v:bm25doc(LDOCS[j],b)});
+  sc.sort(function(a,c){ return c.v-a.v; });
+  var x0=262, x1=W-70, span=x1-x0, smax=18;
+  capt(g,'оцінка BM25 при b = '+f2(b),x0,26,soft,11,true);
+  var y=44;
+  for(j=0;j<sc.length;j++){
+    var it=sc[j], wdt=Math.max(2, span*Math.min(it.v,smax)/smax);
+    g.fillStyle = j===0 ? rose : hair;
+    g.fillRect(x0,y,wdt,20);
+    capt(g,it.d.name,x0-12,y+11,ink,12,j===0,'right');
+    capt(g,it.d.note,x0-12,y+26,soft,10,false,'right');
+    capt(g,f4(it.v),x0+wdt+8,y+15,j===0?rose:soft,12,j===0);
+    if(j===0) capt(g,'топ-1',x0+6,y+15,css('--raise'),11,true);
+    y+=52;
+  }
+  y+=10;
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,y); g.lineTo(x1,y); g.stroke();
+  var key=f2(b), meas=BMEAS[key];
+  capt(g,'штраф за довжину = 1 − b + b × |d| / 7.2605',x0-250,y+26,soft,12);
+  if(meas) capt(g,'на 300 запитах × 3 зерна: MRR '+f4(meas[0])
+    +' · середня довжина топ-1 '+f2(meas[1])+' слова',x0-250,y+46,teal,12,true);
+  else capt(g,'це положення не заміряне — заміряні 0, 0.25, 0.50, 0.75 і 1.00',
+    x0-250,y+46,soft,12);
+  I('b3o').textContent=f2(b);
+  I('v3a').textContent=sc[0].d.note.split(',')[0];
+  I('v3b').textContent=f4(sc[0].v);
+  I('v3c').textContent=meas?f4(meas[0]):'—';
+  I('v3d').textContent=meas?(f2(meas[1])+' слова'):'—';
+  var L=sc[0].d.len;
+  if(L>=100) verd('v3v','t-no','ДОВЖИНА ПІДМІНЮЄ ДОРЕЧНІСТЬ',
+    'При b = '+f2(b)+' першою стоїть довідка з '+L+' слів. Вона виграла не тим, що '
+    +'про помилку, а тим, що в ній узагалі багато слів.');
+  else if(sc[0].d.tf[1]===0) verd('v3v','t-no','ШТРАФ ПЕРЕСТАРАВСЯ',
+    'При b = '+f2(b)+' перемагає документ на '+L+' слова, у якому слова «не» немає '
+    +'зовсім. Короткість переважила відсутність слова запиту.');
+  else verd('v3v','t-ok','ЗНАЙДЕНО ТЕ, ЩО ШУКАЛИ',
+    'При b = '+f2(b)+' першим стоїть повідомлення на '+L+' слів з усіма трьома '
+    +'словами запиту. Саме його людина й мала на увазі.');
+}
+
+/* ═══════ фігура 4 · розтин ═══════ */
+var view4 = 0;
+function val4(i){ return view4===0 ? ABL[i].m : ABL[i].v[view4-1]; }
+function draw4(){
+  var cv=I('c4'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var x0=210, x1=W-64, span=x1-x0, lo=0.60, hi=0.95;
+  function X(v){ return x0+span*(Math.max(lo,Math.min(hi,v))-lo)/(hi-lo); }
+  capt(g,view4===0?'MRR, середнє трьох зерен':('MRR, зерно '+(view4-1)),x0,24,soft,11,true);
+  var t;
+  for(t=0.60;t<=0.951;t+=0.05){
+    var xx=X(t); g.strokeStyle=hair; g.beginPath(); g.moveTo(xx,34); g.lineTo(xx,H-32); g.stroke();
+    capt(g,f2(t),xx,H-16,soft,10,false,'center');
+  }
+  var y=46, i, j;
+  for(i=0;i<ABL.length;i++){
+    var v=val4(i);
+    g.fillStyle = (i===3) ? rose : ((i===0)?teal:hair);
+    g.fillRect(x0,y,X(v)-x0,20);
+    capt(g,(i+1)+'. '+ABL[i].n,x0-12,y+15,ink,12,i===3,'right');
+    var right=X(v);
+    if(view4===0){ for(j=0;j<3;j++){ g.fillStyle=soft;
+      g.beginPath(); g.arc(X(ABL[i].v[j]),y+10,2.6,0,6.29); g.fill();
+      if(X(ABL[i].v[j])>right) right=X(ABL[i].v[j]); } }
+    capt(g,f4(v),right+10,y+15,(i===3)?rose:soft,12,i===3);
+    y+=42;
+  }
+  I('v4a').textContent=f4(val4(0));
+  I('v4b').textContent=f4(val4(3));
+  I('v4c').textContent=f4(val4(5));
+  I('v4d').textContent=f4(val4(4));
+  var gain=(view4===0)?GAIN_MEAN:GAINS[view4-1];
+  var satCost=val4(5)-val4(3), lenCost=val4(4)-val4(3);
+  if(view4===0) verd('v4v','t-ok','ПРАЦЮЄ НАСИЧЕННЯ, А НЕ ДОВЖИНА',
+    'BM25 виграє в TF-IDF +'+f4(gain)+'. Вимкнути насичення коштує '
+    +f4(satCost)+', вимкнути нормалізацію довжини — лише '+f4(lenCost)
+    +', тобто менше за розкид по зернах 0.0222.');
+  else verd('v4v','t-mid','ОДНЕ ЗЕРНО',
+    'На зерні '+(view4-1)+' виграш BM25 над TF-IDF +'+f4(gain)
+    +', ціна вимкненого насичення '+f4(satCost)+', ціна вимкненої нормалізації довжини '
+    +(lenCost>=0?'+':'')+f4(lenCost)+'. Знак останньої по зернах різний — тому в '
+    +'середньому вона й дає майже нуль.');
+}
+
+/* ═══════ фігура 5 · сітка k1 x b ═══════ */
+function draw5(){
+  var cv=I('c5'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ri=+I('k5').value, ci=+I('b5').value, v=GRID[ri][ci];
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), raise=css('--raise');
+  var x0=140, y0=62, cw=104, ch=38, i, j;
+  var lo=0.70, hi=0.91;
+  capt(g,'b →',x0,42,soft,11,true);
+  for(j=0;j<BS.length;j++) capt(g,f2(BS[j]),x0+cw*j+cw/2,56,soft,11,false,'center');
+  capt(g,'k1 ↓',x0-70,42,soft,11,true);
+  for(i=0;i<K1S.length;i++){
+    capt(g,f1(K1S[i]),x0-12,y0+ch*i+ch/2+4,soft,11,false,'right');
+    for(j=0;j<BS.length;j++){
+      var val=GRID[i][j], a=Math.max(0,Math.min(1,(val-lo)/(hi-lo)));
+      g.fillStyle=rose; g.globalAlpha=0.10+0.75*a;
+      g.fillRect(x0+cw*j+1, y0+ch*i+1, cw-2, ch-2);
+      g.globalAlpha=1;
+      capt(g,f4(val), x0+cw*j+cw/2, y0+ch*i+ch/2+4, a>0.55?raise:ink, 11.5, false, 'center');
+    }
+  }
+  g.strokeStyle=ink; g.lineWidth=2.5;
+  g.strokeRect(x0+cw*ci+1, y0+ch*ri+1, cw-2, ch-2);
+  var yb=y0+ch*K1S.length+26;
+  capt(g,'світліше — гірше, темніше — краще',x0,yb,soft,11);
+  capt(g,'найкраща клітинка: k1 = 0.3, b = 0.25 → 0.9066',x0,yb+18,rose,11,true);
+  I('k5o').textContent=f1(K1S[ri]);
+  I('b5o').textContent=f2(BS[ci]);
+  I('v5a').textContent=f4(v);
+  I('v5b').textContent=f4(v-GRID_BEST);
+  I('v5c').textContent=(v-GRID_DEF>=0?'+':'')+f4(v-GRID_DEF);
+  var gapBest=GRID_BEST-v;
+  if(gapBest<=GRID_SPREAD) verd('v5v','t-ok','ВСЕРЕДИНІ ПЛАТО',
+    'MRR '+f4(v)+' — від найкращої клітинки це '+f4(gapBest)+', тобто в межах розкиду '
+    +'по зернах (0.0222). Таких клітинок у сітці 7 із 30.');
+  else if(gapBest<=0.0823) verd('v5v','t-mid','ПОМІТНО ГІРШЕ',
+    'MRR '+f4(v)+' — на '+f4(gapBest)+' нижче за найкращу клітинку. Це більше за '
+    +'розкид по зернах, але ще менше за 0.0823, які дав сам перехід від TF-IDF до BM25.');
+  else verd('v5v','t-no','ПОГАНА ПАРА',
+    'MRR '+f4(v)+' — на '+f4(gapBest)+' нижче за найкращу клітинку. '
+    +(v<0.7618?'Це гірше навіть за базову TF-IDF (0.7618): невдалі параметри зʼїли весь виграш методу.'
+             :'Такий програш більший за весь виграш переходу від TF-IDF до BM25 (0.0823).'));
+}
+
+/* ═══════ фігура 6 · три метрики ═══════ */
+var q6 = 0;
+function draw6(){
+  var cv=I('c6'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var L=LISTS[q6], k=+I('k6').value;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  capt(g,'видача BM25 на запит «'+L.q+'»',24,26,soft,11,true);
+  var y=44, i, hits=0;
+  for(i=0;i<10;i++){
+    var r=L.rows[i];
+    if(i<k && r.r) hits++;
+    if(i<k){ g.fillStyle=r.r?css('--teal-w'):'transparent';
+             if(r.r){ g.fillRect(24,y,W-48,22); } }
+    g.globalAlpha = i<k ? 1 : 0.38;
+    capt(g,(i+1)+'.',44,y+16,soft,11,false,'right');
+    capt(g,r.r?'✓':'·',60,y+16,r.r?teal:hair,12,true);
+    capt(g,r.t,76,y+16,ink,11.5);
+    capt(g,r.s.toFixed(2),W-116,y+16,soft,11,false,'right');
+    g.globalAlpha=1;
+    y+=26;
+  }
+  var ycut=44+26*k;
+  g.strokeStyle=rose; g.lineWidth=2; g.setLineDash([6,4]);
+  g.beginPath(); g.moveTo(24,ycut); g.lineTo(W-24,ycut); g.stroke(); g.setLineDash([]);
+  capt(g,'межа k = '+k,W-26,ycut-6,rose,11,true,'right');
+  var prec=hits/k, rec=hits/L.total, mrr=1/L.first;
+  var gy=H-46, gx=140, gw=120;
+  var trio=[['MRR',mrr],['precision@k',prec],['recall@k',rec]];
+  for(i=0;i<3;i++){
+    var bx=24+i*(gw+80);
+    capt(g,trio[i][0],bx,gy-6,soft,10.5,true);
+    g.fillStyle=hair; g.fillRect(bx,gy,gw,14);
+    g.fillStyle=rose; g.fillRect(bx,gy,gw*trio[i][1],14);
+    capt(g,f4(trio[i][1]),bx+gw+8,gy+12,ink,12,true);
+  }
+  I('k6o').textContent=k;
+  I('v6a').textContent=f4(mrr);
+  I('v6b').textContent=L.total;
+  I('v6c').textContent=f4(prec);
+  I('v6d').textContent=f4(rec);
+  if(L.total===1 && hits===0) verd('v6v','t-no','ДОРЕЧНОГО ЩЕ НЕ ВИДНО',
+    'Єдиний доречний документ стоїть на '+L.first+' місці, а межа зараз k = '+k
+    +'. Precision і recall обидві нульові й нічого не розрізняють: вони не кажуть, '
+    +'наскільки близько ми були. Це каже MRR — '+f4(mrr)+'.');
+  else if(L.total===1) verd('v6v','t-mid','PRECISION ТУТ НЕ МІРЯЄ НІЧОГО',
+    'Доречний документ один, тож precision@'+k+' не може перевищити '+f4(1/k)
+    +'. Зараз вона '+f4(prec)+', а recall@'+k+' — '+f4(rec)+'. Питання «чи знайшли» '
+    +'закриває recall, питання «як швидко» — MRR ('+f4(mrr)+').');
+  else if(L.total>2*k) verd('v6v','t-no','RECALL ТУТ НЕ МІРЯЄ НІЧОГО',
+    'Доречних '+L.total+', місць '+k+' — recall@'+k+' не може перевищити '+f4(k/L.total)
+    +'. Зараз вона '+f4(rec)+' при precision@'+k+' = '+f4(prec)
+    +'. Видача бездоганна, а число виглядає провалом.');
+  else verd('v6v','t-ok','ОБИДВІ МЕТРИКИ ЩОСЬ ОЗНАЧАЮТЬ',
+    'Доречних '+L.total+', місць '+k+' — жодна зі стель не тисне. '
+    +'precision@'+k+' = '+f4(prec)+', recall@'+k+' = '+f4(rec)+'.');
+}
+
+/* ═══════ фігура 7 · одруківки й схожість рядків ═══════ */
+var mode7 = 0;
+function wordForm(n){ return n===1 ? 'слово' : (n===0 ? 'слів' : 'слова'); }
+function draw7(){
+  var cv=I('c7'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var lvl=+I('t7').value;
+  if(I('t7').disabled!==undefined) I('t7').disabled = (mode7===1);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var x0=250, x1=W-70, span=x1-x0, i;
+  if(mode7===0){
+    capt(g,'MRR на 300 запитах × три зерна',x0,26,soft,11,true);
+    var y=48;
+    for(i=0;i<4;i++){
+      var sel=(i===lvl);
+      capt(g,'зіпсовано '+i+' '+wordForm(i)+' з 3',x0-12,y+22,ink,12,sel,'right');
+      g.globalAlpha = sel?1:0.32;
+      g.fillStyle = css('--paper'); g.fillRect(x0,y,span,18);
+      g.fillStyle = rose; g.fillRect(x0,y,span*TYPO[i][0],18);
+      capt(g,f4(TYPO[i][0]),x0+span*TYPO[i][0]+8,y+14,sel?rose:soft,11,sel);
+      g.fillStyle = css('--paper'); g.fillRect(x0,y+22,span,18);
+      g.fillStyle = teal; g.fillRect(x0,y+22,span*TYPO[i][1],18);
+      capt(g,f4(TYPO[i][1]),x0+span*TYPO[i][1]+8,y+36,sel?teal:soft,11,sel);
+      g.globalAlpha = 1;
+      y+=68;
+    }
+    capt(g,'верхня смуга — без виправлення',x0,H-30,rose,11,true);
+    capt(g,'нижня смуга — після rapidfuzz',x0,H-14,teal,11,true);
+    I('n7a').textContent='без виправлення'; I('n7b').textContent='після rapidfuzz';
+    I('n7c').textContent='повернуто'; I('n7d').textContent='до чистого';
+    I('v7a').textContent=f4(TYPO[lvl][0]);
+    I('v7b').textContent=f4(TYPO[lvl][1]);
+    I('v7c').textContent=f4(TYPO[lvl][1]-TYPO[lvl][0]);
+    I('v7d').textContent=f2(100*TYPO[lvl][1]/TYPO[0][0])+' %';
+    if(lvl===0) verd('v7v','t-ok','ОДРУКІВОК НЕМАЄ',
+      'Чистий запит дає MRR '+f4(TYPO[0][0])+'. Виправляти нічого, тож нечіткий пошук '
+      +'нічого й не міняє.');
+    else if(TYPO[lvl][0]<0.2) verd('v7v','t-no','ПОШУК ОБІРВАВСЯ, RAPIDFUZZ ВРЯТУВАВ',
+      'Одруківки зронили MRR до '+f4(TYPO[lvl][0])+' — пошук фактично не працює. '
+      +'Виправлення повертає '+f4(TYPO[lvl][1])+', тобто '
+      +f2(100*TYPO[lvl][1]/TYPO[0][0])+' % від чистого результату.');
+    else verd('v7v','t-mid','ВТРАТА ВЕЛИКА, АЛЕ НЕ ФАТАЛЬНА',
+      'MRR упав до '+f4(TYPO[lvl][0])+'. Rapidfuzz повертає '+f4(TYPO[lvl][1])
+      +' — це '+f2(100*TYPO[lvl][1]/TYPO[0][0])+' % від чистих '+f4(TYPO[0][0])+'.');
+  } else {
+    capt(g,'схожість рядків, rapidfuzz · зерно 0',x0,26,soft,11,true);
+    var yy=70;
+    for(i=0;i<SIM.length;i++){
+      capt(g,SIM[i][0],x0-12,yy+16,ink,12,i===1,'right');
+      g.fillStyle=css('--paper'); g.fillRect(x0,yy,span,24);
+      g.fillStyle=(i===0)?teal:((i===1)?rose:hair); g.fillRect(x0,yy,span*SIM[i][1],24);
+      capt(g,f4(SIM[i][1]),x0+span*SIM[i][1]+8,yy+17,ink,12,true);
+      yy+=74;
+    }
+    capt(g,'та сама міра відстані бачить одруківку — і не бачить синоніма',
+      x0-238,H-24,soft,12,true);
+    I('n7a').textContent='одруківки'; I('n7b').textContent='синоніми';
+    I('n7c').textContent='синоніми − випадкові'; I('n7d').textContent='випадкові пари';
+    I('v7a').textContent=f4(SIM[0][1]);
+    I('v7b').textContent=f4(SIM[1][1]);
+    I('v7c').textContent=f4(SIM[1][1]-SIM[2][1]);
+    I('v7d').textContent=f4(SIM[2][1]);
+    verd('v7v','t-no','ЗМІСТУ ЦЯ МІРА НЕ БАЧИТЬ',
+      'Той самий текст з одруківками дає '+f4(SIM[0][1])+'. Той самий зміст іншими '
+      +'словами — лише '+f4(SIM[1][1])+', а дві випадкові пари корпусу — '+f4(SIM[2][1])
+      +'. Синонім ближчий до випадкової пари, ніж до одруківки.');
+  }
+}
+
+/* ═══════ підписка на керування ═══════ */
+segment('seg1', function(i){ q1=i; draw1(); });
+on('k2','input',draw2);
+on('b3','input',draw3);
+segment('seg4', function(i){ view4=i; draw4(); });
+on('k5','input',draw5);
+on('b5','input',draw5);
+segment('seg6', function(i){ q6=i; draw6(); });
+on('k6','input',draw6);
+segment('seg7', function(i){ mode7=i; draw7(); });
+on('t7','input',draw7);
+
+function drawAll(){ draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7(); }
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+})();
+</script>
+</body>
+</html>

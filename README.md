@@ -11,9 +11,9 @@
 | [Python](courses/01-python/index.html) | 40 із 40 | нічого | [130 термінів](courses/01-python/glossary.html) |
 | [Машинне навчання](courses/02-ai-ml/index.html) | 40 із 40 | Python | [154 терміни](courses/02-ai-ml/glossary.html) |
 | [Компʼютерний зір](courses/03-computer-vision/index.html) | 40 із 40 | машинне навчання | [172 терміни](courses/03-computer-vision/glossary.html) |
-| [Обробка природної мови](courses/04-nlp/index.html) | 0 із 40 | машинне навчання | [109 термінів](courses/04-nlp/glossary.html) |
+| [Обробка природної мови](courses/04-nlp/index.html) | 10 із 40 | машинне навчання | [127 термінів](courses/04-nlp/glossary.html) |
 
-Три курси готові повністю. Обробка природної мови в роботі — глосарій уже складений.
+Три курси готові повністю. Обробка природної мови в роботі: перший блок на місці.
 
 ## Із чого складається тема
 

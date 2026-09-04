@@ -1,0 +1,1778 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Токенізація: як текст стає числами</title>
+<meta name="description" content="Друга тема курсу: як суцільний текст стає списком номерів. Словник зі словоформ для української на тому самому змісті вміщує 46701 рядок проти 28821 англійських — і при однаковому бюджеті в чотири тисячі рядків втрачає 0.1640 слововживань проти 0.0871. Субслова закривають дірку повністю. Націнка на українську падає з 29.7 % при словнику на 500 до 10.4 % при 16000, і розкладається в добуток двох множників: сталої 1.1760 за довжину слова й змінної за дрібність різання, яка при великому словнику падає до 0.9390 — тобто нижче одиниці. Токенізатор знає домен, а не мову: «налаштування» лишається цілим, «телефон» розпадається на чотири шматки, «кіт» на два. WordPiece програє BPE 4.1 % англійською і 4.8 % українською. Англійський словник на українському тексті дає 0.9050 невідомих токенів, а байтовий — 12461.6 токенів на тисячу слів проти 1866.7 своїм, тобто вшестеро дорожче.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, td:first-child, .ctl label,
+.tag, .toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap, .derive .lbl,
+h2 .num, .meta, .nums td, .nums th, .plain td:first-child,
+.chip, .verdict .tag{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+.nums tr.good td{background:var(--teal-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase кирилиця й латиниця псуються — .raw це знімає */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw{text-transform:none}
+
+/* шматки слова просто в тексті */
+.chip{font-family:"JetBrains Mono",monospace; font-size:.86em; background:var(--teal-w);
+  border:1px solid var(--hair); border-radius:5px; padding:1px 6px; margin:0 1px;
+  white-space:nowrap; display:inline-block}
+
+/* перемикачі рівнів і слів займають два стовпчики */
+.seg.two button{flex:1 1 46%}
+.seg.three button{flex:1 1 30%}
+</style>
+</head>
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 1 · Тема 02</p>
+    <h1>Токенізація: як текст стає числами</h1>
+    <p class="stand">Модель не бачить літер. Вона бачить список цілих чисел — і хтось
+      мусить вирішити, де розрізати текст, щоб ці числа зʼявились. Рішення виглядає
+      технічним, а насправді визначає, скільки коштує запит, що модель узагалі здатна
+      прочитати і яким мовам дістанеться місце.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Модель не бачить літер</a></li>
+        <li><a href="#s2">Пробіл — погана межа</a></li>
+        <li><a href="#s3">Три рівні: символи, слова, субслова</a></li>
+        <li><a href="#s4">BPE: злити найчастішу пару</a></li>
+        <li><a href="#s5">Наш BPE проти бібліотечного</a></li>
+        <li><a href="#s6">Скільки коштує та сама думка двома мовами</a></li>
+        <li><a href="#s7">Довжина слів чи морфологія?</a></li>
+        <li><a href="#s8">Токенізатор знає домен, а не мову</a></li>
+        <li><a href="#s9">WordPiece проти BPE</a></li>
+        <li><a href="#s10">Спецтокени: рядки, яких у тексті немає</a></li>
+        <li><a href="#s11">Один словник на дві мови</a></li>
+        <li><a href="#s12">Ціна довгого тексту</a></li>
+        <li><a href="#s13">Що з цього забрати</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../01-text-is-hard/lecture.html">← 01. Чому текст складніший за таблицю</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../03-morphology/lecture.html">03. Морфологія: лематизація і стемінг →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Найпростіше питання цієї теми звучить так: скільки в реченні «Не
+вдалося відкрити файл» одиниць? Відповідей щонайменше чотири — двадцять чотири
+символи, чотири слова, чотири токени або сорок пʼять байтів. Кожна правильна,
+і кожна дає іншу модель. У <a href="../01-text-is-hard/lecture.html">темі 01</a> ми
+побачили, чому текст складніший за таблицю: у нього немає готових стовпчиків. Тут
+ми ці стовпчики зробимо — і побачимо, що вибір способу різати коштує грошей,
+памʼяті й точності, причому для української дорожче, ніж для англійської.</p>
+
+<h2 id="s1"><span class="num">01 / Постановка</span>Модель не бачить літер</h2>
+
+<p>Нейромережа вміє одне: множити числа на матриці. Рядок «файл» для неї нічого не
+означає — його спершу треба перетворити на числа. Робиться це в два кроки, і другий
+крок ми відкладемо аж до блоку 3.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Крок</th><th>Що робить</th><th>Вихід</th><th>Де в курсі</th></tr></thead>
+  <tbody>
+    <tr><td>токенізація</td><td>ріже текст на шматки й дає кожному номер</td><td>список цілих чисел</td><td>ця тема</td></tr>
+    <tr><td>ембединг</td><td>міняє номер на вектор, який щось означає</td><td>матриця чисел</td><td>блок 3</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Три слова, без яких далі не обійтись, і всі три є в
+<a href="../glossary.html">глосарії курсу</a>:</p>
+
+<ul>
+  <li><b>Токен</b> (token) — найменший шматок тексту, з яким модель працює. Це не
+    обовʼязково слово: токеном буває ціле слово, його частина, розділовий знак або
+    один символ.</li>
+  <li><b>Токенізація</b> (tokenization) — саме перетворення тексту на список токенів.</li>
+  <li><b>Словник моделі</b> (vocabulary) — повний список токенів, які модель узагалі
+    знає. Усе, чого в цьому списку немає, вона побачити не здатна.</li>
+</ul>
+
+<p>Остання фраза заслуговує на окремий наголос, бо саме з неї виростає вся тема.
+<b>Словник скінченний.</b> У ньому тридцять тисяч рядків, або сто тисяч, або
+двісті — але не безмежність. Мов у світі тисячі, слів у кожній сотні тисяч, а місця
+на всіх одне. Далі ми заміряємо, як саме це місце ділиться і хто за це платить.</p>
+
+<div class="note"><b>Наскрізний приклад теми.</b> Усюди в цій темі й у зошиті працює
+один корпус — <b>українські переклади системних програм</b>. Вони лежать у кожній
+Linux-системі й мають рідкісну властивість: у кожному записі <b>англійський оригінал
+стоїть поруч з українським перекладом</b>. Це дає порівняння двох мов на <b>тому
+самому змісті</b>, а не на різних текстах. У нашому прогоні набралося
+<b>93 392</b> пари з 273 файлів локалі: 811 226 слововживань англійською й
+805 625 українською.</div>
+
+<p>Одразу скажу, чим цей корпус поганий, бо на цьому побудований
+<a href="#s8">розділ 8</a>. Переклади інтерфейсів — <b>вузький домен</b>: технічна
+лексика, короткі речення, наказовий спосіб, безліч повідомлень про помилки.
+Висновків про українську мову взагалі з нього робити не можна. Але саме ця вада
+дасть нам найкращий урок теми.</p>
+
+<h2 id="s2"><span class="num">02 / Наївний спосіб</span>Пробіл — погана межа</h2>
+
+<p>Перше, що спадає на думку: різати по пробілах. У Python це один виклик,
+<code>text.split()</code>, і для англійської він працює пристойно. Для української
+ламається у двох місцях, і обидва можна побачити числом.</p>
+
+<p><b>Перше: розділові знаки приклеюються.</b> Рядок «сервером,» із комою й рядок
+«сервером» без неї — для <code>split()</code> два різні слова, і в словнику вони
+займуть два місця. На пʼяти тисячах документів нашого корпусу
+<code>text.split()</code> дає <b>11 406</b> різних рядків, а розбиття, яке відділяє
+розділові знаки, — <b>8 290</b>. Різниця в <b>3 116</b> рядків — це чисті двійники,
+які нічого не додають.</p>
+
+<div class="eq left">split():   Не | вдалося | зʼєднатися | з | сервером, | спробуй | ще | раз.
+розумніше: Не | вдалося | зʼєднатися | з | сервером | , | спробуй | ще | раз | .</div>
+
+<p><b>Друге, підступніше: апостроф.</b> В українських текстах його пишуть щонайменше
+трьома різними символами Unicode, які на екрані виглядають майже однаково. Ось що
+знайшлося в нашому корпусі:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>символ</th><th>код</th><th>назва</th><th>разів</th></tr></thead>
+  <tbody>
+    <tr><td>'</td><td>U+0027</td><td>APOSTROPHE</td><td>7734</td></tr>
+    <tr><td>ʼ</td><td>U+02BC</td><td>MODIFIER LETTER APOSTROPHE</td><td>1591</td></tr>
+    <tr><td>’</td><td>U+2019</td><td>RIGHT SINGLE QUOTATION MARK</td><td>1553</td></tr>
+    <tr><td>`</td><td>U+0060</td><td>GRAVE ACCENT</td><td>334</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Для компʼютера «зʼєднання» через U+02BC і «з'єднання» через U+0027 — <b>різні
+слова</b>. Словник тихо роздувається, частоти діляться навпіл, і жодної помилки при
+цьому не видно. У нашому корпусі апостроф містять <b>1 884</b> словоформи, а
+зведення всіх написань до одного символу склеює <b>330</b> пар-двійників.</p>
+
+<div class="note warn"><b>Це не дрібниця й не питання смаку.</b> Помилка тут не
+падає, не логується й не має симптомів. Вона просто робить статистику трохи гіршою —
+скрізь і назавжди. Нормалізація Unicode й заміна символів-двійників для української
+обовʼязкові, і робити їх треба <b>до</b> токенізації, а не після.</div>
+
+<p>Але навіть акуратний поділ по словах має ваду, яку не полагодити правилами. Про
+неї — наступний розділ.</p>
+<h2 id="s3"><span class="num">03 / Вибір рівня</span>Три рівні: символи, слова, субслова</h2>
+
+<p>Різати текст можна на трьох різних рівнях, і кожен має свою біду. Щоб порівняння
+було чесним, поставмо всім трьом однакові вимоги й заміряймо їх на тексті, якого
+токенізатор <b>не бачив</b> — тобто на відкладеній тестовій частині корпусу.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Вимога</th><th>Що означає</th><th>Наш поріг</th></tr></thead>
+  <tbody>
+    <tr><td>словник</td><td>скільки різних рядків доводиться тримати в моделі</td><td>не більше 4000</td></tr>
+    <tr><td>невідомі (OOV)</td><td>яка частка слововживань не має рядка в словнику</td><td>менше 1 %</td></tr>
+    <tr><td>довжина</td><td>скільки токенів коштує тисяча слів тексту</td><td>не більше 2500</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Пороги тут не священні — це просто розумні межі для маленької моделі. Важливий не
+їхній рівень, а те, що <b>жоден із двох очевидних способів не виконує всі три</b>.</p>
+
+<p><b>Рівень символів.</b> Словник крихітний: у навчальній частині трапилось
+<b>156</b> різних символів англійською й <b>220</b> українською. Невідомих не буває
+взагалі. Але тисяча слів обходиться в <b>6436.8</b> токена англійською й
+<b>7569.9</b> українською — текст стає майже впʼятеро довшим, і модель мусить
+тримати в увазі стільки ж разів більше позицій.</p>
+
+<p><b>Рівень слів.</b> Довжина ідеальна, зате словник вибухає. І ось перше число,
+заради якого варто було брати паралельний корпус: на <b>тому самому змісті</b>
+англійська дає <b>28 821</b> словоформу, а українська — <b>46 701</b>. У
+<b>1.62 раза</b> більше, і це не про багатство лексики: те саме поняття просто
+розсипається на десяток відмінкових форм.</p>
+
+<p>І що прикро — більший словник виявляється ще й <b>дірявішим</b>. Невідомих слів
+у тесті англійською <b>1.53 %</b>, українською <b>2.47 %</b>. А якщо обом мовам дати
+однаковий бюджет у чотири тисячі найчастіших слів, різниця стає непристойною:
+англійська втрачає <b>8.71 %</b> слововживань, українська — <b>16.40 %</b>, тобто
+кожне шосте.</p>
+
+<div class="note"><b>Що таке «втрачає».</b> Слово, якого немає в словнику,
+замінюється єдиною позначкою <code>[UNK]</code> — «невідоме». Для моделі всі такі
+слова стають одним і тим самим рядком: «розпакування», «телефона» й «мурчання»
+перетворюються на одну й ту саму пляму. У навчальній частині нашого корпусу
+«розпакування» трапляється 13 разів і стоїть на <b>5952-му</b> місці за частотою —
+далеко за межею чотирьох тисяч, тож на рівні слів воно зникає. Щоб потрапити в топ,
+слову тут вистачило б <b>21</b> появи.</div>
+
+<p><b>Рівень субслів.</b> <b>Субслово</b> (subword) — шматок слова, коротший за слово
+й довший за літеру: «роз», «па», «кування». Словник фіксуємо тим самим бюджетом у
+4000 рядків, і всі три вимоги виконуються одразу: невідомих <b>нуль</b> (бо будь-яке
+слово завжди можна розкласти на дрібніші шматки, аж до окремих літер), а довжина —
+<b>1631.5</b> токена англійською й <b>1992.1</b> українською.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Три рівні різання і три вимоги до них</p>
+  <p class="fig-sub">Згори — українське слово «розпакування» на обраному рівні. Нижче
+    три смуги: розмір словника, частка невідомих слововживань і довжина тексту в
+    токенах. Пунктир на кожній смузі — поріг із таблиці вище.</p>
+  <div class="panel">
+    <div><canvas id="cLvl" width="940" height="430" aria-label="Три вимоги до токенізатора: розмір словника, частка невідомих слів і довжина тексту в токенах, на трьох рівнях різання"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">мова корпусу</span>
+        <div class="seg" id="langSeg"><button type="button" data-lang="0" aria-pressed="false">англійська</button><button type="button" data-lang="1" aria-pressed="true">українська</button></div>
+      </div>
+      <div class="ctl">
+        <span class="cap">рівень різання</span>
+        <div class="seg wrap two" id="lvlSeg"><button type="button" data-lvl="0" aria-pressed="false">символи</button><button type="button" data-lvl="1" aria-pressed="false">слова, усі</button><button type="button" data-lvl="2" aria-pressed="false">слова, топ-4000</button><button type="button" data-lvl="3" aria-pressed="true">субслова</button></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>словник</b><i id="lvVoc">4000</i></div>
+        <div class="cellv"><b>невідомих</b><i id="lvOov">0.0000</i></div>
+        <div class="cellv"><b>токенів / 1000 слів</b><i id="lvLen">1992.1</i></div>
+        <div class="cellv"><b>вимог виконано</b><i id="lvOk">3 / 3</i></div>
+      </div>
+      <div class="verdict" id="lvVer"></div>
+    </div>
+  </div>
+  <figcaption>Числа — середнє по трьох поділах корпусу. <b>Символи</b> провалюють
+    довжину, <b>слова</b> — або словник, або дірку в ньому. Усі три вимоги виконує
+    лише субслівний рівень, і саме тому сучасні моделі стоять на ньому.</figcaption>
+</figure>
+
+<p>Ось чому виграли субслова, і виграли вони саме через <b>дірку</b>. Символи й
+слова — це два краї: один робить текст нестерпно довгим, другий робить словник
+нестерпно великим і все одно дірявим. Субслова стоять посередині й закривають
+дірку повністю, бо в крайньому разі відступають до окремих літер.</p>
+
+<div class="note"><b>Для української це важливіше, ніж для англійської.</b> Дивись
+на два останні числа: при однаковому бюджеті словника англійська втрачає 8.71 %
+слововживань, українська — 16.40 %. Субслова прибирають цю різницю до нуля обом,
+але англійській вони дають економію, а українській — можливість узагалі працювати.</div>
+
+<h2 id="s4"><span class="num">04 / Алгоритм</span>BPE: злити найчастішу пару</h2>
+
+<p>Найпоширеніший спосіб знайти субслова зветься <b>BPE</b> (byte pair encoding,
+кодування парами байтів). Алгоритм вміщується в одне речення:</p>
+
+<div class="eq">поки словник не набрався — знайди найчастішу пару<br>сусідніх шматків і злий її в один</div>
+
+<p>Починаємо з того, що кожне слово — це послідовність окремих літер. Кожне злиття
+додає у словник один новий рядок і робить тексти коротшими. Усе. Ніякого навчання
+градієнтом, ніякої нейромережі — тільки лічильник.</p>
+
+<p>Порахуймо руками. Візьмімо шість справжніх слів нашого корпусу з їхніми
+справжніми частотами:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>слово</th><th>разів у корпусі</th></tr></thead>
+  <tbody>
+    <tr><td>файл</td><td>3314</td></tr>
+    <tr><td>файлів</td><td>1080</td></tr>
+    <tr><td>каталог</td><td>971</td></tr>
+    <tr><td>файли</td><td>685</td></tr>
+    <tr><td>файлу</td><td>559</td></tr>
+    <tr><td>каталогу</td><td>504</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Крок 1 · порахувати пари</span>
+    <p>Слова поділені на літери. Пара «ф» + «а» стоїть усередині всіх чотирьох слів
+    із коренем «файл», тож її частота — це сума їхніх частот:
+    3314 + 1080 + 685 + 559 = <b>5638</b>. Пара «к» + «а» набирає 971 + 504 = 1475.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 2 · злити найчастішу</span>
+    <p>Перемагає «ф» + «а» з частотою 5638. Тепер у всіх словах, де вона траплялась,
+    замість двох шматків стоїть один: <span class="chip">фа</span><span class="chip">й</span><span class="chip">л</span>.
+    Загальна кількість шматків у шести словах падає з 35 до 31.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 3 · повторити</span>
+    <p>Наступною найчастішою стає «фа» + «й» — теж 5638, бо ці шматки стоять у тих
+    самих словах. Потім «фай» + «л». Після трьох злиттів корінь «файл» уже цілий
+    токен, і слово «файлів» виглядає так:
+    <span class="chip">файл</span><span class="chip">і</span><span class="chip">в</span>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Що буде далі</span>
+    <p>Корінь «файл» вичерпано, і найчастішою стає пара з іншого слова — «к» + «а»
+    з частотою 1475. Девʼять злиттів роблять цілими обидва корені, а злиття з
+    десятого по чотирнадцяте доліплюють до них закінчення.</p>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · BPE крок за кроком</p>
+  <p class="fig-sub">Повзунок — скільки злиттів уже зроблено. Кожен прямокутник —
+    один шматок; рожевим підсвічено пару, яка переможе на наступному кроці.
+    Праворуч від слова — його частота в корпусі. Усе рахується просто зараз,
+    у браузері, тим самим алгоритмом, що в зошиті.</p>
+  <div class="panel">
+    <div><canvas id="cBpe" width="940" height="400" aria-label="Шість слів, поділених на шматки, і те, як послідовні злиття BPE склеюють їх у корені й закінчення"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="mrg4">злиттів зроблено <output id="mrgOut">0</output></label>
+        <input type="range" id="mrg4" min="0" max="14" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>наступне злиття</b><i id="bpPair" class="sm">ф + а</i></div>
+        <div class="cellv"><b>його частота</b><i id="bpCnt">5638</i></div>
+        <div class="cellv"><b>шматків у 6 словах</b><i id="bpTot">35</i></div>
+        <div class="cellv"><b>претендентів</b><i id="bpTie">3</i></div>
+      </div>
+      <div class="verdict" id="bpVer"></div>
+    </div>
+  </div>
+  <figcaption>Тридцять пʼять шматків на шість слів на старті й <b>шість</b> після
+    чотирнадцяти злиттів. «Претенденти» — скільки пар набрали <b>однакову</b>
+    найбільшу частоту; коли їх більше однієї, вибір між ними алгоритм не визначає.</figcaption>
+</figure>
+<h2 id="s5"><span class="num">05 / Перевірка</span>Наш BPE проти бібліотечного</h2>
+
+<p>У зошиті цей алгоритм написаний повністю — тридцять рядків, дві функції:
+порахувати пари й злити одну з них. Поруч на тому самому крихітному корпусі
+навчається бібліотека <code>tokenizers</code>. Порівняння дає результат, якого
+я не чекав, і він вартий окремого розділу.</p>
+
+<p><b>Списки злиттів не збіглися.</b> Наш алгоритм першим злив «ф» + «а», а
+бібліотека — «а» + «й». З чотирнадцяти злиттів однаковими виявились лише чотири.</p>
+
+<p>Причина видна в тому самому інтерактиві, у полі «претенденти». На першому кроці
+найбільшу частоту 5638 набрали <b>три пари одразу</b>: «ф»+«а», «а»+«й» і «й»+«л».
+Вони стоять усередині тих самих чотирьох слів, тому й трапляються однакову кількість
+разів. Це <b>нічия</b>, і алгоритм її не розводить — правило «злий найчастішу пару»
+просто не каже, що робити, коли найчастіших кілька.</p>
+
+<div class="note warn"><b>Ось чому це важливо знати.</b> Дві реалізації того самого
+алгоритму дають різні словники — і жодна з них не помиляється. Якщо колись
+доведеться відтворити чужий токенізатор «за описом», словник вийде інший, а модель
+із чужими вагами перестане працювати. Токенізатор передають файлом, а не описом
+алгоритму.</div>
+
+<p>Але результат від порядку злиттів <b>не залежить</b>. Перевіряти треба не список
+злиттів, а те, як поділені слова, — і ось воно збігається символ у символ:</p>
+
+<div class="eq left">файл     -> файл          каталог  -> каталог
+файлів   -> файлів        каталогу -> каталогу
+файли    -> файли         файлу    -> файлу</div>
+
+<p>Обидві реалізації після чотирнадцяти злиттів тримають усі шість слів цілими.
+Різні дороги, та сама точка. У зошиті це записано як <code>assert</code>, який
+падає, якщо хоч одне слово поділилось інакше.</p>
+
+<p>І окремо подивись на десяте злиття бібліотеки: вона зліпила «і» + «в» в один
+рядок <b>«ів»</b> — тобто <b>сама знайшла закінчення родового відмінка множини</b>.
+Жодного уявлення про морфологію в неї немає, тільки лічильник пар: закінчення
+частотні, тому вони злипаються рано. <a href="../03-morphology/lecture.html">Тема
+03</a> покаже, що буває, коли морфологію знати по-справжньому, — і чим лематизація
+відрізняється від такого випадкового вгадування.</p>
+
+<h2 id="s6"><span class="num">06 / Головний замір</span>Скільки коштує та сама думка двома мовами</h2>
+
+<p>Тепер головне число теми. Умови максимально чесні до обох мов:</p>
+
+<ul>
+  <li>корпус <b>паралельний</b> — обидві мови кажуть буквально те саме;</li>
+  <li>кожна мова дістає <b>свій власний</b> токенізатор, навчений на своїй мові;</li>
+  <li>обидва токенізатори мають <b>однаковий</b> розмір словника;</li>
+  <li>міряємо на відкладеній частині, три різні поділи корпусу.</li>
+</ul>
+
+<p>Питання одне: скільки токенів коштує тисяча слів.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>словник</th><th>англ / 1000 слів</th><th>укр / 1000 слів</th><th>націнка</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>500</td><td>2726.5 ± 5.3</td><td>3537.6 ± 4.8</td><td>+29.7 %</td></tr>
+    <tr><td>1000</td><td>2228.2 ± 4.7</td><td>2852.4 ± 5.9</td><td>+28.0 %</td></tr>
+    <tr><td>2000</td><td>1872.4 ± 5.1</td><td>2361.0 ± 6.4</td><td>+26.1 %</td></tr>
+    <tr><td>4000</td><td>1631.5 ± 5.2</td><td>1992.1 ± 6.1</td><td>+22.1 %</td></tr>
+    <tr><td>8000</td><td>1489.4 ± 4.7</td><td>1731.5 ± 4.9</td><td>+16.3 %</td></tr>
+    <tr class="good"><td>16000</td><td>1414.9 ± 4.2</td><td>1562.5 ± 4.8</td><td>+10.4 %</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Число після знака ± — розкид по трьох поділах корпусу. Він близько пʼяти токенів,
+тобто три десятих відсотка: усе, що більше за нього, — справжня різниця, а не шум.</p>
+
+<p>Тепер прочитаймо таблицю. Найпоширеніше формулювання — «українська дорожча в
+токенах» — правдиве, але марне: воно не каже ані <b>наскільки</b>, ані <b>від чого
+це залежить</b>. А залежить від однієї-єдиної речі.</p>
+
+<div class="eq">націнка падає з <b>+29.7 %</b> до <b>+10.4 %</b> —<br>у <b>2.85 раза</b>, коли словнику дають місце</div>
+
+<p>Мова при цьому не змінилась жодною літерою. Змінилось те, <b>скільки рядків
+словника їй виділили</b>. Ось чому за фразою «модель погано розуміє українську»
+часто стоїть не «модель не вміє», а «в її словнику українській дісталося пʼятсот
+рядків із тридцяти тисяч». Це, звісно, не єдина причина — але єдина, яку видно
+у відкритому файлі за пʼять хвилин.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Націнка падає, коли словнику дають місце</p>
+  <p class="fig-sub">Дві криві — скільки токенів коштує тисяча слів англійською
+    (бірюзова) і українською (рожева). Вісь словника логарифмічна. Смуга внизу —
+    націнка на українську в тому самому положенні.</p>
+  <div class="panel">
+    <div><canvas id="cCurve" width="940" height="420" aria-label="Криві ціни тисячі слів у токенах для англійської та української залежно від розміру словника, і смуга націнки"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="voc6">розмір словника <output id="vocOut">500</output></label>
+        <input type="range" id="voc6" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>англ / 1000 слів</b><i id="cvEn">2726.5</i></div>
+        <div class="cellv"><b>укр / 1000 слів</b><i id="cvUk">3537.6</i></div>
+        <div class="cellv"><b>націнка</b><i id="cvMk">+29.7 %</i></div>
+        <div class="cellv"><b>розкид націнки</b><i id="cvSd" class="sm">± 0.10</i></div>
+      </div>
+      <div class="verdict" id="cvVer"></div>
+    </div>
+  </div>
+  <figcaption>Обидві криві спадають, але рожева спадає <b>крутіше</b>: українська
+    втрачає 55.8 % своєї початкової ціни, англійська — 48.1 %. Саме тому щілина між
+    ними звужується, хоч українська дорожча в кожному положенні.</figcaption>
+</figure>
+
+<div class="note"><b>Практичний висновок, який можна забрати просто зараз.</b> Якщо
+обираєш багатомовну модель для української, дивись не на кількість підтримуваних мов
+у описі, а на <b>розмір словника</b> й на те, скільки в ньому кириличних рядків. Це
+можна перевірити за пʼять хвилин — словник токенізатора лежить у відкритому
+файлі.</div>
+<h2 id="s7"><span class="num">07 / Розклад</span>Довжина слів чи морфологія?</h2>
+
+<p>Націнку легко пояснити морфологією: багаті закінчення змушують різати дрібніше.
+Пояснення красиве, і воно неповне. Є простіша причина, яку видно без жодного
+токенізатора: <b>українське слово просто довше</b>.</p>
+
+<p>У нашому паралельному корпусі 811 226 англійських слововживань і 805 625
+українських — практично порівну, бо це переклад того самого. А символів
+5 218 685 проти 6 097 779. Виходить:</p>
+
+<div class="eq">6.4331 символа на англійське слово<br>7.5690 символа на українське<br>відношення = <b>1.1760</b></div>
+
+<p>Тепер розділимо два внески точно. Для цього досить арифметики й одного
+скорочення дробу. Запишімо ціну слова в токенах як добуток:</p>
+
+<div class="eq left">токенів     токенів     символів
+────────  = ────────  ×  ────────
+ слово       символ       слово</div>
+
+<p>Прочитаймо це словами. Скільки токенів припадає на слово — це те, скільки токенів
+припадає на <b>символ</b>, помножене на те, скільки символів у слові. «Символи»
+у правій частині скорочуються, і лишається ліва.</p>
+
+<p>Але з неї випливає корисне. Якщо поділити цю рівність для української на ту саму
+рівність для англійської, вийде, що <b>націнка теж розкладається в добуток двох
+націнок</b>:</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Множник 1 · за довжину слова</span>
+    <p>У скільки разів українське слово довше в символах. Це <b>1.1760</b>, і воно
+    від токенізатора не залежить узагалі — це властивість самої пари мов на цьому
+    корпусі. Розкид по трьох поділах — 0.0012, тобто число тверде.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Множник 2 · за дрібність різання</span>
+    <p>У скільки разів дрібніше токенізатор ріже <b>той самий символ</b>. Ось цей
+    множник і відповідає за морфологію: якщо українські слова доводиться кришити
+    на дрібніше, він буде більший за одиницю.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Перевірка</span>
+    <p>Добуток двох множників мусить точно дорівнювати повній націнці. У зошиті
+    це <code>assert</code> із допуском 10<span class="sup">−9</span> на кожному
+    зерні окремо — не «приблизно зійшлося», а тотожність.</p>
+  </div>
+</div>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>словник</th><th>за довжину</th><th>за дрібність</th><th>разом</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>500</td><td>1.1760</td><td>1.1032</td><td>1.2974</td></tr>
+    <tr><td>1000</td><td>1.1760</td><td>1.0885</td><td>1.2801</td></tr>
+    <tr><td>2000</td><td>1.1760</td><td>1.0722</td><td>1.2609</td></tr>
+    <tr><td>4000</td><td>1.1760</td><td>1.0383</td><td>1.2211</td></tr>
+    <tr><td>8000</td><td>1.1760</td><td>0.9885</td><td>1.1625</td></tr>
+    <tr class="good"><td>16000</td><td>1.1760</td><td>0.9390</td><td>1.1043</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Дивись на середню колонку — це найцікавіше число теми. При маленькому словнику
+вона більша за одиницю: українську справді ріжуть дрібніше. Але зі зростанням
+словника вона <b>падає нижче одиниці</b>. При словнику на шістнадцять тисяч
+множник дорівнює <b>0.9390</b>: на той самий символ українського тексту виходить
+<b>менше</b> токенів, ніж англійського.</p>
+
+<div class="note"><b>Скажімо це прямо, бо воно суперечить звичному.</b> При великому
+словнику вся націнка, яка лишається, — це <b>не морфологія, а просто довші слова</b>.
+Морфологічна складова не те що зникає: вона <b>міняє знак</b> і починає працювати
+<b>на користь</b> української.</div>
+
+<p>Пояснення просте, коли його побачив. Українських словоформ більше, але вони
+<b>передбачувані</b>: ті самі кільканадцять закінчень чіпляються до тисяч основ.
+Щойно словнику вистачає місця, щоб узяти ці закінчення окремими рядками, довгі
+шматки української стають дешевими — саме тому, що їх багато й вони однакові.
+Англійська такої регулярності не має й економити на ній не може.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Націнка — це добуток двох множників</p>
+  <p class="fig-sub">Ліворуч — сталий множник за довжину слова, посередині — змінний
+    множник за дрібність різання, праворуч — їхній добуток. Пунктир — одиниця:
+    те, що нижче за неї, працює на користь української.</p>
+  <div class="panel">
+    <div><canvas id="cSplit" width="940" height="410" aria-label="Розклад націнки на українську на два множники: сталий за довжину слова і змінний за дрібність різання"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="voc7">розмір словника <output id="voc7Out">500</output></label>
+        <input type="range" id="voc7" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>за довжину</b><i id="spLen">1.1760</i></div>
+        <div class="cellv"><b>за дрібність</b><i id="spGr">1.1032</i></div>
+        <div class="cellv"><b>добуток</b><i id="spTot">1.2974</i></div>
+        <div class="cellv"><b>націнка</b><i id="spMk">+29.7 %</i></div>
+      </div>
+      <div class="verdict" id="spVer"></div>
+    </div>
+  </div>
+  <figcaption>Лівий стовпчик не рухається взагалі — довжина слова від словника не
+    залежить. Рухається лише середній, і на восьми тисячах він перетинає одиницю:
+    з цього місця дрібність різання перестає бути причиною націнки.</figcaption>
+</figure>
+<h2 id="s8"><span class="num">08 / Домен</span>Токенізатор знає домен, а не мову</h2>
+
+<p>Досі ми говорили «токенізатор для української». Це неточно, і зараз буде видно
+чому. Візьмімо BPE зі словником на чотири тисячі, навчений на нашому корпусі, і
+дамо йому кілька звичайних українських слів.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>слово</th><th>як поділено</th><th>шматків</th><th>разів у всьому корпусі</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>телефон</td><td>те | ле | фо | н</td><td>4</td><td>6</td></tr>
+    <tr class="hot"><td>телефони</td><td>те | ле | фо | ни</td><td>4</td><td>1</td></tr>
+    <tr class="hot"><td>телефонів</td><td>те | ле | фо | нів</td><td>4</td><td>0</td></tr>
+    <tr class="good"><td>налаштування</td><td>налаштування</td><td>1</td><td>450</td></tr>
+    <tr class="good"><td>неможливо</td><td>неможливо</td><td>1</td><td>1082</td></tr>
+    <tr><td>розпакування</td><td>роз | па | кування</td><td>3</td><td>19</td></tr>
+    <tr class="good"><td>файл</td><td>файл</td><td>1</td><td>3314</td></tr>
+    <tr class="good"><td>дерево</td><td>дерево</td><td>1</td><td>77</td></tr>
+    <tr class="hot"><td>кіт</td><td>кі | т</td><td>2</td><td>0</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Прочитай перший і четвертий рядки поруч, бо це головний абзац теми.
+<b>«Телефон» розпадається на чотири шматки, а «налаштування» лишається цілим.</b></p>
+
+<p>Не тому, що одне слово складніше за інше. Обидва — звичайні українські іменники,
+обидва довгі, «налаштування» навіть довше. І не тому, що одне рідше в мові: «телефон»
+знає кожен. Причина одна: <b>наш корпус складається з перекладів компʼютерних
+інтерфейсів</b>. У ньому «налаштування» трапляється 450 разів, «неможливо» — 1082,
+«файл» — 3314, а «телефон» — <b>шість</b>. Слово «кіт», яке знає кожна дитина, не
+трапляється <b>жодного разу</b> й теж розсипається.</p>
+
+<div class="note warn"><b>Модель знає той домен, на якому її навчили.</b> Це
+твердження звучить банально, доки не побачиш його на одному слові. Токенізатор —
+найдешевша його демонстрація: не треба ані навчати мережу, ані міряти точність.
+Досить подивитись, як поділилось слово.</div>
+
+<p>Звідси й практичний прийом: <b>словник токенізатора — це відбиток корпусу</b>.
+Відкривши його файл, можна здогадатися, чим займалась модель, ще до першого запуску:
+багато рядків на кшталт «error» і «config» — технічні тексти, багато медичних
+коренів — медичні.</p>
+
+<p>Побічно тут видно й друге. Подивись на пару «телефони» → <span class="chip">те</span><span class="chip">ле</span><span class="chip">фо</span><span class="chip">ни</span>
+і «телефонів» → <span class="chip">те</span><span class="chip">ле</span><span class="chip">фо</span><span class="chip">нів</span>.
+Корінь поділений однаково й безглуздо, а от <b>закінчення «ни» і «нів» алгоритм
+виділив правильно</b> — вони є в словнику окремими рядками. BPE не має жодного
+уявлення про відмінки; він просто порахував, що ці двійки й трійки літер трапляються
+часто. Морфологію він відтворює <b>випадково</b> — там, де вона збігається з
+частотою. <a href="../03-morphology/lecture.html">Наступна тема</a> питає, чи не
+можна замість такого різання <b>звести форми до лем</b> і чи буде від цього краще.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Частота слова вирішує, чи лишиться воно цілим</p>
+  <p class="fig-sub">Обери слово. Згори — як його поділив BPE зі словником 4000,
+    навчений на перекладах інтерфейсів. Знизу — скільки разів це слово трапилось
+    у корпусі; шкала логарифмічна, бо частоти різняться в тисячі разів.</p>
+  <div class="panel">
+    <div><canvas id="cDom" width="940" height="380" aria-label="Поділ слова на шматки токенізатором BPE і частота цього слова в корпусі"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">слово</span>
+        <div class="seg wrap two" id="domSeg"><button type="button" data-w="0" aria-pressed="true">телефон</button><button type="button" data-w="1" aria-pressed="false">телефони</button><button type="button" data-w="2" aria-pressed="false">телефонів</button><button type="button" data-w="3" aria-pressed="false">налаштування</button><button type="button" data-w="4" aria-pressed="false">неможливо</button><button type="button" data-w="5" aria-pressed="false">розпакування</button><button type="button" data-w="6" aria-pressed="false">файл</button><button type="button" data-w="7" aria-pressed="false">дерево</button><button type="button" data-w="8" aria-pressed="false">кіт</button></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>шматків</b><i id="dmPc">4</i></div>
+        <div class="cellv"><b>разів у корпусі</b><i id="dmFq">6</i></div>
+      </div>
+      <div class="verdict" id="dmVer"></div>
+    </div>
+  </div>
+  <figcaption>Девʼять слів, і жодне з них не рідкісне в українській мові. Цілими
+    лишились ті чотири, що часті <b>в цьому корпусі</b>. Той самий поділ відтворився
+    на всіх трьох поділах корпусу — це не випадковість зерна.</figcaption>
+</figure>
+
+<p>Наостанок — те саме, але на всьому тексті, а не на девʼяти словах. Яка частка
+слововживань узагалі лишається цілою при словнику 4000:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>шматків на слово</th><th>англійська</th><th>українська</th></tr></thead>
+  <tbody>
+    <tr class="good"><td>1 (слово ціле)</td><td>0.8686</td><td>0.7402</td></tr>
+    <tr><td>2</td><td>0.0803</td><td>0.1472</td></tr>
+    <tr><td>3</td><td>0.0333</td><td>0.0661</td></tr>
+    <tr class="hot"><td>4 і більше</td><td>0.0179</td><td>0.0466</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Англійське слово лишається цілим у <b>87</b> випадках зі ста, українське — у
+<b>74</b>. А розсипається на чотири шматки й більше українське слово <b>у 2.6 раза</b>
+частіше. Це та сама націнка з розділу 6, тільки видно, з чого вона складається:
+не з рівномірного подорожчання, а з хвоста слів, які словник не вмістив.</p>
+<h2 id="s9"><span class="num">09 / Варіанти</span>WordPiece проти BPE</h2>
+
+<p>BPE — не єдиний спосіб знайти субслова. Модель <code>BERT</code>, з якою ми
+зустрінемось у темі 26, стоїть на алгоритмі
+<b>WordPiece</b>, і різниця між ними на перший погляд принципова.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Алгоритм</th><th>Яку пару зливає</th><th>Що це означає</th></tr></thead>
+  <tbody>
+    <tr><td>BPE</td><td>найчастішу</td><td>жадібно скорочує текст</td></tr>
+    <tr><td>WordPiece</td><td>з найбільшим відношенням<br>частота пари ÷ (частота лівого × частота правого)</td><td>віддає перевагу парам, які трапляються разом частіше, ніж поодинці</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Пояснімо другий рядок словами, бо формула тут не самоочевидна. Уяви два шматки,
+кожен із яких сам по собі дуже частий, — наприклад «а» і «н». Вони стоятимуть поруч
+часто просто тому, що обидва часті, а не тому, що між ними є звʼязок. BPE зіллє їх
+охоче. WordPiece ділить частоту пари на добуток частот її половинок і питає інше:
+<b>чи трапляються ці шматки разом частіше, ніж якби стояли поруч випадково</b>.</p>
+
+<p>Звучить як зовсім інший алгоритм. Заміряймо, чи це видно в числах — словник 4000,
+три поділи корпусу:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>мова</th><th>BPE / 1000 слів</th><th>WordPiece дорожчий на</th></tr></thead>
+  <tbody>
+    <tr><td>англійська</td><td>1631.5</td><td>+4.1 %</td></tr>
+    <tr><td>українська</td><td>1992.1</td><td>+4.8 %</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Скажімо результат прямо, з обома половинами. <b>Різниця є</b>: близько семи
+десятків токенів на тисячу слів англійською й майже сотні українською, при розкиді
+по трьох поділах корпусу приблизно в шість токенів. Це на порядок більше за шум,
+тож списати різницю на випадковість не можна. І <b>різниця маленька</b>:
+чотири-пʼять відсотків не на користь WordPiece. До того ж майже три чверті словників
+у них однакові — <b>2940 спільних рядків із 4000</b>.</p>
+
+<div class="note warn"><b>Друге джерело розкиду, про яке легко забути.</b> Три зерна
+показують, як число гуляє від <b>поділу корпусу</b>. Але є ще <b>сама бібліотека</b>:
+якщо навчання не відтворюється точно, три зерна цього не покажуть, бо вони міняють
+дані, а не прогін. Тому в зошиті ми навчили обидва токенізатори <b>тричі поспіль на
+тих самих даних</b>. BPE щоразу дав те саме число до останнього знака —
+<b>1988.5518</b>. WordPiece не дав: три прогони розійшлися в четвертому знаку, тобто
+його словник трохи міняється від запуску до запуску. Розходження тут — частки токена
+на тисячу слів, у сотні разів менше за різницю між алгоритмами, тож висновок вище
+стоїть. Але відтворити чужий словник WordPiece точно не вийде навіть із тим самим
+корпусом.</div>
+
+<p>Тобто вибір між BPE й WordPiece — це не вибір між добрим і поганим методом. Це
+питання сумісності: береш <code>BERT</code> — береш WordPiece, бо словник у нього
+вже такий, і поміняти алгоритм означає переучувати модель цілком. Виграти на самому
+виборі майже нічого.</p>
+
+<p>Помітна тут інша дрібниця, суто інженерна. WordPiece позначає <b>продовження
+слова</b> двома ґратками:</p>
+
+<div class="eq left">BPE:       розпакування -> роз | па | кування
+WordPiece: розпакування -> розп | ##ак | ##ування</div>
+
+<p>Позначка <code>##</code> потрібна, щоб зі списку токенів можна було однозначно
+скласти текст назад: без неї не зрозуміло, чи був пробіл між «роз» і «па». BPE
+розвʼязує ту саму задачу інакше — прикріплює пробіл до початку токена.</p>
+
+<h2 id="s10"><span class="num">10 / Службове</span>Спецтокени: рядки, яких у тексті немає</h2>
+
+<p>У словнику моделі живуть не лише шматки слів. Там є кілька службових рядків, які
+<b>ніколи не зустрічаються в тексті</b> й потрапляють у послідовність тільки тому,
+що їх туди поставили навмисно. Це <b>спецтокени</b> (special tokens).</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Токен</th><th>Навіщо</th><th>Що буде без нього</th></tr></thead>
+  <tbody>
+    <tr><td>[UNK]</td><td>заміна символу, якого модель не знає взагалі</td><td>токенізатор упаде на першому ж емодзі</td></tr>
+    <tr><td>[CLS]</td><td>порожнє місце на початку, куди модель складе підсумок усього тексту</td><td>ніде взяти один вектор на весь текст</td></tr>
+    <tr><td>[SEP]</td><td>межа: кінець тексту або шов між двома текстами в парі</td><td>модель не відрізнить питання від відповіді</td></tr>
+    <tr><td>[PAD]</td><td>доповнення, щоб усі рядки в пакеті мали однакову довжину</td><td>пакет не скласти в матрицю</td></tr>
+    <tr><td>[MASK]</td><td>дірка, яку модель має вгадати під час навчання</td><td>нічим навчати <code>BERT</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Порядок має значення: спецтокени додають у словник <b>першими</b>, тому вони
+дістають найменші номери — <code>[UNK]</code> нуль, <code>[CLS]</code> один,
+<code>[SEP]</code> два, <code>[PAD]</code> три, <code>[MASK]</code> чотири. Так номер
+<code>[PAD]</code> не зʼїде, якщо словник колись переучити на іншому корпусі.</p>
+
+<p>Далі за розмітку відповідає окремий крок після різання. Ось що виходить на нашому
+токенізаторі:</p>
+
+<div class="eq left">один текст:     [CLS] Не вдалося відкрити файл [SEP]
+пара:           [CLS] Не вдалося відкрити файл [SEP] Перевір права доступу [SEP]
+номер частини:    0   0     0       0      0     0      1      1      1      1  </div>
+
+<p>Останній рядок — це <b>маска частин</b> (token type ids): вона каже моделі, який
+токен належить першому текстові, а який другому. Разом із <code>[SEP]</code> вона
+й перетворює два окремі речення на одну послідовність, у якій ще видно шов.</p>
+
+<p>Доповнення працює так само просто: коротший рядок доганяє довший токенами
+<code>[PAD]</code>, а поруч зʼявляється <b>маска доповнення</b> — рядок з одиниць
+і нулів, де нуль означає «тут порожнє місце, не рахуй його за текст». У коді вона
+зветься <code>attention_mask</code>.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Що насправді бачить модель</p>
+  <p class="fig-sub">Прямокутники — токени. Бірюзові належать першому текстові, жовті
+    другому, сірі — доповнення. Смуга під ними — маска доповнення: одиниця означає
+    «справжній токен», нуль — «пропусти».</p>
+  <div class="panel">
+    <div><canvas id="cSpec" width="940" height="300" aria-label="Послідовність токенів зі спецтокенами CLS і SEP, маскою частин і маскою доповнення"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що подаємо</span>
+        <div class="seg" id="pairSeg"><button type="button" data-pair="0" aria-pressed="true">один текст</button><button type="button" data-pair="1" aria-pressed="false">пара текстів</button></div>
+      </div>
+      <div class="ctl">
+        <span class="cap">розмітка</span>
+        <div class="seg" id="markSeg"><button type="button" data-mark="0" aria-pressed="false">без неї</button><button type="button" data-mark="1" aria-pressed="true">з <span class="raw">[CLS]</span> і <span class="raw">[SEP]</span></button></div>
+      </div>
+      <div class="ctl">
+        <label for="pad10">довжина пакета <output id="padOut">12</output></label>
+        <input type="range" id="pad10" min="4" max="16" step="1" value="12">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>справжніх токенів</b><i id="spReal">6</i></div>
+        <div class="cellv"><b>доповнення</b><i id="spPad">6</i></div>
+        <div class="cellv"><b>частка порожнього</b><i id="spWaste">0.50</i></div>
+        <div class="cellv"><b>обрізано</b><i id="spCut">0</i></div>
+      </div>
+      <div class="verdict" id="scVer"></div>
+    </div>
+  </div>
+  <figcaption>Порухай довжину пакета. Замала — і кінець тексту просто зникає разом із
+    <code>[SEP]</code>; завелика — і половина обчислень витрачається на порожнечу.
+    Саме тому справжні бібліотеки сортують тексти за довжиною перед складанням
+    у пакети.</figcaption>
+</figure>
+
+<div class="note warn"><b>Пастка, про яку варто знати одразу.</b> Спецтокен,
+написаний літерами <b>прямо в тексті</b>, перетворюється на справжній спецтокен:
+рядок <code>текст [CLS] далі</code> дає послідовність
+<code>[CLS] · текст · [CLS] · д · алі · [SEP]</code>. Модель не має способу відрізнити
+службовий токен від такого, що прийшов із тексту користувача. Звідси проста гігієна:
+чужий текст перед токенізацією чистять від таких рядків — інакше зловмисник напише
+їх у своєму повідомленні й змінить розмітку.</div>
+<h2 id="s11"><span class="num">11 / Спільний словник</span>Один словник на дві мови</h2>
+
+<p>Досі кожна мова мала <b>свій</b> токенізатор. Справжні моделі так не роблять:
+словник один на всі мови. Заміряймо, чого це коштує — той самий бюджет у 8000
+рядків, але навчений на обох мовах разом.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>словник 8000</th><th>англ / 1000 слів</th><th>укр / 1000 слів</th><th>націнка</th></tr></thead>
+  <tbody>
+    <tr><td>свій на кожну мову</td><td>1489.4</td><td>1731.5</td><td>+16.3 %</td></tr>
+    <tr><td>спільний</td><td>1626.4</td><td>1827.0</td><td>+12.3 %</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Платять <b>обидві</b> мови: англійська дорожчає на <b>9.2 %</b>, українська на
+<b>5.5 %</b>. Це прямий наслідок того, що місце скінченне — дві мови ділять одні й
+ті самі вісім тисяч рядків, і кожній дістається менше, ніж коли вона була сама.</p>
+
+<p>Але зверни увагу на останню колонку: <b>націнка при спільному словнику менша</b>,
+ніж при двох окремих того самого розміру, — 12.3 % проти 16.3 %. Причина та сама,
+що в розділі 7: спільний словник забирає в англійської довгі рідкісні шматки й
+віддає місце частим українським закінченням, які окупаються швидше. Англійська
+платить більше саме тому, що їй було що втрачати.</p>
+
+<div class="note"><b>Це не універсальний закон, а замір на двох мовах.</b> У
+справжніх багатомовних моделях мов сотня, дані розподілені вкрай нерівномірно, і
+там працює інший ефект: мова, якої в навчальних даних мало, дістає мало рядків і
+дорожчає. Наш замір показує лише механізм — <b>місце в словнику скінченне й ділиться
+між мовами</b>. Скільки саме дістанеться українській, вирішує склад корпусу, а не
+алгоритм.</div>
+
+<h2 id="s12"><span class="num">12 / Ціна</span>Ціна довгого тексту</h2>
+
+<p>Досі націнка була академічною цифрою. Тепер зробимо її грошима й обмеженнями,
+бо довжина в токенах вирішує дві дуже практичні речі:</p>
+
+<ul>
+  <li><b>скільки коштує запит</b> — платні сервіси рахують саме токени, а не слова
+    й не символи;</li>
+  <li><b>скільки тексту взагалі влізе</b> — <b>довжину контексту</b> моделі, тобто
+    скільки вона здатна прочитати за раз, міряють у токенах.</li>
+</ul>
+
+<p>Найгірший реальний випадок такий: токенізатор навчений <b>лише на англійській</b>,
+а текст йому дають український. Спробуймо це буквально — і зупинімось на результаті,
+бо він не той, якого чекаєш.</p>
+
+<div class="eq left">англійський словник 8000 на українському тексті:
+   токенів на 1000 слів: 6072.1
+   з них [UNK]:          0.9050
+
+«Не вдалося відкрити файл» -> [UNK] [UNK] [UNK] [UNK] [UNK] [UNK] …</div>
+
+<p>Девʼять токенів із десяти — <code>[UNK]</code>. Це <b>не «дорого», це «сліпо»</b>:
+такий токенізатор не бачить українського тексту взагалі, для моделі це рядок
+однакових плям, у якому не відрізнити «файл» від «дерева». Числом «у скільки разів
+дорожче» тут міряти нічого, бо змісту не лишилось.</p>
+
+<p>Саме тому справжні моделі так не роблять. Вони працюють не з символами, а з
+<b>байтами</b>: будь-який символ Unicode розкладається на байти, байтів усього 256,
+і всі вони в словнику є <b>завжди</b>. Невідомого не буває за побудовою — але
+кириличний символ у UTF-8 займає <b>два байти замість одного</b>. Це і є справжня
+ціна.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>байтовий BPE, словник 8000</th><th>токенів / 1000 слів</th></tr></thead>
+  <tbody>
+    <tr><td>англійський текст, англійський словник</td><td>1604.4 ± 5.09</td></tr>
+    <tr><td>український текст, український словник</td><td>1866.7 ± 5.04</td></tr>
+    <tr class="hot"><td>український текст, АНГЛІЙСЬКИЙ словник</td><td>12461.6 ± 16.58</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="eq">той самий український текст коштує <b>у 6.68 раза</b> дорожче,<br>якщо словник навчали не на ньому</div>
+
+<p>Переведімо це в те, що видно користувачеві. Візьмімо довжину контексту 4096
+токенів — скромне за сьогоднішніми мірками. Англійського тексту в нього влізе
+<b>2553</b> слова. Українського зі своїм словником — <b>2194</b>. Українського з
+англійським словником — <b>329</b>.</p>
+
+<p>Триста двадцять девʼять слів — це дві третини книжкової сторінки.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Скільки тексту влізе в контекст</p>
+  <p class="fig-sub">Смуги в одному масштабі: найдовша — та, у яку влазить найбільше
+    слів. Праворуч від кожної — саме число слів, що вміщуються в контекст.</p>
+  <div class="panel">
+    <div><canvas id="cCost" width="940" height="380" aria-label="Скільки слів уміщується в контекст заданої довжини при трьох різних токенізаторах"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="win12">довжина контексту <output id="winOut">4096</output></label>
+        <input type="range" id="win12" min="0" max="5" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <span class="cap">текст і словник</span>
+        <div class="seg wrap two" id="costSeg"><button type="button" data-c="0" aria-pressed="false">англ · свій</button><button type="button" data-c="1" aria-pressed="true">укр · свій</button><button type="button" data-c="2" aria-pressed="false">укр · англійський</button></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>токенів / 1000 слів</b><i id="csRate">1866.7</i></div>
+        <div class="cellv"><b>слів у контексті</b><i id="csWords">2194</i></div>
+        <div class="cellv"><b>сторінок тексту</b><i id="csPages" class="sm">4.4</i></div>
+        <div class="cellv"><b>дорожче за англійський</b><i id="csMult">x1.16</i></div>
+      </div>
+      <div class="verdict" id="csVer"></div>
+    </div>
+  </div>
+  <figcaption>Сторінка тут — 500 слів. Порухай повзунок: різниця між трьома
+    стовпчиками не зникає з ростом контексту, вона просто масштабується. Множник сталий —
+    міняється лише те, скільки коштує його заплатити.</figcaption>
+</figure>
+
+<div class="note"><b>Ось чим насправді є «націнка на українську».</b> Не десять
+відсотків із таблиці розділу 6 — та таблиця чесно давала кожній мові <b>свій</b>
+словник, і в тих умовах різниця справді мала. А в кілька разів, якщо словник
+дістався іншій мові. Різниця між цими двома числами й є вся суть теми: проблема не
+в мові, а в тому, скільки місця їй виділили.</div>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Що з цього забрати</h2>
+
+<p>Тема почалась із питання «де різати рядок» і закінчилась пʼятьма твердженнями,
+жодне з яких не про синтаксис бібліотеки.</p>
+
+<ul>
+  <li><b>Субслова виграли не швидкістю, а дірками.</b> Словник зі словоформ для
+    української на тому самому змісті вміщує 46 701 рядок проти 28 821 англійських —
+    і при цьому дірявіший. При однаковому бюджеті в 4000 рядків слова втрачають
+    кожне шосте українське слововживання, субслова — жодного.</li>
+  <li><b>BPE — це тридцять рядків коду й лічильник пар.</b> Наш власний ділить слова
+    точно так само, як бібліотечний, хоча порядок злиттів у нього інший: на нічиях
+    кожна реалізація обирає по-своєму. Тому токенізатор передають файлом, а не
+    описом.</li>
+  <li><b>Націнка на українську падає зі словником</b> — з +29.7 % при пʼятистах
+    рядках до +10.4 % при шістнадцяти тисячах. І та, що лишається, — <b>не
+    морфологія, а довжина слів</b>: множник за дрібність різання падає до 0.9390,
+    тобто нижче одиниці.</li>
+  <li><b>Токенізатор знає домен, а не мову.</b> «Налаштування» ціле, «телефон» на
+    чотири шматки, «кіт» на два — бо корпус складається з перекладів інтерфейсів.
+    Словник токенізатора — відбиток корпусу, і його можна прочитати.</li>
+  <li><b>Чужий словник — це не «дорого», а «сліпо»:</b> девʼять токенів із десяти
+    <code>[UNK]</code>. Байтовий рятує від сліпоти, але коштує вшестеро дорожче,
+    і контекст стискається з двох тисяч слів до трьохсот.</li>
+</ul>
+
+<p>І окремо — прийом, на якому все тут трималось. Ми весь час порівнювали дві мови
+на <b>тому самому змісті</b>. Порівнювати токенізатори на різних текстах можна
+нескінченно й без результату: різниця завжди знайдеться, тільки невідомо, чия вона.</p>
+
+<h3>Куди йдемо далі</h3>
+
+<p>Ми навчилися різати текст, але зробили це <b>наосліп</b>: BPE знайшов закінчення
+«ни» й «нів» випадково, бо вони часті, а корінь «телефон» покришив на смітинки.
+Напрошується питання: а що, як натомість <b>звести всі форми слова до однієї</b> —
+«файлів», «файли», «файлу» до «файл»? Тоді словник упаде сам собою, і не
+випадково, а за правилами мови.</p>
+
+<p><a href="../03-morphology/lecture.html">Тема 03</a> саме про це: лематизація
+проти стемінгу, і чому для української ці дві операції мають <b>різну ціну</b>, хоч
+для англійської майже однакову. Далі <a href="../04-bag-of-words/lecture.html">тема
+04</a> нарешті зробить із токенів числа — найпростішим способом, який тільки буває,
+і побачить, чого він коштує. А <a href="../05-tfidf/lecture.html">тема 05</a> покаже,
+що просто рахувати токени мало: частота слова й його важливість — різні речі.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../01-text-is-hard/lecture.html"><span class="dir">попередня</span><span class="ttl">01. Чому текст складніший за таблицю</span></a>
+    <a class="next" href="../03-morphology/lecture.html"><span class="dir">наступна</span><span class="ttl">03. Морфологія: лематизація і стемінг</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* перемикач: кнопки з довільним data-атрибутом, а не лише data-i */
+function segment(box, attr, fn){
+  if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset[attr]);
+  });
+}
+/* «1 токен», «3 токени», «12 токенів» — інакше вердикт читається як недописаний */
+function plural(n,one,few,many){
+  var t2=n%10, h=n%100;
+  if(h>=11&&h<=14) return many;
+  if(t2===1) return one;
+  if(t2>=2&&t2<=4) return few;
+  return many;
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function pct(v){return (v>=0?'+':'−')+f1(Math.abs(v))+' %';}
+/* рамка з підписом усередині — базова цеглина всіх фігур теми */
+function chip(g,txt,x,y,h,fill,stroke,ink,px){
+  g.font=mono(px||14,true);
+  var w=Math.max(26, g.measureText(txt).width+16);
+  g.fillStyle=fill; g.strokeStyle=stroke; g.lineWidth=1.5;
+  g.beginPath(); g.roundRect(x,y,w,h,7); g.fill(); g.stroke();
+  g.fillStyle=ink; g.textAlign='center'; g.textBaseline='middle';
+  g.fillText(txt,x+w/2,y+h/2+0.5);
+  return w;
+}
+/* горизонтальна смуга з порогом: використана у фігурі 1 */
+function gauge(g,x,y,w,h,frac,ok){
+  g.fillStyle=css('--paper'); g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.roundRect(x,y,w,h,6); g.fill(); g.stroke();
+  var fw=Math.max(3, Math.min(1,frac)*w);
+  g.fillStyle=ok?css('--teal'):css('--rose');
+  g.beginPath(); g.roundRect(x,y,fw,h,6); g.fill();
+}
+function dash(g,x1,y1,x2,y2,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke(); g.restore();
+}
+
+/* ═══════════ 1 · три рівні різання ═══════════ */
+/* числа з зошита: [розмір словника, частка невідомих, токенів на 1000 слів] */
+var LEVELS=[
+  [[156,0.0000,6436.8],[28821,0.0153,1342.5],[4000,0.0871,1342.5],[4000,0.0000,1631.5]],
+  [[220,0.0000,7569.9],[46701,0.0247,1365.7],[4000,0.1640,1365.7],[4000,0.0000,1992.1]]
+];
+var LEVEL_NAMES=['символи','слова, усі','слова, топ-4000','субслова, BPE-4000'];
+var LEVEL_PIECES=[
+  ['р','о','з','п','а','к','у','в','а','н','н','я'],
+  ['розпакування'],
+  ['[UNK]'],
+  ['роз','па','кування']
+];
+var lvLang=1, lvLevel=3;
+var VOC_LIMIT=4000, OOV_LIMIT=0.01, LEN_LIMIT=2500;
+
+function drawLevels(){
+  var cv=I('cLvl'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var row=LEVELS[lvLang][lvLevel];
+  var voc=row[0], oov=row[1], len=row[2];
+  var okVoc=voc<=VOC_LIMIT, okOov=oov<OOV_LIMIT, okLen=len<=LEN_LIMIT;
+  var passed=(okVoc?1:0)+(okOov?1:0)+(okLen?1:0);
+
+  capt(g,'слово «розпакування» на рівні «'+LEVEL_NAMES[lvLevel]+'»',28,32,css('--soft'),12,false);
+  var pieces=LEVEL_PIECES[lvLevel], x=28, i, unk;
+  for(i=0;i<pieces.length;i++){
+    unk=(pieces[i]==='[UNK]');
+    x+=chip(g,pieces[i],x,46,40,unk?css('--rose-w'):css('--teal-w'),
+            unk?css('--rose'):css('--hair'),css('--ink'),15)+8;
+  }
+  capt(g,pieces.length+' '+plural(pieces.length,'токен','токени','токенів'),x+6,72,css('--soft'),12,false);
+
+  var bars=[
+    ['словник', Math.log(voc/100)/Math.log(500), okVoc,
+     String(voc), 'поріг 4000', Math.log(40)/Math.log(500)],
+    ['невідомих', oov/0.20, okOov, f4(oov), 'поріг 0.0100', 0.01/0.20],
+    ['токенів / 1000 слів', len/8000, okLen, f1(len), 'поріг 2500', 2500/8000]
+  ];
+  var bx=250, bw=W-bx-120, k, by;
+  for(k=0;k<3;k++){
+    by=150+k*88;
+    capt(g,bars[k][0],28,by+21,css('--ink'),13,true);
+    gauge(g,bx,by,bw,30,bars[k][1],bars[k][2]);
+    dash(g,bx+bw*bars[k][5],by-8,bx+bw*bars[k][5],by+38,css('--soft'));
+    capt(g,bars[k][4],bx+bw*bars[k][5],by-14,css('--soft'),10.5,false,'center');
+    capt(g,bars[k][3],W-108,by+21,bars[k][2]?css('--teal'):css('--rose'),15,true);
+    capt(g,bars[k][2]?'✓':'✗',W-34,by+21,bars[k][2]?css('--teal'):css('--rose'),18,true);
+  }
+
+  I('lvVoc').textContent=voc;
+  I('lvOov').textContent=f4(oov);
+  I('lvLen').textContent=f1(len);
+  I('lvOk').textContent=passed+' / 3';
+  var lang=lvLang?'українська':'англійська';
+  if(passed===3) verd('lvVer','t-ok','УСІ ТРИ',
+    lang+', рівень «'+LEVEL_NAMES[lvLevel]+'»: словник '+voc+', невідомих '+f4(oov)+', довжина '+f1(len)+'. Жодного компромісу.');
+  else if(passed===2) verd('lvVer','t-mid','ДВІ З ТРЬОХ',
+    lang+', рівень «'+LEVEL_NAMES[lvLevel]+'»: провалено '
+    +(okVoc?(okOov?'довжину — '+f1(len)+' токенів на 1000 слів':'невідомі — '+f4(oov)):'словник — '+voc+' рядків')
+    +'. Дві вимоги з трьох виконано, і саме третя вирішує, що цим рівнем не користуються.');
+  else verd('lvVer','t-no','ОДНА З ТРЬОХ',
+    lang+', рівень «'+LEVEL_NAMES[lvLevel]+'»: словник '+voc+', невідомих '+f4(oov)+', довжина '+f1(len)+'. Для роботи це не годиться.');
+}
+segment(I('langSeg'),'lang',function(v){lvLang=v; drawLevels();});
+segment(I('lvlSeg'),'lvl',function(v){lvLevel=v; drawLevels();});
+
+/* ═══════════ 2 · BPE крок за кроком ═══════════ */
+/* корпус той самий, що в зошиті: шість слів із їхніми справжніми частотами */
+var BPE_WORDS=['файл','файлів','каталог','файли','файлу','каталогу'];
+var BPE_FREQ=[3314,1080,971,685,559,504];
+
+/* один крок алгоритму: знайти найчастішу пару. Нічию розводимо так само,
+   як Counter.most_common у Python — перемагає та, що трапилась першою. */
+function bestPair(pieces){
+  var order=[], counts={}, i, j, key;
+  for(i=0;i<pieces.length;i++)
+    for(j=0;j+1<pieces[i].length;j++){
+      key=pieces[i][j]+' '+pieces[i][j+1];
+      if(counts[key]===undefined){counts[key]=0; order.push(key);}
+      counts[key]+=BPE_FREQ[i];
+    }
+  if(!order.length) return null;
+  var win=order[0], rivals=0;
+  for(i=1;i<order.length;i++) if(counts[order[i]]>counts[win]) win=order[i];
+  for(i=0;i<order.length;i++) if(counts[order[i]]===counts[win]) rivals++;
+  var half=win.split(' ');
+  return {left:half[0], right:half[1], count:counts[win], rivals:rivals};
+}
+function applyMerge(pieces,pair){
+  var out=[], i, j, row, cur;
+  for(i=0;i<pieces.length;i++){
+    row=pieces[i]; cur=[]; j=0;
+    while(j<row.length){
+      if(j+1<row.length && row[j]===pair.left && row[j+1]===pair.right){cur.push(pair.left+pair.right); j+=2;}
+      else {cur.push(row[j]); j++;}
+    }
+    out.push(cur);
+  }
+  return out;
+}
+function bpeState(steps){
+  var pieces=[], i, k, pair;
+  for(i=0;i<BPE_WORDS.length;i++) pieces.push(BPE_WORDS[i].split(''));
+  for(k=0;k<steps;k++){
+    pair=bestPair(pieces); if(!pair) break;
+    pieces=applyMerge(pieces,pair);
+  }
+  return {pieces:pieces, next:bestPair(pieces)};
+}
+var bpeSteps=0;
+function drawBpe(){
+  var cv=I('cBpe'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var st=bpeState(bpeSteps), total=0, i, j, x, y, row, hot;
+  for(i=0;i<st.pieces.length;i++) total+=st.pieces[i].length;
+
+  capt(g,'злиттів зроблено: '+bpeSteps+'   ·   шматків у шести словах: '+total,28,28,css('--soft'),12,false);
+  for(i=0;i<st.pieces.length;i++){
+    y=48+i*52; row=st.pieces[i]; x=28;
+    for(j=0;j<row.length;j++){
+      hot = !!st.next && ((row[j]===st.next.left && j+1<row.length && row[j+1]===st.next.right) ||
+                          (row[j]===st.next.right && j>0 && row[j-1]===st.next.left));
+      x+=chip(g,row[j],x,y,36,hot?css('--rose-w'):css('--teal-w'),
+              hot?css('--rose'):css('--hair'),css('--ink'),15)+7;
+    }
+    capt(g,'x'+BPE_FREQ[i],W-30,y+24,css('--soft'),12,false,'right');
+  }
+  y=48+6*52+18;
+  if(st.next) capt(g,'наступне злиття: «'+st.next.left+'» + «'+st.next.right+'» дає «'
+      +(st.next.left+st.next.right)+'», частота '+st.next.count
+      +', претендентів: '+st.next.rivals,28,y,css('--rose'),12.5,true);
+  else capt(g,'зливати більше нічого: усі шість слів стали цілими токенами',28,y,css('--teal'),12.5,true);
+
+  I('mrgOut').textContent=bpeSteps;
+  I('bpTot').textContent=total;
+  I('bpPair').textContent=st.next?(st.next.left+' + '+st.next.right):'—';
+  I('bpCnt').textContent=st.next?st.next.count:'—';
+  I('bpTie').textContent=st.next?st.next.rivals:'—';
+  if(!st.next) verd('bpVer','t-ok','ГОТОВО',
+    'Після '+bpeSteps+' злиттів шматків рівно '+total+' — по одному на слово. Далі зливати нічого.');
+  else if(st.next.rivals>1) verd('bpVer','t-no','НІЧИЯ',
+    'Найбільшу частоту '+st.next.count+' мають '+st.next.rivals+' '+plural(st.next.rivals,'пара','пари','пар')+' одразу. Правило «злий найчастішу» не каже, яку з них брати — тут реалізації й розходяться.');
+  else verd('bpVer','t-mid','ОДИН ЛІДЕР',
+    'Пара «'+st.next.left+'» + «'+st.next.right+'» з частотою '+st.next.count+' — єдина з такою частотою, вибір однозначний. Шматків зараз '+total+'.');
+}
+on('mrg4','input',function(e){bpeSteps=+e.target.value; drawBpe();});
+
+/* ═══════════ 3 і 4 · націнка та її розклад ═══════════ */
+var VOCS=[500,1000,2000,4000,8000,16000];
+var EN_W=[2726.5,2228.2,1872.4,1631.5,1489.4,1414.9];
+var UK_W=[3537.6,2852.4,2361.0,1992.1,1731.5,1562.5];
+var MARK =[29.7,28.0,26.1,22.1,16.3,10.4];
+var MSD  =[0.10,0.01,0.07,0.10,0.05,0.03];
+var GRAIN=[1.1032,1.0885,1.0722,1.0383,0.9885,0.9390];
+var LENFAC=1.1760;
+var TOTAL=[1.2974,1.2801,1.2609,1.2211,1.1625,1.1043];
+
+var curveIdx=0;
+function drawCurve(){
+  var cv=I('cCurve'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var L=86, R=W-40, T=44, B=296;
+  var lo=Math.log(500), hi=Math.log(16000);
+  function px(v){return L+(Math.log(v)-lo)/(hi-lo)*(R-L);}
+  function py(v){return B-(v-1200)/2500*(B-T);}
+  var i, v;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  for(v=1500;v<=3500;v+=500){
+    g.beginPath(); g.moveTo(L,py(v)); g.lineTo(R,py(v)); g.stroke();
+    capt(g,String(v),L-10,py(v)+4,css('--soft'),10.5,false,'right');
+  }
+  for(i=0;i<VOCS.length;i++) capt(g,String(VOCS[i]),px(VOCS[i]),B+20,css('--soft'),10.5,false,'center');
+  capt(g,'розмір словника',(L+R)/2,B+40,css('--soft'),11.5,false,'center');
+  capt(g,'токенів на 1000 слів',28,T-16,css('--soft'),11.5,false,'left');
+
+  function line(arr,color){
+    g.strokeStyle=color; g.lineWidth=2.5; g.beginPath();
+    for(i=0;i<VOCS.length;i++){ if(i) g.lineTo(px(VOCS[i]),py(arr[i])); else g.moveTo(px(VOCS[i]),py(arr[i])); }
+    g.stroke();
+    for(i=0;i<VOCS.length;i++){ g.fillStyle=color; g.beginPath(); g.arc(px(VOCS[i]),py(arr[i]),3.5,0,6.284); g.fill(); }
+  }
+  line(EN_W,css('--teal')); line(UK_W,css('--rose'));
+  capt(g,'українська',px(VOCS[2]),py(UK_W[2])-16,css('--rose'),12.5,true);
+  capt(g,'англійська',px(VOCS[2]),py(EN_W[2])+26,css('--teal'),12.5,true);
+
+  var cx=px(VOCS[curveIdx]);
+  dash(g,cx,T-6,cx,B+6,css('--soft'));
+  g.strokeStyle=css('--ink'); g.lineWidth=2;
+  g.beginPath(); g.arc(cx,py(EN_W[curveIdx]),7,0,6.284); g.stroke();
+  g.beginPath(); g.arc(cx,py(UK_W[curveIdx]),7,0,6.284); g.stroke();
+
+  var by=B+62, bw=R-L;
+  capt(g,'націнка на українську',28,by-10,css('--soft'),11.5,false);
+  g.fillStyle=css('--paper'); g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.roundRect(L,by,bw,26,6); g.fill(); g.stroke();
+  var frac=MARK[curveIdx]/35, fw=Math.max(4,frac*bw);
+  g.fillStyle=MARK[curveIdx]>25?css('--rose'):(MARK[curveIdx]>15?css('--amber'):css('--teal'));
+  g.beginPath(); g.roundRect(L,by,fw,26,6); g.fill();
+  capt(g,pct(MARK[curveIdx]),L+fw+12,by+18,css('--ink'),14,true);
+
+  I('vocOut').textContent=VOCS[curveIdx];
+  I('cvEn').textContent=f1(EN_W[curveIdx]);
+  I('cvUk').textContent=f1(UK_W[curveIdx]);
+  I('cvMk').textContent=pct(MARK[curveIdx]);
+  I('cvSd').textContent='± '+f2(MSD[curveIdx]);
+  var m=MARK[curveIdx];
+  if(m>25) verd('cvVer','t-no','ДОРОГО',
+    'Словник '+VOCS[curveIdx]+': українська коштує '+f1(UK_W[curveIdx])+' токенів на 1000 слів проти '+f1(EN_W[curveIdx])+' англійською — на '+f1(m)+' % більше. Місця мові бракує.');
+  else if(m>15) verd('cvVer','t-mid','ТЕРПИМО',
+    'Словник '+VOCS[curveIdx]+': націнка '+f1(m)+' %. Уже помітно менша за найгіршу, але ще відчутна.');
+  else verd('cvVer','t-ok','ДЕШЕВО',
+    'Словник '+VOCS[curveIdx]+': націнка '+f1(m)+' % при розкиді '+f2(MSD[curveIdx])+'. Різниця між мовами майже стерлась — і стерло її саме місце в словнику.');
+}
+on('voc6','input',function(e){curveIdx=+e.target.value; drawCurve();});
+
+var splitIdx=0;
+function drawSplit(){
+  var cv=I('cSplit'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var base=H-70, top=64, lo=0.85, hi=1.35;
+  function py(v){return base-(v-lo)/(hi-lo)*(base-top);}
+  var bars=[
+    ['за довжину слова', LENFAC, css('--teal')],
+    ['за дрібність різання', GRAIN[splitIdx], GRAIN[splitIdx]>1?css('--rose'):css('--teal')],
+    ['разом = націнка', TOTAL[splitIdx], css('--amber')]
+  ];
+  var bw=180, gap=(W-2*90-3*bw)/2, i, x, y;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(88,base); g.lineTo(W-40,base); g.stroke();
+  dash(g,88,py(1),W-40,py(1),css('--soft'));
+  capt(g,'1.0000',82,py(1)+4,css('--soft'),11,false,'right');
+  for(i=0;i<3;i++){
+    x=90+i*(bw+gap); y=py(bars[i][1]);
+    g.fillStyle=bars[i][2];
+    g.globalAlpha=0.22; g.beginPath(); g.roundRect(x,Math.min(y,py(1)),bw,Math.max(2,Math.abs(py(1)-y)),6); g.fill();
+    g.globalAlpha=1;
+    g.strokeStyle=bars[i][2]; g.lineWidth=3;
+    g.beginPath(); g.moveTo(x,y); g.lineTo(x+bw,y); g.stroke();
+    capt(g,f4(bars[i][1]),x+bw/2,bars[i][1]>=1?y-14:y+24,bars[i][2],17,true,'center');
+    capt(g,bars[i][0],x+bw/2,base+26,css('--ink'),12.5,true,'center');
+  }
+  capt(g,'словник '+VOCS[splitIdx],28,32,css('--soft'),12.5,true);
+  capt(g,f4(LENFAC)+' x '+f4(GRAIN[splitIdx])+' = '+f4(TOTAL[splitIdx]),W-40,32,css('--soft'),12.5,true,'right');
+
+  I('voc7Out').textContent=VOCS[splitIdx];
+  I('spLen').textContent=f4(LENFAC);
+  I('spGr').textContent=f4(GRAIN[splitIdx]);
+  I('spTot').textContent=f4(TOTAL[splitIdx]);
+  I('spMk').textContent=pct(MARK[splitIdx]);
+  var gr=GRAIN[splitIdx];
+  if(gr>1.05) verd('spVer','t-no','МОРФОЛОГІЯ ДОРОЖЧАЄ',
+    'Множник за дрібність '+f4(gr)+' помітно більший за одиницю. При словнику '+VOCS[splitIdx]+' українську справді ріжуть дрібніше, і це додає до націнки понад пʼять відсотків.');
+  else if(gr>1) verd('spVer','t-mid','МАЙЖЕ ЗРІВНЯЛОСЬ',
+    'Множник за дрібність '+f4(gr)+' — уже майже одиниця. Майже вся націнка '+pct(MARK[splitIdx])+' пояснюється сталим множником '+f4(LENFAC)+' за довжину слова.');
+  else verd('spVer','t-ok','ДРІБНІСТЬ ЗА УКРАЇНСЬКУ',
+    'Множник за дрібність '+f4(gr)+' нижчий за одиницю: на той самий символ українського тексту виходить менше токенів. Уся націнка, що лишилась, — це довжина слова.');
+}
+on('voc7','input',function(e){splitIdx=+e.target.value; drawSplit();});
+
+/* ═══════════ 5 · домен вирішує, а не мова ═══════════ */
+/* поділ і частоти — з зошита, BPE зі словником 4000 на нашому корпусі */
+var DOM=[
+  ['телефон',      ['те','ле','фо','н'],       6],
+  ['телефони',     ['те','ле','фо','ни'],      1],
+  ['телефонів',    ['те','ле','фо','нів'],     0],
+  ['налаштування', ['налаштування'],         450],
+  ['неможливо',    ['неможливо'],           1082],
+  ['розпакування', ['роз','па','кування'],    19],
+  ['файл',         ['файл'],                3314],
+  ['дерево',       ['дерево'],                77],
+  ['кіт',          ['кі','т'],                 0]
+];
+var domIdx=0;
+function drawDom(){
+  var cv=I('cDom'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var row=DOM[domIdx], pieces=row[1], freq=row[2], n=pieces.length, i, x;
+
+  capt(g,'слово',28,34,css('--soft'),12,false);
+  capt(g,row[0],28,74,css('--ink'),30,true);
+  capt(g,'як його поділив BPE зі словником 4000',28,124,css('--soft'),12,false);
+  x=28;
+  for(i=0;i<n;i++)
+    x+=chip(g,pieces[i],x,138,46,n===1?css('--teal-w'):css('--rose-w'),
+            n===1?css('--teal'):css('--rose'),css('--ink'),17)+9;
+  capt(g,n===1?'ціле слово — один токен':(n+' '+plural(n,'шматок','шматки','шматків')),
+       x+8,167,n===1?css('--teal'):css('--rose'),13,true);
+
+  /* частота, логарифмічна шкала: 0 -> нуль, далі log10 до 4000 */
+  var by=250, L=28, R=W-190;
+  capt(g,'скільки разів це слово трапилось у корпусі',L,by-14,css('--soft'),12,false);
+  g.fillStyle=css('--paper'); g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.roundRect(L,by,R-L,34,7); g.fill(); g.stroke();
+  var frac = freq<=0 ? 0 : Math.log(freq+1)/Math.log(4001);
+  if(frac>0){
+    g.fillStyle=freq>=100?css('--teal'):css('--amber');
+    g.beginPath(); g.roundRect(L,by,Math.max(6,frac*(R-L)),34,7); g.fill();
+  }
+  capt(g,freq===0?'жодного разу':(freq+' '+plural(freq,'раз','рази','разів')),
+       R+16,by+23,freq===0?css('--rose'):css('--ink'),16,true);
+  var ticks=[1,10,100,1000], t;
+  for(i=0;i<ticks.length;i++){
+    t=L+Math.log(ticks[i]+1)/Math.log(4001)*(R-L);
+    dash(g,t,by+38,t,by+48,css('--hair'));
+    capt(g,String(ticks[i]),t,by+62,css('--soft'),10.5,false,'center');
+  }
+  capt(g,'шкала логарифмічна',L,by+90,css('--soft'),11,false);
+
+  I('dmPc').textContent=n;
+  I('dmFq').textContent=freq;
+  var seen = freq===0 ? 'не трапилось у корпусі жодного разу'
+                      : 'трапилось у корпусі '+freq+' '+plural(freq,'раз','рази','разів');
+  if(n===1) verd('dmVer','t-ok','ЦІЛЕ',
+    '«'+row[0]+'» '+seen+' і має власний рядок у словнику. Одне слово — один токен.');
+  else if(n<=3) verd('dmVer','t-mid','РОЗСИПАЛОСЬ НА '+n,
+    '«'+row[0]+'» '+seen+'. Власного рядка в словнику для нього не знайшлось, і BPE склав його з '+n+' дрібніших шматків.');
+  else verd('dmVer','t-no','РОЗСИПАЛОСЬ НА '+n,
+    '«'+row[0]+'» '+seen+'. Звичайне українське слово, якого цей корпус '
+    +(freq===0?'не бачив зовсім':'майже не бачив')+', — і воно розпалось на смітинки.');
+}
+segment(I('domSeg'),'w',function(v){domIdx=v; drawDom();});
+
+/* ═══════════ 6 · спецтокени ═══════════ */
+var TEXT_A=['Не','вдалося','відкрити','файл'];
+var TEXT_B=['Перевір','права','доступу'];
+var scPair=0, scMark=1, scPad=12;
+function drawSpec(){
+  var cv=I('cSpec'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var seq=[], i;
+  if(scMark) seq.push({t:'[CLS]',p:0,s:1});
+  for(i=0;i<TEXT_A.length;i++) seq.push({t:TEXT_A[i],p:0,s:0});
+  if(scMark) seq.push({t:'[SEP]',p:0,s:1});
+  if(scPair){
+    for(i=0;i<TEXT_B.length;i++) seq.push({t:TEXT_B[i],p:1,s:0});
+    if(scMark) seq.push({t:'[SEP]',p:1,s:1});
+  }
+  var real=seq.length, cut=Math.max(0,real-scPad);
+  if(cut>0) seq=seq.slice(0,scPad);
+  var shown=seq.length, pad=Math.max(0,scPad-shown);
+  for(i=0;i<pad;i++) seq.push({t:'[PAD]',p:-1,s:2});
+
+  /* розкладка: спершу міряємо ширини, потім ріжемо на рядки — інакше
+     смуги масок лягли б під перший рядок, а токени поїхали б на другий */
+  g.font=mono(14,true);
+  var W_MAX=W-40, rows=[], cur=[], curW=28;
+  for(i=0;i<seq.length;i++){
+    var wi=Math.max(26, g.measureText(seq[i].t).width+16);
+    if(cur.length && curW+wi>W_MAX){ rows.push(cur); cur=[]; curW=28; }
+    seq[i].w=wi; cur.push(seq[i]); curW+=wi+7;
+  }
+  if(cur.length) rows.push(cur);
+
+  capt(g,'послідовність, яку отримає модель  ·  під кожним рядком: угорі маска доповнення, унизу номер частини',
+       28,30,css('--soft'),12,false);
+  var y=46, r, k, item, fill, stroke, x;
+  for(r=0;r<rows.length;r++){
+    x=28;
+    for(k=0;k<rows[r].length;k++){
+      item=rows[r][k];
+      if(item.s===2){fill=css('--paper'); stroke=css('--hair');}
+      else if(item.p===1){fill=css('--amber-w'); stroke=css('--amber');}
+      else {fill=css('--teal-w'); stroke=css('--teal');}
+      chip(g,item.t,x,y,38,fill,stroke,item.s===2?css('--soft'):css('--ink'),14);
+      item.x=x; x+=item.w+7;
+    }
+    /* маска доповнення й номер частини — рівно під своїм рядком токенів */
+    for(k=0;k<rows[r].length;k++){
+      item=rows[r][k];
+      var one=(item.s!==2);
+      g.fillStyle=one?css('--teal'):css('--hair');
+      g.beginPath(); g.roundRect(item.x,y+42,item.w,18,5); g.fill();
+      g.fillStyle=one?css('--raise'):css('--soft'); g.font=mono(11,true);
+      g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(one?'1':'0',item.x+item.w/2,y+51);
+
+      g.fillStyle=item.p===1?css('--amber'):(item.p===0?css('--teal'):css('--hair'));
+      g.beginPath(); g.roundRect(item.x,y+64,item.w,18,5); g.fill();
+      g.fillStyle=item.p<0?css('--soft'):css('--raise'); g.font=mono(11,true);
+      g.fillText(item.p<0?'—':String(item.p),item.x+item.w/2,y+73);
+    }
+    y+=100;
+  }
+  if(cut>0) capt(g,'обрізано з кінця: '+cut+' '+plural(cut,'токен','токени','токенів')
+      +(scMark?' — разом із межею [SEP]':''),28,y-8,css('--rose'),12.5,true);
+
+  I('padOut').textContent=scPad;
+  I('spReal').textContent=shown;
+  I('spPad').textContent=pad;
+  I('spWaste').textContent=f2(pad/scPad);
+  I('spCut').textContent=cut;
+  if(cut>0) verd('scVer','t-no','ОБРІЗАНО',
+    'Пакет на '+scPad+' '+plural(scPad,'токен','токени','токенів')+', а треба '+real+'. Кінець тексту зник'
+    +(scMark?' разом із межею [SEP]':'')+' — модель побачить обірвану фразу й не дізнається про це.');
+  else if(pad/scPad>0.4) verd('scVer','t-mid','БАГАТО ПОРОЖНЕЧІ',
+    pad+' '+plural(pad,'токен','токени','токенів')+' із '+scPad+' — доповнення, тобто '+f2(pad/scPad)+' обчислень витрачається намарно. Маска їх не рахує, але час на них іде.');
+  else verd('scVer','t-ok','ЩІЛЬНО',
+    'Справжніх токенів '+shown+', доповнення '+pad+' із '+scPad+'. Пакет складений щільно — саме цього й домагаються, коли сортують тексти за довжиною.');
+}
+segment(I('pairSeg'),'pair',function(v){scPair=v; drawSpec();});
+segment(I('markSeg'),'mark',function(v){scMark=v; drawSpec();});
+on('pad10','input',function(e){scPad=+e.target.value; drawSpec();});
+
+/* ═══════════ 7 · ціна довгого тексту ═══════════ */
+var WINS=[1024,2048,4096,8192,16384,32768];
+var COST=[
+  ['англійський текст · англійський словник', 1604.4],
+  ['український текст · український словник', 1866.7],
+  ['український текст · англійський словник', 12461.6]
+];
+var winIdx=2, costIdx=1;
+function drawCost(){
+  var cv=I('cCost'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var win=WINS[winIdx], i, words=[], maxw=0;
+  for(i=0;i<COST.length;i++){ words.push(win/COST[i][1]*1000); if(words[i]>maxw) maxw=words[i]; }
+
+  capt(g,'довжина контексту: '+win+' '+plural(win,'токен','токени','токенів'),28,30,css('--soft'),12.5,true);
+  var L=28, R=W-150, y;
+  for(i=0;i<COST.length;i++){
+    y=64+i*98;
+    capt(g,COST[i][0],L,y-8,i===costIdx?css('--ink'):css('--soft'),12.5,i===costIdx);
+    g.fillStyle=css('--paper'); g.strokeStyle=i===costIdx?css('--ink'):css('--hair');
+    g.lineWidth=i===costIdx?2:1;
+    g.beginPath(); g.roundRect(L,y,R-L,44,7); g.fill(); g.stroke();
+    g.fillStyle=i===2?css('--rose'):(i===1?css('--amber'):css('--teal'));
+    g.beginPath(); g.roundRect(L,y,Math.max(5,words[i]/maxw*(R-L)),44,7); g.fill();
+    capt(g,Math.round(words[i])+' '+plural(Math.round(words[i]),'слово','слова','слів'),
+         R+16,y+29,i===costIdx?css('--ink'):css('--soft'),16,true);
+  }
+  capt(g,'довжина смуги — скільки слів уміщується в контекст',L,64+3*98-8,css('--soft'),11,false);
+
+  I('winOut').textContent=win;
+  I('csRate').textContent=f1(COST[costIdx][1]);
+  I('csWords').textContent=Math.round(words[costIdx]);
+  I('csPages').textContent=f1(words[costIdx]/500);
+  var mult=COST[costIdx][1]/COST[0][1];
+  I('csMult').textContent='x'+f2(mult);
+  if(mult<1.05) verd('csVer','t-ok','БАЗА',
+    'Англійський текст своїм словником: '+f1(COST[0][1])+' токенів на 1000 слів. У контекст на '+win+' '+plural(win,'токен','токени','токенів')+' влізе '+Math.round(words[0])+' '+plural(Math.round(words[0]),'слово','слова','слів')+' — це наша точка відліку.');
+  else if(mult<2) verd('csVer','t-mid','ТРОХИ ДОРОЖЧЕ',
+    'Українською зі своїм словником '+f1(COST[1][1])+' токенів на 1000 слів — у '+f2(mult)+' раза дорожче за англійську. У контекст влізе '+Math.round(words[1])+' '+plural(Math.round(words[1]),'слово','слова','слів')+' проти '+Math.round(words[0])+'.');
+  else verd('csVer','t-no','ЧУЖИЙ СЛОВНИК',
+    'Той самий український текст чужим словником коштує '+f1(COST[2][1])+' токенів на 1000 слів — у '+f2(mult)+' раза дорожче за англійський текст і в '+f2(COST[2][1]/COST[1][1])+' раза дорожче, ніж своїм словником. У контекст на '+win+' '+plural(win,'токен','токени','токенів')+' влізе '+Math.round(words[2])+' '+plural(Math.round(words[2]),'слово','слова','слів')+' замість '+Math.round(words[1])+'.');
+}
+on('win12','input',function(e){winIdx=+e.target.value; drawCost();});
+segment(I('costSeg'),'c',function(v){costIdx=v; drawCost();});
+
+/* ═══════════ перший показ і перемальовування при зміні теми ═══════════ */
+function drawAll(){ drawLevels(); drawBpe(); drawCurve(); drawSplit(); drawDom(); drawSpec(); drawCost(); }
+drawAll();
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change',drawAll);
+}
+window.addEventListener('resize',drawAll);
+})();
+</script>
+</body>
+</html>

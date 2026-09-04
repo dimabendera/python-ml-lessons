@@ -1,0 +1,1939 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision Transformer: як трансформер для тексту навчили дивитися на картинки</title>
+<meta name="description" content="Як із операції уваги збирають мережу для зображень: нарізання на патчі, проєкція патча як згортка, CLS-токен, блок енкодера з нормою спереду. Розклад справжнього ViT-B по частинах, ціна розміру патча, чесне порівняння з CNN на малих даних і перевірка того, коли позиційне кодування справді потрібне.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 4 · Тема 20</p>
+    <h1>Vision Transformer</h1>
+    <p class="stand">Спробувати згодувати мережі для тексту звичайне зображення —
+      і майже нічого в ній не змінювати. Ідея, яка в 2020-му виглядала
+      несерйозною, за пʼять років стала базовою. Розберемо, як саме з операції
+      уваги збирають мережу для картинок, скільки це коштує і де воно
+      не спрацьовує.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Смілива ідея</a></li>
+        <li><a href="#s2">Зображення як послідовність</a></li>
+        <li><a href="#s3">Проєкція патча — це згортка</a></li>
+        <li><a href="#s4">CLS-токен</a></li>
+        <li><a href="#s5">Блок енкодера</a></li>
+        <li><a href="#s6">Розклад справжнього ViT</a></li>
+        <li><a href="#s7">Скільки коштує розмір патча</a></li>
+        <li><a href="#s8">ViT проти CNN на нашій задачі</a></li>
+        <li><a href="#s9">Позиційне кодування допомагає не завжди</a></li>
+        <li><a href="#s10">Чому справжній ViT усе-таки працює</a></li>
+        <li><a href="#s11">Що ViT дав галузі</a></li>
+        <li><a href="#s12">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../19-conv-to-attention/lecture.html">← 19. Від згортки до уваги</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../21-swin-hybrids/lecture.html">21. Swin і гібриди →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У попередній темі ми розібрали саму операцію уваги: як із набору
+векторів робляться запити, ключі й значення, чому в знаменнику стоїть корінь із
+розмірності, навіщо кілька голів і чому увага не бачить порядку, поки їй не
+підкажеш. Операція є. Тепер питання інженерне: як із неї зібрати мережу, якій
+можна показати фотографію. Відповідь, яку дали автори Vision Transformer,
+приблизно така: «а давайте нічого не збиратимемо — візьмемо готову мережу для
+тексту й наріжемо картинку на шматочки, щоб вона була схожа на речення».</p>
+
+<h2 id="s1"><span class="num">01 / Ідея</span>Смілива ідея</h2>
+
+<p>Щоб оцінити зухвалість цього кроку, треба згадати, як виглядав компʼютерний зір
+до 2020 року. Вісімнадцять тем цього курсу — і майже кожна стоїть на згортці.
+Згортка не просто «якось працює»: вона вносить у мережу три припущення про світ,
+і всі три для зображень правдиві.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Припущення 1 · Локальність</span>
+    <p>Сусідні пікселі повʼязані сильніше, ніж далекі. Ядро 3×3 дивиться на девʼять
+    пікселів поруч і не бачить решти — і це не обмеження, а підказка: у зображенні
+    справді важливо, що поруч, а не що за двісті пікселів звідси.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Припущення 2 · Спільні ваги</span>
+    <p>Те саме ядро проїжджає по всьому зображенню. Детектор краю, вивчений у
+    лівому верхньому куті, працює й у правому нижньому. Мережа вчить одну штуку
+    замість тисячі однакових.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Припущення 3 · Терпимість до зсуву</span>
+    <p>Зсунув предмет — карта ознак зсунулась разом із ним, а після пулінга
+    відповідь майже не змінилась. У <a href="../06-why-not-dense/lecture.html">темі
+    06</a> це поміряно прямо: на зсунутих предметах повнозвʼязна мережа падає
+    до 0.360 (рівень вгадування — 0.333), а згорткова тримає 0.607, маючи при
+    цьому в тринадцять разів менше ваг.</p>
+  </div>
+</div>
+
+<p>Vision Transformer прибирає всі три. Він ріже зображення на квадратні патчі,
+робить із кожного вектор — і далі поводиться з ними як зі словами в реченні.
+Кожен патч із першого ж шару бачить усі інші. Ніякої локальності, ніякої
+пірамідки, ніякого пулінга. Позиція патча в кадрі перестає бути частиною
+будови мережі й стає просто ще одним числом, яке треба вивчити.</p>
+
+<div class="note warn"><b>Чому це виглядало божевіллям.</b> Викинути три
+припущення, які роками працювали, — означає, що мережа має вивчити їх наново
+з даних. Локальність, спільні ваги й терпимість до зсуву були <em>безкоштовними</em>:
+вони йшли разом із архітектурою і не коштували жодного прикладу з навчальної
+вибірки. Тепер за них треба платити даними. Розділ 8 покаже, скільки саме, а
+розділ 10 — чому в оригінальній роботі рахунок усе-таки зійшовся.</div>
+
+<p>Далі в темі ми не переказуватимемо саму увагу — вона розібрана
+в <a href="../19-conv-to-attention/lecture.html">темі 19</a>. Нас цікавить те,
+що навколо неї: як зображення перетворюється на послідовність, що робить
+проєкція патча, навіщо зайвий токен, як улаштований блок і скільки все це
+коштує в параметрах і в часі.</p>
+
+<h2 id="s2"><span class="num">02 / Вхід</span>Зображення як послідовність</h2>
+
+<p>Трансформер для тексту їсть послідовність векторів: одне слово — один вектор.
+Зображення — це не послідовність, це двовимірна сітка чисел. Треба якось
+перетворити одне на інше.</p>
+
+<p>Найпростіше, що спадає на думку: нехай кожен піксель буде «словом». Для нашої
+картинки 28×28 це 784 токени. Увага рахує вагу для <em>кожної пари</em> токенів,
+тобто 784 × 784 = 614 656 пар — вже на першому шарі. Для звичайної фотографії
+224×224 пікселів вийде 50 176 токенів і понад два з половиною мільярди пар. Це
+не «повільно», це неможливо.</p>
+
+<p>Розвʼязок, який дає ViT, зумисне грубий: розріжемо зображення на квадратні
+патчі (patch) розміром P×P і оголосимо патч одним токеном. Для 28×28 і
+P = 4 виходить сітка 7×7, тобто <b>49 патчів</b> — і 49 × 49 = 2 401 пара
+замість 614 656. У 256 разів дешевше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Зображення в патчі</p>
+  <p class="fig-sub">Покрути розмір патча й подивись, як одночасно міняються
+    чотири речі: скільки виходить токенів, якої довжини вектор кожного, скільки
+    ваг у матриці, що робить із нього токен, і наскільки грубою стає сітка.</p>
+  <div class="panel">
+    <div><canvas id="cGrid" width="940" height="380" aria-label="Зображення 28 на 28 із накладеною сіткою патчів; праворуч — та сама сітка як послідовність токенів"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="p2">розмір патча <output id="p2v">4</output></label>
+        <input type="range" id="p2" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>токенів</b><i id="p2tok">—</i></div>
+        <div class="cellv"><b>довжина вектора</b><i id="p2len">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пар уваги</b><i id="p2pair">—</i></div>
+        <div class="cellv"><b>ваг у проєкції</b><i id="p2par">—</i></div>
+      </div>
+      <div class="verdict" id="p2vd"></div>
+    </div>
+  </div>
+  <figcaption>Зображення 28×28, один канал, розмірність токена 48 — така сама
+    крихітна модель, яку ми навчаємо в практиці. «Ваг у проєкції» = P×P×48 + 48.</figcaption>
+</figure>
+
+<p>Тепер порахуємо руками, що саме відбувається з одним патчем. Беремо картинку
+28×28 і патч 4×4.</p>
+
+<ol class="steps">
+  <li><b>Ріжемо.</b> 28 ділиться на 4 без остачі, тому сітка виходить 7×7 = 49
+    патчів. Патчі не перекриваються й не мають проміжків.</li>
+  <li><b>Розгортаємо.</b> Патч 4×4 з одного каналу — це 16 чисел. Виписуємо
+    їх у рядок: спершу перший рядок патча зліва направо, потім другий, і так
+    усі чотири. Вийшов вектор довжини 16.</li>
+  <li><b>Множимо.</b> Множимо цей вектор на матрицю розміром 16 × 48 і додаємо
+    зсув із 48 чисел. Вийшов вектор довжини 48 — це й є токен.</li>
+</ol>
+
+<div class="eq">токен = вектор_патча · W + b,&nbsp;&nbsp; W: 16 × 48,&nbsp;&nbsp; b: 48</div>
+
+<p>Тут <b>W</b> — матриця, яку мережа вчить; вона одна на всі 49 патчів.
+<b>b</b> — вектор зсуву, теж один на всіх. Число 48 називають <b>розмірністю
+токена</b>: це ширина «шини», якою всі 49 векторів поїдуть далі крізь мережу.
+Ваг тут 16 × 48 + 48 = <b>816</b> — і цією ж матрицею обробляється кожен із
+49 патчів.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Патч → вектор → токен</p>
+  <p class="fig-sub">Обери патч на зображенні. Побачиш його 16 чисел крупно,
+    той самий патч розгорнутий у рядок і результат множення на матрицю —
+    токен із 48 чисел. Зверни увагу: перемикаючи патч, ти міняєш числа
+    ліворуч, але <b>не матрицю</b>. Вона одна на всіх.</p>
+  <div class="panel">
+    <div><canvas id="cPatch" width="940" height="400" aria-label="Один патч чотири на чотири крупно, його шістнадцять чисел у рядок, стрілка множення на матрицю і смужка з сорока восьми чисел токена"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="k3">номер патча <output id="k3v">24</output></label>
+        <input type="range" id="k3" min="0" max="48" step="1" value="24">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ряд · стовпець</b><i id="k3rc">—</i></div>
+        <div class="cellv"><b>чисел у патчі</b><i id="k3n">16</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найбільше в токені</b><i id="k3max">—</i></div>
+        <div class="cellv"><b>матриця</b><i id="k3w" class="sm">та сама</i></div>
+      </div>
+      <div class="verdict" id="k3vd"></div>
+    </div>
+  </div>
+  <figcaption>Матриця W заповнена детермінованим генератором, щоб числа збігались
+    у всіх читачів. Значення пікселів — 0…1, тому й числа токена невеликі.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Чесна деталь</span>Проєкція патча — це згортка</h2>
+
+<p>Прочитай ще раз, що ми щойно зробили: взяли квадратне вікно, розгорнули його
+в вектор, помножили на спільну матрицю, зсунули вікно на його ширину й повторили.
+Це дослівний опис згортки з ядром P×P і кроком (stride) P.</p>
+
+<div class="eq">нарізання + розгортання + спільна матриця &nbsp;≡&nbsp; Conv2d(канали, dim, kernel=P, stride=P)</div>
+
+<p>Це не аналогія й не «майже те саме». Ми перевірили це в практиці прямим
+порівнянням: власноруч нарізали зображення циклом, склали патчі в матрицю
+49 × 16, помножили на ту саму матрицю ваг — і звірили з тим, що видає
+<code>Conv2d</code>. Результат: <code>np.allclose</code> дає <b>True</b>,
+найбільша різниця <b>1.8e-07</b> — це чисельний шум float32, а не розбіжність.
+Наша нарізка збігається з <code>torch.nn.functional.unfold</code> уже
+<b>побітово</b>: різниця рівно 0.</p>
+
+<div class="note"><b>Наслідок, який часто замовчують.</b> Мережа, яку описують
+як «трансформер без згорток», має згортку першим шаром. У <code>torchvision</code>
+цей шар так і зветься — <code>conv_proj</code>. Тобто гасло «ViT довів, що
+згортки не потрібні» неточне навіть щодо самого ViT.</div>
+
+<p>Але це <b>особлива</b> згортка, і різниця принципова. Ядро дорівнює кроку,
+тому вікна не перекриваються: жоден піксель не потрапляє у два патчі. Локальність
+працює <em>усередині</em> патча й закінчується на його межі. Усе, що відбувається
+далі — 49 токенів, які дивляться один на одного без жодного уявлення про те,
+хто кому сусід. Згортка тут не будує ієрархію, вона просто пакує пікселі в токени.</p>
+
+<p>Звідси й перша практична порада, до якої дійшли пізніші роботи: якщо замість
+однієї згортки з кроком P поставити на вході маленький згортковий стем із кількох
+шарів 3×3, трансформер навчається помітно стабільніше. Локальність, повернута
+хоча б на вході, коштує дешево й окупається.</p>
+
+<h2 id="s4"><span class="num">04 / CLS</span>CLS-токен</h2>
+
+<p>Після енкодера ми маємо ті самі 49 токенів — кожен по 48 чисел. Класифікатору
+потрібен <b>один</b> вектор, з якого він зробить шість чисел (по одному на клас).
+Як із 49 зробити 1?</p>
+
+<p>Очевидний спосіб — усереднити: скласти всі 49 векторів і поділити на 49.
+Це рівно те саме глобальне усереднення, яке ми робили в
+<a href="../08-pooling/lecture.html">темі 08</a> над картою ознак, і воно нічого
+не коштує в параметрах.</p>
+
+<p>ViT робить інакше. Він додає <b>пʼятдесятий</b> токен, який не відповідає
+жодному патчу зображення. Це просто вектор із 48 чисел, який мережа вчить
+разом з усім іншим, і він однаковий для будь-якої картинки на вході. Токен
+називають <b>CLS</b> (від classification) — прийом запозичено з мовної моделі
+BERT. Після енкодера беруть вихід саме цього токена й подають у класифікатор.</p>
+
+<p>Логіка така. Токен патча мусить одночасно нести інформацію про свій патч
+<em>і</em> служити підсумком усього зображення — це дві різні роботи в одному
+векторі. CLS ніякого патча не представляє, тож уся його місткість вільна під
+підсумок. А механізм уваги дає йому право взяти з кожного патча рівно стільки,
+скільки треба: усереднення жорстко ставить усім вагу 1/49, CLS вибирає ваги сам.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Куди дивиться CLS-токен</p>
+  <p class="fig-sub">Ваги уваги від CLS до кожного з 49 патчів у нашій навченій
+    моделі. Перемикай фігуру, шар і голову. Рівномірна увага дала б скрізь
+    0.0204 = 1/49 — саме з цим числом і треба порівнювати те, що бачиш.</p>
+  <div class="panel">
+    <div><canvas id="cAttn" width="940" height="400" aria-label="Ліворуч вхідне зображення 28 на 28, праворуч теплова карта 7 на 7 з вагами уваги CLS-токена до кожного патча"></canvas></div>
+    <div>
+      <span class="cap">фігура</span>
+      <div class="seg" id="a4shape">
+        <button data-i="0" aria-pressed="true">коло</button>
+        <button data-i="1" aria-pressed="false">кільце</button>
+        <button data-i="2" aria-pressed="false">хрест</button>
+      </div>
+      <span class="cap">шар</span>
+      <div class="seg" id="a4layer">
+        <button data-i="0" aria-pressed="true">перший</button>
+        <button data-i="1" aria-pressed="false">другий</button>
+      </div>
+      <span class="cap">голова</span>
+      <div class="seg wrap" id="a4head">
+        <button data-i="0" aria-pressed="true">1</button>
+        <button data-i="1" aria-pressed="false">2</button>
+        <button data-i="2" aria-pressed="false">3</button>
+        <button data-i="3" aria-pressed="false">4</button>
+        <button data-i="4" aria-pressed="false">середнє</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найбільша вага</b><i id="a4max">—</i></div>
+        <div class="cellv"><b>у скільки разів &gt; 1/49</b><i id="a4rel">—</i></div>
+      </div>
+      <div class="verdict" id="a4vd"></div>
+    </div>
+  </div>
+  <figcaption>Модель із практики: патч 4×4, розмірність 48, два шари, чотири
+    голови, 41 574 ваги, навчена на 600 прикладах до точності 0.332. Ваги уваги
+    зняті прямим викликом <code>self_attn</code> з <code>need_weights=True</code>.</figcaption>
+</figure>
+
+<p>Картина повчальна й не така, як на красивих ілюстраціях у статтях. У першому
+шарі окремі голови ставлять майже всю вагу на один-єдиний патч: на колі
+найбільша вага доходить до <b>0.9505</b>, на кільці — до <b>0.9950</b> при
+рівномірних 0.0204. Це в 46-49 разів більше за рівномірну, тобто голова просто
+вибрала одну клітинку й дивиться тільки туди.</p>
+
+<p>У другому шарі на колі увага розмазується — максимум падає з 0.9505 до
+<b>0.2813</b>. Але це не універсальне правило: на хресті картина інша, там
+максимум у першому шарі 0.5644, а в другому 0.5692, тобто гостроти не додалось
+і не зникло. Красиві силуети предмета на теплових картах, які показують у
+статтях, зʼявляються на великих навчених моделях, а не на двошаровій іграшці,
+яку вчили на 600 прикладах.</p>
+
+<h3>А чи потрібен CLS насправді?</h3>
+
+<p>Це перевіряється заміром. Ми навчили ту саму модель двічі: з CLS-токеном і
+з усередненням по всіх 49 токенах, по три зерна на кожну.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>як зводимо 49 токенів в 1</th><th>три прогони</th><th>середнє</th><th>розкид</th><th>зайвих ваг</th></tr>
+<tr><td>CLS-токен</td><td>0.332 · 0.435 · 0.378</td><td>0.382</td><td>0.103</td><td>48</td></tr>
+<tr><td>середнє по токенах</td><td>0.372 · 0.437 · 0.398</td><td>0.402</td><td>0.065</td><td>0</td></tr>
+</table></div>
+
+<p>Різниця середніх — 0.021. А розкид від самої лише зміни зерна — 0.103, тобто
+впʼятеро більший. За правилом, яке ми вивели
+в <a href="../18-architecture-comparison/lecture.html">темі 18</a>, різниця,
+менша за розкид, різницею не є: <b>на нашій задачі CLS не дає нічого</b>. Він
+коштує 48 ваг і не окупає їх.</p>
+
+<div class="note"><b>Це не вирок CLS.</b> Наша задача — шість простих фігур на
+600 прикладах. У великих моделях різниця теж невелика, і частина сучасних
+архітектур зору свідомо відмовилась від CLS на користь усереднення. Правильний
+висновок не «CLS зайвий», а «CLS — це зручна конвенція, а не джерело сили ViT».
+Джерело сили — сама увага.</div>
+
+<h2 id="s5"><span class="num">05 / Блок</span>Блок енкодера</h2>
+
+<p>Тепер серце мережі. Енкодер ViT — це один і той самий блок, повторений
+кілька разів. У нашій моделі їх два, у ViT-B — дванадцять. Блок складається
+з чотирьох речей, і три з них ти вже знаєш.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Крок 1 · LayerNorm</span>
+    <p><b>Нормалізація по шару</b>: для кожного токена окремо віднімаємо середнє
+    його 48 чисел і ділимо на їхнє стандартне відхилення, потім множимо на
+    вивчений масштаб і додаємо вивчений зсув. На відміну від батчнорму
+    з <a href="../11-training-cnn/lecture.html">теми 11</a>, тут нічого не
+    усереднюється по батчу: кожен токен нормалізується сам по собі. Ваг —
+    рівно 2 × 48 = 96 на один LayerNorm.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 2 · Увага</span>
+    <p>Багатоголова увага з <a href="../19-conv-to-attention/lecture.html">теми
+    19</a>. Кожен токен формує запит, ключ і значення, зважує всі інші токени
+    й забирає з них зважену суму. Ваг при розмірності 48: три матриці 48×48
+    зі зсувами (запити, ключі, значення) — 3 × (48 × 48) + 3 × 48 = 6 912 + 144,
+    і вихідна матриця 48×48 + 48 = 2 352. Разом <b>9 408</b>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 3 · MLP</span>
+    <p>Дві повнозвʼязні операції з нелінійністю посередині, застосовані до
+    <em>кожного токена окремо</em>: розширити 48 → 96, застосувати нелінійність,
+    стиснути 96 → 48. Тут токени між собою не спілкуються взагалі — це чиста
+    обробка кожного вектора нарізно. Ваг: (48 × 96 + 96) + (96 × 48 + 48) = <b>9 360</b>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 4 · Залишкові звʼязки</span>
+    <p>І увага, і MLP додаються до входу, а не заміняють його — той самий скіп,
+    що в <a href="../14-resnet/lecture.html">темі 14</a>. Ми не переказуватимемо,
+    навіщо він; але саме через нього те, що проходить крізь весь стос блоків,
+    прийнято називати <b>залишковим потоком</b> (residual stream).</p>
+  </div>
+</div>
+
+<p>Разом один блок при розмірності 48 важить 9 408 + 9 360 + 2 × 96 = <b>18 960</b> ваг.
+Наша модель має два такі блоки — 37 920 ваг, або 91 % усієї мережі. Усе інше —
+проєкція патча, позиційне кодування, CLS і класифікатор — це решта 9 %.</p>
+
+<h3>Норма спереду чи ззаду</h3>
+
+<p>Лишається питання, де саме стоїть LayerNorm, і воно зовсім не косметичне.
+Є два варіанти, і історично першим був другий.</p>
+
+<div class="eq left">норма спереду (pre-norm, norm_first=True):
+    x = x + Увага(LN(x))
+    x = x + MLP(LN(x))
+
+норма ззаду (post-norm, norm_first=False):
+    x = LN(x + Увага(x))
+    x = LN(x + MLP(x))</div>
+
+<p>Різниця в одному: у першому варіанті нормалізація стоїть <em>на гілці</em>,
+а магістраль від входу до виходу лишається чистою сумою. У другому LayerNorm
+сидить <em>на самій магістралі</em> і перемасштабовує її після кожного блоку.
+Тобто в post-norm наскрізного тотожного шляху, заради якого скіп і придумали,
+насправді немає.</p>
+
+<p>Це не теорія, це видно на числах без жодного навчання. Ми пропустили той самий
+випадковий вхід крізь стос із дванадцяти ненавчених блоків і після кожного
+міряли косинус між тим, що тече зараз, і початковим входом — тобто наскільки
+початковий сигнал іще вцілів.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>після скількох блоків</th><th>1</th><th>4</th><th>8</th><th>12</th></tr>
+<tr><td>норма спереду</td><td>0.969</td><td>0.668</td><td>0.358</td><td>0.223</td></tr>
+<tr><td>норма ззаду</td><td>0.953</td><td>0.613</td><td>0.164</td><td>0.029</td></tr>
+</table></div>
+
+<p>Після дванадцяти блоків від початкового сигналу в pre-norm лишається 0.223,
+у post-norm — 0.029, у 7,7 раза менше. Практично це означає, що глибокий
+трансформер із нормою ззаду не навчається без обережного розігріву швидкості
+навчання на початку, а з нормою спереду — навчається просто так. Тому сучасні
+реалізації, включно з тією, що в <code>torch.nn.TransformerEncoderLayer</code>
+за прапорцем <code>norm_first=True</code>, беруть норму спереду. Ми теж.</p>
+
+<div class="note"><b>Усередині немає магії.</b> Ці чотири рядки — весь блок.
+У практиці ми пишемо їх руками й порівнюємо з бібліотечним
+<code>nn.TransformerEncoderLayer</code> на тих самих вагах: різниця виходить
+<b>рівно 0.0</b>, не «майже нуль». Блок трансформера справді складається тільки
+з того, що перелічено вище.</div>
+
+<h2 id="s6"><span class="num">06 / Розклад</span>Розклад справжнього ViT</h2>
+
+<p>Досі ми говорили про іграшку на 41 574 ваги. Подивимось на дорослу модель.
+<code>torchvision</code> уміє зібрати ViT-B — базовий Vision Transformer — двох
+різновидів: з патчем 16×16 і з патчем 32×32. Обидва працюють із зображенням
+224×224 і мають розмірність токена 768 та дванадцять блоків. Різниця між ними
+рівно одна — розмір патча. Ми зібрали обидва (нічого не завантажуючи з мережі)
+і порахували, скільки ваг у кожній частині.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>частина</th><th>ViT-B/16</th><th>ViT-B/32</th></tr>
+<tr><td>токенів (із CLS)</td><td>197</td><td>50</td></tr>
+<tr class="hot"><td>проєкція патча</td><td>590 592</td><td>2 360 064</td></tr>
+<tr><td>позиційне кодування</td><td>151 296</td><td>38 400</td></tr>
+<tr><td>CLS-токен</td><td>768</td><td>768</td></tr>
+<tr class="hot"><td>шари енкодера</td><td>85 054 464</td><td>85 054 464</td></tr>
+<tr><td>фінальний LayerNorm</td><td>1 536</td><td>1 536</td></tr>
+<tr><td>класифікатор</td><td>769 000</td><td>769 000</td></tr>
+<tr class="sumrow"><td>усього</td><td>86 567 656</td><td>88 224 232</td></tr>
+</table></div>
+
+<p>Головне число теми стоїть у передостанньому рядку: <b>85 054 464 в обох</b>.
+Не «приблизно однаково» — однаково до біта. Дванадцять блоків енкодера не знають
+і не хочуть знати, звідки взялися токени: їм байдуже, чи це 196 патчів по
+16×16, чи 49 патчів по 32×32. Розмір патча міняє тільки вхідний каскад.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Розклад ViT-B по частинах</p>
+  <p class="fig-sub">Перемикай патч 16 і 32 й дивись на стовпчики. Один із них
+    не рухається зовсім — це і є відкриття розділу. Нижні стовпчики намальовані
+    в логарифмічній шкалі, інакше все, крім енкодера, було б невидиме.</p>
+  <div class="panel">
+    <div><canvas id="cVit" width="940" height="400" aria-label="Стовпчики частин моделі ViT-B: проєкція патча, позиційне кодування, CLS, шари енкодера, фінальна нормалізація, класифікатор"></canvas></div>
+    <div>
+      <span class="cap">модель</span>
+      <div class="seg" id="v5seg">
+        <button data-i="0" aria-pressed="true">ViT-B/16</button>
+        <button data-i="1" aria-pressed="false">ViT-B/32</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>усього ваг</b><i id="v5tot">—</i></div>
+        <div class="cellv"><b>токенів</b><i id="v5tok">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>проєкція патча</b><i id="v5proj">—</i></div>
+        <div class="cellv"><b>шари енкодера</b><i id="v5enc">—</i></div>
+      </div>
+      <div class="verdict" id="v5vd"></div>
+    </div>
+  </div>
+  <figcaption>Обидві моделі зібрано через <code>weights=None</code> — це чиста
+    арифметика будови, нічого не завантажується. Класифікатор на 1000 класів
+    ImageNet: 768 × 1000 + 1000 = 769 000.</figcaption>
+</figure>
+
+<p>Перевірмо проєкцію рахунком, щоб число не було чарівним. Патч 32×32 із
+трьох кольорових каналів — це 32 × 32 × 3 = 3072 числа. Матриця переводить їх у
+768: 3072 × 768 = 2 359 296, плюс 768 зсувів = <b>2 360 064</b>. Збіглося. Для
+патча 16 те саме: 16 × 16 × 3 × 768 + 768 = 590 592.</p>
+
+<p>А тепер найцікавіше. Патч 32 дає вчетверо менше токенів (50 замість 197),
+тобто увага стає дешевшою приблизно в шістнадцять разів — вона квадратична.
+Але матриця проєкції росте вчетверо. Підсумок: <b>ViT-B/32 має більше
+параметрів, ніж ViT-B/16 — і рахується помітно швидше</b>. Це вже третій випадок
+у курсі, коли кількість параметрів і кількість обчислень розходяться в різні
+боки; перші два були в <a href="../15-efficient-architectures/lecture.html">темі
+15</a>.</p>
+
+<p>Ще одна деталь, яку варто помітити: позиційне кодування ViT-B/16 — це
+197 × 768 = 151 296 ваг, тобто 0.2 % моделі. Це <b>вся</b> геометрія, яку має
+Vision Transformer. Уся інформація про те, що патч номер 5 стоїть праворуч
+від патча номер 4, а не десь інде, сидить у цих 151 296 числах — і мережа
+мусить вивчити її з даних. Згортка знала це задарма.</p>
+
+<h2 id="s7"><span class="num">07 / Компроміс</span>Скільки коштує розмір патча</h2>
+
+<p>Розмір патча — головна ручка, яку крутить проєктувальник трансформера зору.
+Вона тягне за собою одразу чотири величини, і всі чотири — в різні боки.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>патч</th><th>токенів</th><th>пар уваги</th><th>ваг у проєкції</th><th>роздільність</th></tr>
+<tr><td>2×2</td><td>196</td><td>38 416</td><td>240</td><td>14×14</td></tr>
+<tr class="hot"><td>4×4</td><td>49</td><td>2 401</td><td>816</td><td>7×7</td></tr>
+<tr><td>7×7</td><td>16</td><td>256</td><td>2 400</td><td>4×4</td></tr>
+<tr><td>14×14</td><td>4</td><td>16</td><td>9 456</td><td>2×2</td></tr>
+</table></div>
+
+<p>Читати таблицю треба так. <b>Токенів</b> — довжина послідовності, з якою
+працює енкодер. <b>Пар уваги</b> — квадрат цього числа: стільки ваг рахує один
+шар уваги, і саме цей стовпчик визначає час. <b>Ваг у проєкції</b> — розмір
+вхідної матриці, P × P × 48 + 48. <b>Роздільність</b> — наскільки дрібні деталі
+модель узагалі здатна розрізнити: усередині патча вона нічого не бачить, там усе
+злилося в один вектор.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Ціна розміру патча</p>
+  <p class="fig-sub">Чотири числа, які тягнуть у різні боки. Немає положення
+    повзунка, де всі чотири були б добрі — саме тому це компроміс, а не
+    налаштування, яке можна «поставити правильно».</p>
+  <div class="panel">
+    <div><canvas id="cCost" width="940" height="380" aria-label="Чотири стовпчики: кількість токенів, пари уваги, параметри проєкції та роздільність карти для різних розмірів патча"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="c6">розмір патча <output id="c6v">4</output></label>
+        <input type="range" id="c6" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>токенів</b><i id="c6tok">—</i></div>
+        <div class="cellv"><b>пар уваги</b><i id="c6pair">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ваг у проєкції</b><i id="c6par">—</i></div>
+        <div class="cellv"><b>роздільність</b><i id="c6res">—</i></div>
+      </div>
+      <div class="verdict" id="c6vd"></div>
+    </div>
+  </div>
+  <figcaption>Зображення 28×28, один канал, розмірність токена 48. «Пари уваги»
+    порахована без CLS: N × N, де N — кількість патчів.</figcaption>
+</figure>
+
+<p>Ліворуч таблиці — патч 2×2: майже піксельна роздільність, дешева матриця
+проєкції, але 38 416 пар уваги на кожному шарі. Праворуч — патч 14×14:
+шістнадцять пар уваги, тобто увага коштує нічого, зате від зображення лишилось
+чотири квадрати, і всередині кожного модель сліпа.</p>
+
+<p>Практичний вибір майже завжди лежить посередині й визначається розміром
+зображення: для 224×224 беруть 16, рідше 32; для нашої 28×28 — 4. Правило
+просте: цільова кількість токенів десь від кількох десятків до кількох сотень.
+Менше — модель не бачить деталей, більше — увага зʼїдає всю памʼять.</p>
+
+<h2 id="s8"><span class="num">08 / Замір</span>ViT проти CNN на нашій задачі</h2>
+
+<p>Тепер чесна перевірка. У нас є той самий наскрізний приклад, що й в усьому
+блоці: шість класів фігур 28×28, згенерованих формулами, шум 0.45, центр гуляє
+на ±5 пікселів. Порівнюємо три моделі на трьох обсягах даних, по два зерна на
+кожну точку. Перевірка — 600 фігур, вгадування навмання дає 0.167.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>прикладів</th><th>CNN, 4 926 ваг</th><th>ViT, 41 574 ваги</th><th>ViT без позиційного</th></tr>
+<tr><td>150</td><td>0.599</td><td>0.260</td><td>0.237</td></tr>
+<tr><td>600</td><td>0.812</td><td>0.383</td><td>0.411</td></tr>
+<tr class="hot"><td>2400</td><td>0.925</td><td>0.607</td><td>0.642</td></tr>
+</table></div>
+
+<p>Скажемо це прямо, без помʼякшень. <b>Згорткова мережа виграє на кожному обсязі
+даних, маючи у вісім із половиною разів менше ваг.</b> На 2400 прикладах вона
+дає 0.925 проти 0.607 — це не «трохи краще», це різні ліги.</p>
+
+<p>І друге, важливіше: <b>ViT не наздоганяє</b>. Від 150 до 2400 прикладів,
+тобто при зростанні даних у шістнадцять разів, розрив скоротився з 0.339 до
+0.318 — на два пункти. Такими темпами він закриється приблизно ніколи. Канонічне
+«ViT наздоганяє на великих даних» тут просто не настає: 2400 прикладів для
+трансформера — це нічого.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · ViT проти CNN зі зростанням даних</p>
+  <p class="fig-sub">Три криві на одній шкалі. Повзунок обирає обсяг даних;
+    праворуч — точність кожної моделі й розрив між найкращою та ViT. Вусики
+    показують два зерна, щоб було видно, коли різниця більша за розкид.</p>
+  <div class="panel">
+    <div><canvas id="cCmp" width="940" height="400" aria-label="Три криві точності залежно від обсягу навчальних даних: згорткова мережа, ViT і ViT без позиційного кодування"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="d7">прикладів у навчанні <output id="d7v">600</output></label>
+        <input type="range" id="d7" min="0" max="2" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>CNN</b><i id="d7cnn">—</i></div>
+        <div class="cellv"><b>ViT</b><i id="d7vit">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ViT без позиційного</b><i id="d7np">—</i></div>
+        <div class="cellv"><b>розрив CNN − ViT</b><i id="d7gap">—</i></div>
+      </div>
+      <div class="verdict" id="d7vd"></div>
+    </div>
+  </div>
+  <figcaption>AdamW, швидкість навчання 0.003, 30 епох, батч 64, один потік CPU.
+    Вгадування навмання — 0.167. Кожна точка — середнє з двох зерен.</figcaption>
+</figure>
+
+<p>Чому так — уже сказано в розділі 1. Згорткова мережа знає про зображення три
+речі безкоштовно, ViT мусить купити їх за дані. При 2400 прикладах грошей на
+покупку немає.</p>
+
+<div class="note warn"><b>Один стенд — не рейтинг.</b>
+<a href="../18-architecture-comparison/lecture.html">Тема 18</a> застерігала:
+абсолютні числа залежать від рецепта не менше, ніж від архітектури. Той самий
+дослід на іншій згортковій мережі (5 094 ваги, з кроком 2 на вході) дав інші
+рівні: CNN 0.315 / 0.638 / 0.930, ViT 0.322 / 0.450 / 0.702, ViT без позиційного
+0.382 / 0.502 / 0.703. Там на 150 прикладах CNN і ViT зрівнялись, а розрив із
+даними <em>зростав</em>. Спільними лишилися три висновки: CNN не програє ніде,
+ViT не наздоганяє, і варіант без позиційного кодування не гірший за варіант із
+ним. Цитувати як «рейтинг архітектур» не можна ані першу таблицю, ані другу.</div>
+
+<div class="note"><b>Про оптимізатор.</b> Протокол блоку — AdamW: на великих
+трансформерах простий SGD дає помітно гірші результати, і легко видати за
+властивість архітектури те, що є властивістю налаштувань. На нашій крихітній
+моделі це, до речі, <em>не</em> підтвердилось: SGD з моментом 0.9 дав 0.443 і
+0.410 при двох швидкостях навчання проти 0.382 в AdamW — тобто не гірше. Два
+шари й 41 тисяча ваг — надто мала мережа, щоб на ній перевіряти правила,
+здобуті на великих. Числа наводимо, щоб ти не думав, ніби ми їх сховали.</div>
+
+<h2 id="s9"><span class="num">09 / Головне</span>Позиційне кодування допомагає не завжди</h2>
+
+<p>Придивись до останнього стовпчика таблиці. ViT <b>без</b> позиційного
+кодування ніде не програє, а на двох більших обсягах іде попереду: 0.411 проти
+0.383 на 600 прикладах і 0.642 проти 0.607 на 2400. Ми викинули 2 400 ваг, які
+мали розповідати моделі про геометрію, — і стало не гірше.</p>
+
+<div class="note warn"><b>Наскільки цьому можна вірити.</b> Розкид від зерна тут
+великий, і чесно його назвати обовʼязково. На 150 прикладах різниця −0.023 при
+розкиді 0.113 — її просто немає. На 600 різниця +0.027 при розкиді 0.103 — теж
+немає. І лише на 2400 різниця +0.036 більша за розкид 0.010, тобто це єдина з
+трьох точок, де можна щось стверджувати. Правильне формулювання: кодування
+<b>не допомагає</b>, а не «шкодить».</div>
+
+<p>Навіть із цим застереженням висновок лишається дивним: 2 400 ваг, які мали
+розповідати моделі про геометрію, не окупились ніде. Це схоже на спростування
+всього, що ми казали про потребу в позиційному кодуванні. Насправді це не
+спростування, а підказка про задачу. Гіпотеза така:
+<b>наші фігури класифікуються за вмістом, а не за положенням</b>. Коло лишається
+колом, де б воно не стояло; центр і так гуляє на ±5 пікселів. Задача майже
+позиційно інваріантна за побудовою — і тоді 2 400 ваг позиційного кодування не
+несуть корисної інформації, але їх усе одно треба вивчити з мізерних даних.</p>
+
+<p>Гіпотезу треба перевіряти, а не переказувати. Тому ми зробили другу задачу,
+де положення вирішує все.</p>
+
+<div class="note"><b>Задача «де фігура».</b> Чотири класи — чотири чверті кадру.
+У кожному прикладі малюється <em>випадкова</em> фігура випадкового розміру, тож
+форма про клас не говорить нічого. Клас визначає лише те, у якій чверті стоїть
+предмет: центр — рівно (8, 8), (8, 20), (20, 8) або (20, 20). Зсув між чвертями
+дорівнює 12 пікселів, тобто <b>рівно три патчі по чотири</b> — це знадобиться
+за хвилину. Вгадування навмання дає 0.25.</div>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>модель</th><th>«яка фігура», 6 класів</th><th>«де фігура», 4 класи</th></tr>
+<tr><td>CNN</td><td>0.812</td><td>1.000</td></tr>
+<tr><td>ViT із позиційним</td><td>0.383</td><td>0.995</td></tr>
+<tr class="hot"><td>ViT без позиційного</td><td>0.411</td><td>0.248</td></tr>
+<tr class="sumrow"><td>вгадування навмання</td><td>0.167</td><td>0.250</td></tr>
+</table></div>
+
+<p><b>Гіпотеза підтвердилась, і навіть різкіше, ніж очікувалось.</b> На задачі
+«де фігура» ViT без позиційного кодування дає 0.248 — це рівно вгадування
+навмання, три зерна поспіль: 0.252, 0.243, 0.250. Модель не просто гірша, вона
+<b>не працює взагалі</b>. Той самий ViT із позиційним кодуванням розвʼязує ту
+саму задачу практично ідеально — 0.995.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Коли позиційне кодування потрібне</p>
+  <p class="fig-sub">Перемикай задачу. На «яка фігура» кодування не окупається:
+    різниця з ним і без нього тоне в розкиді від зерна. На «де фігура» без нього
+    моделі просто немає. Пунктир — рівень вгадування навмання для відповідної
+    задачі.</p>
+  <div class="panel">
+    <div><canvas id="cPos" width="940" height="380" aria-label="Дві пари стовпчиків: точність ViT із позиційним кодуванням і без нього на задачі класифікації фігури та на задачі визначення її розташування"></canvas></div>
+    <div>
+      <span class="cap">задача</span>
+      <div class="seg" id="p8seg">
+        <button data-i="0" aria-pressed="true">яка фігура</button>
+        <button data-i="1" aria-pressed="false">де фігура</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ViT із кодуванням</b><i id="p8yes">—</i></div>
+        <div class="cellv"><b>ViT без кодування</b><i id="p8no">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розкид від зерна</b><i id="p8d">—</i></div>
+        <div class="cellv"><b>вгадування</b><i id="p8ch">—</i></div>
+      </div>
+      <div class="verdict" id="p8vd"></div>
+    </div>
+  </div>
+  <figcaption>«Яка фігура»: 600 прикладів, 6 класів, 2 зерна. «Де фігура»:
+    600 прикладів, 4 класи, 3 зерна. Однакова модель, однаковий рецепт —
+    відрізняється тільки наявність позиційного кодування.</figcaption>
+</figure>
+
+<h3>Чому саме 0.25, а не «трохи гірше»</h3>
+
+<p>Провал до рівня вгадування — не випадковість і не невдале навчання. Він
+доводиться алгеброю, без жодного прогону.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Крок 1</span>
+    <p>Без позиційного кодування увага <b>еквіваріантна щодо перестановки</b>
+    (<a href="../19-conv-to-attention/lecture.html">тема 19</a>): переставиш
+    токени на вході — вони переставляться на виході, і більше нічого
+    не зміниться.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 2</span>
+    <p>А CLS-токен (як і усереднення) не залежить від порядку взагалі. Тобто
+    вся модель стає <b>інваріантною</b> щодо перестановки патчів: вона бачить
+    не сітку, а невпорядкований мішок із 49 векторів.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 3</span>
+    <p>Ми навмисне зробили зсув між чвертями рівним 12 пікселям = трьом патчам.
+    Отже, той самий предмет у різних чвертях дає <b>той самий набір патчів</b>,
+    просто розкладений по інших місцях сітки. Для моделі, яка бачить мішок,
+    ці чотири картинки не відрізняються нічим.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 4</span>
+    <p>Отже, модель фізично не може дати різні відповіді на чотири класи. Її
+    стеля — вгадування, тобто 0.25. Саме це замір і показує.</p>
+  </div>
+</div>
+
+<p>Кроки 1 і 2 — це вже доведене:
+<a href="../19-conv-to-attention/lecture.html">тема 19</a> показала на числах, що
+два зображення, друге з яких є перестановкою патчів першого, дають без
+позиційного кодування різницю логітів на рівні чисельного шуму. Нам лишається
+крок 3 — і його теж можна перевірити за секунду, не навчаючи мережу. Беремо
+<em>ненавчену</em> модель, подаємо їй ту саму фігуру в чотирьох чвертях і
+дивимось, наскільки відрізняються виходи:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>модель (ненавчена)</th><th>найбільша різниця виходів між чвертями</th></tr>
+<tr class="hot"><td>ViT без позиційного</td><td>0.00000024</td></tr>
+<tr><td>ViT із позиційним</td><td>0.0130</td></tr>
+<tr><td>CNN, доповнення нулями</td><td>0.0027</td></tr>
+<tr><td>CNN, доповнення циклічне</td><td>0.0000000000</td></tr>
+</table></div>
+
+<p>Перший рядок — це нуль із точністю до float32. ViT без позиційного кодування
+видає на чотирьох різних картинках <b>однаковий</b> вихід. Ніяке навчання цього
+не виправить: інформації про чверть у моделі немає взагалі.</p>
+
+<h3>Несподіванка в останніх двох рядках</h3>
+
+<p>А ось чого ми не очікували. Наша CNN закінчується глобальним усередненням, яке
+за побудовою викидає просторову інформацію
+(<a href="../08-pooling/lecture.html">тема 08</a>). Здавалося б, вона теж мала б
+провалитись на «де фігура». Але вона дає <b>1.000</b> — ідеально.</p>
+
+<p>Останні два рядки таблиці пояснюють, звідки вона бере позицію. Різниця виходів
+у звичайної CNN — 0.0027, тобто вона <em>розрізняє</em> чверті. А та сама мережа
+з циклічним доповненням країв (коли замість нулів по краях підставляється
+протилежний край) дає рівно 0.0000000000 — не «майже нуль», а нуль до останнього
+знака float32. Отже, джерело позиції — саме <b>доповнення нулями</b>. Згортка
+біля межі бачить смугу штучних нулів, і по тому, як близько ця смуга, мережа
+відновлює абсолютні координати.</p>
+
+<div class="note warn"><b>Що з цього забрати.</b> Не «позиційне кодування зайве»
+і не «пулінг усе стирає». Правило таке: <b>позиційне кодування допомагає рівно
+тоді, коли положення визначає клас</b>. На задачі про вміст воно коштує ваг і не
+дає нічого; на задачі про розташування без нього моделі не існує. І перед тим,
+як додавати чи прибирати його, варто спитати себе, від чого залежить твоя
+відповідь — від того, <em>що</em> на картинці, чи від того, <em>де</em> воно.</div>
+
+<h2 id="s10"><span class="num">10 / Чесно</span>Чому справжній ViT усе-таки працює</h2>
+
+<p>Питання, яке мусить виникнути після розділу 8: якщо ViT так програє згортці,
+чому він узагалі став популярним? Відповідь чесна й трохи прикра: тому що в
+авторів було стільки даних, скільки в нас немає.</p>
+
+<div class="note"><b>Числа нижче — цитовані з літератури, а не заміряні нами.</b>
+На цій машині ми не можемо ані завантажити ImageNet, ані навчити 86-мільйонну
+модель. Тому вони наводяться як орієнтир масштабу, і жодне з них не друкується
+нашим зошитом — на відміну від усіх інших чисел цієї теми.</div>
+
+<p>В оригінальній роботі про Vision Transformer (Dosovitskiy та співавтори,
+2021) картина була така. Навчений тільки на ImageNet-1k — приблизно 1,3 мільйона
+зображень — ViT програвав порівнянній залишковій мережі. Після передтренування
+на ImageNet-21k (близько 14 мільйонів зображень) він зрівнявся. А після
+передтренування на закритому наборі JFT-300M (близько 300 мільйонів зображень)
+найбільший варіант, ViT-H/14, вийшов на 88,55 % точності на ImageNet — тобто
+попереду всіх згорткових мереж свого часу.</p>
+
+<p>Тобто перелом стався не в архітектурі, а в кількості даних. Три припущення,
+які згортка дає задарма, трансформер вивчає сам — але для цього йому потрібні
+приблизно два порядки більше прикладів.</p>
+
+<p>Через рік стало зрозуміло, що річ не лише в даних. Робота DeiT (Touvron та
+співавтори, 2021) показала, що ViT-B можна навчити на самому ImageNet-1k до
+81,8 % — якщо застосувати важку аугментацію, сильну регуляризацію й довге
+навчання; дистиляція знань від згорткової мережі-вчителя піднімає результат ще
+вище. Іншими словами, бракувало не тільки даних, а й рецепта — рівно те, про що
+попереджала <a href="../18-architecture-comparison/lecture.html">тема 18</a>.</p>
+
+<p>Наші 2400 прикладів на цьому тлі — це навіть не крапля. Тому правильний
+висновок із розділу 8 не «ViT гірший за CNN», а «на 2400 прикладах ViT не має
+шансів, і жодна таблиця з ImageNet цього не змінює».</p>
+
+<h2 id="s11"><span class="num">11 / Спадок</span>Що ViT дав галузі</h2>
+
+<p>Якби вся заслуга ViT зводилась до «переміг згортку на дуже великих даних»,
+тема не варта була б окремої лекції. Значення в іншому.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">1 · Спільна архітектура для тексту й зображень</span>
+    <p>Після ViT текст і зображення обробляються <em>однаковим</em> блоком.
+    Речення — послідовність токенів, картинка — послідовність токенів; далі та
+    сама увага, той самий MLP, той самий залишковий потік. Це відкрило дорогу
+    моделям, які працюють з обома видами даних одночасно, і саме про них буде
+    тема 22.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">2 · Передбачувана масштабованість</span>
+    <p>Трансформери ростуть добре: збільшив модель і дані — точність зросла
+    приблизно так, як обіцяє крива. Зі згортковими мережами цей звʼязок був
+    менш надійним і вимагав ручного добору глибини, ширини й роздільності
+    (<a href="../15-efficient-architectures/lecture.html">тема 15</a>).</p>
+  </div>
+  <div class="step">
+    <span class="lbl">3 · Простота</span>
+    <p>Один блок, повторений N разів. Ані пірамідки, ані вручну підібраних
+    розмірів ядер, ані окремих гілок — порівняй із Inception. Менше рішень
+    для людини означає більше свободи для пошуку архітектур і легше перенесення
+    коду між задачами.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">4 · Він підштовхнув самі згорткові мережі</span>
+    <p>Найпарадоксальніший наслідок. Розібравшись, <em>що саме</em> в ViT
+    працює, дослідники перенесли ці рішення назад у згортки — великі ядра,
+    норма на гілці, широкий MLP-блок, менше нелінійностей. Так зʼявився
+    ConvNeXt, який на тих самих даних тримається нарівні з трансформерами.
+    У нашому середовищі обидва є: <code>convnext_tiny</code> має 28 589 128 ваг,
+    <code>swin_t</code> — 28 288 354.</p>
+  </div>
+</div>
+
+<p>Практична порада на 2026 рік лишається прозаїчною. Якщо в тебе тисячі
+зображень, а не мільйони, — бери згорткову мережу або передтреновану модель,
+байдуже якої архітектури. Якщо мільйони або якщо тобі потрібна одна модель для
+тексту й картинок разом — тоді трансформер.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Підсумок і місток далі</h2>
+
+<p>Що ми зібрали в цій темі:</p>
+
+<ul>
+  <li><b>Зображення стає послідовністю</b> через нарізання на патчі. Патч 4×4
+    для 28×28 дає 49 токенів замість 784 пікселів.</li>
+  <li><b>Проєкція патча — це згортка</b> з ядром P і кроком P. Перевірено
+    прямим порівнянням: різниця 1.8e-07, тобто нуль у float32.</li>
+  <li><b>CLS-токен</b> — зручна конвенція, а не джерело сили: 0.382 проти 0.402
+    в усереднення при розкиді від зерна 0.103.</li>
+  <li><b>Блок енкодера</b> — LayerNorm, увага, MLP, залишкові звʼязки. Норму
+    беруть спереду, бо тоді магістраль від входу до виходу лишається чистою:
+    після 12 блоків від входу вціліло 0.223 проти 0.029.</li>
+  <li><b>Розмір патча міняє лише вхід.</b> Шари енкодера ViT-B/16 і ViT-B/32
+    однакові до біта — 85 054 464 ваги в обох.</li>
+  <li><b>На малих даних згортка виграє</b> — 0.925 проти 0.607 на 2400 прикладах,
+    маючи у 8,4 раза менше ваг.</li>
+  <li><b>Позиційне кодування допомагає тоді, коли положення визначає клас.</b>
+    На задачі про вміст — 2 400 зайвих ваг; на задачі про розташування без нього
+    точність рівно на рівні вгадування.</li>
+</ul>
+
+<p>І що лишилось невирішеним. Два обмеження ViT ми не прибрали, а лише назвали.</p>
+
+<p><b>Перше — квадратична ціна.</b> Кількість пар уваги дорівнює квадрату
+кількості токенів. Для 28×28 з патчем 4 це 2 401 пара, і це дрібниця. Для
+зображення 1024×1024 з тим самим патчем це вже 65 536 токенів і понад
+чотири мільярди пар на кожному шарі. Детекція й сегментація саме таких
+роздільностей і потребують.</p>
+
+<p><b>Друге — відсутність ієрархії.</b> У згортковій мережі роздільність падає
+від шару до шару: 28×28 → 14×14 → 7×7, і кожен рівень працює зі своїм масштабом
+деталей. У ViT усі дванадцять блоків працюють з однією й тією самою сіткою
+7×7 або 14×14. Пірамідки, на якій стоять і детекція, і сегментація, просто
+немає.</p>
+
+<p>Цікаво, що обидві втрати — це саме те, що згортка мала задарма: локальність
+обмежувала ціну, а пулінг будував ієрархію. Наступна тема, <b>21 «Swin і
+гібриди»</b>, повертає обидві речі назад у трансформер — не відмовляючись від
+уваги, а обмежуючи її вікном і додаючи злиття патчів між рівнями. Ми
+подивимось, скільки від «чистої ідеї» ViT лишається після цього і чи варто
+воно того.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../19-conv-to-attention/lecture.html"><span class="dir">попередня</span><span class="ttl">19. Від згортки до уваги</span></a>
+    <a class="next" href="../21-swin-hybrids/lecture.html"><span class="dir">наступна</span><span class="ttl">21. Swin і гібриди</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function plate(g,txt,x,y,color,px,align,bg){
+  g.font=mono(px,true);
+  var w=g.measureText(txt).width+8;
+  g.fillStyle=bg; g.fillRect(align==='right'? x-w+4 : x-4, y-px-2, w, px+6);
+  g.fillStyle=color; g.textAlign=align; g.textBaseline='alphabetic';
+  g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+function токенів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'токен';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'токени';
+  return 'токенів';
+}
+function крат(v){
+  if(Math.abs(v-Math.round(v))<1e-9) return v.toFixed(0)+' '+разів(Math.round(v));
+  return v.toFixed(1)+' раза';
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* детермінований генератор — картинка однакова у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)&0x7fffffff; return s/0x7fffffff; };
+}
+/* Чи темна зараз тема — визначаємо за яскравістю тла, а не за медіазапитом:
+   тему можна перемкнути й вручну через data-theme. */
+function darkNow(){
+  var c=css('--paper');
+  var m=/^#([0-9a-f]{6})$/i.exec(c);
+  if(!m) return false;
+  var v=parseInt(m[1],16);
+  return (((v>>16)&255)*0.299 + ((v>>8)&255)*0.587 + (v&255)*0.114) < 128;
+}
+/* лінійна інтерполяція кольору теплової карти: спокійний → гарячий.
+   Холодний край мусить збігатися з тлом сторінки, інакше в темній темі
+   карта світиться білою плямою. */
+function heat(t){
+  if(!(t>=0)) t=0; if(t>1) t=1;
+  var stops = darkNow()
+    ? [[26,32,41],[38,92,96],[45,170,158],[226,150,60],[240,98,146]]
+    : [[247,249,251],[173,216,214],[ 90,180,170],[226,150,60],[194,24,91]];
+  var x=t*(stops.length-1), i=Math.min(stops.length-2,Math.floor(x)), f=x-i;
+  var a=stops[i], b=stops[i+1];
+  return 'rgb('+Math.round(a[0]+(b[0]-a[0])*f)+','+Math.round(a[1]+(b[1]-a[1])*f)+','
+              +Math.round(a[2]+(b[2]-a[2])*f)+')';
+}
+
+/* ══════════ дані — усі числа заміряні, друкуються зошитом ══════════ */
+
+/* Розклад справжнього ViT, torchvision, weights=None */
+var VITB = [
+  {name:'ViT-B/16', patch:16, tokens:197, proj:590592,  pos:151296, cls:768, enc:85054464, ln:1536, head:769000, total:86567656},
+  {name:'ViT-B/32', patch:32, tokens:50,  proj:2360064, pos:38400,  cls:768, enc:85054464, ln:1536, head:769000, total:88224232}
+];
+var PART_NAMES = ['шари енкодера','класифікатор','проєкція патча','позиційне кодування','фінальна норма','CLS-токен'];
+function partsOf(m){ return [m.enc, m.head, m.proj, m.pos, m.ln, m.cls]; }
+
+/* Ціна розміру патча для 28×28, розмірність токена 48 */
+var COST = [
+  {p:2,  tok:196, pair:38416, par:240,  res:14},
+  {p:4,  tok:49,  pair:2401,  par:816,  res:7},
+  {p:7,  tok:16,  pair:256,   par:2400, res:4},
+  {p:14, tok:4,   pair:16,    par:9456, res:2}
+];
+
+/* Замір: ViT проти CNN, 600 перевірочних фігур, 6 класів, 2 зерна */
+var CMP = [
+  {n:150,  cnn:[0.573,0.625], vit:[0.203,0.317], np:[0.247,0.227],
+           mcnn:0.599, mvit:0.260, mnp:0.237, worst:0.113},
+  {n:600,  cnn:[0.820,0.805], vit:[0.332,0.435], np:[0.403,0.418],
+           mcnn:0.812, mvit:0.383, mnp:0.411, worst:0.103},
+  {n:2400, cnn:[0.953,0.897], vit:[0.602,0.612], np:[0.643,0.642],
+           mcnn:0.925, mvit:0.607, mnp:0.642, worst:0.057}
+];
+function avg(a){var s=0,k; for(k=0;k<a.length;k++) s+=a[k]; return s/a.length;}
+function lo(a){return Math.min.apply(null,a);}
+function hi(a){return Math.max.apply(null,a);}
+
+/* Замір: позиційне кодування на двох задачах */
+var TASKS = [
+  {name:'яка фігура', classes:6, chance:1/6,
+   yes:[0.332,0.435], no:[0.403,0.418], myes:0.383, mno:0.411, spread:0.103, cnn:0.812},
+  {name:'де фігура', classes:4, chance:0.25,
+   yes:[0.998,0.988,1.000], no:[0.252,0.243,0.250], myes:0.995, mno:0.248, spread:0.012, cnn:1.000}
+];
+/* найбільший розкид від зерна серед двох варіантів — одиниця виміру теми 18 */
+function taskSpread(T){ return T.spread; }
+
+/* Карти уваги CLS-токена, зняті з навченої моделі практики */
+var ATTN = {"shapes":["коло","кільце","хрест"],"acc":0.332,"img":[[60,0,0,52,0,0,0,0,26,0,49,0,0,15,29,0,22,14,0,0,96,36,0,14,58,0,48,0,50,27,79,0,0,17,0,0,21,0,14,13,0,23,0,0,3,25,30,0,0,0,0,6,99,36,77,17,3,0,0,28,6,49,0,89,0,53,0,0,36,0,5,0,0,0,22,27,0,0,0,70,0,0,0,58,95,0,10,56,17,0,0,37,99,61,34,71,0,0,0,92,0,70,16,0,25,0,0,10,0,23,31,0,38,3,0,21,23,0,0,4,15,67,13,2,0,0,0,3,14,0,58,97,0,9,0,0,14,0,69,16,37,3,0,0,69,21,4,69,39,62,5,0,44,14,0,0,32,40,15,25,27,36,24,25,0,0,28,0,96,6,0,3,17,0,34,14,5,0,0,0,0,0,65,10,0,41,0,32,0,12,18,23,0,6,0,0,0,3,30,63,0,51,0,93,19,23,0,24,49,4,18,0,64,64,0,0,36,48,31,0,10,5,0,0,19,17,33,0,0,0,0,0,0,0,19,27,0,0,0,0,3,53,0,0,65,0,0,32,24,5,31,0,85,0,40,0,0,72,0,14,3,0,6,3,0,0,0,0,62,0,54,0,0,36,0,0,31,0,36,58,60,0,24,2,0,0,72,0,25,41,26,0,17,0,61,15,33,0,45,0,0,57,0,0,0,23,15,0,53,33,0,6,57,0,0,0,0,0,0,0,2,91,0,99,3,44,44,0,18,53,0,0,0,17,51,37,16,0,2,0,0,38,0,0,39,42,18,0,23,76,0,25,99,88,99,0,0,0,29,73,53,0,0,0,0,25,0,0,0,0,31,18,0,48,0,99,54,67,99,64,89,28,87,56,61,65,5,32,2,29,78,0,20,0,67,8,0,0,0,8,31,0,0,54,99,69,54,99,85,82,99,92,42,37,15,0,48,0,99,0,0,0,43,1,64,0,0,26,0,13,99,88,99,32,45,99,80,99,99,93,0,42,0,0,97,0,0,0,0,0,50,83,0,8,0,0,22,24,99,99,63,99,99,99,99,81,99,99,77,0,0,0,0,0,0,0,0,0,0,5,0,56,0,37,20,23,41,99,29,88,99,99,95,99,89,94,0,0,0,68,36,0,59,43,7,73,0,7,0,0,0,0,42,0,17,99,52,60,99,21,65,78,35,55,0,16,74,0,0,0,42,7,8,15,7,51,51,4,0,0,0,33,57,49,99,99,93,42,99,99,99,89,0,7,0,11,0,33,39,16,0,39,5,0,44,13,4,0,6,13,83,0,99,89,92,85,99,99,99,69,27,29,31,0,0,87,38,0,0,43,25,25,0,0,16,0,0,0,0,0,5,0,31,1,22,0,16,23,0,0,0,40,0,18,0,0,0,0,0,9,0,49,0,99,45,8,0,0,0,15,19,0,0,0,74,2,0,53,8,15,19,3,41,0,37,0,0,0,0,34,22,33,0,0,66,0,0,0,35,19,10,0,0,0,88,13,67,99,7,98,0,0,11,0,17,0,0,10,0,0,0,0,0,0,99,32,13,99,99,35,20,0,0,0,0,0,47,19,0,0,0,99,0,0,0,48,0,8,0,37,0,56,0,0,0,18,0,20,0,50,9,32,48,48,0,0,0,0,26,36,43,48,0,23,19,10,90,49,37,58,0,17,0,0,0,2,64,19,10,1,5,0,0,16,0,39,0,15,0,0,35,27,0,0,39,67,0,0,35,0,20,49,0,45,0,2,0,8,0,35,0,0,0,41],[0,0,0,64,75,58,3,0,20,0,0,0,80,0,89,36,0,0,0,0,0,0,0,0,33,12,0,46,66,31,22,34,0,85,33,66,0,0,7,20,0,0,0,0,72,0,36,0,0,0,0,0,73,12,14,60,48,37,0,15,51,7,0,0,3,0,0,1,23,39,0,0,47,83,99,0,0,29,35,42,46,0,61,24,0,33,25,69,34,0,14,0,93,0,0,0,0,32,0,46,0,49,0,56,34,33,33,0,0,0,0,22,4,51,0,40,0,0,31,0,0,0,49,0,62,21,5,0,0,0,29,21,0,24,38,62,5,35,19,54,0,0,18,84,0,0,0,13,0,0,44,0,0,0,0,67,0,40,83,51,0,10,7,10,0,0,6,33,34,0,0,0,0,0,0,49,0,1,0,27,0,0,0,17,71,80,99,99,21,99,5,39,0,3,0,33,0,0,0,0,19,57,0,0,15,48,38,28,0,0,91,99,99,99,38,68,99,99,67,0,13,39,11,0,0,8,0,66,37,30,0,0,1,2,0,69,26,0,99,98,58,82,99,99,97,53,35,0,33,0,0,0,0,0,11,0,0,0,89,0,0,0,18,0,0,0,99,99,57,0,0,0,99,89,79,1,99,44,22,0,99,48,14,0,0,0,0,0,13,35,0,39,0,40,47,99,99,0,9,0,37,99,99,99,0,8,54,0,0,0,0,0,47,11,43,63,0,0,99,65,11,47,99,15,77,0,74,0,99,77,59,0,4,0,62,0,31,0,0,36,0,17,0,17,0,0,0,0,0,0,41,99,99,99,11,72,99,99,99,0,0,3,0,55,75,29,16,0,0,0,0,5,0,51,0,0,18,37,99,71,60,39,88,78,99,65,99,0,32,0,92,0,64,0,0,0,41,33,43,0,14,46,34,8,0,0,2,48,99,99,99,96,99,99,0,0,0,11,12,47,0,0,26,13,0,0,0,0,0,17,0,0,0,52,0,0,33,19,99,53,46,0,0,0,72,0,8,0,99,70,0,47,26,51,0,53,3,0,1,0,0,39,0,0,0,37,0,0,20,0,39,0,37,45,0,0,0,76,42,63,33,0,0,0,14,2,0,0,5,0,7,0,3,0,0,26,0,0,0,29,9,0,28,0,10,12,0,0,0,6,28,41,38,0,5,1,30,0,33,5,1,31,0,0,0,0,26,0,0,23,0,0,16,6,5,13,0,0,0,0,0,0,0,10,65,0,0,49,0,0,0,0,3,0,0,0,0,0,0,0,43,0,51,50,27,0,45,0,0,0,30,63,13,45,45,18,0,5,23,24,0,48,16,58,0,0,0,35,0,0,17,74,39,0,0,32,25,0,0,0,0,22,25,16,63,5,0,0,0,0,15,0,0,28,0,67,0,0,27,33,0,71,0,41,0,33,0,0,0,3,6,3,0,97,47,0,0,0,36,67,8,0,0,27,0,47,12,34,38,0,42,39,93,13,0,14,0,0,0,68,69,22,0,0,40,35,0,0,0,27,0,0,18,0,43,0,0,11,0,4,0,50,52,0,25,0,10,0,13,0,51,0,29,0,0,0,0,0,28,0,0,0,27,58,67,0,0,17,26,0,18,0,16,40,0,0,1,37,8,0,6,36,80,0,0,37,0,25,15,0,7,0,0,0,0,17,28,24,0,0,0,93,0,0,0,31,41,0,32,0,89,0,0,0,0,0,50,0,0,6,0,29,0,2,58,0,0,0,42,0,0,0,11,0,0,3,0,11,0,40,12,4,13,49],[0,0,0,0,0,3,5,0,0,33,0,34,0,0,74,40,0,0,18,33,34,35,0,83,0,25,29,0,0,8,0,24,0,0,26,68,0,27,13,47,35,0,0,0,0,69,52,0,0,5,0,0,20,30,45,11,31,44,0,77,0,0,0,0,0,34,0,31,32,0,0,0,0,39,7,13,7,0,0,0,19,3,8,79,12,0,0,27,99,0,0,0,71,0,95,1,0,0,54,7,0,12,11,0,47,0,0,0,29,28,8,2,6,38,0,0,0,10,0,9,46,0,20,0,0,2,45,0,97,21,0,2,10,0,0,1,46,5,0,0,0,55,30,77,58,0,21,83,0,32,52,58,0,0,13,50,14,0,0,52,0,31,0,29,0,0,0,4,0,54,15,0,0,0,0,40,0,0,0,99,1,67,67,64,41,0,16,0,0,0,0,54,0,35,0,0,4,8,18,0,0,0,1,0,0,0,25,99,99,99,15,99,11,0,0,1,0,0,0,62,0,10,0,0,0,0,51,0,0,0,0,54,36,0,0,99,99,91,99,97,10,2,1,0,6,0,42,30,0,9,0,0,12,0,0,43,27,0,0,46,0,16,35,99,50,99,53,82,0,78,21,49,0,0,0,4,0,0,12,0,0,0,51,9,0,99,8,0,29,0,20,99,99,99,84,99,6,0,0,0,0,0,99,0,5,75,24,0,0,24,0,0,0,20,82,73,36,84,80,40,73,88,99,99,99,99,95,60,99,5,32,24,0,0,0,0,30,53,0,0,0,0,99,99,88,99,94,99,99,87,95,2,72,40,99,92,99,0,5,7,2,40,2,0,0,41,25,0,66,0,69,7,99,40,92,81,84,99,99,99,35,99,86,99,92,0,0,0,79,0,30,0,72,0,9,0,14,0,82,99,78,99,99,99,77,69,84,95,46,99,99,56,99,0,0,73,0,12,0,0,0,77,0,0,47,8,95,99,65,99,99,99,93,65,96,34,99,75,99,99,99,2,53,44,80,48,0,0,0,99,44,0,13,0,52,0,0,57,0,99,71,99,98,99,0,0,19,0,0,0,15,20,32,15,6,0,0,0,16,0,0,0,0,0,0,61,0,99,99,99,72,57,14,0,34,0,3,0,55,53,30,0,0,17,7,0,0,0,0,0,63,34,21,0,42,61,95,99,99,99,0,0,2,0,0,0,0,0,0,0,0,25,32,0,86,54,19,0,0,0,99,35,0,27,52,99,84,99,0,0,0,0,0,0,36,31,32,19,14,33,43,0,0,76,0,38,85,77,26,99,0,15,69,99,93,99,51,31,0,48,0,0,0,27,0,91,99,6,0,70,72,2,0,15,23,39,0,0,42,22,20,0,62,0,21,0,5,9,0,24,34,0,33,0,16,0,55,0,32,0,0,12,0,0,0,4,0,0,0,0,23,6,20,11,19,0,33,0,0,9,61,0,0,0,18,3,0,0,16,37,0,0,0,0,0,0,0,27,29,0,0,0,0,99,18,99,0,0,3,0,8,0,0,0,0,0,41,0,0,16,74,0,27,0,47,0,0,0,0,0,49,0,0,29,0,0,0,0,44,0,99,0,0,51,0,0,0,50,12,3,0,28,0,1,0,3,0,22,26,0,0,12,0,13,0,0,77,0,9,22,22,13,0,0,37,44,0,60,0,0,0,36,29,0,25,24,0,26,48,0,0,16,45,0,31,0,0,0,0,54,0,24,0,50,30,71,0,38,5,11,0,79,0,14,0,21,0,9,0,5,15,0,0,0]],"attn":[[[[0.00034,0.0,0.0,6e-05,0.0,0.0,0.0,0.00167,0.04547,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.00572,0.00042,0.0,0.0,0.0,0.0,0.0,1e-05,0.92705,0.00032,0.0,0.00033,0.00025,0.0,0.0,0.0,0.01822,0.0,0.0,0.0,0.0,0.0,0.0,0.0,9e-05,0.0,0.0,0.0,2e-05,0.0,0.0,1e-05,0.0],[0.00141,0.00284,7e-05,0.0,0.00011,4e-05,0.00013,0.0,0.0,0.0,4e-05,0.0068,0.03623,0.0,0.0,1e-05,0.0001,0.0,0.0,0.00028,0.0,0.0,0.0,1e-05,0.05163,0.00158,3e-05,1e-05,2e-05,0.0,0.06127,0.0497,0.74427,0.0,1e-05,1e-05,1e-05,0.00022,0.0,0.0,0.00179,7e-05,6e-05,0.00079,0.04041,0.0,0.0,0.0,0.0],[1e-05,0.0,6e-05,1e-05,0.0,0.0,0.0,0.0,1e-05,0.0,0.0,3e-05,0.0,0.0,0.0,0.0,0.0,8e-05,0.0,0.0,0.0,0.0,0.0,0.0,1e-05,0.00149,0.0,0.0,1e-05,0.0,1e-05,0.10159,0.89628,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.00021,0.0,0.0,0.0,0.0,1e-05,0.0,0.0,0.0],[0.0,0.0,0.00035,0.0,0.0,0.0,0.00076,3e-05,0.0,0.0,0.0,0.0,0.0,0.00383,0.9505,0.0,1e-05,0.0,0.00103,0.0,0.0,0.0,0.0,0.0,1e-05,0.03553,0.0008,1e-05,0.0,0.0,0.0,0.00148,0.00251,0.0,1e-05,0.0,0.0,0.0,0.0,0.00292,0.0,0.0,0.0,0.0,0.0002,0.0,0.0,0.0,0.0]],[[0.01323,0.01923,0.01754,0.01584,0.02432,0.03557,0.01621,0.01474,0.01629,0.01603,0.01771,0.00887,0.00837,0.02286,0.0422,0.02042,0.02048,0.01528,0.01524,0.02711,0.02211,0.02455,0.02301,0.00944,0.01128,0.01071,0.01495,0.02361,0.01936,0.01382,0.00675,0.00966,0.00888,0.0345,0.01308,0.02333,0.02054,0.02801,0.02873,0.02594,0.00732,0.03371,0.02149,0.01871,0.01385,0.03201,0.04546,0.01799,0.02304],[0.00431,0.01305,0.01267,0.00105,0.0018,0.00211,0.00058,0.00024,0.00569,0.00994,0.02381,0.01684,0.28131,0.00019,0.00035,0.0012,0.00071,0.00072,0.00446,0.0021,0.00073,0.00174,0.00114,0.0119,0.15517,0.04625,0.00134,0.00261,0.00058,0.02875,0.00062,0.03946,0.078,0.00023,0.00086,0.00109,0.002,0.0016,0.00011,6e-05,0.1718,0.00167,0.00104,0.0232,0.01145,0.00152,0.00043,0.00089,0.00034],[0.02258,0.02404,0.01443,0.03142,0.01069,0.01011,0.01815,0.02091,0.01906,0.02054,0.01455,0.01214,0.01567,0.03042,0.0068,0.0386,0.03503,0.03348,0.01269,0.02091,0.03167,0.02197,0.03283,0.00933,0.01095,0.00961,0.02323,0.02186,0.03097,0.01576,0.01311,0.00378,0.00676,0.01962,0.00862,0.0332,0.02669,0.01817,0.01506,0.00997,0.0285,0.01071,0.03566,0.02073,0.03086,0.00542,0.01049,0.04015,0.03729],[0.02722,0.02614,0.01904,0.0279,0.01342,0.00877,0.00514,0.01182,0.0085,0.01475,0.0198,0.01318,0.02213,0.02506,0.00684,0.04639,0.03515,0.0294,0.00682,0.0203,0.03618,0.03006,0.04231,0.00416,0.00492,0.00348,0.0107,0.02673,0.0311,0.02288,0.00457,0.0057,0.00527,0.01245,0.00352,0.04511,0.03304,0.02599,0.01595,0.00706,0.04606,0.0151,0.04192,0.02735,0.0194,0.00677,0.00775,0.03774,0.03532]]],[[[0.99504,0.0,0.0,0.0,0.00041,0.0,0.0,0.0,0.0,0.0,0.0,1e-05,0.0,0.0,5e-05,0.0,0.00412,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.00032,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,5e-05,0.0],[0.00276,1e-05,1e-05,4e-05,0.0,0.00014,0.00081,0.0,0.00028,0.0,0.0,0.01262,0.62001,0.00109,0.0,0.0,0.00074,0.00264,0.00252,0.03472,0.0,0.0,0.0,0.0,0.02725,0.00065,0.0,0.00054,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.01206,0.0,0.01349,0.0,0.0,0.26471,0.00283,1e-05,3e-05,0.0,0.0,0.0,0.0,0.0],[0.67713,0.0,0.0,0.00486,0.00012,0.0,0.0,2e-05,0.0,0.00155,0.00816,0.09914,0.03751,0.0003,0.0,0.0,0.01692,0.01644,0.00172,0.00174,0.0,3e-05,0.0,0.0,0.00057,0.02304,0.0,7e-05,3e-05,0.0,0.0,1e-05,0.0,0.0,0.0,0.0011,5e-05,0.00021,0.0,2e-05,0.00028,0.00149,0.0,7e-05,0.0,0.0,0.0,0.0,2e-05],[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.00031,2e-05,0.0,0.0,0.0,0.0,0.0,0.0,0.99194,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.00675,0.0,0.0,0.0,0.00028,0.0007,0.0,0.0,0.0,0.0]],[[0.01511,0.03169,0.00505,0.02235,0.01417,0.00602,0.00806,0.01408,0.01107,0.17838,0.01449,0.01482,0.01078,0.00679,0.00894,0.01299,0.01586,0.03005,0.03106,0.0136,0.00588,0.00893,0.00706,0.00613,0.01588,0.01551,0.16996,0.00922,0.02198,0.00498,0.00841,0.00576,0.01307,0.00516,0.011,0.01016,0.00746,0.00586,0.09728,0.01048,0.00674,0.00689,0.01029,0.01146,0.01626,0.00471,0.00554,0.0129,0.00858],[0.02033,0.02045,0.02048,0.0223,0.01909,0.01748,0.01967,0.02548,0.0146,0.01221,0.02063,0.01186,0.0146,0.02036,0.02207,0.01766,0.0188,0.0157,0.03548,0.01423,0.02141,0.02616,0.01806,0.01462,0.01872,0.01876,0.03808,0.01933,0.02233,0.02122,0.01804,0.01778,0.02096,0.02097,0.02541,0.01872,0.01449,0.01888,0.03094,0.01917,0.01597,0.0195,0.01687,0.0183,0.02674,0.02104,0.01764,0.01728,0.01453],[0.00142,0.05363,0.00028,0.00629,0.00046,0.00028,0.00048,0.00572,0.00109,0.68736,0.01194,0.00095,0.0013,0.00088,0.00029,0.00278,0.001,0.00511,0.01548,0.00185,0.00062,0.00113,0.00022,0.00039,0.00213,0.00255,0.09879,0.00053,0.02278,0.00045,0.00062,0.00034,0.00251,0.00041,0.00266,0.00079,0.00063,0.00031,0.04751,0.00049,0.00045,0.00066,0.00157,0.00483,0.00459,0.00033,0.00037,0.00068,0.00111],[0.01063,0.0401,0.00451,0.01496,0.01066,0.00461,0.00733,0.01481,0.00541,0.15603,0.0142,0.00574,0.00511,0.00642,0.00728,0.00887,0.00782,0.01399,0.02788,0.00824,0.00598,0.00796,0.00532,0.0045,0.01079,0.01495,0.2763,0.00667,0.03014,0.0057,0.00559,0.00446,0.01059,0.00508,0.01179,0.00761,0.00456,0.00461,0.12227,0.00548,0.00498,0.00607,0.00653,0.00921,0.01459,0.00504,0.00462,0.00948,0.00479]]],[[[0.001,1e-05,0.0,1e-05,0.0,0.0,0.0,0.0,0.0001,0.0,0.00014,0.0,0.0,0.0,0.0,0.00115,0.08833,0.24139,0.0084,0.00073,0.0,0.0,0.00216,0.35037,0.0129,0.15539,0.06549,0.0,0.0,0.0,2e-05,0.03812,2e-05,0.0,0.0,0.03128,0.0,0.0,0.0,0.00049,1e-05,0.0,0.0024,1e-05,0.0,0.0,0.0,1e-05,0.0],[0.00043,2e-05,0.00012,0.00014,0.0,2e-05,0.00571,0.0,0.0,0.0,0.00933,0.0,0.00057,0.0,0.0,0.0,0.42789,0.22348,0.00223,0.00084,0.0,0.0,0.00014,0.01971,0.18747,0.02383,1e-05,0.0,0.0,0.0,0.06817,0.02272,0.0,0.0,9e-05,1e-05,0.0,0.0,0.0,0.0,0.00496,0.0,0.0,0.00207,0.0,0.0,0.0,0.0,0.0],[0.0,0.0,0.0,0.00038,0.0,0.0,0.0,0.0,0.0,1e-05,0.00274,0.0,0.0,0.0,0.0,1e-05,0.00769,0.1291,0.01888,0.0,0.0,0.0,0.00016,0.13702,7e-05,0.13877,0.0,0.0,1e-05,0.0,3e-05,0.56442,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2e-05,0.0,0.0,1e-05,0.0,0.0,0.0,0.0,0.0],[0.0,0.00034,0.0,1e-05,0.0,0.0,0.0,0.0,1e-05,0.0,0.0,0.0,0.0,5e-05,0.0,0.0,0.0,8e-05,0.0,0.0,0.0,0.0,0.0,0.49075,0.19979,0.0,0.21084,0.07254,0.0,0.0,0.0,0.0009,0.0,0.0,1e-05,0.0,0.0,0.0,0.0,0.0,1e-05,0.0121,0.0,0.0,0.01255,0.0,0.0,0.0,3e-05]],[[0.03262,0.03699,0.01598,0.01044,0.04844,0.01739,0.01914,0.01661,0.01029,0.01149,0.00717,0.01711,0.03708,0.03888,0.03242,0.04612,0.00527,0.00169,0.02221,0.02568,0.06077,0.00848,0.00153,0.00135,0.00188,0.00311,0.00491,0.01578,0.02583,0.03232,0.02029,0.00101,0.05363,0.01666,0.00469,0.04986,0.04462,0.02358,0.004,0.00406,0.03145,0.00227,0.01234,0.00904,0.00987,0.02521,0.03876,0.01564,0.02011],[0.0,0.05379,0.00109,0.0,0.0,0.00011,0.0,0.00098,0.00374,0.00014,0.00016,6e-05,1e-05,0.0,0.0,3e-05,0.5692,0.12376,0.01715,0.0,0.0,0.0,1e-05,0.01025,0.19309,0.01041,1e-05,0.00145,1e-05,0.0,0.0025,0.01141,0.0,0.00017,0.00018,0.0,0.0,1e-05,0.0,0.0,1e-05,0.0,6e-05,0.0001,2e-05,0.0,0.0,0.0,0.0],[0.04788,0.00329,0.00121,0.00199,0.07184,0.00118,0.01313,0.0021,0.00109,0.00404,0.00223,0.00184,0.03655,0.01708,0.03242,0.01985,0.00093,0.00039,0.00658,0.02985,0.2033,0.00112,0.00043,0.00062,0.00034,0.0012,0.00049,0.00132,0.01,0.03225,0.0013,0.00046,0.1327,0.0013,0.00022,0.12854,0.03904,0.00309,0.00047,0.00072,0.04766,0.00022,0.00258,0.0005,0.00087,0.0028,0.06149,0.00596,0.02284],[0.01683,0.03234,0.00202,0.00165,0.01587,0.00058,0.00237,0.00692,0.00155,0.01175,0.00111,0.01135,0.06628,0.02172,0.01018,0.13429,0.00036,2e-05,0.16893,0.01175,0.16713,0.00044,2e-05,1e-05,2e-05,5e-05,0.00024,0.00285,0.05245,0.01209,0.00161,0.0,0.0935,0.00115,4e-05,0.02389,0.0556,0.00069,2e-05,6e-05,0.01514,1e-05,0.0101,9e-05,0.00155,0.00159,0.03119,0.00147,0.0091]]]]};
+
+/* ═════════════ 1 · Зображення в патчі ═════════════ */
+(function(){
+  var cv=I('cGrid'); if(!cv) return;
+  var IMG=ATTN.img[0];                        /* та сама фігура, що в заміру */
+  function px(r,c){ return IMG[r*28+c]/99; }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), i=+I('p2').value, d=COST[i], P=d.p;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'), rose=css('--rose');
+
+    capt(g,'ЗОБРАЖЕННЯ 28×28',30,32,soft,11,true);
+    capt(g,'ПОСЛІДОВНІСТЬ ТОКЕНІВ',380,32,soft,11,true);
+
+    /* зображення з сіткою патчів */
+    var s=10, ox=30, oy=48, r, c;
+    for(r=0;r<28;r++) for(c=0;c<28;c++){
+      var v=px(r,c);
+      g.fillStyle='rgb('+Math.round(30+v*210)+','+Math.round(36+v*206)+','+Math.round(43+v*200)+')';
+      g.fillRect(ox+c*s, oy+r*s, s, s);
+    }
+    g.strokeStyle=rose; g.lineWidth=1;
+    for(r=0;r<=28;r+=P){
+      g.beginPath(); g.moveTo(ox, oy+r*s); g.lineTo(ox+280, oy+r*s); g.stroke();
+      g.beginPath(); g.moveTo(ox+r*s, oy); g.lineTo(ox+r*s, oy+280); g.stroke();
+    }
+    capt(g,'патч '+P+'×'+P+' · сітка '+d.res+'×'+d.res, ox, oy+296, ink,12,true);
+
+    /* стрілка */
+    g.strokeStyle=hair; g.lineWidth=2;
+    g.beginPath(); g.moveTo(324, 188); g.lineTo(360, 188); g.stroke();
+    g.beginPath(); g.moveTo(354,183); g.lineTo(360,188); g.lineTo(354,193); g.stroke();
+
+    /* токени: кожен квадрат — середня яскравість свого патча */
+    var boxW=520, boxH=250, tx=380, ty=48;
+    /* клітинку рахуємо так, щоб уся сітка res×res влізла в рамку — інакше
+       частина токенів обрізається й читач бачить «показано перші 154» */
+    var cell=Math.max(6, Math.min(30, Math.floor(Math.min(boxW,boxH)/d.res)-3));
+    var cols=d.res;
+    var k;
+    for(k=0;k<d.tok;k++){
+      var pr=Math.floor(k/d.res), pc=k%d.res, m=0, a, b;
+      for(a=0;a<P;a++) for(b=0;b<P;b++) m+=px(pr*P+a, pc*P+b);
+      m/=P*P;
+      var col=k%cols, row=Math.floor(k/cols);
+      var x=tx+col*(cell+3), y=ty+row*(cell+3);
+      if(y+cell>ty+boxH) break;
+      g.fillStyle='rgb('+Math.round(30+m*210)+','+Math.round(36+m*206)+','+Math.round(43+m*200)+')';
+      g.fillRect(x,y,cell,cell);
+      g.strokeStyle=hair; g.lineWidth=.5; g.strokeRect(x+.25,y+.25,cell-.5,cell-.5);
+    }
+    var shown=k;
+    capt(g, gr(d.tok)+' '+токенів(d.tok)+', кожен по 48 чисел', tx, ty+boxH+22, ink,12,true);
+    if(shown<d.tok) capt(g,'(показано перші '+shown+')', tx, ty+boxH+40, soft,11);
+
+    I('p2v').textContent=P;
+    I('p2tok').textContent=gr(d.tok);
+    I('p2len').textContent=(P*P)+' → 48';
+    I('p2pair').textContent=gr(d.pair);
+    I('p2par').textContent=gr(d.par);
+
+    if(P===2){
+      verd('p2vd','t-no','ЗАДОРОГО',
+        'Патчі майже піксельні, деталі збережені всі — але 196 токенів дають '
+        +gr(d.pair)+' пар уваги на кожному шарі. У 16 разів більше, ніж при патчі 4.');
+    } else if(P===4){
+      verd('p2vd','t-ok','РОБОЧИЙ ВИБІР',
+        '49 токенів і '+gr(d.pair)+' пари уваги. Саме цей розмір беремо в практиці: '
+        +'фігура ще впізнавана, а увага коштує прийнятно.');
+    } else if(P===7){
+      verd('p2vd','t-mid','ДЕШЕВО, АЛЕ ГРУБО',
+        'Лише 16 токенів і 256 пар — увага майже безкоштовна. Зате сітка 4×4: '
+        +'дрібні відмінності між фігурами вже злилися всередині патча.');
+    } else {
+      verd('p2vd','t-no','НІЧОГО НЕ ВИДНО',
+        'Чотири токени й 16 пар — рахувати нічого. Але від зображення лишилось '
+        +'чотири квадрати, і матриця проєкції розрослась до '+gr(d.par)+' ваг.');
+    }
+  }
+  on('p2','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 2 · Патч → вектор → токен ═════════════ */
+(function(){
+  var cv=I('cPatch'); if(!cv) return;
+  var IMG=ATTN.img[0];
+  function px(r,c){ return IMG[r*28+c]/99; }
+
+  /* матриця 16×48 і зсув — детерміновані, однакові у всіх читачів */
+  var rnd=LCG(20250902), W=[], B=[], a, b;
+  for(a=0;a<16;a++){ var row=[]; for(b=0;b<48;b++) row.push((rnd()-0.5)*0.9); W.push(row); }
+  for(b=0;b<48;b++) B.push((rnd()-0.5)*0.2);
+
+  function draw(){
+    var g=dpr(cv), k=+I('k3').value;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'), rose=css('--rose'), teal=css('--teal');
+    var pr=Math.floor(k/7), pc=k%7, P=4, r, c;
+
+    /* A · зображення з виділеним патчем */
+    capt(g,'1 · РІЖЕМО',30,26,soft,11,true);
+    var s=6, ox=30, oy=44;
+    for(r=0;r<28;r++) for(c=0;c<28;c++){
+      var v=px(r,c);
+      g.fillStyle='rgb('+Math.round(30+v*210)+','+Math.round(36+v*206)+','+Math.round(43+v*200)+')';
+      g.fillRect(ox+c*s, oy+r*s, s, s);
+    }
+    g.strokeStyle=hair; g.lineWidth=.5;
+    for(r=0;r<=28;r+=P){
+      g.beginPath(); g.moveTo(ox, oy+r*s); g.lineTo(ox+168, oy+r*s); g.stroke();
+      g.beginPath(); g.moveTo(ox+r*s, oy); g.lineTo(ox+r*s, oy+168); g.stroke();
+    }
+    g.strokeStyle=rose; g.lineWidth=2.5;
+    g.strokeRect(ox+pc*P*s, oy+pr*P*s, P*s, P*s);
+
+    /* B · патч крупно з числами */
+    capt(g,'2 · РОЗГОРТАЄМО',240,26,soft,11,true);
+    var bx=240, by=44, cs=42;
+    for(r=0;r<P;r++) for(c=0;c<P;c++){
+      var v2=px(pr*P+r, pc*P+c);
+      g.fillStyle='rgb('+Math.round(30+v2*210)+','+Math.round(36+v2*206)+','+Math.round(43+v2*200)+')';
+      g.fillRect(bx+c*cs, by+r*cs, cs, cs);
+      g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(bx+c*cs+.5, by+r*cs+.5, cs-1, cs-1);
+      g.fillStyle = v2>0.5 ? '#17212b' : '#e6ecf2';
+      g.font=mono(11,true); g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(v2.toFixed(2), bx+c*cs+cs/2, by+r*cs+cs/2);
+    }
+    g.textBaseline='alphabetic';
+    capt(g,'патч 4×4 = 16 чисел', bx, by+4*cs+20, ink,12,true);
+
+    /* C · рядок із 16 чисел, кожне підписане */
+    var lx=460, ly=74, lw=29;
+    capt(g,'ТОЙ САМИЙ ПАТЧ У РЯДОК',lx,26,soft,11,true);
+    capt(g,'перший рядок патча, потім другий, третій і четвертий',lx,52,soft,11);
+    var flat=[];
+    for(r=0;r<P;r++) for(c=0;c<P;c++) flat.push(px(pr*P+r, pc*P+c));
+    for(a=0;a<16;a++){
+      var v3=flat[a];
+      g.fillStyle='rgb('+Math.round(30+v3*210)+','+Math.round(36+v3*206)+','+Math.round(43+v3*200)+')';
+      g.fillRect(lx+a*lw, ly, lw-2, 44);
+      g.strokeStyle=hair; g.lineWidth=.5; g.strokeRect(lx+a*lw+.25, ly+.25, lw-2.5, 43.5);
+      g.fillStyle = v3>0.5 ? '#17212b' : '#e6ecf2';
+      g.font=mono(9,false); g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(v3.toFixed(2), lx+a*lw+(lw-2)/2, ly+22);
+    }
+    g.textBaseline='alphabetic';
+    capt(g,'вектор довжини 16',lx,ly+64,ink,12,true);
+    capt(g,'усі 49 патчів проходять цей самий шлях',lx,ly+86,soft,11);
+
+    /* D · множення */
+    capt(g,'3 · МНОЖИМО НА ТУ САМУ МАТРИЦЮ',30,244,soft,11,true);
+    g.strokeStyle=teal; g.lineWidth=2;
+    g.beginPath(); g.moveTo(30,256); g.lineTo(910,256); g.stroke();
+    capt(g,'W: 16 × 48   плюс зсув b: 48   разом 816 ваг — одні на всі 49 патчів',
+         30,278,teal,12,true);
+
+    /* E · токен: 48 чисел */
+    var token=[], mx=0;
+    for(b=0;b<48;b++){
+      var sum=B[b];
+      for(a=0;a<16;a++) sum+=flat[a]*W[a][b];
+      token.push(sum);
+      if(Math.abs(sum)>mx) mx=Math.abs(sum);
+    }
+    var tx=30, ty=308, tw=18;
+    for(b=0;b<48;b++){
+      var t=(token[b]/(mx||1)+1)/2;
+      g.fillStyle=heat(t);
+      g.fillRect(tx+b*tw, ty, tw-2, 34);
+    }
+    capt(g,'ТОКЕН — 48 ЧИСЕЛ',30,302,soft,11,true);
+    capt(g,'найменше '+token.reduce(function(p,q){return Math.min(p,q);}).toFixed(2)
+          +'   найбільше '+token.reduce(function(p,q){return Math.max(p,q);}).toFixed(2),
+         30, ty+54, soft,11);
+
+    I('k3v').textContent=k;
+    I('k3rc').textContent=(pr+1)+' · '+(pc+1);
+    I('k3max').textContent=hi(token).toFixed(3);
+    var mean=0; for(a=0;a<16;a++) mean+=flat[a]; mean/=16;
+
+    /* пороги підібрані під наш датасет: шум 0.45 дає тлу середню яскравість
+       близько 0.18, тож «порожнім» патч треба вважати аж до 0.30 */
+    if(mean<0.30){
+      verd('k3vd','t-mid','ТІЛЬКИ ТЛО',
+        'Предмета тут немає — лише шум, середня яскравість '+mean.toFixed(2)+'. Токен усе одно '
+        +'рахується: модель не знає наперед, де предмет, і обробляє всі 49 патчів однаково.');
+    } else if(mean>0.62){
+      verd('k3vd','t-ok','СЕРЕДИНА ПРЕДМЕТА',
+        'Середня яскравість '+mean.toFixed(2)+' — патч цілком усередині фігури. '
+        +'Найбільше число токена '+hi(token).toFixed(2)+'.');
+    } else {
+      verd('k3vd','t-ok','КРАЙ ПРЕДМЕТА',
+        'Середня яскравість '+mean.toFixed(2)+': патч зачепив межу фігури. '
+        +'Саме такі патчі найінформативніші — але матриця для них та сама, що й для порожніх.');
+    }
+  }
+  on('k3','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 3 · Куди дивиться CLS-токен ═════════════ */
+(function(){
+  var cv=I('cAttn'); if(!cv) return;
+  var si=0, li=0, hi_=0;
+
+  function current(){
+    var heads=ATTN.attn[si][li], k, a;
+    if(hi_<4) return heads[hi_].slice();
+    var out=[]; for(k=0;k<49;k++){ var s=0; for(a=0;a<4;a++) s+=heads[a][k]; out.push(s/4); }
+    return out;
+  }
+  function draw(){
+    var g=dpr(cv);
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'), rose=css('--rose');
+    var w=current(), img=ATTN.img[si], k, r, c;
+    var wmax=hi(w), wmin=lo(w);
+
+    capt(g,'ВХІД 28×28',40,28,soft,11,true);
+    capt(g,'УВАГА CLS → ПАТЧІ',352,28,soft,11,true);
+    capt(g,'НАКЛАДЕНО',664,28,soft,11,true);
+
+    var s=9, oy=46;
+    /* 1 · вхід */
+    for(r=0;r<28;r++) for(c=0;c<28;c++){
+      var v=img[r*28+c]/99;
+      g.fillStyle='rgb('+Math.round(30+v*210)+','+Math.round(36+v*206)+','+Math.round(43+v*200)+')';
+      g.fillRect(40+c*s, oy+r*s, s, s);
+    }
+    g.strokeStyle=hair; g.lineWidth=.5;
+    for(r=0;r<=28;r+=4){
+      g.beginPath(); g.moveTo(40, oy+r*s); g.lineTo(40+252, oy+r*s); g.stroke();
+      g.beginPath(); g.moveTo(40+r*s, oy); g.lineTo(40+r*s, oy+252); g.stroke();
+    }
+    capt(g,ATTN.shapes[si],40,oy+272,ink,13,true);
+
+    /* 2 · теплова карта 7×7 */
+    var cs=36;
+    for(k=0;k<49;k++){
+      r=Math.floor(k/7); c=k%7;
+      g.fillStyle=heat(wmax>wmin ? (w[k]-wmin)/(wmax-wmin) : 0);
+      g.fillRect(352+c*cs, oy+r*cs, cs, cs);
+      g.strokeStyle=hair; g.lineWidth=.5; g.strokeRect(352+c*cs+.25, oy+r*cs+.25, cs-.5, cs-.5);
+    }
+    capt(g,'мін '+wmin.toFixed(4)+'   макс '+wmax.toFixed(4),352,oy+272,ink,12,true);
+
+    /* 3 · накладено на зображення */
+    for(r=0;r<28;r++) for(c=0;c<28;c++){
+      var v2=img[r*28+c]/99;
+      g.fillStyle='rgb('+Math.round(30+v2*210)+','+Math.round(36+v2*206)+','+Math.round(43+v2*200)+')';
+      g.fillRect(664+c*s, oy+r*s, s, s);
+    }
+    for(k=0;k<49;k++){
+      r=Math.floor(k/7); c=k%7;
+      var t=wmax>wmin ? (w[k]-wmin)/(wmax-wmin) : 0;
+      g.globalAlpha=0.62*t;
+      g.fillStyle=rose;
+      g.fillRect(664+c*36, oy+r*36, 36, 36);
+      g.globalAlpha=1;
+    }
+    g.strokeStyle=hair; g.lineWidth=.5;
+    for(r=0;r<=28;r+=4){
+      g.beginPath(); g.moveTo(664, oy+r*s); g.lineTo(664+252, oy+r*s); g.stroke();
+      g.beginPath(); g.moveTo(664+r*s, oy); g.lineTo(664+r*s, oy+252); g.stroke();
+    }
+    capt(g,'шар '+(li+1)+' · '+(hi_<4?('голова '+(hi_+1)):'середнє по головах'),
+         664,oy+272,ink,12,true);
+
+    /* шкала кольору */
+    var bx=352, by=oy+286, bw=252;
+    for(k=0;k<bw;k++){ g.fillStyle=heat(k/(bw-1)); g.fillRect(bx+k, by, 1, 12); }
+    capt(g,'слабко',bx,by+26,soft,10);
+    capt(g,'сильно',bx+bw,by+26,soft,10,false,'right');
+
+    I('a4max').textContent=wmax.toFixed(4);
+    var rel=wmax*49;
+    I('a4rel').textContent=rel.toFixed(1)+'×';
+
+    /* «середнє по головах» — це не голова, і вердикт має говорити про неї інакше */
+    var who = hi_<4 ? 'Ця голова' : 'Усереднена по чотирьох головах увага';
+    if(rel>10){
+      verd('a4vd','t-no','ОДНА КЛІТИНКА',
+        'Найбільша вага '+wmax.toFixed(3)+' — це в '+rel.toFixed(0)+' разів більше за '
+        +'рівномірні 0.0204. '+who+' зосереджена майже на одному патчі, решту ігнорує.');
+    } else if(rel>2.5){
+      verd('a4vd','t-mid','ВИБІРКОВО',
+        'Максимум '+wmax.toFixed(4)+' проти рівномірних 0.0204 — у '+rel.toFixed(1)
+        +' раза більше. '+who+' дивиться на кілька патчів, але не на один.');
+    } else {
+      verd('a4vd','t-ok','МАЙЖЕ РІВНОМІРНО',
+        'Максимум '+wmax.toFixed(4)+' лише в '+rel.toFixed(1)+' раза більший за '
+        +'рівномірні 0.0204. '+who+' бере потроху з усього кадру — майже як усереднення.');
+    }
+  }
+  segment('a4shape', function(i){ si=i; draw(); });
+  segment('a4layer', function(i){ li=i; draw(); });
+  segment('a4head',  function(i){ hi_=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 4 · Розклад ViT-B по частинах ═════════════ */
+(function(){
+  var cv=I('cVit'); if(!cv) return;
+  var mi=0;
+
+  function draw(){
+    var g=dpr(cv), m=VITB[mi], parts=partsOf(m), k;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+    var cols=[teal, soft, rose, amber, ink, ink];
+
+    /* справжні пропорції — одна смуга на 100 % */
+    capt(g,'СПРАВЖНІ ПРОПОРЦІЇ',30,26,soft,11,true);
+    var sx=30, sw=880, acc=0;
+    for(k=0;k<parts.length;k++){
+      var w=sw*parts[k]/m.total;
+      g.fillStyle=cols[k]; g.fillRect(sx+acc, 36, Math.max(w,0.5), 26);
+      acc+=w;
+    }
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(sx+.5, 36.5, sw-1, 25);
+    capt(g,'шари енкодера — '+(100*m.enc/m.total).toFixed(1)+' % моделі',
+         sx, 78, ink, 12, true);
+
+    /* логарифмічна шкала — інакше все, крім енкодера, невидиме */
+    capt(g,'ТА САМА КАРТИНКА В ЛОГАРИФМІЧНІЙ ШКАЛІ — ЩОБ ДРІБНІ ЧАСТИНИ БУЛО ВИДНО',
+         30,104,soft,11,true);
+    var y0=124, rowH=38, bx=200, bw=560, mxl=Math.log(1+m.total);
+    for(k=0;k<parts.length;k++){
+      var y=y0+k*rowH;
+      capt(g, PART_NAMES[k], bx-12, y+16, ink, 12, false, 'right');
+      var wl=bw*Math.log(1+parts[k])/mxl;
+      g.fillStyle=cols[k]; rr(g,bx,y,Math.max(wl,2),20,4); g.fill();
+      capt(g, gr(parts[k]), bx+Math.max(wl,2)+10, y+15, soft, 12, true);
+    }
+    var yb=y0+parts.length*rowH;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(bx, yb+2); g.lineTo(bx+bw, yb+2); g.stroke();
+    capt(g, m.name+' · патч '+m.patch+' · '+m.tokens+' токенів · усього '+gr(m.total)+' ваг',
+         bx, yb+24, ink, 12, true);
+
+    I('v5tot').textContent=gr(m.total);
+    I('v5tok').textContent=m.tokens;
+    I('v5proj').textContent=gr(m.proj);
+    I('v5enc').textContent=gr(m.enc);
+
+    var other=VITB[1-mi];
+    if(mi===0){
+      verd('v5vd','t-ok','ПАТЧ 16',
+        '197 токенів, проєкція '+gr(m.proj)+' ваг (0.7 % моделі). Позиційне кодування — '
+        +gr(m.pos)+', і це вся геометрія, яку має модель. Тепер перемкни на /32 і дивись '
+        +'на рядок «шари енкодера».');
+    } else {
+      verd('v5vd','t-ok','ПАТЧ 32',
+        'Токенів учетверо менше — 50 замість 197. Проєкція виросла вчетверо, до '
+        +gr(m.proj)+'. Разом модель на '+gr(m.total-other.total)+' ваг БІЛЬША, а рахується '
+        +'швидше. Енкодер — '+gr(m.enc)+', той самий до біта.');
+    }
+  }
+  segment('v5seg', function(i){ mi=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 5 · Ціна розміру патча ═════════════ */
+(function(){
+  var cv=I('cCost'); if(!cv) return;
+  var METRIC=[
+    {key:'tok',  title:'ТОКЕНІВ',        good:'менше — дешевше'},
+    {key:'pair', title:'ПАР УВАГИ',      good:'менше — швидше'},
+    {key:'par',  title:'ВАГ У ПРОЄКЦІЇ', good:'менше — легше'},
+    {key:'res',  title:'РОЗДІЛЬНІСТЬ',   good:'більше — детальніше'}
+  ];
+  function draw(){
+    var g=dpr(cv), i=+I('c6').value, d=COST[i], mi, k;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'), rose=css('--rose'), teal=css('--teal');
+
+    for(mi=0;mi<4;mi++){
+      var px0=30+mi*232, M=METRIC[mi], mx=0;
+      for(k=0;k<COST.length;k++) mx=Math.max(mx, COST[k][M.key]);
+      capt(g, M.title, px0, 30, soft, 11, true);
+      capt(g, M.good, px0, 48, soft, 10);
+      var base=308, top=70, bw=38;
+      for(k=0;k<COST.length;k++){
+        var v=COST[k][M.key];
+        var h=Math.max(3, (base-top)*Math.log(1+v)/Math.log(1+mx));
+        var x=px0+k*50;
+        g.fillStyle = (k===i) ? (M.key==='res'?teal:rose) : hair;
+        rr(g, x, base-h, bw, h, 4); g.fill();
+        capt(g, String(COST[k].p), x+bw/2, base+18, k===i?ink:soft, 11, k===i, 'center');
+        if(k===i) capt(g, M.key==='res' ? (v+'×'+v) : gr(v),
+                       x+bw/2, base-h-8, ink, 12, true, 'center');
+      }
+      g.strokeStyle=hair; g.lineWidth=1;
+      g.beginPath(); g.moveTo(px0, base+2); g.lineTo(px0+200, base+2); g.stroke();
+      capt(g,'розмір патча', px0, base+40, soft, 10);
+    }
+    capt(g,'висота стовпчиків — логарифмічна, інакше 16 і 38 416 не влізли б в одну картинку',
+         30, 366, soft, 11);
+
+    I('c6v').textContent=d.p;
+    I('c6tok').textContent=gr(d.tok);
+    I('c6pair').textContent=gr(d.pair);
+    I('c6par').textContent=gr(d.par);
+    I('c6res').textContent=d.res+'×'+d.res;
+
+    if(d.p===2){
+      verd('c6vd','t-no','ДЕТАЛІ Є, ЧАСУ НЕМАЄ',
+        'Роздільність 14×14 — найкраща з чотирьох, проєкція найдешевша (240 ваг). '
+        +'Але '+gr(d.pair)+' пар уваги: у 16 разів дорожче за патч 4.');
+    } else if(d.p===4){
+      verd('c6vd','t-ok','РІВНОВАГА',
+        '49 токенів, 2 401 пара, 816 ваг, сітка 7×7. Жодне з чотирьох чисел не в крайності — '
+        +'тому саме цей розмір беремо для 28×28.');
+    } else if(d.p===7){
+      verd('c6vd','t-mid','ДЕШЕВО, АЛЕ ГРУБО',
+        'Пар уваги всього 256 — увага перестала бути вузьким місцем. Але сітка 4×4, '
+        +'а проєкція вже 2 400 ваг: ціна переїхала зі шарів уваги на вхід.');
+    } else {
+      verd('c6vd','t-no','ВХІД ПОЖЕР УСЕ',
+        'Увага коштує нічого — 16 пар. Зате проєкція '+gr(d.par)+' ваг, майже в 12 разів більше, '
+        +'ніж при патчі 4, а сітка 2×2: у моделі лишилось чотири числа про картинку.');
+    }
+  }
+  on('c6','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 6 · ViT проти CNN зі зростанням даних ═════════════ */
+(function(){
+  var cv=I('cCmp'); if(!cv) return;
+  var SER=[
+    {key:'cnn', mkey:'mcnn', name:'CNN, 4 926 ваг',   cvar:'--teal'},
+    {key:'vit', mkey:'mvit', name:'ViT, 41 574 ваги', cvar:'--rose'},
+    {key:'np',  mkey:'mnp',  name:'ViT без позиційного', cvar:'--amber'}
+  ];
+  function draw(){
+    var g=dpr(cv), i=+I('d7').value, k, s;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+    var L=70, R=690, T=50, Bm=310;
+    function X(n){ return L+(R-L)*(Math.log(n)-Math.log(150))/(Math.log(2400)-Math.log(150)); }
+    function Y(a){ return Bm-(Bm-T)*a; }
+
+    /* сітка й осі */
+    g.strokeStyle=hair; g.lineWidth=1;
+    for(k=0;k<=5;k++){
+      var y=Y(k/5);
+      g.beginPath(); g.moveTo(L,y); g.lineTo(R,y); g.stroke();
+      capt(g,(k/5).toFixed(1), L-10, y+4, soft, 11, false, 'right');
+    }
+    for(k=0;k<CMP.length;k++){
+      var x=X(CMP[k].n);
+      capt(g, String(CMP[k].n), x, Bm+22, k===i?ink:soft, 12, k===i, 'center');
+    }
+    capt(g,'прикладів у навчанні (шкала логарифмічна)', L, Bm+46, soft, 11);
+    capt(g,'точність на 600 перевірочних фігурах', L-10, T-18, soft, 11);
+
+    /* рівень вгадування */
+    g.strokeStyle=soft; g.lineWidth=1; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(L, Y(1/6)); g.lineTo(R, Y(1/6)); g.stroke();
+    g.setLineDash([]);
+    capt(g,'вгадування навмання 0.167', R-4, Y(1/6)-7, soft, 10, false, 'right');
+
+    /* виділення поточного обсягу */
+    g.strokeStyle=css('--rose'); g.lineWidth=1; g.globalAlpha=.35;
+    g.beginPath(); g.moveTo(X(CMP[i].n), T-6); g.lineTo(X(CMP[i].n), Bm); g.stroke();
+    g.globalAlpha=1;
+
+    /* криві */
+    for(s=0;s<SER.length;s++){
+      var col=css(SER[s].cvar);
+      g.strokeStyle=col; g.lineWidth=2.5; g.beginPath();
+      for(k=0;k<CMP.length;k++){
+        var xx=X(CMP[k].n), yy=Y(CMP[k][SER[s].mkey]);
+        if(k===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+      }
+      g.stroke();
+      for(k=0;k<CMP.length;k++){
+        var arr=CMP[k][SER[s].key], x2=X(CMP[k].n);
+        g.strokeStyle=col; g.lineWidth=1.5;
+        g.beginPath(); g.moveTo(x2, Y(lo(arr))); g.lineTo(x2, Y(hi(arr))); g.stroke();
+        g.beginPath(); g.moveTo(x2-5, Y(lo(arr))); g.lineTo(x2+5, Y(lo(arr))); g.stroke();
+        g.beginPath(); g.moveTo(x2-5, Y(hi(arr))); g.lineTo(x2+5, Y(hi(arr))); g.stroke();
+        g.fillStyle=col; g.beginPath();
+        g.arc(x2, Y(CMP[k][SER[s].mkey]), k===i?6:4, 0, 6.2832); g.fill();
+      }
+      /* легенда фіксованими рядками — інакше підписи ViT і ViT без позиційного
+         накладаються один на одного (грабля №12) */
+      var ly=T+16+s*62;
+      g.fillStyle=col; g.fillRect(R+18, ly-9, 10, 10);
+      capt(g, SER[s].name, R+34, ly, ink, 12, true);
+      capt(g, CMP[i][SER[s].mkey].toFixed(3)+' при '+CMP[i].n+' прикладах',
+           R+34, ly+18, soft, 11);
+    }
+
+    var d=CMP[i];
+    I('d7v').textContent=d.n;
+    I('d7cnn').textContent=d.mcnn.toFixed(3);
+    I('d7vit').textContent=d.mvit.toFixed(3);
+    I('d7np').textContent=d.mnp.toFixed(3);
+    var gap=d.mcnn-d.mvit;
+    I('d7gap').textContent=gap.toFixed(3);
+
+    verd('d7vd','t-no','ЗГОРТКА ПОПЕРЕДУ',
+      'При '+d.n+' прикладах CNN дає '+d.mcnn.toFixed(3)+', ViT — '
+      +d.mvit.toFixed(3)+'. Розрив '+gap.toFixed(3)+' при тому, що ваг у ViT у '
+      +(41574/4926).toFixed(1)+' раза більше. Найбільший розкид від зерна тут '
+      +d.worst.toFixed(3)+' — розрив більший за нього в '+крат(gap/d.worst)
+      +', отже це справжня різниця.');
+  }
+  on('d7','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 7 · Коли позиційне кодування потрібне ═════════════ */
+(function(){
+  var cv=I('cPos'); if(!cv) return;
+  var ti=0;
+  function draw(){
+    var g=dpr(cv), k, t;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal');
+    var base=300, top=60;
+    function Y(a){ return base-(base-top)*a; }
+
+    /* шкала точності */
+    g.strokeStyle=hair; g.lineWidth=1;
+    for(k=0;k<=5;k++){
+      var y=Y(k/5);
+      g.beginPath(); g.moveTo(90,y); g.lineTo(900,y); g.stroke();
+      capt(g,(k/5).toFixed(1), 80, y+4, soft, 11, false, 'right');
+    }
+    capt(g,'точність на перевірці', 90, 34, soft, 11, true);
+
+    for(t=0;t<2;t++){
+      var gx=140+t*400, active=(t===ti), T=TASKS[t];
+      var bars=[
+        {lbl:'із кодуванням', v:T.myes, col:teal},
+        {lbl:'без кодування', v:T.mno,  col:rose}
+      ];
+      g.globalAlpha = active ? 1 : 0.28;
+      for(k=0;k<2;k++){
+        var x=gx+k*130, h=base-Y(bars[k].v);
+        g.fillStyle=bars[k].col; rr(g, x, Y(bars[k].v), 96, h, 5); g.fill();
+        capt(g, bars[k].v.toFixed(3), x+48, Y(bars[k].v)-9, ink, 14, true, 'center');
+        capt(g, bars[k].lbl, x+48, base+20, active?ink:soft, 11, active, 'center');
+      }
+      capt(g,'«'+T.name+'», '+T.classes+' класи', gx-18, base+44, active?ink:soft, 13, true);
+      g.globalAlpha=1;
+    }
+    /* рівень вгадування — лише для активної задачі, на всю ширину:
+       коротка лінія з підписом наїжджала на стовпчик (грабля №12) */
+    var Tc=TASKS[ti];
+    g.strokeStyle=soft; g.lineWidth=1.5; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(90, Y(Tc.chance)); g.lineTo(900, Y(Tc.chance)); g.stroke();
+    g.setLineDash([]);
+    /* підпис — у проміжку між групами, з підкладкою: інакше він лягає на стовпчик */
+    plate(g,'вгадування '+Tc.chance.toFixed(3), 386, Y(Tc.chance)-7, soft, 11, 'left', css('--raise'));
+    capt(g,'сіре — друга задача, показана для порівняння', 90, 370, soft, 11);
+
+    var T2=TASKS[ti];
+    I('p8yes').textContent=T2.myes.toFixed(3);
+    I('p8no').textContent=T2.mno.toFixed(3);
+    /* показуємо розкид, а не різницю: різниця й так видно з двох чисел вище,
+       а розкид — це та одиниця виміру, з якою її треба порівнювати */
+    I('p8d').textContent=taskSpread(T2).toFixed(3);
+    I('p8ch').textContent=T2.chance.toFixed(3);
+
+    if(ti===0){
+      verd('p8vd','t-mid','КОДУВАННЯ НЕ ОКУПАЄТЬСЯ',
+        'Без нього '+T2.mno.toFixed(3)+', з ним '+T2.myes.toFixed(3)
+        +'. Але розкид від зерна тут '+taskSpread(T2).toFixed(3)
+        +' — більший за саму різницю, тож чесно сказати можна лише одне: '
+        +'2 400 ваг кодування нічого не додали. Клас визначає вміст патчів, а не їхнє місце.');
+    } else {
+      verd('p8vd','t-no','БЕЗ КОДУВАННЯ МОДЕЛІ НЕМАЄ',
+        'Без нього 0.248 — це рівно вгадування навмання (0.250). З ним 0.995. '
+        +'Клас визначає лише положення, а без кодування модель бачить мішок патчів '
+        +'без порядку і фізично не може відрізнити чверті.');
+    }
+  }
+  segment('p8seg', function(i){ ti=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+})();
+
+</script>
+</body>
+</html>

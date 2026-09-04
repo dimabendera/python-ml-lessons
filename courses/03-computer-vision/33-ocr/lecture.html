@@ -1,0 +1,2033 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCR: знайти текст і прочитати</title>
+<meta name="description" content="Перша тема блоку 7: відповідь моделі вперше не картинка, а рядок символів. Наївний поділ рядка на символи по порожніх стовпцях дає 0.3933 правильних рядків, а 81 пара цифр зі 100 злипається при нульовому проміжку. Рамка з двома рядками дає CER 1.5000 у шаблонного читача і рівно 1.0000 у tesseract при --psm 7, тоді як запас у 4 px не коштує нічого. CER і «рядок цілком» розходяться з довжиною: при CER 0.02 частка чистих рядків падає з 0.9210 на чотирьох символах до 0.6230 на двадцяти пʼяти. Найбільше псування не чіпає жодного пікселя: англійський алфавіт замість українського дає CER 0.7045, «ф» стає двома літерами cb. Контраст 2 % дає 0.0000, а порогування Оцу погіршує 0.0670 до 0.1673. Шум немонотонний: 0.6871 при σ 0.35 і 0.1481 при σ 0.60. CTC вимагає T щонайменше L плюс кількість повторів, тобто 2L−1 у найгіршому випадку, а не 2L+1. Робоче вікно за швидкістю навчання вузьке, і по обидва боки від нього — порожній рядок.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* грабля №3: під uppercase латинська N і грецькі літери псуються.
+   Правило .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw{text-transform:none}
+
+/* сітка з двох канв поруч у деяких фігурах */
+.twin{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+@media(max-width:620px){.twin{grid-template-columns:1fr}}
+/* перемикачі рівнів у фігурі «прибрати скіп» */
+.seg.three button{flex:1 1 30%}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 7 · Тема 33</p>
+    <h1>OCR: знайти текст і прочитати</h1>
+    <p class="stand">Блок 6 закінчився питанням «якому предмету належить цей піксель».
+      Тут відповідь уперше перестає бути картинкою: на виході — <b>рядок символів</b>.
+      І це єдина тема курсу, де поруч із нашою моделлю стоїть готовий промисловий
+      рушій, якому можна поставити ті самі питання.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Одне слово, дві задачі</a></li>
+        <li><a href="#s2">Чому не можна різати рядок на літери</a></li>
+        <li><a href="#s3">Рамка вирішує, що прочитається</a></li>
+        <li><a href="#s4">Чим міряти: відстань Левенштейна</a></li>
+        <li><a href="#s5">Промисловий рушій під псуванням</a></li>
+        <li><a href="#s6">Алфавіт — частина моделі</a></li>
+        <li><a href="#s7">Шум немонотонний, і один замір бреше</a></li>
+        <li><a href="#s8">CRNN: смужка ознак замість літер</a></li>
+        <li><a href="#s9">CTC: порожній символ і склеювання</a></li>
+        <li><a href="#s10">Вікно за швидкістю навчання</a></li>
+        <li><a href="#s11">Декодування: шлях проти рядка</a></li>
+        <li><a href="#s12">Що з цього забрати</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../32-panoptic-sam/lecture.html">← 32. Panoptic і SAM</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../34-video-tracking/lecture.html">34. Відео: трекінг →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Оголошення на дошці: фото телефона, а на фото — цінник. Щоб дошка
+могла шукати за ціною, комусь треба перетворити ділянку пікселів на рядок «4500 грн».
+Задача звучить дрібно поруч із сегментацією, з якої ми щойно вийшли: там модель
+відповідала за кожен піксель окремо, тут вона має видати десяток символів. Але саме
+ця дрібна задача ламає всі звички, набуті в перших шести блоках, — і ламає їх у
+першому ж реченні постановки.</p>
+
+<h2 id="s1"><span class="num">01 / Постановка</span>Одне слово, дві задачі</h2>
+
+<p>Слово <b>OCR</b> (optical character recognition, розпізнавання тексту) означає не
+одну задачу, а дві, поставлені одна за одною:</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Крок</th><th>Питання</th><th>Вихід</th><th>На що схоже з курсу</th></tr></thead>
+  <tbody>
+    <tr><td>детекція тексту</td><td>де на знімку рядки?</td><td>список рамок</td><td>детекція з блоку 5</td></tr>
+    <tr><td>розпізнавання рядка</td><td>що написано в цій рамці?</td><td>рядок символів</td><td>нічого з попередніх блоків</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Перший крок ми фактично вже вміємо. Рамка навколо рядка тексту — це та сама рамка,
+що навколо машини в <a href="../23-detection-setup/lecture.html">темі 23</a>, тільки
+предмет інший: довгий, тонкий і без сталого співвідношення сторін. Метрики ті самі —
+<code>IoU</code>, <code>mAP</code>, <code>NMS</code>.</p>
+
+<p>Другий крок — новий цілком. Досі кожна наша модель віддавала або одне число (клас),
+або масив сталого розміру (карта ознак, маска). Тут вихід — <b>послідовність
+невідомої довжини</b>: «4500 грн» це вісім символів, «Продам телефон терміново» —
+двадцять чотири, і мережа мусить сама вирішити, скільки їх.</p>
+
+<p>Чому ці два кроки не зливають в один? Спокуса є: одна мережа, яка дивиться на
+фото й видає весь текст. Такі моделі існують, але майже всі промислові системи досі
+розділені, і на це є проста причина, яку ми зараз заміряємо: розпізнавач уміє читати
+<b>рівно один рядок</b>, і вся його точність тримається на тому, що детектор дав йому
+саме один рядок і саме цілком.</p>
+
+<div class="note"><b>Наскрізний приклад теми.</b> Ми всюди читатимемо ціни з
+оголошень — той самий домен, що в курсі ML. Власний код малює цифри
+<b>растровим шрифтом 5×7</b>, оголошеним прямо в зошиті: так усі числа відтворяться
+в тебе незалежно від того, які шрифти стоять у системі. Системний шрифт зʼявиться
+рівно один раз — коли ми порівнюватимемо себе з готовим рушієм.</div>
+
+<h2 id="s2"><span class="num">02 / Сегментація</span>Чому не можна різати рядок на літери</h2>
+
+<p>Найочевидніший план такий: розріж рядок на символи, а далі класифікуй кожен
+символ окремо. Класифікація дрібних картинок — задача з блоку 2, вона розвʼязана.</p>
+
+<p>План помирає на першому кроці, і помирає красиво. <b>Щоб розрізати рядок на
+символи, треба вже знати, де вони</b> — а це і є розпізнавання, тільки складніше:
+тепер модель має не просто назвати літери, а ще й знайти межі між ними.</p>
+
+<p>Здається, що межі видно й так: між літерами є проміжок. Перевіримо це правило —
+«порожній стовпець пікселів розділяє символи» — на трьохстах рядках із трьох-пʼяти
+цифр.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>проміжок між цифрами</th><th>рядків поділено правильно</th><th>шматків на символ</th></tr></thead>
+  <tbody>
+    <tr><td>завжди 1 px</td><td>1.0000</td><td>1.0000</td></tr>
+    <tr><td>1 або 2 px</td><td>1.0000</td><td>1.0000</td></tr>
+    <tr class="hot"><td>0, 1 або 2 px</td><td>0.3933</td><td>0.7935</td></tr>
+    <tr class="hot"><td>0 або 1 px</td><td>0.2500</td><td>0.6990</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Доки між цифрами лишається хоч один порожній стовпець, правило працює
+<b>ідеально</b> — і саме тому воно так довго здавалося робочим. Досить проміжкам
+іноді зникати, і правильно поділених рядків лишається <b>39.33 %</b>.</p>
+
+<p>Заміряймо це точніше. Візьмімо всі сто пар цифр і поставмо їх упритул, без
+жодного проміжку: <b>81 пара зі 100 злипається в один звʼязний шматок</b>. Вижили
+рівно девʼятнадцять — усі ті, де є одиниця. У нашому шрифті одиниця вузька, її
+крайні стовпці порожні, тож вона сама створює проміжок там, де його не заклали.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Порожній стовпець — не межа символу</p>
+  <p class="fig-sub">Згори — рядок цифр растровим шрифтом 5×7, бірюзовим обведено
+    шматки, які знайшло наївне правило. Під ним смуга «чорнило в стовпці»: рожеве —
+    стовпець не порожній, отже різати тут не можна.</p>
+  <div class="panel">
+    <div><canvas id="cGap" width="940" height="380" aria-label="Рядок цифр, профіль чорнила по стовпцях і місця, де наївне правило ріже рядок на символи"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="gap2">проміжок між цифрами <output id="gapOut">2 px</output></label>
+        <input type="range" id="gap2" min="0" max="3" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="salt2">зайвих пікселів на папері <output id="saltOut">0</output></label>
+        <input type="range" id="salt2" min="0" max="12" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>символів</b><i id="gp1">—</i></div>
+        <div class="cellv"><b>шматків</b><i id="gp2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>прочитано</b><i id="gp3" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>CER</b><i id="gp4">—</i></div>
+      </div>
+      <div class="verdict" id="gapVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав проміжок у нуль</b> — і сусідні цифри стануть одним шматком,
+    який шаблон упізнає як щось третє. <b>Тепер додавай зайві пікселі по одному</b>:
+    кожен із них або зшиває два шматки в один, або сам стає новим «символом», і вже
+    третій-четвертий валить читання. Обидві поломки не в класифікаторі, а в тому
+    кроці, який мав би його врятувати.</figcaption>
+</figure>
+
+<p>Друга поломка того самого правила зовсім інша й тому цінна. Досить кільком
+випадковим пікселям упасти на папір між цифрами — і порожніх стовпців не лишається
+взагалі, рядок стає одним шматком. Тобто наївна сегментація ламається двома різними
+способами: від <b>злиття</b> символів і від <b>зникнення</b> проміжків.</p>
+
+<div class="note warn"><b>Це не проблема шрифту.</b> У нашому растровому шрифті всі
+цифри однакової ширини й проміжки задаються явно. У справжньому тексті ширина літер
+різна («і» проти «ш»), кернінг зводить пари літер упритул навмисно, а рукописний
+текст злитий увесь. Ми взяли <b>найлегший можливий</b> випадок — і навіть він
+розсипався від одного зниклого пікселя.</div>
+
+<p>Висновок, який визначає всю решту теми: <b>сегментацію на символи треба не
+покращувати, а прибирати</b>. Модель має читати рядок цілком і сама вирішувати, де
+закінчується один символ і починається інший — не окремим кроком, а всередині
+відповіді.</p>
+
+<h2 id="s3"><span class="num">03 / Рамка</span>Рамка вирішує, що прочитається</h2>
+
+<p>Перш ніж будувати модель, варто побачити, що з нею робить перший крок. Зберемо
+найпростіший <b>шаблонний читач</b> — рівно те, що робив класичний рушій до появи
+мереж:</p>
+
+<ol class="steps">
+  <li>узяти рамку;</li>
+  <li>знайти в ній смужку з чорнилом і звести її до <b>сталої висоти</b> сім пікселів;</li>
+  <li>порізати по порожніх стовпцях;</li>
+  <li>кожен шматок звести до 5×7 і порівняти з десятьма шаблонами.</li>
+</ol>
+
+<p>Крок другий тут головний, і він є в кожному рушії, зокрема й у нейромережевому:
+модель має сталий вхід, тож смужку хоч-не-хоч зводять до однієї висоти. Саме через
+нього рамка перестає бути «дрібницею розмітки».</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>рамка навколо рядка «4500»</th><th>прочитано</th><th>CER</th></tr></thead>
+  <tbody>
+    <tr><td>точно по рядку</td><td>4500</td><td>0.0000</td></tr>
+    <tr><td>із запасом 2 px</td><td>4500</td><td>0.0000</td></tr>
+    <tr><td>із запасом 4 px</td><td>4500</td><td>0.0000</td></tr>
+    <tr class="hot"><td>зачепила другий рядок</td><td>7142991</td><td>1.5000</td></tr>
+    <tr class="hot"><td>обидва рядки разом</td><td>70400</td><td>0.7500</td></tr>
+    <tr><td>зрізано верх 2 px</td><td>4000</td><td>0.2500</td></tr>
+    <tr><td>зрізано низ 2 px</td><td>4000</td><td>0.2500</td></tr>
+    <tr><td>зрізано правий край</td><td>4508</td><td>0.2500</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Три речі варто прочитати з цієї таблиці окремо.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">запас нешкідливий</span>
+    <p>Зайві порожні пікселі навколо рядка не коштують нічого: читач сам знаходить
+      смужку з чорнилом. Тому вимога «рамка точно по буквах» — міф, і детектор, який
+      трохи завеликий, нікому не заважає.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">зрізаний край коштує рівно стільки, скільки зрізано</span>
+    <p>Половина рамки — половина рядка. Це лінійна, передбачувана, майже нецікава
+      поломка: скільки символів випало з рамки, стільки й не прочиталось.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">два рядки в одній рамці — повна поразка</span>
+    <p>А ось це поломка іншого роду. Смужку зводять до сталої висоти, і два рядки,
+      стиснуті в сім пікселів, не схожі ні на що. Помилка не пропорційна: рамка
+      більша <b>на кілька пікселів</b> — і читається сміття. CER тут 1.5000, тобто
+      більший за одиницю: модель не просто помилилась, вона <b>дописала зайвого</b>.</p>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Рамка й те, що з неї виходить</p>
+  <p class="fig-sub">Ліворуч — знімок із двома рядками цін і рамка, яку ти рухаєш.
+    Праворуч — смужка, зведена до сталої висоти сім пікселів, і те, що з неї
+    прочиталося.</p>
+  <div class="panel">
+    <div><canvas id="cBox" width="940" height="340" aria-label="Знімок із двома рядками цифр, рамка детектора і смужка, зведена до сталої висоти, разом із прочитаним рядком"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="bTop3">верх рамки <output id="bTopOut">4</output></label>
+        <input type="range" id="bTop3" min="0" max="14" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <label for="bBot3">низ рамки <output id="bBotOut">11</output></label>
+        <input type="range" id="bBot3" min="6" max="26" step="1" value="11">
+      </div>
+      <div class="ctl">
+        <label for="bRight3">права межа <output id="bRightOut">39</output></label>
+        <input type="range" id="bRight3" min="12" max="39" step="1" value="39">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>висота рамки</b><i id="bx1">—</i></div>
+        <div class="cellv"><b>CER</b><i id="bx2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>прочитано</b><i id="bx3" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="boxVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Опусти низ рамки до 16</b> — і вона зачепить верхівку другого рядка.
+    Прочитане не «трохи зіпсується», а перестане мати спільне з істиною: смужку
+    доведеться стиснути вдвічі, і жоден шаблон уже не підійде. <b>А тепер підніми
+    верх до нуля</b> — нічого не станеться, бо порожній папір читача не бентежить.</figcaption>
+</figure>
+
+<p>Те саме, тільки різкіше, дає промисловий рушій. Якщо покласти в одну рамку два
+рядки й сказати йому <code>--psm 7</code>, тобто «тут рівно один рядок», він поверне
+одну літеру «я» і CER рівно <b>1.0000</b>. Той самий знімок із
+<code>--psm 6</code>, тобто «тут блок тексту», читається <b>без жодної помилки</b>.
+Різниця не в моделі й не в картинці — різниця в тому, що йому сказали про рамку.</p>
+
+<p>І ще різкіше — якщо розрізати рядок навпіл <b>горизонтально</b>: верхня половина
+дає CER 1.0870, нижня 0.9130. Порівняй це з вертикальним розрізом, який відрізає
+рівно стільки символів, скільки випало з рамки. Розпізнавач рядка читає <b>вздовж</b>
+рядка; поперечний розріз він переживає, поздовжній — ні.</p>
+
+<p>Отже відповідь на питання «навіщо два кроки, а не один»: тому що ці два кроки
+ламаються по-різному й вимірюються по-різному. Детекцію міряють через
+<code>IoU</code> — і рамка з <code>IoU</code> 0.85 вважається доброю. Але
+<code>IoU</code> 0.85 у високої тонкої рамки означає <b>кілька зайвих пікселів по
+висоті</b>, а це рівно та поломка, що дає CER 1.5000. Метрика першого кроку не
+бачить того, що вбиває другий.</p>
+
+<h2 id="s4"><span class="num">04 / Метрика</span>Чим міряти: відстань Левенштейна</h2>
+
+<p>Досі всі наші метрики порівнювали речі однакового розміру: маску з маскою, рамку
+з рамкою. Тут треба порівняти <b>два рядки різної довжини</b>, і звична «частка
+збігів по позиціях» одразу бреше: досить моделі пропустити першу літеру, і всі решта
+позиції зсунуться, хоч текст майже правильний.</p>
+
+<p>Правильна відповідь — <b>відстань Левенштейна</b> (Levenshtein distance): найменша
+кількість дій, потрібних, щоб перетворити один рядок на інший. Дій рівно три, і всі
+вони коштують одиницю:</p>
+
+<div class="eq">вставити символ · викинути символ · замінити символ</div>
+
+<p>Порахуймо руками. Істина «телефон», модель прочитала «тепефон». Перші дві літери
+збігаються, третя різна: «л» проти «п». Одна заміна — і рядки однакові. Відстань 1.</p>
+
+<p>Складніше: істина «телефон», модель прочитала «телефзон». Тут нічого замінювати не
+треба — досить <b>викинути</b> зайву «з». Знову відстань 1, хоча по позиціях
+збігається лише пʼять символів із семи: усе після «ф» зсунулось на одну клітинку. Саме це й робить відстань Левенштейна
+правильною метрикою: вона розуміє, що вставка зсуває все решта, і не карає за зсув
+двічі.</p>
+
+<p>Рахують її таблицею. У клітинці (i, j) стоїть відстань між першими i символами
+істини й першими j символами прогнозу. Кожна клітинка — мінімум із трьох сусідів
+плюс одиниця, і лише по діагоналі одиниця не додається, якщо символи збіглися.
+Заповнивши таблицю, у правому нижньому куті дістаємо відповідь.</p>
+
+<div class="eq left">d(i, j) = min( d(i−1, j) + 1,        ← викинути символ істини
+              d(i,   j−1) + 1,      ← вставити символ прогнозу
+              d(i−1, j−1) + (a ≠ b) ) ← лишити або замінити</div>
+
+<p>З відстані роблять дві різні метрики, і плутати їх дорого.</p>
+
+<div class="eq"><b>CER</b> = відстань Левенштейна / довжина істини</div>
+
+<p><b>CER</b> (character error rate, посимвольна похибка) каже, яка частка символів
+зіпсована. CER 0.0435 на рядку з двадцяти трьох символів означає рівно одну помилку.
+Метрика не обмежена зверху одиницею: якщо модель дописала зайвого, відстань може
+перевищити довжину істини, і CER вийде більшим за 1.</p>
+
+<div class="eq"><b>рядок цілком</b> = частка рядків, прочитаних без жодної помилки</div>
+
+<p>Друга метрика жорсткіша й ближча до життя: у пошуку за ціною рядок «4500» з однією
+помилкою так само марний, як рядок із пʼятьма.</p>
+
+<p>Ці дві метрики <b>розходяться з довжиною рядка</b>, і це не тонкість, а головна
+пастка звітів про OCR.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>помилка на символ</th><th>довжина рядка</th><th>CER</th><th>рядок цілком</th></tr></thead>
+  <tbody>
+    <tr><td>0.02</td><td>4</td><td>0.0203</td><td>0.9210</td></tr>
+    <tr><td>0.02</td><td>12</td><td>0.0198</td><td>0.7880</td></tr>
+    <tr class="hot"><td>0.02</td><td>25</td><td>0.0188</td><td>0.6230</td></tr>
+    <tr><td>0.05</td><td>4</td><td>0.0465</td><td>0.8280</td></tr>
+    <tr><td>0.05</td><td>12</td><td>0.0456</td><td>0.5650</td></tr>
+    <tr class="hot"><td>0.05</td><td>25</td><td>0.0474</td><td>0.2880</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Одна й та сама модель. CER не зрушив із місця — він і не мусить, бо міряє символи.
+А «рядок цілком» упав із 0.9210 до 0.6230 просто тому, що рядки стали довшими.
+Формула тут проста: якщо помилки на символах незалежні, то ймовірність чистого рядка
+дорівнює (1 − p)<span class="sup">L</span>, і вона спадає з довжиною
+експоненційно.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Відстань Левенштейна й дві метрики</p>
+  <p class="fig-sub">Ліворуч — таблиця відстані між істиною «телефон» і прогнозом,
+    із підсвіченим найдешевшим шляхом. Праворуч — як «рядок цілком» падає з довжиною
+    при тій самій посимвольній похибці.</p>
+  <div class="panel">
+    <div><canvas id="cLev" width="940" height="360" aria-label="Таблиця динамічного програмування для відстані Левенштейна з підсвіченим шляхом і крива частки цілком правильних рядків залежно від довжини"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що прочитала модель</span>
+        <div class="seg wrap" id="segLev">
+          <button data-i="0" aria-pressed="true">телефон</button>
+          <button data-i="1" aria-pressed="false">тепефон</button>
+          <button data-i="2" aria-pressed="false">телефзон</button>
+          <button data-i="3" aria-pressed="false">латиниця</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="len4">довжина рядка <output id="lenOut">7</output></label>
+        <input type="range" id="len4" min="4" max="40" step="1" value="7">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>відстань</b><i id="lv1">—</i></div>
+        <div class="cellv"><b>CER</b><i id="lv2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>які дії потрібні</b><i id="lv4" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>рядок цілком при цій довжині</b><i id="lv3">—</i></div>
+      </div>
+      <div class="verdict" id="levVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Варіант «латиниця» виглядає бездоганним</b> — і це найгірший випадок
+    у житті: там латинські <span class="raw">e</span> й <span class="raw">o</span>
+    замість кирилиць. Око не бачить різниці, пошук не знаходить рядок, а CER чесно
+    показує 0.4286. Посунь повзунок довжини — і побач, як та сама похибка
+    перетворюється на майже нульову частку чистих рядків.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Рушій</span>Промисловий рушій під псуванням</h2>
+
+<p>Досі курс усе будував сам: свій CLIP у <a href="../22-clip/lecture.html">темі
+22</a>, свій YOLO в <a href="../25-yolo/lecture.html">темі 25</a>, свій SAM у
+<a href="../32-panoptic-sam/lecture.html">темі 32</a>. Тут уперше поруч стоїть
+готова навчена модель, яку можна запустити офлайн, — рушій <code>tesseract</code>,
+і він уміє українську.</p>
+
+<p>Це дає рідкісну нагоду: замість здогадів «що заважає розпізнаванню» можна просто
+<b>поламати картинку шістьма способами й подивитись на числа</b>. Рядок один і той
+самий — «Продам телефон 4500 грн» та ще два подібні, щоб один щасливий випадок не
+збрехав.</p>
+
+<div class="note warn"><b>Числа цього розділу залежать від машини.</b> Вони заміряні
+з <code>tesseract</code> 5.3.2 і шрифтом Liberation Sans. На іншій версії рушія чи
+з іншим шрифтом третя цифра буде іншою. Важлива не вона, а <b>порядок причин</b> —
+він на диво стійкий і на диво несподіваний.</div>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>псування</th><th>CER</th><th>чи заважає</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>мова eng замість ukr</td><td>0.7045</td><td>вбиває</td></tr>
+    <tr class="hot"><td>висота літери 8 px</td><td>0.6187</td><td>вбиває</td></tr>
+    <tr><td>нахил 15°</td><td>0.4211</td><td>сильно</td></tr>
+    <tr><td>нахил 7°</td><td>0.1855</td><td>помітно</td></tr>
+    <tr><td>нахил 5°</td><td>0.0101</td><td>майже ні</td></tr>
+    <tr><td>розмиття σ 2 при висоті 32</td><td>0.0000</td><td>ні</td></tr>
+    <tr><td>контраст 10 % від початкового</td><td>0.0000</td><td>ні</td></tr>
+    <tr class="hot"><td>контраст 2 % (розмах 6 рівнів сірого)</td><td>0.0000</td><td>ні</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Останній рядок варто прочитати двічі. Картинка, на якій усе зображення вміщається
+в <b>шість рівнів сірого</b> — око бачить майже чистий білий аркуш, — читається
+<b>без жодної помилки</b>. Бінаризація всередині рушія адаптивна: вона дивиться на
+локальний перепад, а не на абсолютну яскравість, і їй байдуже, наскільки блідий
+текст, доки він відрізняється від паперу.</p>
+
+<p>Звідси перший практичний висновок, протилежний тому, що написано в половині
+посібників: <b>«почистити картинку» перед OCR — здебільшого марна робота</b>.
+Перевіримо це прямо: візьмімо розмитий рядок і прогонимо через порогування Оцу,
+класичний спосіб «покращити» вхід.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>розмитий рядок (σ 3)</th><th>CER</th></tr></thead>
+  <tbody>
+    <tr><td>як є</td><td>0.0670</td></tr>
+    <tr class="hot"><td>після порогування Оцу</td><td>0.1673</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Стало <b>вдвічі гірше</b>. Оцу вибирає один поріг на все зображення й викидає
+півтони — саме ту інформацію, якою внутрішня адаптивна бінаризація рушія
+скористалася б. Чужий крок обробки не додав нічого, зате зʼїв дані.</p>
+
+<h3>Нахил — найдешевша поломка</h3>
+
+<p>А ось нахил заважає, і заважає різко. Між 5° і 7° стоїть обрив: 0.0101 → 0.1855,
+тобто у вісімнадцять разів. Причина видна, щойно згадати попередній розділ: рушій
+ріже сторінку на рядки горизонтальними смугами. Нахилений рядок у горизонтальну
+смугу не влазить — його верх на одному кінці й низ на іншому опиняються в різних
+смугах, і ми знову маємо ту саму поломку, що в інтерактиві 2.</p>
+
+<p>Найважливіше тут — що це <b>лікується повністю й задарма</b>. Повернімо рядок
+назад на той самий кут:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>нахил</th><th>CER як є</th><th>CER після вирівнювання</th></tr></thead>
+  <tbody>
+    <tr><td>7°</td><td>0.1855</td><td>0.0000</td></tr>
+    <tr><td>10°</td><td>0.1919</td><td>0.0000</td></tr>
+    <tr><td>15°</td><td>0.4211</td><td>0.0000</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Рівно нуль. Не «майже нуль», не «краще» — точнісінько той самий результат, що на
+непошкодженому рядку. <b>Вирівнювання нахилу</b> (deskew) — єдина передобробка з
+усіх, які ми перевірили, що справді щось дає, і вона коштує один поворот.</p>
+
+<h3>Справжня межа — висота літери</h3>
+
+<p>Найцікавіше — остання поломка. Заміряймо CER як функцію висоти шрифту в
+пікселях.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>висота</th><th>32</th><th>16</th><th>14</th><th>12</th><th>11</th><th>10</th><th>9</th><th>8</th><th>7</th></tr></thead>
+  <tbody>
+    <tr><td>CER</td><td>0.0000</td><td>0.0000</td><td>0.0145</td><td>0.0108</td><td>0.0562</td><td>0.1736</td><td>0.2053</td><td>0.6187</td><td>0.7910</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>До одинадцяти пікселів усе гаразд, з десяти починається сповзання, з восьми — вже
+сміття. Ось звідки береться правило «скануй у 300 DPI», яке всі повторюють, не
+пояснюючи: при 300 точках на дюйм звичайний кегль 10 pt дає літеру приблизно
+двадцять пікселів заввишки — рівно з дворазовим запасом над межею. При 150 DPI було
+б десять пікселів, тобто рівно на краю прірви.</p>
+
+<p>І тут же розгадка розмиття. У таблиці вище розмиття з σ 2 не заважало
+<b>при висоті 32</b>. Заміряймо ту саму σ при різних висотах:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>висота</th><th>σ 0</th><th>σ 1</th><th>σ 2</th><th>σ 3</th><th>σ 4</th><th>σ 6</th></tr></thead>
+  <tbody>
+    <tr><td>20 px</td><td>0.0000</td><td>0.0000</td><td>0.0973</td><td>0.7778</td><td>0.8813</td><td>0.9596</td></tr>
+    <tr><td>32 px</td><td>0.0000</td><td>0.0000</td><td>0.0000</td><td>0.0670</td><td>0.6457</td><td>1.0000</td></tr>
+    <tr><td>48 px</td><td>0.0000</td><td>0.0000</td><td>0.0000</td><td>0.0000</td><td>0.0670</td><td>0.6520</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Поріг <b>їде разом із висотою</b>: 2 px при висоті 20, 3-4 px при 32, 6 px при 48.
+Тобто розмиття — не окрема причина, а та сама причина, записана інакше. Значення має
+не σ у пікселях, а <b>σ у частках товщини штриха</b>. Обидві поломки — і дрібний
+шрифт, і розмиття — це один і той самий дефіцит: <b>у літери лишилось замало
+пікселів, щоб її форма ще була формою</b>.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Що справді заважає читанню</p>
+  <p class="fig-sub">Обери спосіб псування й силу. Ліворуч — як після цього виглядає
+    цифра, праворуч — заміряний CER на всіх рівнях цього псування, поточний рівень
+    підсвічено.</p>
+  <div class="panel">
+    <div><canvas id="cDmg" width="940" height="320" aria-label="Зіпсована цифра і стовпчики заміряного CER для всіх рівнів обраного псування"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">чим псуємо</span>
+        <div class="seg wrap" id="segDmg">
+          <button data-i="0" aria-pressed="true">мова</button>
+          <button data-i="1" aria-pressed="false">нахил</button>
+          <button data-i="2" aria-pressed="false">розмиття</button>
+          <button data-i="3" aria-pressed="false">контраст</button>
+          <button data-i="4" aria-pressed="false">висота</button>
+          <button data-i="5" aria-pressed="false">шум</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="lvl5">рівень псування <output id="lvlOut">—</output></label>
+        <input type="range" id="lvl5" min="0" max="1" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>заміряний CER</b><i id="dm1">—</i></div>
+        <div class="cellv"><b>найгірше в цьому ряду</b><i id="dm2">—</i></div>
+      </div>
+      <div class="verdict" id="dmgVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Контраст можна довести до 2 %</b> — стовпчики лишаються нульовими на
+    всіх шести рівнях. <b>А висоту досить опустити до 8 px</b>, щоб CER стрибнув до
+    0.6187. Числа заміряні рушієм <code>tesseract</code> 5.3.2 на трьох різних
+    рядках; картинка ліворуч намальована власним растровим шрифтом, тому вона
+    ілюструє псування, а не є його джерелом.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Алфавіт</span>Алфавіт — частина моделі</h2>
+
+<p>Найсильніший результат розділу отримується без жодного псування картинки.
+Візьмімо той самий бездоганний знімок і змінімо <b>одну літеру в налаштуванні</b>:
+замість <code>lang="ukr"</code> напишімо <code>lang="eng"</code>.</p>
+
+<div class="eq left">ukr: «Продам телефон 4500 грн»
+eng: «Npogam Tenecbou 4500 rpH»</div>
+
+<p>Українською CER рівно 0.0000, англійською — <b>0.7045</b> у середньому по трьох
+рядках, тобто зіпсовано сім символів із десяти. Це найбільше псування з усіх, які ми міряли, і воно не зачепило жодного
+пікселя.</p>
+
+<p>Подивись, що саме сталося. Рушій не «не зміг» — він чесно віддав найкращу
+відповідь із тих, що йому <b>дозволено вимовити</b>. Кирилиці в англійському
+алфавіті немає, тож кожен гліф розклався на схожі латинські:</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>було</th><th>стало</th><th>що сталося</th></tr></thead>
+  <tbody>
+    <tr><td>П</td><td>N</td><td>найсхожіша латинська літера</td></tr>
+    <tr><td>д</td><td>g</td><td>хвостик униз збігся</td></tr>
+    <tr><td>ф</td><td>cb</td><td><b>одна літера стала двома</b></td></tr>
+    <tr><td>и</td><td>u</td><td>перевернута форма</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Третій рядок найважливіший. «ф» — це коло з вертикальною рискою; латиниця такого
+гліфа не має, зате має пару <span class="raw">c</span> плюс <span class="raw">b</span>,
+яка разом виглядає схоже. Модель <b>змінила довжину рядка</b>, щоб краще пояснити
+пікселі. Це не збій — це саме те, чого від неї вимагали.</p>
+
+<div class="note"><b>Алфавіт — не косметична опція, а частина моделі.</b> Він задає
+простір можливих відповідей, і модель ніколи не вийде за його межі, хай би що було
+на картинці. Той самий закон діє й у нашій власній мережі: у неї на виході рівно
+одинадцять класів — десять цифр і порожній символ, — і жодної літери вона не
+віддасть навіть теоретично.</div>
+
+<p>Практичний наслідок буденніший, ніж здається. Найчастіша причина, з якої OCR
+«не працює», — не архітектура й не якість знімка, а <b>неправильно виставлений
+алфавіт</b>: у документі є українська, а рушій налаштований на англійську; у полі
+самі цифри, а рушій дозволяє собі літери й читає «0» як «O».</p>
+
+<h2 id="s7"><span class="num">07 / Шум</span>Шум немонотонний, і один замір бреше</h2>
+
+<p>Лишилося останнє псування — гаусів шум. Тут легко зробити висновок, протилежний
+до правди, і зробити його чесно: досить заміряти один рівень.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>σ шуму</th><th>середній CER</th><th>найкращий прогін</th><th>найгірший</th></tr></thead>
+  <tbody>
+    <tr><td>0.10</td><td>0.0000</td><td>0.0000</td><td>0.0000</td></tr>
+    <tr><td>0.20</td><td>0.0070</td><td>0.0000</td><td>0.0323</td></tr>
+    <tr><td>0.25</td><td>0.0353</td><td>0.0000</td><td>0.0870</td></tr>
+    <tr class="hot"><td>0.30</td><td>0.6860</td><td>0.0435</td><td>1.0000</td></tr>
+    <tr class="hot"><td>0.35</td><td>0.6871</td><td>0.0435</td><td>1.0000</td></tr>
+    <tr><td>0.40</td><td>0.5961</td><td>0.0435</td><td>1.0000</td></tr>
+    <tr><td>0.50</td><td>0.4128</td><td>0.0645</td><td>1.0000</td></tr>
+    <tr class="hot"><td>0.60</td><td>0.1481</td><td>0.0968</td><td>0.2609</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Крива <b>не монотонна</b>. Найгірше рушієві не при найбільшому шумі, а посередині:
+0.6871 при σ 0.35 і лише 0.1481 при σ 0.60. Якби ми заміряли один рівень — скажімо,
+σ 0.60 — то написали б «шум майже не заважає» і мали б рацію рівно в тій одній
+точці.</p>
+
+<p>Пояснення просте, щойно подивитись на самі відповіді. При середньому шумі рушій
+<b>вигадує зайві сегменти</b>: шумні плями на папері він приймає за розділові знаки
+й повертає довгий рядок сміття, у якому справжні літери потонули. При великому шумі
+він здається раніше й повертає короткий рядок або порожнечу — а короткий помилковий
+рядок коштує в CER менше, ніж довгий.</p>
+
+<div class="note warn"><b>Правило, ширше за цю тему.</b> Розкид між зернами тут
+величезний: при σ 0.35 найкращий прогін дає 0.0435, найгірший — 1.0000, тобто
+різниця у 23 рази на тому самому рівні шуму. Одне число без розкиду в такій ситуації
+не є вимірюванням. Це та сама вимога, що в блоці 5: <b>три зерна на кожну точку, і
+різниця, менша за розкид, не є різницею</b>.</div>
+
+<h2 id="s8"><span class="num">08 / Модель</span>CRNN: смужка ознак замість літер</h2>
+
+<p>Тепер збудуємо власну модель — і побудуємо її так, щоб кроку «поділ на символи» в
+ній не було взагалі. Класична відповідь зветься <b>CRNN</b> (convolutional recurrent
+neural network) і складається з трьох частин.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">згорткова частина</span>
+    <p>Звичайні згортки з пулінгом, як у блоці 2. Але пулінг <b>несиметричний</b>:
+      по висоті стискаємо агресивно, по ширині майже ні. З картинки 16×40 виходить
+      карта висотою 4 і шириною 20. Далі висоту згортаємо в канали, і лишається
+      <b>смужка з 20 колонок</b>, у кожній — вектор ознак.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">рекурентна частина</span>
+    <p>Двонапрямлений <code>GRU</code> проходить смужку зліва направо й справа
+      наліво. Навіщо: колонка сама по собі бачить лише вертикальну скибку літери, а
+      сусідні колонки кажуть, що це за літера цілком. Двонапрямленість потрібна тому,
+      що початок літери пояснюється її кінцем не менше, ніж навпаки.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">лінійний вихід</span>
+    <p>У кожній із <span class="raw">T</span> колонок — розподіл над алфавітом
+      <b>плюс один зайвий символ</b>. У нас це 10 цифр + 1 = 11 класів. Про зайвий
+      символ — увесь наступний розділ.</p>
+  </div>
+</div>
+
+<p>Уся мережа — <b>57 131</b> вага, і на картинці 16×40 вона дає смужку з
+<span class="raw">T</span> = 20 колонок. Головне в ній не
+розмір, а те, чого в ній <b>немає</b>: ніде не сказано, де на картинці кожна цифра.
+Розмітка складається з пари «картинка → рядок», і все.</p>
+
+<p>Але тоді виникає питання, яке й тримає всю тему. Мережа віддає 20 колонок, а
+правильна відповідь має, скажімо, чотири символи. Як порівняти 20 з 4, не знаючи,
+яка колонка якому символу відповідає?</p>
+
+<h2 id="s9"><span class="num">09 / CTC</span>Порожній символ і склеювання повторів</h2>
+
+<p>Відповідь зветься <b>CTC</b> (connectionist temporal classification). Ідея в тому,
+щоб не вибирати одне вирівнювання, а <b>підсумувати по всіх</b>.</p>
+
+<p>Спершу правила перетворення. Мережа віддає <b>шлях</b> — по одному символу на
+кожну з <span class="raw">T</span> колонок. Шлях перетворюють на рядок двома діями,
+строго в такому порядку:</p>
+
+<ol class="steps">
+  <li><b>склеїти сусідні однакові</b> символи в один;</li>
+  <li><b>викинути порожні</b> символи.</li>
+</ol>
+
+<div class="eq left">–  5  5  –  –  1  –   →   склеїли  →  – 5 – 1 –   →   викинули  →  «51»
+5  5  5  5  1  1  –   →   склеїли  →  5 1 –       →   викинули  →  «51»
+–  5  –  5  –  –  –   →   склеїли  →  – 5 – 5 –   →   викинули  →  «55»
+5  5  5  5  5  5  5   →   склеїли  →  5           →   викинули  →  «5»</div>
+
+<p>Тире тут — <b>порожній символ</b> (blank). Тепер видно, навіщо він потрібен, і це
+не «символ пробілу».</p>
+
+<p><b>Склеювання повторів</b> потрібне тому, що одна цифра займає кілька колонок
+смужки. Мережа природно скаже «пʼятірка, пʼятірка, пʼятірка» на трьох сусідніх
+колонках, і без склеювання ми прочитали б «555» замість «5».</p>
+
+<p><b>Порожній символ</b> потрібен тому, що після склеювання не можна записати
+<b>справжній</b> повтор. «55» вимагає порожнього між двома пʼятірками — інакше
+склеювання зʼїсть другу. Порожній символ означає не «пробіл», а
+<b>«тут щойно нічого не закінчилось»</b>: він розділяє дві сусідні однакові літери й
+заповнює колонки, у яких немає нічого цікавого.</p>
+
+<h3>Скільки колонок треба</h3>
+
+<p>Звідси випливає обмеження на довжину смужки. Щоб записати рядок довжини
+<span class="raw">L</span>, потрібно щонайменше <span class="raw">L</span> колонок,
+а на кожну пару сусідніх однакових символів — ще по одній під порожній:</p>
+
+<div class="eq">T ≥ L + (кількість сусідніх однакових символів)</div>
+
+<p>У найгіршому випадку, коли всі символи однакові, це дає
+<span class="raw">T</span> ≥ 2L − 1. Порахуймо на прикладах:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>рядок</th><th>L</th><th>повторів</th><th>найменше T</th></tr></thead>
+  <tbody>
+    <tr><td>45</td><td>2</td><td>0</td><td>2</td></tr>
+    <tr><td>450</td><td>3</td><td>0</td><td>3</td></tr>
+    <tr><td>455</td><td>3</td><td>1</td><td>4</td></tr>
+    <tr class="hot"><td>555</td><td>3</td><td>2</td><td>5</td></tr>
+    <tr class="hot"><td>55555</td><td>5</td><td>4</td><td>9</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note warn"><b>Обережно з поширеним записом «T ≥ 2L+1».</b> Число 2L+1
+справді зʼявляється в описі CTC — це довжина <b>розширеної</b> послідовності, у якій
+порожній символ вставлено між усіма символами й на обидва краї. Але шлях не мусить
+проходити через усі її стани: він може перескакувати порожні, коли сусідні символи
+різні, а закінчитись має в одному з двох останніх станів. Тому справжня межа —
+<b>2L − 1</b>, і навіть її досягає лише рядок із самих однакових символів. Для
+«45009» довжини пʼять досить <b>шести</b> колонок, а не одинадцяти.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Скільки шляхів ведуть до одного рядка</p>
+  <p class="fig-sub">Сітка станів: рядки — розширена послідовність (порожній,
+    символ, порожній, символ…), стовпці — колонки смужки. Число в кружку — скільки
+    шляхів приводять сюди. Праворуч унизу — відповідь.</p>
+  <div class="panel">
+    <div><canvas id="cCtc" width="940" height="400" aria-label="Сітка станів CTC: скільки шляхів приводять у кожен стан на кожному кроці, і чи існує хоч один повний шлях"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">який рядок записуємо</span>
+        <div class="seg wrap" id="segCtc">
+          <button data-i="0" aria-pressed="true">45</button>
+          <button data-i="1" aria-pressed="false">450</button>
+          <button data-i="2" aria-pressed="false">455</button>
+          <button data-i="3" aria-pressed="false">555</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="tlen6">колонок <span class="raw">T</span> <output id="tlenOut">6</output></label>
+        <input type="range" id="tlen6" min="1" max="12" step="1" value="6">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>повторів</b><i id="ct1">—</i></div>
+        <div class="cellv"><b>найменше T</b><i id="ct2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>шляхів</b><i id="ct3">—</i></div>
+      </div>
+      <div class="verdict" id="ctcVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Порівняй «450» і «455» при T = 3.</b> Довжина однакова, а шляхів у
+    першому випадку один, у другому — жодного: між двома пʼятірками мусить стояти
+    порожній, і третьої колонки на нього не вистачає. <b>Тепер постав T = 12</b> —
+    шляхів стають тисячі, і саме їх усі підсумовує втрата CTC на кожному кроці
+    навчання.</figcaption>
+</figure>
+
+<p>Тепер найголовніше. Імовірність рядка за CTC — це <b>сума ймовірностей усіх
+шляхів</b>, що в нього склеюються:</p>
+
+<div class="eq">p(рядок) = Σ p(шлях) по всіх шляхах, що дають цей рядок</div>
+
+<p>Символ Σ (велика грецька «сигма») означає «додай усе, що стоїть праворуч». Втрата
+CTC — це мінус логарифм цієї суми, і навчання просто збільшує сумарну ймовірність
+усіх правильних вирівнювань одразу, не обираючи між ними.</p>
+
+<p>Шляхів багато — для рядка «45009» при <span class="raw">T</span> = 20 їх
+1 961 256, — але рахувати їх поодинці не треба: та сама сітка з інтерактиву дозволяє порахувати суму
+за <span class="raw">T</span> кроків динамічним програмуванням. У зошиті ми
+перевірили це прямо: перебрали всі 4096 шляхів на маленькому прикладі й дістали
+0.0078335876 проти 0.0078335870 у <code>nn.CTCLoss</code> — збіг до сьомого знака.</p>
+
+<h2 id="s10"><span class="num">10 / Навчання</span>Вікно за швидкістю навчання</h2>
+
+<p>А тепер поламане місце, через яке CTC має репутацію примхливої втрати. Навчімо
+мережу тричі — з різною швидкістю навчання, по три зерна на кожну.</p>
+
+<div class="scroll-x">
+<table class="nums" id="tabLr">
+  <thead><tr><th>швидкість навчання</th><th>рядок цілком</th><th>CER</th><th>частка порожніх відповідей</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>3e-2</td><td>0.0333 ±0.0471 [0.0000..0.1000]</td><td>0.7287 ±0.2319 [0.4334..1.0000]</td><td>0.3367</td></tr>
+    <tr><td>3e-3</td><td>1.0000 ±0.0000</td><td>0.0000 ±0.0000</td><td>0.0000</td></tr>
+    <tr class="hot"><td>3e-4</td><td>0.0000 ±0.0000</td><td>1.0000 ±0.0000</td><td>1.0000</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>По обидва боки від робочого вікна стоїть <b>той самий</b> результат — порожній
+рядок. Замалий крок не дає мережі вибратись із порожнього символу взагалі: усі три
+зерна віддають порожнечу на всіх двохстах перевірних картинках, і CER виходить рівно
+1.0000. Завеликий збиває навчання так, що частина зерен теж падає в порожнечу.</p>
+
+<p>Це не «підбери швидкість навчання» — це властивість самої втрати, і видно її на
+кривій.</p>
+
+<div class="eq left">епоха      lr 3e-2    lr 3e-3    lr 3e-4
+    0       4.3630     6.0495     8.9267
+    5       2.7280     2.7261     3.3077   ← усі три на полиці
+   10       2.7118     2.6955     2.7653
+   15       2.7260     2.6392     2.7505
+   20       2.6780     2.3210     2.7405   ← робоча крива рушає
+   30       2.6077     0.8300     2.7212
+   40       2.3226     0.0425     2.6946
+   59       1.7410     0.0097     2.4828</div>
+
+<p>Дивись на епохи 4-13: за десять епох втрата впала на
+0.0963. Це <b>полиця</b>, і вона не випадкова.</p>
+
+<div class="note"><b>Полиця і є колапс у порожній символ.</b> Уяви, що модель нічого
+не знає. Який вихід дає найменшу втрату найдешевше? Порожній рядок. Порожній символ
+можна поставити в усі <span class="raw">T</span> колонок одразу, це не вимагає
+розрізняти цифри, і втрата від цього одразу помітно падає. Мережа спершу
+<b>вчиться мовчати</b>, сидить у цьому мінімумі десяток епох — і аж тоді починає
+розрізняти цифри.</div>
+
+<p>Наслідок практичний і неприємний: читач, який вимкне навчання на
+пʼятнадцятій епосі, побачить втрату 2.6392 і рівну лінію позаду — і вирішить, що
+CTC не працює. А при замалому
+кроці полиця й не закінчується — остання втрата 2.4828 проти 0.0097 у
+робочого режиму.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Полиця на кривій втрати</p>
+  <p class="fig-sub">Три криві — три швидкості навчання. Повзунок ставить епоху, на
+    якій ти вирішив зупинитись і зробити висновок.</p>
+  <div class="panel">
+    <div><canvas id="cLoss" width="940" height="330" aria-label="Криві втрати CTC для трьох швидкостей навчання з вертикальною лінією обраної епохи"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">швидкість навчання</span>
+        <div class="seg" id="segLoss">
+          <button data-i="0" aria-pressed="false">3e-2</button>
+          <button data-i="1" aria-pressed="true">3e-3</button>
+          <button data-i="2" aria-pressed="false">3e-4</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="ep7">зупинився на епосі <output id="epOut">15</output></label>
+        <input type="range" id="ep7" min="0" max="12" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>втрата тут</b><i id="ls1">—</i></div>
+        <div class="cellv"><b>впало за 10 епох</b><i id="ls2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>рядок цілком у кінці навчання</b><i id="ls3">—</i></div>
+      </div>
+      <div class="verdict" id="lossVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Зупинись на 15-й епосі при робочій швидкості</b> — і вердикт скаже
+    те саме, що сказав би ти: нічого не рухається, модель мовчить. А до кінця
+    навчання та сама мережа читає рядки цілком. Крива замалого кроку відрізняється
+    від неї тільки тим, що з полиці так і не сходить.</figcaption>
+</figure>
+
+<div class="note warn"><b>Вікно зсувається разом із розміром пакета.</b> Наші межі —
+3e-2 згори й 3e-4 знизу — заміряні при пакеті 64. При меншому пакеті кроків за епоху
+більше, і те саме навчання проходить при меншій швидкості. Тому не перенось ці числа
+на свою задачу як константи: переноситься сама форма — вузьке вікно, і порожній
+рядок по обидва боки від нього.</div>
+
+<h2 id="s11"><span class="num">11 / Декодування</span>Жадібний шлях проти найімовірнішого рядка</h2>
+
+<p>Мережа навчена. Лишилось перетворити двадцять колонок на рядок — і тут ховається
+остання пастка теми.</p>
+
+<p><b>Жадібне декодування</b> (greedy decoding) бере в кожній колонці найімовірніший
+символ і склеює те, що вийшло. Це один рядок коду й майже завжди правильна
+відповідь.</p>
+
+<p>Але воно неправильне <b>за побудовою</b>, і зрозуміти чому важливіше, ніж уміти
+його замінити. Жадібний вибір знаходить <b>найімовірніший шлях</b>. А нас цікавить
+<b>найімовірніший рядок</b>, і ймовірність рядка — це сума по всіх його шляхах.
+Рядок може складатися з мільйона посередніх шляхів і перемогти один блискучий.</p>
+
+<p>Ось найменший приклад, де вони розходяться. Три класи: порожній, «0» і «1». У
+кожній колонці порожній трохи ймовірніший за кожну окрему цифру — але цифра «0»
+може прийти багатьма шляхами, а порожній рядок лише одним.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Найімовірніший шлях проти найімовірнішого рядка</p>
+  <p class="fig-sub">Таблиця ймовірностей: рядки — класи, стовпці — колонки смужки.
+    Жовтим — жадібний вибір. Праворуч — усі рядки, які взагалі можна отримати, з
+    їхньою повною ймовірністю.</p>
+  <div class="panel">
+    <div><canvas id="cDec" width="940" height="330" aria-label="Таблиця ймовірностей класів по колонках, жадібний шлях і повний перелік рядків із їхніми сумарними ймовірностями"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="pb8">імовірність порожнього <output id="pbOut">0.40</output></label>
+        <input type="range" id="pb8" min="30" max="70" step="2" value="40">
+      </div>
+      <div class="ctl">
+        <label for="tt8">колонок <span class="raw">T</span> <output id="ttOut">4</output></label>
+        <input type="range" id="tt8" min="2" max="6" step="1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>жадібне</b><i id="dc1">—</i></div>
+        <div class="cellv"><b>його p</b><i id="dc2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкращий рядок</b><i id="dc3">—</i></div>
+        <div class="cellv"><b>його p</b><i id="dc4">—</i></div>
+      </div>
+      <div class="verdict" id="decVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Підніми ймовірність порожнього до 0.40</b> — жадібний вибір
+    замовкне, бо в кожній окремій колонці порожній сильніший. А сумарно рядок «0»
+    лишається ймовірнішим, бо до нього веде багато шляхів, а до порожнечі — рівно
+    один. <b>Збільшуй T</b> — і розрив росте, бо шляхів до «0» більшає, а шлях до
+    порожнечі так і лишається один.</figcaption>
+</figure>
+
+<p>Правильна відповідь зветься <code>beam search</code> — і в курсі ми лишаємо цю
+назву латиницею, бо звичний переклад «променевий пошук» вводить в оману: нічого
+променевого там немає. Ідея проста: вести не один шлях, а кілька десятків найкращих
+<b>рядків</b> одразу, додаючи ймовірності шляхів, що зійшлися в один рядок. Ми написали його в зошиті й перевірили на навченій мережі при
+дедалі більшому шумі.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>σ шуму на перевірці</th><th>жадібне CER</th><th>CER із <code>beam search</code></th><th>розійшлись рядків</th></tr></thead>
+  <tbody>
+    <tr><td>0.08</td><td>0.0000</td><td>0.0000</td><td>0 зі 100</td></tr>
+    <tr><td>0.25</td><td>0.3342</td><td>0.3317</td><td>3 зі 100</td></tr>
+    <tr><td>0.40</td><td>0.7805</td><td>0.7756</td><td>6 зі 100</td></tr>
+    <tr><td>0.55</td><td>0.9127</td><td>0.9102</td><td>6 зі 100</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Результат чесний і не дуже мальовничий: <b><code>beam search</code> майже нічого
+не дає</b>. Він міняє відповідь щонайбільше на шести рядках зі ста, а CER рухається в
+третьому знаку.</p>
+
+<div class="note"><b>Так і має бути, і ось чому це варто знати.</b> <code>beam
+search</code> виграє не сам по собі, а <b>разом зі словником</b>. У справжньому OCR до ймовірності шляху
+додають імовірність слова з мовної моделі, і тоді він може обрати менш
+імовірний шлях заради більш імовірного слова: «телефон» замість «телефом». Без
+словника він просто акуратніше рахує те саме — і чесна різниця в третьому знаку.
+Тому «додати beam search» без мовної моделі — це та сама марна робота, що
+«почистити картинку» з розділу 5.</div>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Що з цього забрати</h2>
+
+<p>Тема почалась із задачі, яка виглядала дрібною, і закінчилась чотирма
+твердженнями, жодне з яких не про архітектуру.</p>
+
+<ul>
+  <li><b>Сегментація на символи — не крок до розвʼязку, а та сама задача.</b>
+    Найлегший можливий випадок — моноширинний растровий шрифт із явними проміжками —
+    ламається від одного зниклого пікселя: правильно поділених рядків 0.3933.
+    Тому CRNN і не ділить нічого: вона віддає смужку, а вирівнювання шукає втрата.</li>
+  <li><b>Найбільше шкодить не якість знімка, а постановка.</b> Найгірше псування з
+    усіх, що ми міряли, — 0.7045 — не зачепило жодного пікселя: змінили алфавіт.
+    Друге за силою — дрібний шрифт. А розмиття й контраст, на які витрачають
+    передобробку, не заважають узагалі, і порогування Оцу робить <b>вдвічі
+    гірше</b>.</li>
+  <li><b>Метрика мусить називатись повністю.</b> CER і «рядок цілком» розходяться з
+    довжиною рядка: при незмінному CER 0.02 частка чистих рядків падає з 0.9210 на
+    чотирьох символах до 0.6230 на двадцяти пʼяти. Звіт з однією з цих метрик
+    можна прочитати як завгодно.</li>
+  <li><b>У CTC є вузьке вікно, і по обидва боки від нього — мовчання.</b> Полиця на
+    кривій втрати — не «мережа не вчиться», а мінімум, у якому найдешевше нічого не
+    казати. Хто зупинить навчання на полиці, зробить хибний висновок; хто візьме
+    замалий крок, ніколи з неї не зійде.</li>
+</ul>
+
+<p>І окремо — те, що ця тема дала курсу вперше. Досі ми будували все самі й
+порівнювати не було з чим. Тут поруч стояв промисловий рушій, і виявилось, що
+<b>питання до нього ставляться ті самі, що до власної моделі</b>: який у тебе
+алфавіт, скільки пікселів на літеру, як ти ділиш рядок на смуги. Готова модель не
+скасовує цих питань — вона лише відповідає на них за тебе, і мовчки.</p>
+
+<h3>Куди йдемо далі</h3>
+
+<p>Блок 7 додає до знімка два виміри, яких у курсі ще не було. Ця тема була про те,
+що робити, коли <b>відповідь не картинка</b>. Наступні три — про те, що робити, коли
+<b>вхід не одна картинка</b>.</p>
+
+<p><a href="../34-video-tracking/lecture.html">Тема 34</a> додає <b>час</b>: той
+самий предмет на сусідніх кадрах має лишитись тим самим предметом, і зʼявиться нова
+метрика — підміна номера. Ти вже бачив у цій темі, як помилка детектора руйнує все
+далі по конвеєру; у трекінгу це стане головним сюжетом.
+<a href="../35-video-action/lecture.html">Тема 35</a> питає, що з часом робити далі:
+як класифікувати не кадр, а рух.
+А <a href="../36-depth-stereo/lecture.html">тема 36</a> додає <b>глибину</b> — і
+разом із нею похибку, яку вперше в курсі міряють у метрах, а не в безрозмірних
+частках.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../32-panoptic-sam/lecture.html"><span class="dir">попередня</span><span class="ttl">32. Panoptic і SAM</span></a>
+    <a class="next" href="../34-video-tracking/lecture.html"><span class="dir">наступна</span><span class="ttl">34. Відео: трекінг</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* підпис із непрозорою підкладкою — щоб крива під ним не читалась крізь літери */
+function plate(g,txt,x,y,color,px,bold){
+  var w=txt.length*px*0.62;
+  g.fillStyle=css('--raise'); g.fillRect(x-4,y-px-2,w+8,px+7);
+  capt(g,txt,x,y,color,px,bold);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* «4 колонки», але «5 колонок» — інакше вердикт читається як недописаний */
+function cols(n){
+  var t2=n%10, h=n%100;
+  if(h>=11&&h<=14) return n+" колонок";
+  if(t2===1) return n+" колонка";
+  if(t2>=2&&t2<=4) return n+" колонки";
+  return n+" колонок";
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)>>>0; return s/4294967296; };
+}
+
+/* ═══════════ спільне: растровий шрифт 5×7, той самий, що в зошиті ═══════════ */
+var GLYPHS={
+  "0":["#####","#...#","#...#","#...#","#...#","#...#","#####"],
+  "1":["..#..",".##..","..#..","..#..","..#..","..#..",".###."],
+  "2":["#####","....#","....#","#####","#....","#....","#####"],
+  "3":["#####","....#","....#","#####","....#","....#","#####"],
+  "4":["#...#","#...#","#...#","#####","....#","....#","....#"],
+  "5":["#####","#....","#....","#####","....#","....#","#####"],
+  "6":["#####","#....","#....","#####","#...#","#...#","#####"],
+  "7":["#####","....#","....#","...#.","..#..","..#..","..#.."],
+  "8":["#####","#...#","#...#","#####","#...#","#...#","#####"],
+  "9":["#####","#...#","#...#","#####","....#","....#","#####"]
+};
+var DIGITS="0123456789";
+function glyphCell(ch,r,c){ return GLYPHS[ch][r].charAt(c)==="#" ? 1 : 0; }
+
+/* поле пікселів: обгортка над Float32Array з шириною й висотою */
+function field(w,h){ return {w:w,h:h,a:new Float32Array(w*h)}; }
+function fget(f,x,y){ return (x<0||y<0||x>=f.w||y>=f.h)?0:f.a[y*f.w+x]; }
+function fset(f,x,y,v){ if(x>=0&&y>=0&&x<f.w&&y<f.h) f.a[y*f.w+x]=v; }
+
+function drawText(f,text,left,top,gap){
+  var i,r,c;
+  var x=left;
+  for(i=0;i<text.length;i++){
+    for(r=0;r<7;r++) for(c=0;c<5;c++)
+      if(glyphCell(text.charAt(i),r,c)) fset(f,x+c,top+r,1);
+    x+=5+gap;
+  }
+  return x;
+}
+/* наївна сегментація: рядок ріжеться там, де стовпець порожній */
+function splitCols(f){
+  var out=[],st=null,x,y,ink;
+  for(x=0;x<f.w;x++){
+    ink=0; for(y=0;y<f.h;y++) if(fget(f,x,y)>0.5){ ink=1; break; }
+    if(ink && st===null) st=x;
+    else if(!ink && st!==null){ out.push([st,x]); st=null; }
+  }
+  if(st!==null) out.push([st,f.w]);
+  return out;
+}
+/* зміна розміру найближчим сусідом — так рушій зводить смужку до сталої висоти */
+function nnResize(f,x0,x1,y0,y1,W,H){
+  var out=field(W,H),i,j,sx,sy;
+  var sw=x1-x0, sh=y1-y0;
+  if(sw<=0||sh<=0) return out;
+  for(j=0;j<H;j++) for(i=0;i<W;i++){
+    sx=x0+Math.min(sw-1,Math.floor((i+0.5)*sw/W));
+    sy=y0+Math.min(sh-1,Math.floor((j+0.5)*sh/H));
+    out.a[j*W+i]=fget(f,sx,sy);
+  }
+  return out;
+}
+/* шаблонний читач: смужка → стала висота 7 → поділ по стовпцях → шаблон */
+function readField(f){
+  var y,x,rows=[],ink;
+  for(y=0;y<f.h;y++){ ink=0; for(x=0;x<f.w;x++) if(fget(f,x,y)>0.5){ink=1;break;} if(ink) rows.push(y); }
+  if(!rows.length) return {text:"",pieces:[]};
+  var band=nnResize(f,0,f.w,rows[0],rows[rows.length-1]+1,f.w,7);
+  var pieces=splitCols(band), out="", k;
+  for(k=0;k<pieces.length;k++){
+    var p=nnResize(band,pieces[k][0],pieces[k][1],0,7,5,7);
+    var best="0",bd=1e9,d,i,r,c;
+    for(i=0;i<10;i++){
+      var ch=DIGITS.charAt(i); d=0;
+      for(r=0;r<7;r++) for(c=0;c<5;c++) d+=Math.abs(p.a[r*5+c]-glyphCell(ch,r,c));
+      if(d<bd){bd=d;best=ch;}
+    }
+    out+=best;
+  }
+  return {text:out,pieces:pieces};
+}
+/* відстань Левенштейна: таблиця повністю, щоб її можна було намалювати */
+function levTable(a,b){
+  var n=a.length,m=b.length,i,j,d=[];
+  for(i=0;i<=n;i++){ d.push(new Array(m+1)); d[i][0]=i; }
+  for(j=0;j<=m;j++) d[0][j]=j;
+  for(i=1;i<=n;i++) for(j=1;j<=m;j++)
+    d[i][j]=Math.min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+(a.charAt(i-1)===b.charAt(j-1)?0:1));
+  return d;
+}
+function lev(a,b){ return levTable(a,b)[a.length][b.length]; }
+
+/* ─────────────────── 1 · порожній стовпець — не межа ─────────────────── */
+(function(){
+  var cv=I("cGap"); if(!cv) return;
+  var TEXT="45091", GW=44, GH=14, S=19, OX=18, OY=36;
+  /* позиції зайвих пікселів: сталий перелік, повзунок бере перші N.
+     Так кожне положення повзунка додає рівно один піксель і щось міняє. */
+  function saltSpots(gap){
+    var clean=field(GW,GH); drawText(clean,TEXT,2,3,gap);
+    var r=LCG(20250903), spots=[], tries=0, x, y;
+    while(spots.length<12 && tries<4000){
+      tries++;
+      x=1+Math.floor(r()*40); y=2+Math.floor(r()*10);
+      if(fget(clean,x,y)>0.5) continue;
+      var dup=false,i;
+      for(i=0;i<spots.length;i++) if(spots[i][0]===x&&spots[i][1]===y) dup=true;
+      if(!dup) spots.push([x,y]);
+    }
+    return spots;
+  }
+  function build(gap,n){
+    var f=field(GW,GH); drawText(f,TEXT,2,3,gap);
+    var spots=saltSpots(gap), i;
+    for(i=0;i<n && i<spots.length;i++) fset(f,spots[i][0],spots[i][1],1);
+    return f;
+  }
+  function draw(){
+    var gap=+I("gap2").value, n=+I("salt2").value;
+    I("gapOut").textContent=gap+" px";
+    I("saltOut").textContent=n;
+    var f=build(gap,n);
+    var res=readField(f);
+    var g=dpr(cv), x,y,i;
+    capt(g,"растровий шрифт 5×7 · рядок «"+TEXT+"» · проміжок "+gap+" px · зайвих пікселів "+n,
+         OX,20,css('--soft'),11.5,true);
+    for(y=0;y<GH;y++) for(x=0;x<GW;x++){
+      g.fillStyle= fget(f,x,y)>0.5 ? css('--ink') : css('--paper');
+      g.fillRect(OX+x*S,OY+y*S,S-1,S-1);
+    }
+    var pcs=res.pieces;
+    g.lineWidth=2; g.strokeStyle=css('--teal');
+    for(i=0;i<pcs.length;i++)
+      g.strokeRect(OX+pcs[i][0]*S-1.5,OY+1*S-1.5,(pcs[i][1]-pcs[i][0])*S,12*S);
+    var PY=OY+GH*S+16;
+    capt(g,"чорнило в стовпці",OX,PY-5,css('--soft'),10.5,false);
+    for(x=0;x<GW;x++){
+      var ink=0; for(y=0;y<GH;y++) if(fget(f,x,y)>0.5){ink=1;break;}
+      g.fillStyle= ink? css('--rose') : css('--hair');
+      g.fillRect(OX+x*S,PY,S-1,18);
+    }
+    capt(g,"шматків "+pcs.length+" · символів "+TEXT.length+" · прочитано «"+(res.text||"нічого")+"»",
+         OX,PY+40,css('--ink'),13,true);
+    I("gp1").textContent=TEXT.length;
+    I("gp2").textContent=pcs.length;
+    I("gp3").textContent=res.text||"нічого";
+    var c=lev(TEXT,res.text)/TEXT.length;
+    I("gp4").textContent=f4(c);
+    if(pcs.length===TEXT.length && res.text===TEXT)
+      verd("gapVd","t-ok","ПРАВИЛО ПРАЦЮЄ","Кожна цифра дістала свій шматок, шаблони збіглися, CER 0.0000. Так буде завжди, поки між цифрами лишається хоч один порожній стовпець і на папір нічого не впало.");
+    else if(pcs.length<TEXT.length)
+      verd("gapVd","t-no","ШМАТКІВ МЕНШЕ, НІЖ ЦИФР","Шматків "+pcs.length+" замість "+TEXT.length+
+        ": сусідні цифри злиплися в один звʼязний кусок. Класифікатор дістає картинку, якої немає в жодному класі, і читає «"+res.text+"» — CER "+f4(c)+".");
+    else if(pcs.length>TEXT.length)
+      verd("gapVd","t-no","ШМАТКІВ БІЛЬШЕ, НІЖ ЦИФР","Шматків "+pcs.length+" замість "+TEXT.length+
+        ": зайві пікселі стали окремими «символами». Прочитано «"+res.text+"», CER "+f4(c)+".");
+    else
+      verd("gapVd","t-mid","ШМАТКІВ СТІЛЬКИ, СКІЛЬКИ ТРЕБА","Їх "+pcs.length+", як і цифр, — але межі зсунуті: зайвий піксель приклеївся до цифри й змінив її форму. Прочитано «"+res.text+"» замість «"+TEXT+"», CER "+f4(c)+
+        ". Правильна кількість шматків ще не означає правильного поділу.");
+  }
+  on("gap2","input",draw); on("salt2","input",draw); draw();
+  window.addEventListener("resize",draw);
+})();
+
+/* ─────────────────── 2 · рамка ─────────────────── */
+(function(){
+  var cv=I("cBox"); if(!cv) return;
+  var SW=39, SH=26, S=10, OX=18, OY=46, TRUTH="4500";
+  function scene(){
+    var f=field(SW,SH);
+    drawText(f,"4500",3,4,2);
+    drawText(f,"12300",3,15,2);
+    return f;
+  }
+  var SCENE=scene();
+  function crop(top,bot,right){
+    var f=field(right,Math.max(0,bot-top)),x,y;
+    for(y=0;y<f.h;y++) for(x=0;x<right;x++) fset(f,x,y,fget(SCENE,x,top+y));
+    return f;
+  }
+  function draw(){
+    var top=+I("bTop3").value, bot=+I("bBot3").value, right=+I("bRight3").value;
+    if(bot<=top){ bot=top+1; }
+    I("bTopOut").textContent=top; I("bBotOut").textContent=bot; I("bRightOut").textContent=right;
+    var box=crop(top,bot,right);
+    var res=readField(box);
+    var g=dpr(cv),x,y;
+    capt(g,"знімок 26×39: два рядки цін",OX,24,css('--soft'),11.5,true);
+    for(y=0;y<SH;y++) for(x=0;x<SW;x++){
+      g.fillStyle= fget(SCENE,x,y)>0.5 ? css('--ink') : css('--paper');
+      g.fillRect(OX+x*S,OY+y*S,S-1,S-1);
+    }
+    g.lineWidth=2; g.strokeStyle=css('--rose');
+    g.strokeRect(OX-2,OY+top*S-2,right*S+2,(bot-top)*S+2);
+    /* смужка сталої висоти */
+    var BX=OX+SW*S+50, BS=10;
+    capt(g,"смужка, зведена до висоти 7",BX,24,css('--soft'),11.5,true);
+    var rows=[],ink;
+    for(y=0;y<box.h;y++){ ink=0; for(x=0;x<box.w;x++) if(fget(box,x,y)>0.5){ink=1;break;} if(ink) rows.push(y); }
+    var band=rows.length? nnResize(box,0,box.w,rows[0],rows[rows.length-1]+1,box.w,7) : field(box.w,7);
+    for(y=0;y<7;y++) for(x=0;x<band.w;x++){
+      g.fillStyle= band.a[y*band.w+x]>0.5 ? css('--ink') : css('--paper');
+      g.fillRect(BX+x*BS,46+y*BS,BS-1,BS-1);
+    }
+    /* скільки окремих смуг чорнила потрапило в рамку */
+    var runs=0, prev=false, yy2;
+    for(yy2=0;yy2<box.h;yy2++){
+      var has=false;
+      for(x=0;x<box.w;x++) if(fget(box,x,yy2)>0.5){has=true;break;}
+      if(has&&!prev) runs++;
+      prev=has;
+    }
+    var c=lev(TRUTH,res.text)/TRUTH.length;
+    capt(g,"істина:    "+TRUTH,BX,168,css('--soft'),14,false);
+    capt(g,"прочитано: "+(res.text||"нічого"),BX,194,
+         res.text===TRUTH?css('--teal'):css('--rose'),14,true);
+    capt(g,"CER "+f4(c),BX,222,css('--ink'),14,true);
+    capt(g,"висота рамки "+(bot-top)+" px, рядок займає 7",BX,250,css('--soft'),11.5,false);
+    capt(g,"смуг чорнила в рамці: "+runs,BX,272,css('--soft'),11.5,false);
+    I("bx1").textContent=(bot-top)+" px";
+    I("bx2").textContent=f4(c);
+    I("bx3").textContent=res.text||"нічого";
+    if(res.text===TRUTH)
+      verd("boxVd","t-ok","РАМКА ГОДИТЬСЯ","Прочитано «"+TRUTH+"» без помилок. Зайвий порожній папір навколо рядка нічого не коштує: читач сам знаходить смужку з чорнилом.");
+    else if(runs===0)
+      verd("boxVd","t-no","У РАМЦІ НЕМАЄ ТЕКСТУ","Жодного пікселя чорнила. CER "+f4(c)+" — це просто довжина істини, поділена сама на себе.");
+    else if(runs>=2)
+      verd("boxVd","t-no","У РАМЦІ ДВА РЯДКИ","CER "+f4(c)+". Смужку зводять до сталої висоти сім пікселів, і два рядки, стиснуті в сім пікселів, не схожі ні на що. Помилка не пропорційна похибці рамки: зайвих пікселів кілька, а зіпсовано все.");
+    else if(top>10)
+      verd("boxVd","t-no","У РАМЦІ НЕ ТОЙ РЯДОК","Прочитано «"+res.text+"» — це другий рядок знімка, і читається він бездоганно. Але істина для цієї рамки «"+TRUTH+"», тож CER "+f4(c)+". Помилку зробив детектор, а розплачується метрика розпізнавання.");
+    else if(c>=1)
+      verd("boxVd","t-no","ВІД РЯДКА ЛИШИВСЯ ОГРИЗОК","Рамка заввишки "+(bot-top)+" px при рядку у 7 px: після зведення до сталої висоти від форми цифр не лишилось нічого. Прочитано «"+res.text+"», CER "+f4(c)+".");
+    else
+      verd("boxVd","t-mid","РЯДОК ОБРІЗАНО","CER "+f4(c)+". Скільки цифр випало з рамки або скільки пікселів зрізано зверху й знизу — стільки й зіпсовано. Поломка передбачувана й лінійна: рамка зачепила рівно один рядок, просто не весь.");
+  }
+  on("bTop3","input",draw); on("bBot3","input",draw); on("bRight3","input",draw); draw();
+  window.addEventListener("resize",draw);
+})();
+
+/* ─────────────────── 3 · Левенштейн і дві метрики ─────────────────── */
+(function(){
+  var cv=I("cLev"); if(!cv) return;
+  var TRUTH="телефон";
+  var PREDS=["телефон","тепефон","телефзон","тeлeфoн"];
+  var NOTES=["чистий знімок","нахил 7°: «л» стала «п»","розріз рядка: зайва «з»","латинські e, o замість кирилиць"];
+  var cur=0;
+  function draw(){
+    var pred=PREDS[cur], L=+I("len4").value;
+    I("lenOut").textContent=L;
+    var d=levTable(TRUTH,pred), dist=d[TRUTH.length][pred.length];
+    var c=dist/TRUTH.length;
+    var exact=Math.pow(1-Math.min(c,1),L);
+    var g=dpr(cv),i,j;
+    /* таблиця */
+    var CS=32, OX=64, OY=76;
+    capt(g,"таблиця відстані: істина «"+TRUTH+"» проти «"+pred+"»",18,24,css('--soft'),11.5,true);
+    capt(g,NOTES[cur],18,42,css('--soft'),11,false);
+    for(j=0;j<=pred.length;j++)
+      if(j>0) capt(g,pred.charAt(j-1),OX+j*CS+CS/2,OY-10,css('--rose'),13,true,'center');
+    for(i=0;i<=TRUTH.length;i++)
+      if(i>0) capt(g,TRUTH.charAt(i-1),OX-10,OY+i*CS+CS/2+5,css('--rose'),13,true,'right');
+    /* найдешевший шлях: від правого нижнього кута назад */
+    var path={},pi=TRUTH.length,pj=pred.length,nSub=0,nIns=0,nDel=0;
+    while(pi>0||pj>0){
+      path[pi+","+pj]=1;
+      if(pi>0&&pj>0&&d[pi][pj]===d[pi-1][pj-1]+(TRUTH.charAt(pi-1)===pred.charAt(pj-1)?0:1)){
+        if(TRUTH.charAt(pi-1)!==pred.charAt(pj-1)) nSub++;
+        pi--;pj--;
+      }
+      else if(pi>0&&d[pi][pj]===d[pi-1][pj]+1){nDel++;pi--;}
+      else {nIns++;pj--;}
+    }
+    path["0,0"]=1;
+    for(i=0;i<=TRUTH.length;i++) for(j=0;j<=pred.length;j++){
+      var hot=path[i+","+j];
+      g.fillStyle= hot? css('--rose-w') : css('--paper');
+      g.fillRect(OX+j*CS,OY+i*CS,CS-2,CS-2);
+      capt(g,String(d[i][j]),OX+j*CS+CS/2-1,OY+i*CS+CS/2+5,
+           hot?css('--rose'):css('--soft'),12,!!hot,'center');
+    }
+    capt(g,"відстань "+dist+" · CER "+f4(c),18,OY+(TRUTH.length+1)*CS+28,css('--ink'),13,true);
+    /* крива «рядок цілком» */
+    var PX=520, PY=76, PW=390, PH=210;
+    capt(g,"частка цілком правильних рядків",PX,24,css('--soft'),11.5,true);
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(PX,PY); g.lineTo(PX,PY+PH); g.lineTo(PX+PW,PY+PH); g.stroke();
+    var k,xx,yy,started=false;
+    g.beginPath(); g.strokeStyle=css('--teal'); g.lineWidth=2;
+    for(k=4;k<=40;k++){
+      xx=PX+(k-4)/36*PW; yy=PY+PH-Math.pow(1-Math.min(c,1),k)*PH;
+      if(!started){g.moveTo(xx,yy);started=true;} else g.lineTo(xx,yy);
+    }
+    g.stroke();
+    xx=PX+(L-4)/36*PW; yy=PY+PH-exact*PH;
+    g.strokeStyle=css('--rose'); g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(xx,PY); g.lineTo(xx,PY+PH); g.stroke();
+    g.fillStyle=css('--rose'); g.beginPath(); g.arc(xx,yy,5,0,6.284); g.fill();
+    capt(g,"0",PX-8,PY+PH+4,css('--soft'),10.5,false,'right');
+    capt(g,"1",PX-8,PY+5,css('--soft'),10.5,false,'right');
+    capt(g,"4",PX,PY+PH+18,css('--soft'),10.5,false,'center');
+    capt(g,"40",PX+PW,PY+PH+18,css('--soft'),10.5,false,'center');
+    capt(g,"довжина рядка, символів",PX+PW/2,PY+PH+34,css('--soft'),11,false,'center');
+    capt(g,"при довжині "+L+": "+f4(exact),PX,PY+PH+56,css('--ink'),13,true);
+    var ops=[];
+    if(nSub) ops.push(nSub+" заміна");
+    if(nIns) ops.push(nIns+" вставка");
+    if(nDel) ops.push(nDel+" викидання");
+    I("lv4").textContent=ops.length?ops.join(", "):"жодної";
+    I("lv1").textContent=dist;
+    I("lv2").textContent=f4(c);
+    I("lv3").textContent=f4(exact);
+    if(dist===0)
+      verd("levVd","t-ok","ЖОДНОЇ ПОМИЛКИ","Відстань 0, CER 0.0000, і частка чистих рядків дорівнює 1.0000 на будь-якій довжині.");
+    else if(exact>=0.5)
+      verd("levVd","t-mid","КОРОТКІ РЯДКИ ПРОЩАЮТЬ","Потрібно "+ops.join(", ")+" — відстань "+dist+", CER "+f4(c)+
+        ". При довжині "+L+" ще "+f4(exact)+" рядків виходять чистими; той самий CER на довших рядках дасть значно менше.");
+    else
+      verd("levVd","t-no","МЕТРИКИ РОЗІЙШЛИСЯ","Потрібно "+ops.join(", ")+", тобто CER "+f4(c)+
+        ", а чистих рядків уже тільки "+f4(exact)+". Модель та сама — змінилася лише довжина рядка, на якій її міряють.");
+  }
+  segment("segLev",function(i){cur=i;draw();});
+  on("len4","input",draw); draw();
+  window.addEventListener("resize",draw);
+})();
+
+/* ─────────────────── 4 · що заважає рушієві ─────────────────── */
+(function(){
+  var cv=I("cDmg"); if(!cv) return;
+  /* заміряно: tesseract 5.3.2, ukr, --psm 7, шрифт Liberation Sans, три рядки */
+  var DMG=[
+    {name:"мова", unit:"", labels:["ukr","eng"], cer:[0.0000,0.7045], kind:"lang"},
+    {name:"нахил", unit:"°", labels:["0","3","5","6","7","8","10","15"],
+     cer:[0.0000,0.0000,0.0101,0.0751,0.1855,0.1414,0.1919,0.4211], vals:[0,3,5,6,7,8,10,15], kind:"rot"},
+    {name:"розмиття", unit:"σ", labels:["0","1","2","3","4","6"],
+     cer:[0.0000,0.0000,0.0000,0.0670,0.6457,1.0000], vals:[0,1,2,3,4,6], kind:"blur"},
+    {name:"контраст", unit:"", labels:["1.0","0.5","0.25","0.10","0.05","0.02"],
+     cer:[0.0000,0.0000,0.0000,0.0000,0.0000,0.0000], vals:[1,0.5,0.25,0.1,0.05,0.02], kind:"contrast"},
+    {name:"висота", unit:" px", labels:["32","16","14","12","11","10","9","8","7"],
+     cer:[0.0000,0.0000,0.0145,0.0108,0.0562,0.1736,0.2053,0.6187,0.7910],
+     vals:[32,16,14,12,11,10,9,8,7], kind:"size"},
+    {name:"шум", unit:"σ", labels:["0.10","0.20","0.25","0.30","0.35","0.40","0.50","0.60"],
+     cer:[0.0000,0.0070,0.0353,0.6860,0.6871,0.5961,0.4128,0.1481],
+     vals:[0.10,0.20,0.25,0.30,0.35,0.40,0.50,0.60], kind:"noise"}
+  ];
+  var cur=0;
+  function preview(g,d,idx,x0,y0,W,H){
+    var k=d.kind;
+    g.save(); g.beginPath(); g.rect(x0,y0,W,H); g.clip();
+    if(k==="lang"){
+      capt(g,"ukr:  Продам телефон",x0,y0+40,css('--teal'),16,true);
+      capt(g,"eng:  Npogam Tenecbou",x0,y0+76,idx===1?css('--rose'):css('--soft'),16,true);
+      capt(g,"П→N   д→g   ф→cb   и→u",x0,y0+120,css('--soft'),13,false);
+      capt(g,"жоден піксель не змінено",x0,y0+146,css('--soft'),11.5,false);
+    } else {
+      /* растровий рядок «4500» з обраним псуванням */
+      var base=field(30,10);
+      drawText(base,"4500",1,2,2);
+      /* масштаб добираємо так, щоб картинка гарантовано вміщалась у 400×200 */
+      var px = (k==="size") ? Math.max(2, d.vals[idx]*0.375) : 11;
+      var i,j,x,y,v;
+      var r=LCG(77);
+      var cx=x0+W/2, cy=y0+H/2, ang=(k==="rot")? d.vals[idx]*Math.PI/180 : 0;
+      for(j=0;j<base.h;j++) for(i=0;i<base.w;i++){
+        v=base.a[j*base.w+i];
+        if(k==="blur"){
+          /* коробкове згладжування радіуса σ: скільки чорнила лишилось у клітинці */
+          var rad=Math.round(d.vals[idx]), s=0, n=0, a, b;
+          for(b=-rad;b<=rad;b++) for(a=-rad;a<=rad;a++){ s+=fget(base,i+a,j+b); n++; }
+          v=s/n;
+        }
+        if(k==="contrast") v=v*d.vals[idx];
+        if(k==="noise") v=Math.max(0,Math.min(1,v+(r()*2-1)*d.vals[idx]*1.6));
+        if(v<=0.02) continue;
+        var alpha=Math.max(0.05,Math.min(1,v));
+        g.save();
+        g.translate(cx,cy); g.rotate(ang);
+        g.globalAlpha=alpha; g.fillStyle=css('--ink');
+        g.fillRect((i-base.w/2)*px,(j-base.h/2)*px,px-1,px-1);
+        g.restore();
+      }
+      g.globalAlpha=1;
+      capt(g,"растровий шрифт, "+d.name+" "+d.labels[idx]+d.unit,x0,y0+H-6,css('--soft'),11.5,false);
+    }
+    g.restore();
+  }
+  function draw(){
+    var d=DMG[cur], sl=I("lvl5");
+    if(+sl.max!==d.cer.length-1){ sl.max=String(d.cer.length-1); if(+sl.value>d.cer.length-1) sl.value="0"; }
+    var idx=Math.min(+sl.value,d.cer.length-1);
+    /* грабля №3: під text-transform:uppercase «σ» стає «Σ», тому одиниця йде в .raw */
+    I("lvlOut").innerHTML=d.labels[idx]+(d.unit? '<span class="raw">'+d.unit+'</span>' : '');
+    var g=dpr(cv);
+    capt(g,"псування: "+d.name,18,24,css('--soft'),11.5,true);
+    preview(g,d,idx,18,44,400,200);
+    /* стовпчики */
+    var BX=470, BY=54, BW=430, BH=200, i;
+    capt(g,"заміряний CER на кожному рівні",BX,24,css('--soft'),11.5,true);
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(BX,BY); g.lineTo(BX,BY+BH); g.lineTo(BX+BW,BY+BH); g.stroke();
+    var n=d.cer.length, bw=BW/n;
+    for(i=0;i<n;i++){
+      var h=Math.max(1.5,d.cer[i]*BH);
+      g.fillStyle= i===idx ? css('--rose') : css('--hair');
+      g.fillRect(BX+i*bw+bw*0.15, BY+BH-h, bw*0.7, h);
+      capt(g,d.labels[i],BX+i*bw+bw/2,BY+BH+16,i===idx?css('--rose'):css('--soft'),10.5,i===idx,'center');
+      capt(g,f2(d.cer[i]),BX+i*bw+bw/2,BY+BH-h-6,i===idx?css('--rose'):css('--soft'),10,i===idx,'center');
+    }
+    capt(g,"1.00",BX-6,BY+5,css('--soft'),10.5,false,'right');
+    capt(g,"0.00",BX-6,BY+BH+4,css('--soft'),10.5,false,'right');
+    capt(g,"рівень псування",BX+BW/2,BY+BH+36,css('--soft'),11,false,'center');
+    var worst=Math.max.apply(null,d.cer);
+    I("dm1").textContent=f4(d.cer[idx]);
+    I("dm2").textContent=f4(worst);
+    if(worst<0.005)
+      verd("dmgVd","t-ok","НЕ ЗАВАЖАЄ ВЗАГАЛІ","Найгірший рівень цього псування дає CER "+f4(worst)+
+        ". Бінаризація всередині рушія адаптивна: їй важливий локальний перепад, а не абсолютна яскравість.");
+    else if(d.cer[idx]<0.02)
+      verd("dmgVd","t-ok","НА ЦЬОМУ РІВНІ ЩЕ НІЧОГО","CER "+f4(d.cer[idx])+". Але в цьому ряду є рівень із "+
+        f4(worst)+" — посунь повзунок далі й побач, де саме починається обрив.");
+    else if(d.cer[idx]<0.25)
+      verd("dmgVd","t-mid","ПОЧАЛОСЯ СПОВЗАННЯ","CER "+f4(d.cer[idx])+" при найгіршому "+f4(worst)+
+        ". Форма літери вже втрачається, але рушій ще вгадує більшість символів.");
+    else
+      verd("dmgVd","t-no","ЧИТАННЯ ЗЛАМАНЕ","CER "+f4(d.cer[idx])+" — зіпсовано більш ніж чверть символів. "+
+        "Найгірше в цьому ряду "+f4(worst)+".");
+  }
+  segment("segDmg",function(i){cur=i;I("lvl5").value="0";draw();});
+  on("lvl5","input",draw); draw();
+  window.addEventListener("resize",draw);
+})();
+
+/* ─────────────────── 5 · шляхи CTC ─────────────────── */
+(function(){
+  var cv=I("cCtc"); if(!cv) return;
+  var TARGETS=["45","450","455","555"];
+  var cur=0;
+  function extended(t){
+    var e=[""],i;
+    for(i=0;i<t.length;i++){ e.push(t.charAt(i)); e.push(""); }
+    return e;
+  }
+  function counts(t,T){
+    var e=extended(t), n=e.length, s, k;
+    var reach=new Array(n); for(s=0;s<n;s++) reach[s]=0;
+    reach[0]=1; if(n>1) reach[1]=1;
+    var hist=[reach.slice()];
+    for(k=1;k<T;k++){
+      var nx=new Array(n); for(s=0;s<n;s++) nx[s]=0;
+      for(s=0;s<n;s++){
+        if(!reach[s]) continue;
+        nx[s]+=reach[s];
+        if(s+1<n) nx[s+1]+=reach[s];
+        if(s+2<n && e[s+2]!=="" && e[s]!==e[s+2]) nx[s+2]+=reach[s];
+      }
+      reach=nx; hist.push(reach.slice());
+    }
+    return hist;
+  }
+  function draw(){
+    var t=TARGETS[cur], T=+I("tlen6").value;
+    I("tlenOut").textContent=T;
+    var e=extended(t), n=e.length, hist=counts(t,T);
+    var last=hist[T-1];
+    var total=last[n-1]+(n>=2?last[n-2]:0);
+    var reps=0,i; for(i=1;i<t.length;i++) if(t.charAt(i)===t.charAt(i-1)) reps++;
+    var need=t.length+reps;
+    var g=dpr(cv), s,k;
+    capt(g,"рядок «"+t+"» · розширена послідовність із "+n+" станів · T = "+T,18,22,css('--soft'),11.5,true);
+    var CW=Math.min(66,(800)/Math.max(T,1)), CH=38, OX=120, OY=88;
+    for(s=0;s<n;s++)
+      capt(g, e[s]===""?"–":e[s], OX-22, OY+s*CH+5, e[s]===""?css('--soft'):css('--rose'),14,true,'right');
+    capt(g,"стан",OX-22,OY-30,css('--soft'),10.5,false,'right');
+    for(k=0;k<T;k++) capt(g,String(k+1),OX+k*CW+CW/2,OY-30,css('--soft'),10.5,false,'center');
+    capt(g,"колонка смужки →",OX,OY+(n-1)*CH+42,css('--soft'),11,false);
+    for(k=0;k<T;k++) for(s=0;s<n;s++){
+      var v=hist[k][s], cx=OX+k*CW+CW/2, cy=OY+s*CH;
+      var alive = v>0;
+      g.beginPath(); g.arc(cx,cy,13,0,6.284);
+      g.fillStyle= alive ? (s>=n-2 && k===T-1 ? css('--rose-w') : css('--teal-w')) : css('--paper');
+      g.fill();
+      g.strokeStyle= alive? css('--teal') : css('--hair'); g.lineWidth=1.2; g.stroke();
+      capt(g, alive? (v>99999? "10⁵+" : String(v)) : "·", cx, cy+4,
+           alive?css('--ink'):css('--hair'), v>999?9:11, alive, 'center');
+    }
+    /* фініш */
+    if(n>=2){
+      g.strokeStyle=css('--rose'); g.lineWidth=2;
+      g.strokeRect(OX+(T-1)*CW+CW/2-18, OY+(n-2)*CH-18, 36, CH+36);
+    }
+    capt(g,"шляхів до «"+t+"»: "+total,18,OY+(n-1)*CH+72,total>0?css('--teal'):css('--rose'),13,true);
+    I("ct1").textContent=reps;
+    I("ct2").textContent=need;
+    I("ct3").textContent=total;
+    if(total===0)
+      verd("ctcVd","t-no","ТАКОГО ШЛЯХУ НЕМАЄ","При T = "+T+" рядок «"+t+"» записати неможливо: потрібні щонайменше "+
+        cols(need)+" (довжина "+t.length+" плюс "+reps+" на порожні між однаковими). Втрата CTC тут дорівнює нескінченності.");
+    else if(T===need)
+      verd("ctcVd","t-mid","РІВНО ОДИН ШЛЯХ","T = "+T+" — це точний мінімум для цього рядка. Шлях єдиний, свободи в мережі немає жодної.");
+    else
+      verd("ctcVd","t-ok","ШЛЯХІВ "+total,"Усі "+total+" шляхів дають той самий рядок «"+t+"», і втрата CTC підсумовує їхні ймовірності. "+
+        "Мережі не треба обирати між ними — вона піднімає їх усі одразу.");
+  }
+  segment("segCtc",function(i){cur=i;draw();});
+  on("tlen6","input",draw); draw();
+  window.addEventListener("resize",draw);
+})();
+
+/* ─────────────────── 6 · полиця на кривій втрати ─────────────────── */
+(function(){
+  var cv=I("cLoss"); if(!cv) return;
+  /* епохи й втрати — рівно ті, що друкує зошит */
+  var EPOCHS=[0,5,10,15,20,25,30,35,40,45,50,55,59];
+  var CURVES=[
+    [4.3630,2.7280,2.7118,2.7260,2.6780,2.6525,2.6077,2.4067,2.3226,2.1500,2.0555,1.9606,1.7410],
+    [6.0495,2.7261,2.6955,2.6392,2.3210,1.5532,0.8300,0.1539,0.0425,0.0228,0.0156,0.0117,0.0097],
+    [8.9267,3.3077,2.7653,2.7505,2.7405,2.7308,2.7212,2.7099,2.6946,2.6689,2.6179,2.5454,2.4828]
+  ];
+  var NAMES=["3e-2","3e-3","3e-4"];
+  var EXACT=[0.0333,1.0000,0.0000];
+  var CER=[0.7287,0.0000,1.0000];
+  var cur=1;
+  function draw(){
+    var k=+I("ep7").value, ep=EPOCHS[k];
+    I("epOut").textContent=ep;
+    var g=dpr(cv),i,m,xx,yy;
+    var PX=74, PY=42, PW=812, PH=222, MAXL=9.5;
+    capt(g,"втрата CTC за епоху · 512 навчальних рядків, пакет 64 · зерно 0",18,24,css('--soft'),11.5,true);
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(PX,PY); g.lineTo(PX,PY+PH); g.lineTo(PX+PW,PY+PH); g.stroke();
+    for(i=0;i<=9;i+=3){
+      yy=PY+PH-i/MAXL*PH;
+      g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(PX,yy); g.lineTo(PX+PW,yy); g.stroke();
+      capt(g,String(i),PX-8,yy+4,css('--soft'),10.5,false,'right');
+    }
+    yy=PY+PH-2.7/MAXL*PH;
+    g.setLineDash([4,4]); g.strokeStyle=css('--amber'); g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(PX,yy); g.lineTo(PX+PW,yy); g.stroke(); g.setLineDash([]);
+    var COLS=[css('--amber'),css('--teal'),css('--rose')];
+    for(m=0;m<3;m++){
+      g.beginPath(); g.strokeStyle=COLS[m]; g.lineWidth= m===cur?2.6:1.2;
+      g.globalAlpha= m===cur?1:0.4;
+      for(i=0;i<EPOCHS.length;i++){
+        xx=PX+EPOCHS[i]/59*PW; yy=PY+PH-Math.min(CURVES[m][i],MAXL)/MAXL*PH;
+        if(i===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+      }
+      g.stroke();
+      for(i=0;i<EPOCHS.length;i++){
+        xx=PX+EPOCHS[i]/59*PW; yy=PY+PH-Math.min(CURVES[m][i],MAXL)/MAXL*PH;
+        g.beginPath(); g.arc(xx,yy,m===cur?3:2,0,6.284); g.fillStyle=COLS[m]; g.fill();
+      }
+      g.globalAlpha=1;
+      g.fillStyle=COLS[m]; g.fillRect(PX+PW-150,PY+8+m*18,16,3);
+      capt(g,"lr "+NAMES[m],PX+PW-128,PY+13+m*18,COLS[m],11,m===cur,'left');
+    }
+    /* підпис полиці малюємо ПІСЛЯ кривих, щоб вони не проходили крізь літери */
+    plate(g,"полиця 2.7 — модель мовчить",PX+10,PY+PH-2.7/MAXL*PH-8,css('--amber'),11,true);
+    xx=PX+ep/59*PW;
+    g.strokeStyle=css('--ink'); g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(xx,PY); g.lineTo(xx,PY+PH); g.stroke();
+    yy=PY+PH-Math.min(CURVES[cur][k],MAXL)/MAXL*PH;
+    g.fillStyle=COLS[cur]; g.beginPath(); g.arc(xx,yy,6,0,6.284); g.fill();
+    capt(g,"епоха",PX+PW/2,PY+PH+36,css('--soft'),11,false,'center');
+    for(i=0;i<EPOCHS.length;i+=2) capt(g,String(EPOCHS[i]),PX+EPOCHS[i]/59*PW,PY+PH+18,css('--soft'),10.5,false,'center');
+    var here=CURVES[cur][k];
+    var drop=(k>=2)? CURVES[cur][k-2]-here : null;
+    I("ls1").textContent=f4(here);
+    I("ls2").textContent=(drop===null?"—":f4(drop));
+    I("ls3").textContent=f4(EXACT[cur]);
+    if(ep<=5)
+      verd("lossVd","t-mid","ЩЕ ЗАРАНО СУДИТИ","Втрата "+f4(here)+" на "+ep+"-й епосі. Перші кроки збивають випадкову ініціалізацію, і будь-який висновок тут передчасний.");
+    else if(here<1.0)
+      verd("lossVd","t-ok","ПОЛИЦЮ ПРОЙДЕНО","Втрата "+f4(here)+" — модель уже розрізняє цифри. До кінця навчання ця швидкість дає «рядок цілком» "+f4(EXACT[cur])+" при CER "+f4(CER[cur])+".");
+    else if(here>2.3 && drop!==null && drop<0.5)
+      verd("lossVd","t-no","ПОЛИЦЯ: МОДЕЛЬ МОВЧИТЬ","Втрата "+f4(here)+", за десять епох упала лише на "+f4(drop)+
+        ". На полиці вихід порожній: це найдешевший спосіб зменшити втрату. Кінцевий результат цієї швидкості — «рядок цілком» "+f4(EXACT[cur])+".");
+    else if(here>2.3)
+      verd("lossVd","t-mid","ЩОЙНО ВПАЛА НА ПОЛИЦЮ","Втрата "+f4(here)+", за десять епох упала на "+f4(drop)+
+        " — це ще падіння з випадкової ініціалізації, а не навчання. Далі буде рівна ділянка.");
+    else
+      verd("lossVd","t-mid","МОДЕЛЬ СХОДИТЬ З ПОЛИЦІ","Втрата "+f4(here)+(drop!==null?", за десять епох упала на "+f4(drop):"")+
+        ". Рух почався. Кінцевий результат цієї швидкості — «рядок цілком» "+f4(EXACT[cur])+".");
+  }
+  segment("segLoss",function(i){cur=i;draw();});
+  on("ep7","input",draw); draw();
+  window.addEventListener("resize",draw);
+})();
+
+/* ─────────────────── 7 · шлях проти рядка ─────────────────── */
+(function(){
+  var cv=I("cDec"); if(!cv) return;
+  var CLS=["–","0","1"];
+  function collapse(path){
+    var out="",prev=-1,i;
+    for(i=0;i<path.length;i++){
+      if(path[i]!==prev && path[i]!==0) out+=String(path[i]-1);
+      prev=path[i];
+    }
+    return out;
+  }
+  function draw(){
+    var pb=+I("pb8").value/100, T=+I("tt8").value;
+    I("pbOut").textContent=f2(pb); I("ttOut").textContent=T;
+    var p=[pb,(1-pb)*0.6,(1-pb)*0.4];
+    /* перебираємо всі 3^T шляхів і додаємо ймовірності однакових рядків */
+    var tot={},i,k,code,path,pr,best="",bestp=-1;
+    var n=Math.pow(3,T);
+    for(i=0;i<n;i++){
+      code=i; path=[]; pr=1;
+      for(k=0;k<T;k++){ var c=code%3; code=Math.floor(code/3); path.push(c); pr*=p[c]; }
+      var s=collapse(path);
+      tot[s]=(tot[s]||0)+pr;
+    }
+    var keys=Object.keys(tot).sort(function(a,b){return tot[b]-tot[a];});
+    best=keys[0]; bestp=tot[best];
+    var gpath=[]; for(k=0;k<T;k++) gpath.push(p[0]>=p[1]?0:1);
+    var gstr=collapse(gpath), gp=tot[gstr]||0;
+    var g=dpr(cv);
+    var CW=Math.min(80,620/T), OX=90, OY=64, RH=44;
+    capt(g,"імовірності класів по колонках (усі колонки однакові)",18,24,css('--soft'),11.5,true);
+    for(k=0;k<3;k++) capt(g,CLS[k],OX-16,OY+k*RH+RH/2+5,k===0?css('--soft'):css('--rose'),14,true,'right');
+    for(i=0;i<T;i++) capt(g,String(i+1),OX+i*CW+CW/2,OY-10,css('--soft'),10.5,false,'center');
+    for(i=0;i<T;i++) for(k=0;k<3;k++){
+      var hot=(gpath[i]===k);
+      g.fillStyle= hot? css('--amber-w') : css('--paper');
+      g.fillRect(OX+i*CW,OY+k*RH,CW-3,RH-3);
+      if(hot){ g.strokeStyle=css('--amber'); g.lineWidth=2; g.strokeRect(OX+i*CW,OY+k*RH,CW-3,RH-3); }
+      capt(g,f2(p[k]),OX+i*CW+CW/2-1,OY+k*RH+RH/2+4,hot?css('--amber'):css('--soft'),12,hot,'center');
+    }
+    capt(g,"жовте — найімовірніший символ у колонці, тобто жадібний вибір",18,OY+3*RH+26,css('--soft'),11,false);
+    /* стовпчики рядків */
+    var BX=OX+T*CW+60, i2;
+    capt(g,"повна ймовірність рядка",BX,24,css('--soft'),11.5,true);
+    /* показуємо чотири найкращі рядки й обовʼязково той, що дав жадібний вибір */
+    var listed=keys.slice(0,4);
+    if(listed.indexOf(gstr)<0) listed.push(gstr);
+    var maxp=tot[keys[0]];
+    for(i2=0;i2<listed.length;i2++){
+      var kk=listed[i2], w=Math.max(2,(tot[kk]||0)/maxp*150);
+      var isG=(kk===gstr), isB=(kk===best);
+      g.fillStyle= isB? css('--teal') : (isG? css('--amber') : css('--hair'));
+      g.fillRect(BX+76,44+i2*34,w,20);
+      capt(g,kk===""?"порожній":"«"+kk+"»",BX+70,44+i2*34+15,
+           isB?css('--teal'):(isG?css('--amber'):css('--soft')),12,isB||isG,'right');
+      capt(g,(tot[kk]||0).toFixed(4),BX+82+w+6,44+i2*34+15,css('--soft'),11,false);
+    }
+    capt(g,"бірюзове — найкращий рядок,",BX,44+listed.length*34+18,css('--soft'),11,false);
+    capt(g,"жовте — той, що дав жадібний вибір",BX,44+listed.length*34+34,css('--soft'),11,false);
+    I("dc1").textContent= gstr===""? "порожній" : "«"+gstr+"»";
+    I("dc2").textContent=gp.toFixed(4);
+    I("dc3").textContent="«"+best+"»";
+    I("dc4").textContent=bestp.toFixed(4);
+    if(gstr===best)
+      verd("decVd","t-ok","ЗБІГЛОСЯ","Жадібний вибір дав «"+gstr+"» — той самий рядок, що й повний перебір. Так буває найчастіше, і саме тому жадібне декодування живе в коді.");
+    else
+      verd("decVd","t-no","ЖАДІБНИЙ ВИБІР ПРОГРАВ","Він дав "+(gstr===""?"порожній рядок":"«"+gstr+"»")+
+        " з імовірністю "+gp.toFixed(4)+", а найімовірніший рядок насправді «"+best+"» з "+bestp.toFixed(4)+
+        ". До «"+best+"» веде багато посередніх шляхів, а до "+(gstr===""?"порожнечі":"«"+gstr+"»")+
+        " — мало, зате кожен окремо сильніший.");
+  }
+  on("pb8","input",draw); on("tt8","input",draw); draw();
+  window.addEventListener("resize",draw);
+})();
+
+})();
+</script>
+
+</body>
+</html>

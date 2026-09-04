@@ -1,0 +1,1704 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLIP і мультимодальність: спільний простір зображень і тексту</title>
+<meta name="description" content="Як підпис під фотографією замінює мітку: дві вежі, симетрична контрастна втрата, спільний простір зображень і тексту. Власний крихітний CLIP, навчений офлайн на синтетичних парах; нульовий постріл проти лінійної проби й навчання з нуля, роль температури, перевірка композиційності з негативним результатом, інженерія підказок і три речі, яких контрастна модель не вміє в принципі.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 4 · Тема 22</p>
+    <h1>CLIP і мультимодальність</h1>
+    <p class="stand">Що буде, якщо перестати підписувати картинки числами й почати
+      підписувати їх словами. Зображення й текст потрапляють в один простір, і
+      мережа раптом уміє класифікувати те, чого їй ніколи не показували, —
+      бо класи тепер пишуть реченням.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Звідки брати нагляд</a></li>
+        <li><a href="#s2">Дві вежі</a></li>
+        <li><a href="#s3">Контрастна втрата між модальностями</a></li>
+        <li><a href="#s4">Матриця схожості</a></li>
+        <li><a href="#s5">Температура</a></li>
+        <li><a href="#s6">Нульовий постріл</a></li>
+        <li><a href="#s7">Композиційність</a></li>
+        <li><a href="#s8">Інженерія підказок</a></li>
+        <li><a href="#s9">Де воно ламається</a></li>
+        <li><a href="#s10">Справжній CLIP</a></li>
+        <li><a href="#s11">Що успадковано від даних</a></li>
+        <li><a href="#s12">Підсумок блоку</a></li>
+        <li><a href="#s13">Місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../21-swin-hybrids/lecture.html">← 21. Swin і гібриди</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../23-detection-setup/lecture.html">23. Постановка детекції →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Двадцять одна тема позаду, і в кожній мережа вчилася з міток.
+Хтось сідав і писав навпроти кожної картинки число: це клас 3, це клас 5. Ми
+міняли архітектури, згортку на увагу, увагу на вікна зі зсувом — але джерело
+знання лишалося тим самим, і воно було дороге. Ця тема міняє саме джерело.
+Виявляється, у світі вже лежать мільярди зображень із текстом поруч: підпис під
+фотографією, alt-текст у розмітці сторінки, назва товару в оголошенні. Ніхто не
+писав їх для нейромереж. Але вони описують те, що на картинці, — а отже, це теж
+нагляд, тільки дармовий.</p>
+
+<h2 id="s1"><span class="num">01 / Джерело</span>Звідки брати нагляд</h2>
+
+<p>Почнемо з ціни. У <a href="../02-cv-task-map/lecture.html">темі 02</a> ми вже
+рахували, скільки коштує розмітка: класифікація — секунди на зображення,
+рамки — десятки секунд, маска пікселів — хвилини. ImageNet, на якому виріс увесь
+сучасний зір, це чотирнадцять мільйонів розмічених зображень і роки роботи
+багатьох людей. Такий набір роблять раз на десятиліття, і кожен новий домен
+доводиться розмічати наново.</p>
+
+<p>У <a href="../16-self-supervised/lecture.html">темі 16</a> ми знайшли один вихід:
+вигадати задачу з самих даних. Мітки не потрібні взагалі — беремо два види
+одного зображення й вимагаємо, щоб мережа впізнала в них те саме. Це працює, але
+має межу: вивчені ознаки хороші, а <em>що</em> на зображенні, модель усе одно не
+знає. Щоб дізнатися, доводиться приносити мітки — хай і небагато.</p>
+
+<p>Тут ми беремо інший вихід. Мітка — це число з наперед складеного списку:
+шість класів, тисяча класів, скільки завгодно, але список скінченний і
+складений заздалегідь. Підпис — це речення. Порівняй:</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>Мітка</th><th>Підпис</th></tr>
+  <tr><td>клас 3</td><td>«велике кільце вгорі»</td></tr>
+  <tr><td>один із шести варіантів</td><td>будь-які слова, які знає мова</td></tr>
+  <tr><td>каже, <b>що це</b></td><td>каже, що це, яке воно, де воно і що поруч</td></tr>
+  <tr><td>пише людина спеціально для моделі</td><td>уже написано, і не для нас</td></tr>
+</table></div>
+
+<p>Головна різниця не в кількості інформації, хоч її і більше. Головна різниця в
+тому, що список класів більше не треба складати заздалегідь. Якщо модель уміє
+зіставляти зображення з текстом, то <b>класи можна задавати реченням просто під
+час роботи</b> — і жодного нового навчання для цього не потрібно. Саме звідси
+береться здатність, заради якої ми сюди й прийшли.</p>
+
+<div class="note"><b>Наскрізний приклад теми.</b> Ті самі шість фігур 28×28, що
+й у блоках 2–4, але тепер у кожної є ще два параметри: <b>розмір</b> (маленька
+або велика) і <b>положення</b> в кадрі (у центрі, вгорі, внизу, ліворуч,
+праворуч). Шість форм × два розміри × пʼять положень — <b>60 комбінацій</b>. З
+цих параметрів генератор складає справжні описи: «велике коло вгорі»,
+«маленький хрест у центрі», «кільце ліворуч». Ані зображень, ані підписів ми
+нізвідки не завантажуємо — усе малюється й складається формулами.</div>
+
+<h2 id="s2"><span class="num">02 / Будова</span>Дві вежі</h2>
+
+<p>Модель складається з двох окремих мереж, які не мають жодної спільної ваги.
+Їх звуть <b>вежами</b> (towers), і кожна робить свою половину роботи.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Вежа перша · зображення</span>
+    <p>Бере картинку й видає вектор — стовпчик із фіксованої кількості чисел. У
+    нас це знайома згорткова мережа з <a href="../09-cnn-complete/lecture.html">теми
+    09</a>: три блоки «згортка → ReLU → пулінг» перетворюють 28×28 на 288 чисел,
+    а лінійний шар стискає їх до <b>32</b>. Разом 15 136 ваг.</p></div>
+  <div class="step"><span class="lbl">Вежа друга · текст</span>
+    <p>Бере речення й видає вектор <b>тієї самої довжини — теж 32 числа</b>. У
+    справжньому CLIP це трансформер; у нас — два лінійні шари поверх мішка слів,
+    2 432 ваги.</p></div>
+  <div class="step"><span class="lbl">Місце зустрічі</span>
+    <p>Вежі ніде не перетинаються — аж до останнього кроку, де ми беремо
+    <b>косинус</b> між двома векторами. Це і є вся звʼязка між модальностями:
+    одне число.</p></div>
+</div>
+
+<p>Спинимось на мішку слів, бо це найпростіша чесна текстова вежа, і новачкові
+варто побачити її повністю. Заводимо словник — список слів, які модель узагалі
+може зрозуміти. У нас їх сімнадцять. Речення перетворюється на вектор довжини
+сімнадцять, де проти кожного присутнього слова стоїть одиниця, а проти
+відсутнього — нуль. Далі цей вектор іде у звичайні лінійні шари, як будь-які
+інші числа.</p>
+
+<div class="eq">«велике коло вгорі» → [1 0 0 0 0 0 0 1 0 1 0 0 0 0 0 0 0]</div>
+
+<p>Одна деталь, без якої вся тема розсипалась би, і вона суто мовна. В
+українській прикметник змінюється за родом: «велик<b>е</b> коло», але
+«велик<b>ий</b> квадрат». Якби ми вважали ці два слова різними, то слово
+«велике» модель побачила б лише з двома формами із шести — і перевірити
+композиційність у розділі 7 стало б неможливо. Тому наш токенізатор ріже слово
+до <b>основи</b>: «велик-» покриває обидві форми, «кол-» покриває і «коло», і
+«кола» в «фото кола». Справжні моделі роблять по суті те саме субслівними
+токенізаторами — розбивають рідкісне слово на частіші шматки.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Дві вежі й одне число між ними</p>
+  <p class="fig-sub">Ліворуч зображення йде в згорткову вежу, знизу опис іде в
+    текстову. Обидві видають по 32 числа. Перемкни пару й подивись, як міняється
+    косинус між ними — і що буде, якщо підставити чужий опис.</p>
+  <div class="panel">
+    <div><canvas id="cTowers" width="940" height="424" aria-label="Схема двох веж: зображення перетворюється на вектор із 32 чисел, опис перетворюється на вектор тієї самої довжини, між ними рахується косинус"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">пара</span>
+        <div class="seg wrap" id="twSeg">
+          <button data-i="0" aria-pressed="true">1</button>
+          <button data-i="1" aria-pressed="false">2</button>
+          <button data-i="2" aria-pressed="false">3</button>
+          <button data-i="3" aria-pressed="false">4</button>
+          <button data-i="4" aria-pressed="false">5</button>
+          <button data-i="5" aria-pressed="false">6</button>
+          <button data-i="6" aria-pressed="false">7</button>
+          <button data-i="7" aria-pressed="false">8</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">який опис підставити</span>
+        <div class="seg" id="twWho">
+          <button data-i="0" aria-pressed="true">свій</button>
+          <button data-i="1" aria-pressed="false">чужий</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>фігура</b><i id="twPair" class="sm">—</i></div>
+        <div class="cellv"><b>косинус</b><i id="twCos">—</i></div>
+      </div>
+      <div class="verdict" id="twVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Дві мережі, які нічого не знають одна про одну, домовляються
+    про спільну систему координат.</b> Вежа зображень бачить лише пікселі, вежа
+    тексту — лише мішок слів. Спільного в них немає нічого, крім одного числа
+    в кінці й того, що обидві вчаться від нього. Цього досить: після навчання
+    вектор картинки й вектор її опису дивляться майже в один бік.</figcaption>
+</figure>
+
+<div class="note"><b>Чому саме дві вежі, а не одна мережа на два входи.</b>
+Можна було б зшити зображення й текст в одну послідовність і подати трансформеру
+разом. Так теж роблять, і якість буває вища. Але тоді, щоб знайти картинку за
+запитом, довелося б прогнати мережу для <b>кожної пари</b> «запит + картинка».
+Дві вежі дозволяють порахувати вектори мільярда зображень <b>один раз</b>, а
+далі кожен запит коштує один прогін текстової вежі й одне множення матриці на
+вектор. Саме тому CLIP так швидко опинився в пошукових системах по
+фотоархівах.</div>
+
+<h2 id="s3"><span class="num">03 / Втрата</span>Контрастна втрата між модальностями</h2>
+
+<p>Тепер найкоротший розділ теми, і водночас її серце. Втрату ми вже писали — у
+<a href="../16-self-supervised/lecture.html">темі 16</a>, і зветься вона
+<b>NT-Xent</b>: у чисельнику свій, у знаменнику всі. Там ми брали два види
+одного зображення й вимагали, щоб вони зійшлися ближче, ніж кожен із них до
+чужих. Тут формула та сама, слово в слово.</p>
+
+<p><b>Різниця рівно одна: два вектори тепер беруться з різних модальностей.</b>
+Замість «зображення та його зсунута копія» — «зображення та його опис». Усе
+інше — температура, знаменник із чужих, мінус логарифм частки — переїжджає без
+жодної зміни. Якщо ти памʼятаєш тему 16, ти вже знаєш цю втрату; якщо не
+памʼятаєш, туди варто повернутися, бо тут ми її не переказуватимемо.</p>
+
+<p>Одна нова деталь усе-таки зʼявляється, і вона важлива. Матриця схожості в
+темі 16 була квадратна й симетрична: всі 2N видів були однорідні, і схожість
+виду <span class="raw">i</span> до виду <span class="raw">j</span> дорівнювала
+схожості <span class="raw">j</span> до <span class="raw">i</span>. Тут не так.
+<b>Рядки — зображення, стовпці — описи</b>, і це різні сутності. Тому питання
+«який опис підходить цьому зображенню» і «яке зображення підходить цьому опису»
+— два різні питання, і відповідати треба на обидва.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1 · матриця</span>
+    <p>Беремо партію з N пар. Нормуємо всі вектори на довжину 1 і множимо
+    матрицю зображень на матрицю описів. Виходить квадрат N×N, де в клітинці
+    (<span class="raw">i</span>, <span class="raw">j</span>) стоїть косинус між
+    <span class="raw">i</span>-м зображенням і <span class="raw">j</span>-м
+    описом. Правильні пари — на діагоналі.</p></div>
+  <div class="step"><span class="lbl">Крок 2 · перший напрямок</span>
+    <p>Ділимо все на температуру <span class="raw">τ</span> і рахуємо звичайну
+    перехресну ентропію <b>по рядках</b>: для кожного зображення правильна
+    відповідь — номер його стовпця. Це «зображення шукає свій опис».</p></div>
+  <div class="step"><span class="lbl">Крок 3 · другий напрямок</span>
+    <p>Те саме <b>по стовпцях</b>: для кожного опису правильна відповідь —
+    номер його рядка. Це «опис шукає своє зображення».</p></div>
+  <div class="step"><span class="lbl">Крок 4 · середнє</span>
+    <p>Береться півсума двох втрат. Через це втрату й називають
+    <b>симетричною</b>: не тому, що матриця симетрична — вона якраз ні, — а
+    тому, що ми однаково караємо за помилку в обидва боки.</p></div>
+</div>
+
+<div class="eq">втрата = ½ · ( CE(S / <span class="raw">τ</span>, по рядках) + CE(S<span class="sup">T</span> / <span class="raw">τ</span>, по стовпцях) )</div>
+
+<p>Тут <b>S</b> — матриця косинусів, <b>CE</b> — перехресна ентропія (та сама, що
+й у будь-якому класифікаторі: мінус логарифм частки, яку правильна відповідь
+відхопила після softmax), <b>T</b> угорі означає транспонування, тобто «поверни
+матрицю так, щоб рядки стали стовпцями». Зошит рахує цю формулу двома способами
+— у циклі руками й через <code>cross_entropy</code> — і звіряє їх на прикладі
+3×3: 0.459597 проти 0.459597.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Втрата по кроках</p>
+  <p class="fig-sub">Сім кроків від матриці косинусів до одного числа. Тисни
+    «крок» і дивись, що саме потрапляє в чисельник, що — у знаменник і навіщо
+    все це рахується двічі.</p>
+  <div class="panel">
+    <div><canvas id="cLoss" width="940" height="356" aria-label="Матриця схожості чотири на чотири; підсвічується поточний крок обчислення контрастної втрати"></canvas></div>
+    <div>
+      <div class="code tight" id="lsCode"></div>
+      <div class="readout one">
+        <div class="cellv"><b>крок</b><i id="lsStep">1 / 7</i></div>
+      </div>
+      <button id="lsBtn">крок →</button>
+      <div class="verdict" id="lsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>У чисельнику свій, у знаменнику всі — і так двічі.</b> Кроки
+    1–3 лише готують числа: косинуси діляться на температуру й проходять через
+    експоненту. Втрата зʼявляється аж на кроці 4, коли ми питаємо, яку частку
+    рядка забрав свій опис. Кроки 5–6 повторюють те саме по стовпцю, і аж крок 7
+    дає число, яке піде в градієнт.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Замір</span>Матриця схожості</h2>
+
+<p>Перше твердження, яке треба перевірити числом: <b>після навчання спільний
+простір справді існує</b>. Формально це означає, що зображення лежить близько до
+свого опису й далеко від чужих. Беремо дванадцять тестових зображень, складаємо
+для кожного правильний повний опис і дивимось на матрицю косинусів.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>Що поміряно</th><th>значення</th><th>рівень вгадування</th></tr>
+  <tr class="hot"><td>косинус зі своїм описом</td><td>0.869 ±0.007</td><td>—</td></tr>
+  <tr><td>косинус із чужим описом</td><td>0.050 ±0.010</td><td>—</td></tr>
+  <tr><td>пошук опису за зображенням (з 12)</td><td>0.889 ±0.039</td><td>0.083</td></tr>
+</table></div>
+
+<p>Розрив між 0.869 і 0.050 — це і є весь результат навчання. До
+навчання обидва числа були б однаковими: випадкові вектори дивляться куди
+завгодно. Третій рядок — уже готова корисна задача: <b>пошук за текстом</b>. Найбільше
+число в рядку стоїть саме на діагоналі у 0.889 рядків із одиниці — тобто
+модель за описом майже завжди знаходить потрібне зображення серед дванадцяти.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Матриця схожості</p>
+  <p class="fig-sub">Вісім зображень проти восьми описів. Кнопка перемикає між
+    сирими косинусами й частками після softmax, а повзунок температури міняє
+    контраст цих часток. Діагональ обведена — саме вона має світитися.</p>
+  <div class="panel">
+    <div><canvas id="cMat" width="940" height="560" aria-label="Теплова карта вісім на вісім: рядки — зображення, стовпці — описи, діагональ обведена"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="mtT">температура <span class="raw">τ</span> <output id="mtTv">0.07</output></label>
+        <input type="range" id="mtT" min="0" max="9" step="1" value="2">
+      </div>
+      <button id="mtMode" data-raw="0">показати косинуси</button>
+      <div class="readout">
+        <div class="cellv"><b>діагональ</b><i id="mtDiag">—</i></div>
+        <div class="cellv"><b>поза нею</b><i id="mtOff">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>максимум на діагоналі</b><i id="mtHit">—</i></div>
+        <div class="cellv"><b>втрата</b><i id="mtLoss">—</i></div>
+      </div>
+      <div class="verdict" id="mtVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Косинуси не міняються від температури — міняються частки.</b>
+    Сира матриця вивчена раз і назавжди; температура лише вирішує, наскільки
+    різко softmax перетворює її на розподіл. Тому втрата при
+    <span class="raw">τ</span> = 0.02 дорівнює 0.000, а при
+    <span class="raw">τ</span> = 1.0 виростає до 1.439 при стелі повного незнання
+    log 8 = 2.079 — і це при тій самій, незмінній матриці.</figcaption>
+</figure>
+
+<div class="note warn"><b>Партія — це і є задача, і в неї є пастка.</b>
+Контрастна втрата вважає своїм лише опис на діагоналі, а решту описів партії —
+чужими. Якщо два різні зображення в одній партії дістануть <b>однаковий</b>
+підпис, ми накажемо моделі розсунути те, що насправді однакове. У нашому зошиті
+партія будується так, щоб описи не повторювались. У даних з інтернету цієї
+розкоші немає: однакові підписи там трапляються постійно, і це один із відомих
+шумів у навчанні справжнього CLIP.</div>
+
+<h2 id="s5"><span class="num">05 / Ручка</span>Температура</h2>
+
+<p>Температура <span class="raw">τ</span> (грецька літера «тау» — просто число)
+ділить усі схожості перед експонентою. У темі 16 ми дивились на неї з боку
+навчання: мала температура робить втрату майже повністю залежною від
+найсхожішого чужого прикладу. Тут вона показує друге обличчя — <b>вона формує
+саму геометрію спільного простору</b>.</p>
+
+<p>Навчимо моделі з чотирма різними температурами й подивимось не лише на
+якість, а й на те, як розкладені вектори після навчання.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th><span class="raw">τ</span></th><th>свій опис</th><th>чужий опис</th><th>нульовий постріл</th></tr>
+  <tr><td>0.02</td><td>0.864</td><td>0.553</td><td>0.871 ±0.034</td></tr>
+<tr class="hot"><td>0.07</td><td>0.869</td><td>0.050</td><td>0.863 ±0.017</td></tr>
+<tr><td>0.20</td><td>0.933</td><td>-0.027</td><td>0.888 ±0.010</td></tr>
+<tr><td>0.50</td><td>0.951</td><td>-0.012</td><td>0.816 ±0.030</td></tr>
+</table></div>
+
+<p>Дивись на другий стовпець згори вниз. Він падає з 0.553 до -0.027, тобто саме температура вирішує, наскільки сильно модель <b>розсуває чужі пари</b>. При <span class="raw">τ</span> = 0.02 чужий опис лежить майже так само близько, як свій, і спільний простір виходить тісним. При <span class="raw">τ</span> = 0.20 чужі відсунуті вже за прямий кут. Це велика, наочна, легко відтворювана зміна геометрії.</p><p>А тепер подивись на четвертий стовпець — і побач те, чого я, чесно кажучи, не чекав. Точність нульового пострілу при <span class="raw">τ</span> = 0.02, 0.07 і 0.20 дорівнює 0.871, 0.863 і 0.888 при розкиді від зерна 0.010–0.034. Це <b>одне й те саме число</b>: різниця, менша за розкид, не є різницею. Помітно гіршає лише правий край — 0.816 при <span class="raw">τ</span> = 0.50.</p><p>Тут заховано ще одне корисне попередження. Найкрасивіша геометрія (діагональ 0.951, чужі при -0.012) вийшла саме там, де якість найгірша. Матриця схожості на дванадцяти прикладах виглядає переконливо, але <b>метрикою вона не є</b> — оцінювати треба на всьому тестовому наборі й на кількох зернах.</p>
+
+<p>Практичний висновок такий самий, як із багатьма гіперпараметрами в цьому
+курсі: <b>температура має робоче вікно, а не оптимум</b>. Обидва краї шкідливі
+з різних причин, а всередині широкої середини різниця тоне в розкиді від зерна.
+Справжній CLIP стартує з <span class="raw">τ</span> = 0.07 і вчить її разом із
+вагами, обмежуючи знизу, — саме щоб не звалитись у лівий край.</p>
+
+<h2 id="s6"><span class="num">06 / Новина</span>Нульовий постріл</h2>
+
+<p>Ось нова здатність, якої в курсі ще не було. Щоб класифікувати зображення,
+нам <b>не потрібен класифікатор</b>. Досить написати шість речень — по одному на
+клас, — прогнати їх через текстову вежу й спитати, до якого з шести векторів
+зображення ближче. Це й зветься <b>нульовий постріл</b> (zero-shot): нуль
+навчальних прикладів на клас, нуль ваг класифікатора, нуль додаткового
+навчання.</p>
+
+<p>Порівняємо три способи дістати відповідь «яка це фігура». Усі — на тому
+самому тестовому наборі з 600 зображень, усі — на трьох зернах.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>Спосіб</th><th>міток</th><th>точність</th></tr>
+  <tr class="hot"><td>нульовий постріл</td><td>0</td><td>0.863 ±0.017</td></tr>
+  <tr><td>лінійна проба</td><td>60</td><td>0.866 ±0.029</td></tr>
+  <tr><td>навчання з нуля</td><td>60</td><td>0.379 ±0.047</td></tr>
+  <tr><td>лінійна проба</td><td>300</td><td>0.876 ±0.012</td></tr>
+  <tr><td>навчання з нуля</td><td>300</td><td>0.684 ±0.031</td></tr>
+  <tr class="sumrow"><td>рівень вгадування</td><td>—</td><td>0.167</td></tr>
+</table></div>
+
+<p>Читати цю таблицю треба знизу вгору. Навчання з нуля на 60 мітках дає 0.379 при рівні вгадування 0.167 — шістдесяти прикладів мережі просто мало. На 300 мітках воно доростає до 0.684. А нульовий постріл, який не бачив жодної мітки, дає 0.863 — тобто <b>більше, ніж повноцінне навчання на 300 мітках</b>. Лінійна проба поверх тієї самої вежі дає 0.866 на 60 мітках і 0.876 на 300: шістдесят міток додають до нульового пострілу приблизно нічого.</p><p>Пояснення просте й важливе: вежа зображень уже вивчила все потрібне — не з міток, а з описів. Мітки лишень перекладають вивчене на мову шести номерів, і цю роботу однаково добре виконує і лінійний шар, і шість речень.</p><div class="note warn"><b>Чесна межа цього порівняння.</b> «Нуль міток» не означає «безкоштовно». Наша вежа побачила 500 партій по 32 пари — шістнадцять тисяч зображень із описами. Правильне формулювання таке: <b>нуль <em>людських</em> міток проти 300 людських міток</b>. Описи згенерував той самий генератор, що й картинки, а мітки довелося б проставляти руками — і саме в цьому вся економія. У справжньому CLIP та сама логіка: підписи вже лежали в вебі й нікому не коштували.</div>
+
+<p>І ще одне, чого мітка не дала б у принципі. Опис знає про картинку більше,
+ніж клас, — тож спитаємо модель не «яка це фігура», а «вона велика чи маленька»
+і «де вона в кадрі». Класифікатора для цих питань ніколи не існувало й не
+зʼявиться: класи задаються текстом просто зараз.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>Питання, задане текстом</th><th>варіантів</th><th>точність</th><th>вгадування</th></tr>
+  <tr><td>яка це фігура</td><td>6</td><td>0.863 ±0.017</td><td>0.167</td></tr>
+  <tr><td>велика чи маленька</td><td>2</td><td>0.999 ±0.001</td><td>0.500</td></tr>
+  <tr><td>де вона в кадрі</td><td>5</td><td>0.998 ±0.001</td><td>0.200</td></tr>
+</table></div>
+
+<p>0.999 і 0.998 — практично безпомилково. Задача, звісно, легша за розпізнавання форми: у двох підказках різниться одне слово, а саму форму ми називаємо правильно самі. Але важлива тут не висота числа, а те, що <b>жодного класифікатора для цих питань не існує й не існувало</b>. Хочеш питати про розмір — питай про розмір; хочеш про положення — питай про положення; мережа лишається та сама, і донавчати її не треба. Це і є та зміна інженерії, заради якої CLIP розійшовся по галузі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Класифікація без класифікатора</p>
+  <p class="fig-sub">Обери зображення й подивись на шість косинусів — це весь
+    механізм рішення. Ніякої голови, ніяких навчених ваг класів: є вектор
+    картинки, є шість векторів речень, перемагає найбільший косинус.</p>
+  <div class="panel">
+    <div><canvas id="cZs" width="940" height="300" aria-label="Зображення фігури і шість горизонтальних стовпчиків косинусів із шістьма текстовими описами"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">зображення</span>
+        <div class="seg wrap" id="zsSeg">
+          <button data-i="0" aria-pressed="true">коло</button>
+          <button data-i="1" aria-pressed="false">квадрат</button>
+          <button data-i="2" aria-pressed="false">ромб</button>
+          <button data-i="3" aria-pressed="false">кільце</button>
+          <button data-i="4" aria-pressed="false">хрест</button>
+          <button data-i="5" aria-pressed="false">трикутник</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>насправді</b><i id="zsTrue" class="sm">—</i></div>
+        <div class="cellv"><b>модель каже</b><i id="zsSaid" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>відрив переможця</b><i id="zsGap">—</i></div>
+      </div>
+      <div class="verdict" id="zsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Класи тут не в мережі, а в тексті.</b> Щоб додати сьомий клас,
+    не треба нічого донавчати — досить дописати сьоме речення. Щоб прибрати
+    клас, досить стерти рядок. Це принципово інша інженерія, ніж усе, що ми
+    робили в перших двадцяти одній темі.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Перевірка</span>Композиційність</h2>
+
+<p>А тепер найцікавіше питання теми — і найризикованіше, бо відповідь могла
+виявитись (і виявилась) не тією, якої хотілося.</p>
+
+<p>Модель бачила «велике коло». Модель бачила «маленьке кільце». Чи впізнає вона
+<b>велике кільце</b>, якщо такої пари в навчанні не було жодного разу? Якщо так —
+вона склала два слова, яких разом не бачила, і це справжня <b>композиційність</b>:
+здатність зібрати нове значення зі знайомих частин. Саме на неї спираються всі
+обіцянки про «мережа розуміє мову».</p>
+
+<p>Замір простий. Забираємо з навчання всі пʼять комбінацій «кільце × великий
+розмір» — лишається 55 комбінацій із 60. Навчаємо три нові моделі. Перевіряємо
+на дванадцяти підказках виду «розмір + форма»: модель має вибрати «велике
+кільце». Рівень вгадування — 1/12 = 0.083.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>Модель і набір</th><th>пара цілком</th><th>форма</th><th>розмір</th></tr>
+  <tr class="hot"><td>без пари → великі кільця</td><td>0.140 ±0.043</td><td>0.140 ±0.043</td><td>0.967 ±0.047</td></tr>
+<tr><td>без пари → бачені пари</td><td>0.850 ±0.016</td><td>0.859 ±0.012</td><td>0.987 ±0.009</td></tr>
+<tr><td>з парою → великі кільця</td><td>1.000 ±0.000</td><td>1.000 ±0.000</td><td>1.000 ±0.000</td></tr>
+<tr><td>з парою → бачені пари</td><td>0.865 ±0.018</td><td>0.866 ±0.019</td><td>0.996 ±0.001</td></tr>
+  <tr class="sumrow"><td>рівень вгадування</td><td>0.083</td><td>0.167</td><td>0.500</td></tr>
+</table></div>
+
+<p><b>Композиційності не виявлено.</b> Модель, яка не бачила пари, впізнає її в 0.140 випадків при розкиді 0.043. Та сама модель на парах, які вона бачила, дає 0.850. Контрольна модель, у навчанні якої велике кільце було, дає на ньому 1.000. Різниця між 0.140 і 0.850 — це не «трохи гірше», це «не працює».</p>
+
+<p>Розклад по стовпцях пояснює, <em>чому</em> саме. Розмір модель бере правильно в 0.967 випадків: слово «велик-» вона зрозуміла й переносить на незнайому форму без жодних проблем. Форму бере правильно лише в 0.140. І ось деталь, яка робить результат остаточним: якщо модель майже завжди каже «велике», то реальний вибір у неї не з дванадцяти підказок, а з <b>шести</b> — тих, що починаються на «велик-». Рівень вгадування там 0.167, а модель дає 0.140. Тобто форму вона обирає <b>не краще, ніж навмання</b>.</p><p>Зошит друкує й те, куди саме вона показує. Із пʼятдесяти великих кілець: 29 разів «великий хрест», 12 разів «велике коло», 5 разів «великий ромб» — і лише 4 рази правильно. Слово «кільце» у неї міцно зрослося з маленьким розміром, і розчепити їх нічим.</p>
+
+<div class="note warn"><b>Це не вада нашої іграшки.</b> Спокуса списати результат
+на мішок слів велика, але вона хибна: композиційність — відома відкрита проблема
+<b>великих</b> контрастних моделей, які мають повноцінний текстовий трансформер.
+Для неї придумали окремі перевірки саме тому, що моделі на них падають. Наш
+замір відтворює справжню властивість підходу, а не свою власну кострубатість.
+Механізм, найімовірніше, той самий: контрастна втрата винагороджує за те, щоб
+відрізнити свій підпис від чужих у партії, а для цього досить кількох сильних
+слів. Розбирати речення до кінця вигоди немає.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Пара, якої не було</p>
+  <p class="fig-sub">Одне й те саме велике кільце, дванадцять підказок і дві
+    моделі: одна бачила цю пару під час навчання, друга не бачила жодного разу.
+    Перемкни й порівняй.</p>
+  <div class="panel">
+    <div><canvas id="cComp" width="940" height="400" aria-label="Зображення великого кільця й дванадцять стовпчиків косинусів із підказками виду розмір плюс форма"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">пара «велике кільце» в навчанні</span>
+        <div class="seg" id="cpSeg">
+          <button data-i="0" aria-pressed="true">не була</button>
+          <button data-i="1" aria-pressed="false">була</button>
+        </div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>модель каже</b><i id="cpSaid" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>«велике кільце»</b><i id="cpRight">—</i></div>
+        <div class="cellv"><b>переможець</b><i id="cpBest">—</i></div>
+      </div>
+      <div class="verdict" id="cpVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Слово взяте правильно, форма — ні.</b> Модель, яка не бачила
+    великих кілець, майже завжди ставить у відповідь щось «велике» — прикметник
+    вона зрозуміла. Але іменник «кільце» вона знає тільки маленьким, і зібрати
+    з двох знайомих слів незнайому пару не виходить.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Формулювання</span>Інженерія підказок</h2>
+
+<p>Класи в нульовому пострілі задаються текстом — а текст можна написати
+по-різному. Це звучить як дрібниця, поки не поміряєш. Порівняємо чотири способи
+назвати ті самі шість класів.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>Формулювання</th><th>точність</th><th>по зернах</th></tr>
+  <tr class="hot"><td>«коло»</td><td>0.867 ±0.020</td><td>0.893 · 0.847 · 0.860</td></tr>
+<tr><td>«фото кола»</td><td>0.863 ±0.017</td><td>0.887 · 0.848 · 0.855</td></tr>
+<tr><td>«маленьке коло вгорі»</td><td>0.849 ±0.014</td><td>0.868 · 0.842 · 0.837</td></tr>
+<tr><td>ансамбль двох</td><td>0.863 ±0.017</td><td>0.887 · 0.847 · 0.857</td></tr>
+</table></div>
+
+<p>Перше, що тут треба зробити, — не повірити середнім. Розкид від зерна тут 0.014–0.020, а вся відстань між найкращим і найгіршим варіантом — 0.018. По середніх довести не можна нічого. Правильний спосіб — рахувати різницю <b>в межах кожного зерна окремо</b>: спільна частина розкиду тоді скорочується, і лишається чистий ефект формулювання.</p>
+
+<p>Ось ці різниці, надруковані зошитом:</p><ul><li><b>«фото кола»</b> проти голої назви: -0.007, +0.002, -0.005. Знак стрибає — ефекту немає.</li><li><b>ансамбль двох формулювань</b>: -0.007, 0.000, -0.003. Те саме — ефекту немає.</li><li><b>«маленьке коло вгорі»</b>: -0.025, -0.005, -0.023 — <b>завжди гірше</b>, на всіх трьох зернах.</li></ul><p>Отже єдиний надійний висновок нашого заміру: <b>надто конкретна підказка стабільно шкодить</b>, а решта відмінностей тоне в шумі. Причина видима: підказка «маленьке коло вгорі» бреше про більшість зображень — не всі кола маленькі й не всі вгорі. Модель чесно відповідає на те, що написано, і платить за це точністю.</p>
+
+<p>А чому «фото кола» не допомогло, хоча в справжньому CLIP підказка «a photo of
+a {клас}» стабільно допомагає? Ми нічого не зробили не так — річ у розподілі
+навчальних описів. Наші пʼять шаблонів включали і голу назву («коло»), і
+форму з «фото» («фото кола»), і траплялися вони однаково часто. Для нашої
+моделі обидва формулювання однаково звичні, тому вибирати між ними нема з чого.
+У справжнього CLIP не так: у підписах із вебу голе слово стоїть рідко, а речення
+на кшталт «a photo of a cat» — часто. Шаблон виграє саме тому, що схожий на те,
+чим модель годували.</p>
+
+<p>Це той самий механізм, що зіпсував нашу надто конкретну підказку, тільки з
+іншим знаком. Обидва випадки кажуть одне: модель відповідає не на поняття, а на
+<b>фразу</b>, і виграє та фраза, яка ближча до її навчального розподілу.</p>
+
+<div class="note warn"><b>Це радше вада, ніж перевага.</b> Коли якість моделі
+залежить від того, як саме ти сформулював запит, — це означає, що модель
+розуміє не поняття, а <em>звичні для неї фрази</em>. Саме тому інженерія
+підказок перетворилася на окреме ремесло з ансамблями формулювань і довгими
+списками шаблонів — ремесло, якого не було б, якби модель розуміла слова, а не
+звички. І зверни увагу на другий бік того самого: наш ансамбль двох формулювань
+не дав нічого (-0.007, 0.000, -0.003), бо усереднювати варто варіанти, різні за
+якістю, а в нас вони однакові.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Формулювання вирішує</p>
+  <p class="fig-sub">Ті самі шість класів, чотири способи їх назвати. Стовпець —
+    середнє по трьох зернах, крапки — самі зерна. Пунктир — рівень вгадування.</p>
+  <div class="panel">
+    <div><canvas id="cPrompt" width="940" height="330" aria-label="Стовпчикова діаграма точності нульового пострілу для чотирьох формулювань підказок; поруч список самих підказок"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">формулювання</span>
+        <div class="seg wrap" id="prSeg">
+          <button data-i="0" aria-pressed="true">гола назва</button>
+          <button data-i="1" aria-pressed="false">фото X</button>
+          <button data-i="2" aria-pressed="false">надто точно</button>
+          <button data-i="3" aria-pressed="false">ансамбль</button>
+        </div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>варіант</b><i id="prName" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>точність</b><i id="prAcc">—</i></div>
+      </div>
+      <div class="verdict" id="prVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Крапки важливіші за стовпці.</b> Три зерна розкидані ширше, ніж
+    відстань між деякими варіантами, — і це означає, що частина різниць між
+    формулюваннями просто не існує. Читати такі таблиці треба по зернах, а не
+    по середніх: різниця, менша за розкид, не є різницею.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Межі</span>Де воно ламається</h2>
+
+<p>Три речі, яких контрастна модель не вміє. Не «вміє погано» — саме не вміє, і
+корисно побачити, чому саме.</p>
+
+<h3>Заперечення</h3>
+
+<p>Дамо моделі шість підказок: «не коло», «не квадрат» і так далі. Для зображення
+кола правильною є будь-яка з них, крім «не коло». Порахуємо, як часто модель обирає
+рівно ту єдину, що точно хибна.</p>
+
+<p>Результат: <b>0.822 ±0.024</b>. Тобто у 82 % випадків модель обирає рівно ту єдину підказку, яка гарантовано хибна. Для порівняння, на звичайних підказках та сама модель дає 0.867 — числа майже збігаються, і це не збіг. Слово «не» додає в мішок одну одиницю й не змінює нічого: косинус між «коло» і «не коло» дорівнює <b>0.909</b>.</p>
+
+<h3>Порядок</h3>
+
+<p>Опис «коло над квадратом» і опис «квадрат над колом» описують різні картинки.
+Наш мішок слів складається з тих самих трьох основ в обох випадках, тож вектори
+збігаються <b>побітово</b>: косинус між ними 1.000000, різниця косинусів
+із зображенням — 0.000000.</p>
+
+<h3>Лічба</h3>
+
+<p>У нашому словнику немає жодного числівника, тому «два кола» дає той самий
+мішок, що й «коло»: косинус між цими двома описами 1.000000. Кількість не
+виражена нічим — отже, і
+розрізнити її нічим.</p>
+
+<div class="note warn"><b>Чесна межа цього заміру.</b> Наша модель провалює
+порядок і лічбу <b>за побудовою</b>: мішок слів фізично не може їх виразити, і
+довести це можна без жодного навчання. Справжній CLIP має текстовий трансформер,
+який порядок бачить, — і все одно провалює ці самі задачі, тільки не рівно, а
+майже. Ось це і є справжня знахідка галузі: механізм для порядку є, а
+користуватися ним контрастна втрата не змушує. Нашу картинку варто читати як
+<em>найпростіший випадок того самого явища</em>, а не як його доказ.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Чотири типи опису</p>
+  <p class="fig-sub">Один і той самий механізм — косинус із текстом — на
+    звичайному описі, на запереченні, на описі з порядком і на лічбі. Перший
+    працює, три інші ні.</p>
+  <div class="panel">
+    <div><canvas id="cBreak" width="940" height="360" aria-label="Зображення та стовпчики косинусів для чотирьох типів опису: звичайного, із запереченням, із порядком і з числівником"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">тип опису</span>
+        <div class="seg wrap" id="bkSeg">
+          <button data-i="0" aria-pressed="true">звичайний</button>
+          <button data-i="1" aria-pressed="false">заперечення</button>
+          <button data-i="2" aria-pressed="false">порядок</button>
+          <button data-i="3" aria-pressed="false">лічба</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>тип</b><i id="bkMode" class="sm">—</i></div>
+        <div class="cellv"><b>модель обрала</b><i id="bkSaid" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="bkVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Косинус не має де тримати логіку.</b> Уся відповідь моделі —
+    одне число між двома векторами. Заперечення, порядок і кількість — це
+    відношення між частинами речення, а не властивості мішка слів; у механізмі,
+    який зводить речення до однієї точки простору, їх просто нікуди покласти.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Масштаб</span>Справжній CLIP</h2>
+
+<p>Усе, що ми зробили, — це та сама ідея в мініатюрі. Тепер числа справжньої
+роботи. <b>Усе в цьому розділі — цитовані числа з літератури, а не наші заміри:</b>
+ваг CLIP у зошиті немає й ми їх не завантажуємо.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>Що</th><th>Скільки</th></tr>
+  <tr><td>Пар «зображення + текст»</td><td>400 мільйонів, зібраних із відкритого вебу</td></tr>
+  <tr><td>Партія</td><td>32 768 пар — тобто в кожному кроці 32 767 чужих описів</td></tr>
+  <tr><td>Вежа зображень</td><td>ResNet або ViT; найкращий варіант — ViT-L/14 із входом 336 пікселів</td></tr>
+  <tr><td>Вежа тексту</td><td>трансформер, 63 мільйони параметрів</td></tr>
+  <tr><td>Температура</td><td>стартує з 0.07 і вчиться разом із вагами</td></tr>
+</table></div>
+
+<p>Головний результат роботи 2021 року формулювався так: нульовий постріл CLIP на
+ImageNet приблизно дорівнює ResNet-50, <b>навченому на самому ImageNet із
+мітками</b>. Модель, яка не бачила жодної мітки ImageNet, зрівнялася з моделлю,
+навченою рівно на них. І, що виявилось важливішим за саму цифру, вона тримала
+цю якість на зсунутих версіях того самого набору — там, де звичайні
+класифікатори просідали.</p>
+
+<p>Партія в 32 768 варта окремої уваги, бо це прямий наслідок формули з розділу
+3. Знаменник — це і є складність задачі: при партії 32 768 модель має відрізнити
+свій підпис від 32 767 чужих. Саме тому контрастне навчання вимагає кластерів
+відеокарт — не через розмір моделі, а через розмір партії.</p>
+
+<h3>Що з цього виросло</h3>
+
+<p><b>Пошук за текстом.</b> Порахувати вектори мільярда зображень один раз, а
+далі кожен запит — одне множення. Так працюють сучасні пошуки по
+фотоархівах.</p>
+
+<p><b>Фільтрація датасетів.</b> Виявилось, що CLIP зручно застосовувати до самих
+даних: беремо мільярди пар із вебу й лишаємо ті, де косинус між картинкою й
+підписом достатньо високий. Так зібрано відкриті набори, на яких навчено
+наступне покоління моделей. Тут є замкнене коло, і про нього чесно кажуть: набір
+відібрано моделлю, яка сама вчилася на схожому наборі.</p>
+
+<p><b>Основа для генерації.</b> Текстовий енкодер CLIP став тим містком, через
+який речення потрапляє в модель, що малює зображення. Коли ми дійдемо до
+дифузійних моделей у блоці 8, ми побачимо саме цю вежу на вході.</p>
+
+<p><b>Метрика.</b> Косинус між згенерованим зображенням і текстом запиту почали
+використовувати як міру «чи те намалювалося». Метрика зручна й тому популярна;
+її вади — рівно ті, що ми поміряли в розділах 7 і 9.</p>
+
+<p><b>Зоопарк відкритих ваг.</b> Бібліотека <code>open_clip</code> відтворила
+навчання на відкритих даних і виклала десятки моделей різного розміру. Це та
+бібліотека, з якої в реальній роботі починають, — але вона тягне ваги з мережі,
+тому в наших зошитах її немає.</p>
+
+<h2 id="s11"><span class="num">11 / Спадок</span>Що успадковано від даних</h2>
+
+<p>Один технічний факт, який має практичні наслідки й тому належить темі, а не
+післямові.</p>
+
+<p>Модель, навчена на підписах із вебу, успадковує розподіл цих підписів. Це не
+оцінка й не докір — це те саме твердження, що ми повторюємо з
+<a href="../10-augmentation/lecture.html">теми 10</a>: модель вивчає той світ,
+який їй показали. Просто тут «світ» складніший, ніж набір фотографій: це ще й
+те, <em>якими словами</em> люди звикли ці фотографії підписувати.</p>
+
+<p>Наслідки цілком інженерні. По-перше, якість нульового пострілу нерівна між
+поняттями: те, що в вебі підписують часто й однаково, розпізнається краще за
+те, що підписують рідко або різними словами. По-друге, звідси й береться
+чутливість до формулювання з розділу 8 — модель відтворює не поняття, а звичні
+для неї фрази. По-третє, модель не має способу сказати «я цього не знаю»: вона
+завжди поверне найбільший косинус, навіть якщо всі шість описів однаково
+далекі.</p>
+
+<p>Практичний висновок один і простий: <b>нульовий постріл треба міряти на своїх
+даних і своїх формулюваннях</b>, а не покладатися на опубліковану цифру. Число
+з таблиці отримане на іншому розподілі й іншими підказками, і переносити його на
+свою задачу — та сама помилка, що переносити чужий lr із підручника.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Підсумок блоку</h2>
+
+<p>Чотири теми тому ми почали з простого спостереження, яке доводиться трьома
+рядками коду: <b>увага не бачить порядку</b>. Переставиш патчі на вході —
+переставляться й виходи, і більше не зміниться нічого. З цього одного факту
+виріс увесь блок.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>Тема</th><th>Що вона додала</th></tr>
+  <tr><td><a href="../19-conv-to-attention/lecture.html">19 · Від згортки до уваги</a></td>
+      <td>Кожен елемент сам обирає, з ким рахуватися. Ціна — квадратична за кількістю токенів; геометрію треба підказати окремо.</td></tr>
+  <tr><td><a href="../20-vision-transformer/lecture.html">20 · Vision Transformer</a></td>
+      <td>Зображення ріжеться на патчі й стає послідовністю. Три припущення згортки викинуто — і платити за них доводиться даними.</td></tr>
+  <tr><td><a href="../21-swin-hybrids/lecture.html">21 · Swin і гібриди</a></td>
+      <td>Локальність і пірамідку повертають назад у трансформер: увага у вікні, злиття патчів між рівнями.</td></tr>
+  <tr><td>22 · CLIP</td>
+      <td>Нагляд переїжджає з мітки в підпис. Зображення й текст опиняються в спільному просторі, і класи починають задаватися реченням.</td></tr>
+</table></div>
+
+<p>Що трансформери дали зору насправді — питання, на яке чесно відповісти
+складніше, ніж здається. У замірі <a href="../20-vision-transformer/lecture.html">теми
+20</a> на нашій маленькій задачі ViT <b>програв</b> згортковій мережі скрізь,
+маючи у вісім разів більше ваг. Це не аномалія: без величезних
+даних локальність, яку згортка знає задарма, доводиться купувати прикладами, і
+двох тисяч прикладів на це не вистачає.</p>
+
+<p>Тому справжня відповідь не «трансформери кращі за згортки». Вона така:
+трансформери зробили можливими <b>дві речі, яких згортка не давала</b>. Перша —
+загальний енкодер, який без переробок їсть будь-яку послідовність векторів:
+патчі, слова, звукові кадри. Друга випливає з першої й саме вона стала темою
+цього розділу: якщо текст і зображення обробляються однорідно, їх можна
+навчити <b>одному спільному простору</b>. І тоді нагляд перестає бути числом зі
+списку.</p>
+
+<p>Заразом блок дав кілька уроків, які не про трансформери зовсім. Що параметри
+не дорівнюють обчисленням — ViT-B/32 має більше ваг за ViT-B/16 і рахується
+швидше. Що канонічний результат зі статті не зобовʼязаний відтворитися на твоїх
+даних, і коли він не відтворився, писати треба те, що вийшло. І що негативний
+результат — теж результат: розділ 7 цієї теми не знайшов композиційності, і це
+корисніше знання, ніж якби ми його просто не міряли.</p>
+
+<h2 id="s13"><span class="num">13 / Далі</span>Місток далі</h2>
+
+<p>Усе, що ми робили двадцять дві теми поспіль, стосувалося <b>зображення
+цілком</b>. Класифікація дає одну відповідь на кадр. Нульовий постріл теж дає
+одну відповідь на кадр — просто вибрану з речень, а не зі списку. Навіть карта
+уваги з <a href="../17-what-network-sees/lecture.html">теми 17</a> лише пояснює,
+куди мережа дивилась, коли ухвалювала цю одну відповідь.</p>
+
+<p>Наступний блок ставить інше питання: <b>де саме</b> на зображенні предмет — і
+скільки їх там. Відповіддю стає не один вектор, а список рамок із класами.
+Зміниться все: розмітка, метрика, будова виходу мережі й навіть те, що вважати
+помилкою. Зате багато чого зі зробленого поїде далі майже без змін — енкодер із
+блоків 2 і 4 стане <code>backbone</code> детектора.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../21-swin-hybrids/lecture.html"><span class="dir">попередня</span><span class="ttl">21. Swin і гібриди</span></a>
+    <a class="next" href="../23-detection-setup/lecture.html"><span class="dir">наступна</span><span class="ttl">23. Постановка детекції</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function plate(g,txt,x,y,color,px,align,bg){
+  g.font=mono(px,true);
+  var w=g.measureText(txt).width+8;
+  g.fillStyle=bg; g.fillRect(align==='right'? x-w+4 : x-4, y-px-2, w, px+6);
+  g.fillStyle=color; g.textAlign=align; g.textBaseline='alphabetic';
+  g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+function токенів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'токен';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'токени';
+  return 'токенів';
+}
+function крат(v){
+  if(Math.abs(v-Math.round(v))<1e-9) return v.toFixed(0)+' '+разів(Math.round(v));
+  return v.toFixed(1)+' раза';
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* детермінований генератор — картинка однакова у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)&0x7fffffff; return s/0x7fffffff; };
+}
+/* Чи темна зараз тема — визначаємо за яскравістю тла, а не за медіазапитом:
+   тему можна перемкнути й вручну через data-theme. */
+function darkNow(){
+  var c=css('--paper');
+  var m=/^#([0-9a-f]{6})$/i.exec(c);
+  if(!m) return false;
+  var v=parseInt(m[1],16);
+  return (((v>>16)&255)*0.299 + ((v>>8)&255)*0.587 + (v&255)*0.114) < 128;
+}
+/* лінійна інтерполяція кольору теплової карти: спокійний → гарячий.
+   Холодний край мусить збігатися з тлом сторінки, інакше в темній темі
+   карта світиться білою плямою. */
+function heat(t){
+  if(!(t>=0)) t=0; if(t>1) t=1;
+  var stops = darkNow()
+    ? [[26,32,41],[38,92,96],[45,170,158],[226,150,60],[240,98,146]]
+    : [[247,249,251],[173,216,214],[ 90,180,170],[226,150,60],[194,24,91]];
+  var x=t*(stops.length-1), i=Math.min(stops.length-2,Math.floor(x)), f=x-i;
+  var a=stops[i], b=stops[i+1];
+  return 'rgb('+Math.round(a[0]+(b[0]-a[0])*f)+','+Math.round(a[1]+(b[1]-a[1])*f)+','
+              +Math.round(a[2]+(b[2]-a[2])*f)+')';
+}
+
+
+/* ═══ дані: усе поміряно зошитом practice.ipynb ═══ */
+var DATA = {"matrix":{"caps":["великий хрест ліворуч","велике кільце внизу","великий ромб внизу","маленьке коло вгорі","маленьке кільце у центрі","великий хрест внизу","велике кільце праворуч","великий квадрат внизу"],"S":[[0.8891000151634216,0.41429999470710754,0.3050000071525574,-0.2802000045776367,-0.0010999999940395355,0.6848999857902527,0.2556000053882599,-0.44589999318122864],[0.018400000408291817,0.8521000146865845,0.2150000035762787,-0.5317999720573425,0.44859999418258667,0.3422999978065491,0.43709999322891235,-0.23440000414848328],[0.420199990272522,0.43320000171661377,0.8896999955177307,-0.2053000032901764,-0.14800000190734863,0.7716000080108643,-0.010499999858438969,0.09510000050067902],[-0.43779999017715454,-0.34779998660087585,-0.040699999779462814,0.8191999793052673,-0.12800000607967377,-0.48190000653266907,-0.34209999442100525,0.2603999972343445],[0.023499999195337296,0.2985000014305115,-0.14239999651908875,-0.13300000131130219,0.8636999726295471,0.07440000027418137,0.2337999939918518,-0.6776000261306763],[0.5146999955177307,0.3880999982357025,0.7595999836921692,-0.2467000037431717,-0.25850000977516174,0.9052000045776367,-0.015699999406933784,0.08219999819993973],[0.19269999861717224,0.6060000061988831,0.120899997651577,-0.12150000035762787,0.32739999890327454,0.3522999882698059,0.8815000057220459,-0.43389999866485596],[-0.3562999963760376,-0.006599999964237213,0.4675000011920929,0.07249999791383743,-0.6097999811172485,-0.022099999710917473,-0.35089999437332153,0.9282000064849854]],"imgs":[[17,0,39,99,61,74,0,12,0,12,7,0,0,0,0,0,46,0,20,0,15,9,20,0,0,0,12,24,0,0,0,15,0,40,30,0,0,0,0,0,0,0,0,0,99,0,32,53,9,0,0,0,76,0,0,22,0,0,39,9,0,0,0,0,84,0,30,55,19,5,0,34,0,0,13,25,2,0,70,0,99,6,0,76,4,46,0,0,26,0,0,60,0,64,0,0,0,51,0,0,0,12,20,22,0,21,48,73,1,45,0,0,28,0,59,0,0,45,7,90,0,6,0,0,0,0,0,7,0,42,10,12,68,3,0,0,0,70,0,67,21,0,0,0,0,0,17,99,0,0,31,10,46,3,3,0,0,15,0,99,0,37,11,6,17,0,0,55,0,0,7,0,0,36,6,0,58,0,10,0,2,0,0,0,0,8,14,81,0,40,40,0,36,0,60,0,7,0,99,0,0,0,0,74,3,50,0,0,21,0,31,0,25,0,33,64,86,19,54,0,11,0,0,38,32,66,0,36,0,0,79,99,79,99,99,83,61,0,44,3,99,0,24,0,97,0,0,0,0,1,0,2,33,0,76,0,0,0,88,98,99,99,99,23,31,0,5,0,39,0,64,8,52,0,70,42,15,64,0,0,45,0,25,9,7,71,88,99,52,52,82,56,0,62,32,0,55,11,36,0,74,0,43,0,0,51,44,0,22,0,7,25,0,9,83,99,99,99,62,20,31,0,51,0,12,40,0,16,0,5,47,32,67,65,0,0,0,5,0,0,21,16,71,99,63,99,99,75,0,14,0,11,0,0,0,5,30,18,3,0,0,0,0,39,64,99,99,23,99,76,2,10,62,0,99,99,30,99,56,98,25,0,0,15,17,0,0,54,4,17,2,0,0,99,73,99,99,99,99,99,96,99,99,43,88,10,60,66,11,6,35,0,0,0,0,0,28,5,0,33,95,88,98,99,99,38,99,72,56,81,34,85,38,99,99,99,5,0,0,0,0,0,53,0,0,0,85,65,6,64,84,97,26,99,68,69,99,81,5,81,99,99,99,69,0,37,0,81,16,0,0,32,0,27,94,0,0,99,94,42,99,92,64,99,58,84,11,0,99,99,81,65,0,0,0,99,0,37,0,24,21,4,32,0,0,24,24,20,43,0,95,75,83,34,93,36,0,0,0,0,0,11,47,0,6,0,0,40,65,0,37,0,26,0,0,0,0,25,70,79,99,99,99,58,0,0,0,0,0,16,0,0,25,0,0,8,0,0,0,35,30,0,19,51,26,0,99,99,99,52,25,37,0,0,0,22,0,0,0,0,0,0,48,0,0,70,0,0,4,17,0,52,3,0,58,99,79,0,80,0,31,20,15,0,20,0,34,36,36,0,26,0,0,0,23,0,17,99,0,0,99,0,99,76,99,99,99,0,68,0,0,57,4,72,0,14,0,0,37,0,24,31,99,19,0,0,0,55,49,48,0,0,9,75,59,0,54,0,51,11,56,0,39,6,38,0,31,17,0,0,22,0,24,31,91,0,0,0,60,0,3,0,0,0,0,13,11,0,0,87,29,0,0,0,9,15,0,13,28,21,0,0,0,40,0,68,26,13,0,0,0,34,0,3,0,43,0,86,53,0,6,51,0,1,10,0,22,25,89,0,0,2,0,3,45,99,21,0,41,39,0,43,0,55,31,41,6,0,84,84,0,0,0,0,0,0,0,61,19,0,27,1,0,0,0,0,58,18,0,0,0,72,34,5,0,32,0,36,0,35,0,0,83,0],[99,11,24,19,0,0,0,21,31,6,22,0,21,0,72,99,1,0,16,0,54,0,7,0,0,0,37,7,0,0,52,28,49,0,9,47,68,64,83,99,1,0,13,40,8,0,0,0,0,23,0,44,0,0,4,7,0,0,0,16,20,36,6,67,6,5,4,47,30,13,0,0,0,54,0,23,0,0,27,33,0,0,0,44,55,89,0,0,3,0,23,25,0,25,0,44,0,26,0,0,49,13,0,46,6,78,0,0,0,28,0,0,20,25,0,38,73,44,22,64,65,0,0,6,45,0,4,70,36,0,0,24,16,9,99,42,68,0,0,0,0,0,0,37,19,45,0,0,5,0,88,59,0,0,93,12,45,31,24,24,0,0,12,0,0,0,0,69,0,0,0,0,64,0,76,24,0,27,0,0,36,79,0,11,0,0,0,0,18,1,0,33,0,0,0,0,31,0,0,70,96,0,38,0,52,25,0,55,0,0,69,3,0,31,52,0,0,41,0,0,34,0,44,6,35,13,0,0,56,0,0,0,28,0,0,0,4,31,0,16,28,0,0,44,8,0,0,5,0,4,0,0,82,69,0,0,0,0,0,0,2,0,16,0,0,0,0,0,0,0,4,0,9,8,21,39,0,0,38,47,0,1,55,10,0,20,33,62,0,87,41,3,0,70,54,26,41,0,0,0,0,0,17,0,11,0,0,0,0,9,19,11,0,0,0,85,21,42,0,54,0,61,0,0,0,3,54,0,0,10,44,0,8,0,0,69,0,34,13,21,61,62,0,30,78,92,12,0,40,7,1,0,0,0,99,0,0,0,0,31,0,98,38,83,0,0,32,27,0,99,0,29,0,73,16,0,0,86,54,0,0,0,8,0,29,40,0,0,21,11,0,0,0,8,29,0,0,0,0,58,0,52,99,87,41,99,99,99,98,0,0,0,0,13,0,23,16,0,0,0,59,34,30,71,18,62,45,6,71,99,19,10,99,99,37,99,99,60,0,67,0,46,0,0,25,33,0,0,0,0,0,55,37,0,0,0,53,63,99,89,99,44,33,60,99,99,72,47,0,64,78,66,24,0,3,0,14,0,31,0,0,0,0,28,86,99,30,72,21,0,39,99,78,77,94,27,0,25,0,0,0,35,83,70,22,15,0,42,0,0,18,35,70,99,99,0,0,0,21,0,99,88,99,99,12,27,0,0,0,11,41,9,75,70,0,0,31,0,0,50,11,99,0,33,91,5,0,30,0,52,81,87,0,0,0,24,4,0,33,0,11,90,0,0,0,0,99,7,88,99,0,45,0,0,9,97,0,99,48,97,99,24,8,18,20,27,0,25,34,18,0,0,65,19,43,78,99,99,0,30,51,70,0,0,0,10,0,89,0,8,0,0,45,12,33,0,19,0,11,0,0,38,5,42,99,98,81,0,13,0,0,0,99,79,99,76,53,0,0,14,0,0,99,5,0,0,45,0,0,0,59,99,77,73,99,84,0,62,28,38,99,51,99,92,0,70,64,60,0,0,94,61,0,21,0,0,0,0,23,0,99,36,99,99,99,99,54,99,94,74,99,7,0,1,26,21,0,35,0,47,14,0,0,11,0,0,9,85,0,87,99,99,78,99,99,99,67,99,44,5,15,0,0,34,16,1,73,77,0,34,0,0,25,24,11,13,44,0,84,33,62,99,49,62,54,0,0,24,42,0,0,25,7,1,53,0,0,0,36,0,15,49,0,84,0,25,0,74,0,77,76,24,0,16,5,23,38,13,0,0,34,0,33,64],[0,12,0,0,0,3,0,12,61,24,8,0,0,0,0,0,0,0,0,58,0,0,31,0,0,0,62,70,0,0,26,44,37,8,0,0,0,0,62,0,30,3,40,0,0,57,0,31,0,13,0,42,0,0,0,0,99,87,0,39,5,0,57,37,0,0,0,4,0,0,39,0,29,0,79,11,0,9,0,26,34,0,0,49,0,0,51,0,99,0,56,48,0,0,65,33,0,46,38,84,0,0,0,0,0,0,99,0,12,0,17,0,0,51,1,39,0,0,0,21,99,28,0,1,41,0,23,33,0,32,57,16,4,0,0,34,0,0,42,60,26,26,1,0,47,0,80,0,0,0,46,56,0,16,0,16,0,58,0,70,0,0,97,0,48,0,62,38,0,20,0,25,0,11,0,0,12,0,0,47,0,47,0,0,9,0,16,68,38,0,0,0,0,19,0,43,0,0,68,42,0,19,11,0,40,0,25,0,76,16,37,51,0,16,2,0,0,0,0,0,58,16,20,0,16,0,21,36,0,45,66,15,30,47,39,0,0,0,26,12,0,37,62,68,70,9,52,0,0,0,0,21,27,17,13,4,4,38,0,11,0,0,40,49,3,0,92,8,0,31,84,57,12,32,0,34,0,0,0,36,44,8,0,0,0,57,47,4,85,0,0,0,0,39,76,0,1,15,18,61,14,30,0,0,41,0,4,2,0,11,88,0,6,12,10,0,0,0,1,1,41,0,37,78,43,8,9,0,37,42,0,0,46,60,31,2,0,51,22,53,0,0,1,0,0,0,0,0,56,9,15,9,0,2,53,31,12,0,0,29,75,29,46,0,0,0,0,0,34,15,11,0,0,0,8,0,0,99,9,59,63,8,11,1,0,0,0,0,0,94,0,61,0,51,0,0,0,0,54,0,7,0,48,0,99,59,99,33,22,25,0,0,7,0,0,72,0,80,12,0,0,0,0,0,0,0,32,0,23,0,0,36,93,0,99,33,0,0,0,25,0,27,10,72,93,0,0,7,14,32,0,35,1,0,70,12,0,0,99,56,99,99,99,99,99,19,7,14,0,38,24,3,0,0,22,0,0,0,0,0,0,40,18,0,0,99,26,99,17,40,99,99,75,71,58,0,0,13,14,67,0,0,7,23,47,49,59,21,29,0,0,47,99,99,13,8,99,99,49,99,99,99,59,0,0,51,39,70,0,36,0,5,7,70,0,0,27,0,79,99,79,84,99,99,43,99,96,57,0,54,99,99,0,38,0,54,42,0,17,0,96,90,0,26,73,0,99,99,75,35,91,86,99,58,48,99,90,99,99,99,99,0,38,0,0,0,29,0,21,0,0,0,0,0,20,99,99,99,88,71,85,99,99,64,59,66,99,73,50,0,0,0,0,0,0,0,33,12,0,22,0,0,0,57,92,99,99,99,99,92,99,83,99,60,99,0,17,10,1,0,33,4,0,0,0,74,0,73,23,7,0,13,36,99,89,99,99,99,99,99,85,69,0,53,0,83,48,18,0,0,0,35,14,0,22,5,0,0,29,1,6,6,99,71,99,99,99,60,99,72,0,0,35,0,0,5,1,65,79,11,16,25,0,0,6,67,0,0,91,0,0,99,65,99,99,78,81,46,51,0,42,20,1,47,0,0,0,52,43,0,18,74,0,53,0,0,18,0,0,90,72,99,99,0,0,74,76,66,31,0,70,13,0,0,18,0,58,37,0,4,60,0,0,0,0,0,0,0,0,99,0,0,24,26,5,0,0,0,6,24,0,18,28,0],[0,0,0,0,36,0,24,0,0,0,49,0,21,0,0,8,0,0,0,40,0,35,0,0,29,23,21,55,0,0,51,61,0,42,0,0,0,38,0,0,21,0,0,26,0,0,0,0,0,0,0,41,0,0,6,8,0,46,0,0,57,0,27,0,37,0,19,0,40,0,99,25,0,21,22,0,0,2,9,0,25,0,25,0,0,0,0,79,0,30,0,90,35,0,0,0,0,22,0,0,3,0,64,0,0,0,0,0,16,0,26,53,0,0,29,40,0,0,0,0,0,0,64,0,67,0,0,0,0,0,18,0,0,41,20,0,0,0,0,0,17,87,0,0,0,20,56,40,0,55,0,0,29,0,0,51,0,21,0,0,34,13,55,3,92,99,0,0,32,59,0,0,7,27,0,0,4,0,0,77,74,41,0,0,5,0,17,42,0,0,0,49,81,0,82,0,40,40,48,43,0,0,0,50,0,0,0,99,99,59,75,82,0,28,82,25,0,33,0,0,0,0,98,30,0,0,0,0,0,0,38,0,2,0,99,92,99,95,99,99,89,0,34,0,45,0,0,0,0,47,5,0,20,27,0,31,22,20,98,34,30,10,70,99,99,99,81,77,99,0,40,0,33,0,0,42,25,29,30,24,49,0,11,0,0,7,54,0,9,99,92,69,99,99,99,90,38,85,0,26,0,0,0,0,0,83,30,46,24,0,16,0,8,85,0,0,0,0,42,99,99,99,71,99,25,0,0,0,18,0,0,53,0,0,22,45,60,0,0,20,0,50,0,70,97,0,51,99,94,86,86,99,99,0,89,0,10,5,0,52,14,39,0,0,0,0,54,0,0,0,0,47,0,0,0,99,49,99,98,99,0,26,56,31,75,0,97,40,53,20,0,44,0,91,0,0,33,0,0,0,52,0,53,0,0,99,0,16,36,30,1,31,30,0,0,0,25,15,55,0,0,0,0,0,91,37,40,7,26,4,84,0,68,0,15,0,0,29,99,0,0,0,63,0,26,0,20,99,66,0,0,24,99,24,0,0,0,0,14,0,0,40,0,0,0,0,34,0,9,0,0,0,0,0,6,0,0,0,0,23,8,66,0,0,48,0,70,6,0,0,0,0,0,85,16,0,12,0,42,0,0,80,7,0,53,0,0,28,27,0,0,0,0,28,0,85,0,3,0,16,0,79,17,0,16,0,80,94,75,3,31,46,0,22,22,0,0,10,25,62,80,0,0,54,32,60,1,73,34,53,0,0,5,0,85,0,86,68,0,29,84,0,0,0,61,0,0,0,18,25,0,0,0,0,0,0,17,55,0,0,0,0,21,67,0,46,0,0,0,15,23,63,26,0,0,7,19,0,5,28,48,48,0,0,35,62,10,0,0,0,0,42,62,0,71,0,29,0,0,0,14,0,1,44,54,43,0,0,0,30,94,46,0,50,0,0,56,0,17,96,0,39,0,23,0,0,0,0,38,43,35,16,26,0,42,1,56,0,0,0,11,65,56,0,13,59,0,0,36,0,31,0,0,0,34,33,22,0,0,79,0,0,0,30,0,18,5,8,0,33,40,3,0,19,87,0,15,0,11,0,0,28,43,0,3,0,75,0,0,0,16,9,0,74,36,6,17,0,50,21,0,91,11,0,0,28,99,2,27,0,0,3,0,30,59,10,0,30,35,33,15,0,14,0,0,0,45,0,0,0,17,2,40,0,0,24,0,0,11,0,12,0,72,32,20,2,0,11,0,34,0,0,13,0,0,29,45,0,9,19,20,0,37,0],[0,0,47,0,6,0,12,0,0,27,0,0,46,47,0,16,17,0,61,44,2,33,66,0,0,0,0,13,0,26,0,0,26,15,17,62,48,0,0,0,11,55,79,0,0,0,15,9,0,95,78,22,0,0,25,0,73,0,0,98,12,0,68,56,26,0,11,0,0,36,25,0,0,1,0,46,6,0,0,0,15,48,26,0,20,0,0,0,65,0,0,0,0,22,4,0,0,7,1,0,0,0,0,0,0,50,2,0,54,0,0,40,0,0,0,69,0,17,0,25,0,0,57,97,40,0,0,0,28,0,0,0,97,0,71,0,0,72,58,0,0,0,28,50,0,53,34,0,81,0,45,76,28,6,0,0,28,99,0,0,69,0,42,0,0,0,4,35,0,0,0,6,0,0,3,0,0,44,5,0,8,0,42,64,0,43,0,0,0,0,0,0,29,0,64,25,0,18,82,28,0,0,32,81,35,15,95,42,0,11,0,43,0,0,0,50,0,0,99,0,88,0,0,0,18,37,0,86,0,9,0,25,0,0,0,0,0,63,72,17,9,16,34,33,0,5,0,81,0,99,0,21,40,7,0,0,0,0,41,0,0,0,11,0,8,99,0,83,2,0,0,46,11,19,73,0,72,18,46,32,0,0,0,0,0,0,0,4,67,0,0,22,0,99,99,99,36,99,0,0,0,0,0,0,0,13,0,12,0,0,0,0,0,0,0,0,18,0,99,0,94,69,8,99,99,99,99,99,25,0,0,53,43,12,63,0,0,0,65,50,0,0,0,52,59,40,70,0,99,95,30,0,0,64,92,0,0,0,31,0,3,41,5,0,32,18,0,0,0,0,0,34,37,85,17,72,95,79,0,3,9,55,99,21,0,8,31,67,0,27,12,0,17,10,0,0,39,0,0,18,63,0,18,0,51,99,56,0,0,99,50,23,0,25,0,0,7,0,53,0,0,71,17,0,0,5,0,0,6,65,12,0,92,99,99,99,33,83,99,74,0,5,68,57,21,0,10,0,0,0,29,6,11,10,0,0,2,31,25,0,14,79,41,99,99,99,0,25,0,0,31,0,0,6,0,21,17,7,0,0,31,0,24,20,2,0,3,0,0,99,68,41,36,0,33,0,3,18,3,48,9,46,0,11,61,58,0,40,7,0,26,0,74,0,56,40,0,0,0,0,0,91,0,0,23,0,0,0,0,3,28,0,0,61,13,0,0,9,0,0,12,0,97,0,11,39,11,0,0,0,0,64,0,6,0,0,0,0,47,0,50,0,0,12,0,0,17,0,26,0,23,15,0,44,0,33,63,70,20,9,0,59,32,0,10,92,0,1,0,0,0,27,63,26,0,0,9,19,0,20,0,27,0,17,0,1,0,4,0,0,86,0,0,0,49,0,0,41,27,1,27,12,20,0,35,0,99,0,0,82,0,41,20,0,0,3,0,38,47,67,0,0,76,0,0,0,37,0,19,0,0,0,0,0,53,0,32,84,82,0,36,0,8,20,29,45,64,14,0,18,22,30,54,6,0,53,28,0,44,0,0,43,62,0,27,59,18,8,20,69,38,0,0,22,0,15,0,0,0,0,0,4,5,2,0,0,0,37,0,49,25,40,0,0,0,82,6,0,31,0,0,0,54,45,47,31,0,41,0,60,68,0,49,59,0,27,4,6,0,26,0,0,0,75,32,47,0,29,0,0,0,21,0,0,29,0,92,0,18,5,0,49,0,13,0,0,7,0,0,42,50,0,15,0,0,10,0,0,8,36,0,0,0,0],[0,0,1,68,15,0,76,36,0,26,79,6,55,2,17,34,0,28,0,0,0,0,0,0,0,0,61,0,5,0,23,0,19,0,0,67,45,0,23,1,0,29,53,0,25,38,5,52,55,40,5,4,0,0,0,0,0,78,9,0,0,92,0,1,0,0,24,69,0,0,0,0,15,0,24,6,58,5,0,88,0,63,0,0,43,0,0,35,27,0,31,41,0,0,81,15,79,60,0,41,0,27,0,0,0,1,25,38,0,17,0,0,0,0,0,64,33,0,25,0,67,3,53,0,49,57,0,0,58,0,0,0,0,0,0,0,37,36,0,0,0,0,51,70,0,1,17,0,0,62,36,8,0,1,33,67,0,0,0,82,0,20,0,0,0,87,68,0,8,0,81,0,34,0,0,0,0,4,0,8,0,34,0,0,0,98,0,0,12,0,0,0,0,0,0,44,29,0,0,0,16,4,2,7,54,0,0,0,19,79,72,0,37,0,0,0,19,0,8,5,25,3,4,52,54,46,0,0,0,0,37,0,0,0,0,33,99,0,0,0,0,0,3,14,23,0,16,0,72,64,0,34,0,0,53,57,13,8,59,0,39,0,0,14,0,9,78,0,33,28,0,0,45,0,9,1,0,0,0,79,0,32,4,0,0,4,0,25,20,0,55,0,0,10,0,44,0,0,0,1,31,0,83,31,0,0,4,0,13,5,0,17,60,28,0,68,12,0,54,70,0,29,99,0,0,52,0,50,0,0,25,0,0,0,57,27,41,11,42,10,0,80,21,67,0,0,78,17,0,56,0,0,58,1,0,0,0,49,0,0,18,89,32,0,17,5,0,58,0,86,0,0,10,1,0,0,53,99,99,64,99,99,0,21,0,21,69,62,0,68,50,0,99,0,15,12,78,10,33,99,0,5,78,99,16,99,99,55,99,99,22,4,0,0,0,65,24,0,13,0,99,0,15,10,18,0,0,0,6,18,49,10,34,99,59,0,87,99,0,11,0,60,0,3,0,11,0,0,39,0,26,0,27,98,29,0,0,65,54,0,39,33,99,69,99,90,38,0,0,16,0,0,0,19,35,2,30,0,70,0,0,0,14,40,5,0,48,88,26,79,14,99,80,14,0,0,58,7,21,8,0,0,8,0,58,34,0,62,0,69,73,0,76,99,93,77,69,99,60,95,65,47,7,34,99,97,19,8,80,28,29,0,15,30,0,17,0,0,30,19,99,86,99,82,99,95,74,99,99,99,99,99,72,8,99,0,50,45,0,28,0,0,0,0,89,0,62,10,99,99,99,60,99,40,99,57,81,99,99,49,85,99,65,0,0,31,25,0,0,0,0,24,26,0,98,60,99,99,40,99,99,99,74,99,64,31,99,73,68,0,90,40,0,15,0,34,63,39,0,0,0,0,14,21,69,60,99,99,99,99,99,83,99,99,99,66,99,99,90,21,0,37,0,17,0,0,0,18,34,0,59,0,0,0,12,0,0,99,99,99,20,99,0,0,0,28,23,0,0,0,61,0,0,0,40,0,0,58,0,18,0,16,29,12,0,99,99,99,66,44,26,22,0,77,0,0,0,26,17,60,10,0,0,24,0,73,56,17,40,0,0,0,0,99,99,73,99,33,0,64,23,25,41,0,0,0,0,0,24,63,78,0,0,0,0,0,0,0,0,0,6,99,83,99,99,99,2,24,59,0,0,0,47,56,99,15,0,28,73,4,0,14,51,0,0,0,73,40,77,94,71,99,70,73,27,18,0,0,41,40,0,88,0,0],[0,0,0,0,0,0,0,1,0,3,0,31,0,0,0,8,15,0,4,0,56,6,0,0,0,0,0,0,0,14,0,14,0,0,0,82,0,0,0,0,15,0,6,0,99,0,0,0,60,20,0,10,0,0,0,0,26,0,0,0,0,21,13,24,67,2,73,53,0,0,44,0,58,3,15,0,0,5,0,27,80,0,8,0,0,18,0,0,16,4,0,43,0,42,39,0,0,30,99,0,0,60,0,15,0,0,94,12,38,16,31,3,0,0,0,0,0,33,29,0,6,21,0,0,0,0,0,18,0,25,0,0,0,0,10,0,0,0,47,45,35,69,38,0,15,93,32,72,0,0,57,48,0,13,0,42,0,0,93,30,0,0,0,0,21,11,33,27,6,0,26,55,12,70,0,0,0,14,0,0,0,0,80,2,40,43,0,99,0,14,1,0,0,40,0,25,0,71,0,0,0,0,37,37,0,24,0,0,24,4,38,0,87,10,99,99,99,99,66,11,0,1,0,44,0,99,0,99,0,7,13,0,0,0,64,10,0,20,0,99,99,2,58,70,99,59,99,37,0,2,43,4,81,32,0,0,0,0,47,0,0,72,0,11,0,25,99,99,0,99,83,81,99,99,99,99,99,0,99,0,0,0,9,99,12,0,69,5,0,48,0,21,58,69,63,99,99,99,77,54,0,99,54,78,99,87,0,19,0,0,44,0,0,0,36,0,0,0,52,30,0,99,99,99,72,16,32,4,7,0,91,99,98,54,0,19,0,0,52,0,0,3,23,0,0,70,0,32,23,99,99,54,36,0,0,0,0,0,18,35,67,99,0,0,0,12,8,2,0,0,0,29,29,0,9,0,65,26,99,0,20,0,0,0,0,20,2,99,85,99,99,0,0,0,0,12,20,6,46,0,0,0,10,27,53,32,99,93,0,0,0,96,0,61,18,82,99,45,0,0,0,23,0,0,0,48,16,0,0,0,30,30,0,45,66,58,99,23,3,25,0,0,22,32,99,86,67,19,79,47,50,7,0,20,0,0,0,34,37,0,0,99,99,99,99,99,0,0,99,48,99,99,99,99,32,12,11,34,0,2,40,0,26,0,45,19,0,32,64,51,54,99,88,99,99,99,99,0,99,56,99,0,32,0,55,36,42,31,0,15,2,0,0,3,63,27,19,0,32,99,99,94,99,99,99,92,99,95,27,0,0,38,0,41,0,41,0,0,0,0,8,58,0,0,0,0,1,99,99,99,99,99,99,61,74,0,1,0,59,1,0,30,0,0,0,76,0,74,75,0,93,0,0,20,0,62,0,22,56,87,39,29,0,0,0,2,0,10,0,0,0,0,0,43,2,0,0,25,4,46,0,0,52,0,18,26,99,0,58,0,53,63,87,0,0,18,0,65,35,50,42,0,96,46,0,0,9,36,32,55,28,0,19,30,46,0,13,0,0,0,84,53,13,0,0,59,0,0,14,0,42,0,41,0,54,0,1,0,0,28,34,0,31,0,30,0,9,0,16,76,0,0,0,57,13,0,33,83,0,33,0,0,4,14,27,0,0,48,0,44,0,0,0,63,26,28,32,0,0,0,60,26,0,21,22,0,28,49,0,55,11,3,65,26,0,0,0,65,0,0,0,6,44,0,17,4,0,77,0,2,0,0,0,0,38,0,0,0,0,68,0,0,0,0,80,0,73,0,0,31,41,0,0,38,77,6,0,0,28,65,55,26,14,0,14,13,4,22,17,0,69,52,35,0,0,0,30,0,94,31,35,24,44,0],[28,3,1,0,3,71,37,20,75,7,0,26,54,17,59,22,0,0,38,0,0,0,0,0,10,0,44,31,34,0,35,1,54,0,11,0,0,0,21,22,0,20,68,29,42,72,0,0,0,14,2,86,0,0,0,0,0,2,40,36,11,0,0,99,0,0,22,20,0,33,0,43,29,0,0,0,56,1,0,0,27,0,93,38,24,0,0,5,0,99,19,59,78,0,21,75,0,0,0,84,0,9,0,37,0,0,74,53,0,0,28,0,22,23,0,55,29,0,0,22,0,0,18,39,28,0,0,36,0,0,0,0,76,0,0,0,0,33,27,50,0,15,0,18,0,62,31,0,27,0,0,0,7,21,0,8,34,8,38,0,77,17,0,0,46,0,0,55,31,0,0,0,15,25,0,0,68,28,0,0,0,13,0,97,0,19,77,0,0,0,0,97,0,27,0,0,10,55,0,23,0,0,17,0,21,24,0,26,0,0,11,0,0,60,0,0,2,0,44,0,83,0,0,0,4,0,0,0,0,8,0,0,0,37,33,14,0,23,70,46,76,0,0,0,0,0,28,0,2,0,0,0,0,0,0,58,31,17,0,34,0,74,0,3,0,0,11,0,0,0,51,19,34,28,0,54,24,51,49,0,51,0,0,0,11,53,0,0,0,35,0,27,23,80,0,2,0,0,46,0,0,7,29,0,10,0,0,12,32,84,31,31,0,0,0,0,2,70,0,0,0,9,23,0,9,17,0,0,0,0,0,0,73,0,55,0,0,0,48,30,0,48,0,0,0,0,0,0,0,0,0,35,9,0,0,38,0,19,6,7,53,57,32,4,56,0,0,63,69,11,10,26,0,0,24,0,57,92,0,0,0,0,16,88,9,40,0,25,0,94,0,32,0,99,0,14,22,0,18,0,43,99,99,99,75,53,88,94,99,73,99,14,0,69,0,0,12,12,3,0,17,0,0,0,0,0,11,0,99,26,0,99,85,82,81,93,99,99,99,84,5,46,0,50,29,49,79,0,43,0,56,0,36,0,3,0,96,99,76,83,67,74,99,76,45,99,71,55,0,49,0,0,99,0,86,0,36,16,0,2,9,0,0,0,99,99,28,99,84,92,99,82,68,56,99,0,0,0,0,45,0,74,0,0,73,27,0,0,0,5,7,58,99,76,99,99,99,87,99,60,85,60,77,16,0,0,0,0,1,14,0,17,0,82,0,0,0,1,0,99,99,99,99,53,99,60,4,99,55,54,99,0,33,0,0,0,16,4,92,0,76,77,0,32,62,57,0,66,97,99,99,81,68,99,96,99,99,54,99,4,0,0,53,96,13,59,7,34,0,99,17,0,0,91,53,0,43,99,71,87,99,15,99,93,70,99,99,14,11,0,41,59,0,48,0,10,7,0,7,11,75,0,0,40,99,99,99,92,50,99,99,99,78,50,61,0,0,0,75,10,0,17,0,39,41,0,17,0,0,0,11,99,19,99,44,76,99,99,88,86,83,99,80,0,29,7,0,38,16,18,20,40,0,85,0,0,12,0,99,0,99,99,98,99,99,89,36,99,62,99,18,0,0,0,0,49,13,76,0,33,0,0,40,0,0,0,61,0,0,64,0,7,14,99,0,29,39,0,16,0,15,89,0,0,0,33,0,47,99,58,0,41,0,0,0,0,20,0,0,44,0,36,5,0,0,9,0,0,35,0,0,0,50,8,0,18,0,14,2,17,16,33,50,0,0,15,0,12,0,49,0,0,0,0,0,4,0,0,9,0,0,0,0,67]],"shapes":["хрест","кільце","ромб","коло","кільце","хрест","кільце","квадрат"],"iv":[[-0.40380001068115234,-0.024900000542402267,0.044199999421834946,-0.1720000058412552,0.15080000460147858,0.31299999356269836,-0.25450000166893005,0.02969999983906746,0.28850001096725464,0.18330000340938568,0.015399999916553497,-0.14350000023841858,0.04019999876618385,-0.19869999587535858,0.031300000846385956,0.10119999945163727,-0.120899997651577,0.05090000107884407,0.0013000000035390258,-0.04639999940991402,-0.35339999198913574,0.18729999661445618,-0.013399999588727951,0.09189999848604202,-0.22429999709129333,-0.21209999918937683,-0.07190000265836716,0.12330000102519989,-0.025800000876188278,0.042100001126527786,-0.041600000113248825,0.3474000096321106],[-0.08100000023841858,0.08869999647140503,0.06379999965429306,0.16410000622272491,-0.21199999749660492,0.1843000054359436,0.033900000154972076,0.08370000123977661,0.09759999811649323,-0.1703999936580658,-0.02459999918937683,-0.1354999989271164,0.22089999914169312,0.08219999819993973,0.03370000049471855,-0.29260000586509705,0.052299998700618744,0.046799998730421066,-0.03539999946951866,-0.02329999953508377,-0.6431999802589417,-0.013899999670684338,0.03420000150799751,0.03620000183582306,-0.1995999962091446,-0.08739999681711197,0.09319999814033508,-0.01810000091791153,0.051600001752376556,-0.1386999934911728,0.019300000742077827,0.40709999203681946],[-0.10459999740123749,-0.09629999846220016,0.03830000013113022,-0.023399999365210533,0.18209999799728394,-0.06639999896287918,-0.33329999446868896,0.2215999960899353,0.09279999881982803,0.1251000016927719,-0.1623000055551529,-0.15889999270439148,0.049300000071525574,-0.09120000153779984,-0.1996999979019165,0.09059999883174896,0.22269999980926514,0.19840000569820404,0.053599998354911804,0.03460000082850456,-0.36980000138282776,0.11289999634027481,0.1987999975681305,-0.11779999732971191,-0.014800000004470348,-0.30250000953674316,0.1770000010728836,0.3871000111103058,0.10859999805688858,-0.023900000378489494,-0.052799999713897705,0.24770000576972961],[0.03709999844431877,-0.1264999955892563,-0.1843000054359436,-0.21469999849796295,-0.12250000238418579,-0.02800000086426735,0.2443999946117401,0.0348999984562397,-0.10279999673366547,0.18799999356269836,-0.08219999819993973,0.19370000064373016,0.20999999344348907,-0.08630000054836273,-0.15629999339580536,0.019999999552965164,0.2867000102996826,0.08860000222921371,0.3476000130176544,-0.04809999838471413,0.26600000262260437,-0.22139999270439148,-0.15389999747276306,-0.0771000012755394,0.1776999980211258,0.20919999480247498,0.2540000081062317,-0.02630000002682209,0.0722000002861023,-0.0632999986410141,-0.30219998955726624,-0.23579999804496765],[-0.23559999465942383,0.3767000138759613,0.013899999670684338,0.02930000051856041,-0.3264000117778778,0.26260000467300415,-0.16290000081062317,0.12189999967813492,0.0737999975681305,-0.0649000033736229,-0.017799999564886093,0.13600000739097595,0.23489999771118164,0.06909999996423721,0.1737000048160553,-0.16449999809265137,0.12639999389648438,0.09019999951124191,0.1891999989748001,0.26010000705718994,-0.2903999984264374,-0.03579999879002571,0.22759999334812164,0.22859999537467957,-0.08649999648332596,-0.021400000900030136,-0.1014999970793724,-0.15649999678134918,0.09809999912977219,-0.08969999849796295,-0.050599999725818634,0.24250000715255737],[-0.01679999940097332,-0.1527000069618225,-0.01269999984651804,-0.04019999876618385,0.15289999544620514,-0.017899999395012856,-0.4481000006198883,0.2680000066757202,0.24629999697208405,0.1282999962568283,-0.298799991607666,-0.11999999731779099,0.050599999725818634,-0.13420000672340393,-0.23409999907016754,0.07180000096559525,0.06390000134706497,0.10440000146627426,-0.025800000876188278,0.09929999709129333,-0.2800000011920929,0.19709999859333038,0.08879999816417694,-0.11749999970197678,-0.09520000219345093,-0.2727999985218048,0.13519999384880066,0.31349998712539673,0.041600000113248825,-0.08980000019073486,0.07760000228881836,0.1915999948978424],[-0.22509999573230743,0.10029999911785126,0.2624000012874603,0.05810000002384186,-0.13089999556541443,0.21789999306201935,-0.02539999969303608,0.05000000074505806,0.12349999696016312,-0.18799999356269836,0.193900004029274,-0.15070000290870667,-0.057100001722574234,-0.08129999786615372,-0.11980000138282776,-0.07760000228881836,-0.05139999836683273,0.23579999804496765,-0.013799999840557575,0.13269999623298645,-0.3418999910354614,0.09300000220537186,-0.03500000014901161,0.29319998621940613,-0.04989999905228615,-0.23149999976158142,0.1445000022649765,-0.12080000340938568,0.40470001101493835,-0.275299996137619,0.15219999849796295,0.12269999831914902],[0.2538999915122986,-0.20309999585151672,-0.12759999930858612,0.15399999916553497,0.1859000027179718,-0.3452000021934509,0.04690000042319298,-0.11320000141859055,-0.07670000195503235,0.03539999946951866,-0.22439999878406525,-0.040300000458955765,-0.11569999903440475,-0.07900000363588333,-0.40639999508857727,-0.14249999821186066,0.26589998602867126,0.045099999755620956,0.04399999976158142,-0.13210000097751617,0.013299999758601189,-0.21610000729560852,-0.10339999943971634,-0.3847000002861023,0.13600000739097595,0.004800000227987766,0.08940000087022781,0.30300000309944153,-0.042399998754262924,0.016100000590085983,0.0003000000142492354,-0.056699998676776886]],"tv":[[-0.3659999966621399,-0.06440000236034393,0.03449999913573265,-0.20999999344348907,0.2434999942779541,0.24150000512599945,-0.33160001039505005,-0.002300000051036477,0.2793000042438507,0.22699999809265137,0.018400000408291817,-0.14970000088214874,-0.08760000020265579,-0.16769999265670776,0.05860000103712082,0.2143000066280365,-0.23829999566078186,0.057100001722574234,-0.09380000084638596,-0.05939999967813492,-0.04580000042915344,0.2849000096321106,-0.029500000178813934,0.04610000178217888,-0.21529999375343323,-0.24709999561309814,-0.13120000064373016,0.13040000200271606,-0.042399998754262924,0.09870000183582306,-0.06530000269412994,0.18860000371932983],[-0.0003000000142492354,-0.033399999141693115,-0.021400000900030136,0.1800999939441681,0.04820000007748604,0.10520000010728836,-0.0020000000949949026,0.06859999895095825,0.10830000042915344,-0.16519999504089355,-0.043800000101327896,-0.3352000117301941,0.02930000051856041,0.03610000014305115,-0.06849999725818634,-0.22280000150203705,0.025200000032782555,0.019999999552965164,0.029600000008940697,-0.17949999868869781,-0.6604999899864197,0.06610000133514404,-0.03849999979138374,0.0957999974489212,-0.18019999563694,-0.0917000025510788,0.18629999458789825,-0.04230000078678131,0.15000000596046448,-0.2667999863624573,0.0340999998152256,0.28369998931884766],[0.03350000083446503,-0.133200004696846,0.0820000022649765,-0.06340000033378601,0.17870000004768372,-0.23510000109672546,-0.22349999845027924,0.16249999403953552,-0.07930000126361847,0.09080000221729279,-0.21299999952316284,-0.20669999718666077,0.0406000018119812,-0.06780000030994415,-0.1485999971628189,0.17569999396800995,0.2361000031232834,0.2696000039577484,-0.04610000178217888,-0.09099999815225601,-0.33980000019073486,0.07259999960660934,0.03830000013113022,-0.21780000627040863,0.14949999749660492,-0.3197000026702881,0.2125999927520752,0.3262999951839447,0.05660000070929527,-0.06440000236034393,-0.059300001710653305,0.2222999930381775],[-0.049400001764297485,-0.05829999968409538,-0.13590000569820404,-0.2004999965429306,-0.06239999830722809,0.08290000259876251,0.065700002014637,-0.03180000185966492,-0.07029999792575836,0.05869999900460243,0.03480000048875809,0.17630000412464142,-0.00989999994635582,-0.3084999918937683,-0.09489999711513519,0.1973000019788742,0.12999999523162842,0.07900000363588333,0.40130001306533813,0.039000000804662704,0.37619999051094055,-0.10289999842643738,-0.1387999951839447,0.14000000059604645,0.23109999299049377,0.16519999504089355,0.30239999294281006,-0.057999998331069946,0.09290000051259995,-0.12240000069141388,-0.24729999899864197,-0.3140999972820282],[-0.19439999759197235,0.4839000105857849,0.08190000057220459,0.1559000015258789,-0.34389999508857727,0.10180000215768814,0.05180000141263008,0.11469999700784683,-0.09769999980926514,-0.13910000026226044,0.03449999913573265,0.16349999606609344,0.18790000677108765,0.10760000348091125,0.3434999883174896,-0.0284000001847744,0.12530000507831573,0.032600000500679016,0.07050000131130219,0.31310001015663147,-0.16210000216960907,-0.021299999207258224,0.22609999775886536,0.19689999520778656,-0.017899999395012856,0.031300000846385956,-0.010700000450015068,-0.24500000476837158,0.020999999716877937,-0.023600000888109207,-0.04830000177025795,0.17020000517368317],[-0.05849999934434891,-0.10639999806880951,0.08730000257492065,-0.002099999925121665,0.23479999601840973,0.025599999353289604,-0.4641000032424927,0.26930001378059387,0.2800999879837036,0.008700000122189522,-0.17110000550746918,-0.18870000541210175,0.004900000058114529,-0.07599999755620956,-0.11699999868869781,0.10869999974966049,-0.08389999717473984,-0.00039999998989515007,-0.029100000858306885,0.017000000923871994,-0.2685999870300293,0.3422999978065491,0.007000000216066837,-0.038100000470876694,-0.1454000025987625,-0.2599000036716461,0.1111999973654747,0.19189999997615814,0.024399999529123306,-0.17260000109672546,0.10040000081062317,0.28619998693466187],[-0.19359999895095825,0.04809999838471413,0.1387999951839447,0.026599999517202377,-0.03519999980926514,0.18359999358654022,0.1421000063419342,-0.041200000792741776,0.03869999945163727,-0.13840000331401825,0.2502000033855438,-0.1720999926328659,-0.18970000743865967,0.0203000009059906,-0.15240000188350677,-0.06509999930858612,-0.12349999696016312,0.1768999993801117,-0.15610000491142273,0.06270000338554382,-0.32089999318122864,0.042899999767541885,-0.18170000612735748,0.24400000274181366,-0.08990000188350677,-0.22259999811649323,0.049800001084804535,-0.3140999972820282,0.34299999475479126,-0.3393000066280365,0.20479999482631683,0.029999999329447746],[0.3878999948501587,-0.2012999951839447,-0.08900000154972076,0.1160999983549118,0.2206999957561493,-0.374099999666214,0.06599999964237213,-0.14720000326633453,-0.13750000298023224,-0.016599999740719795,-0.19499999284744263,-0.08699999749660492,-0.1615000069141388,-0.11980000138282776,-0.2793000042438507,-0.13330000638961792,0.15850000083446503,-0.046300001442432404,0.02319999970495701,-0.2542000114917755,-0.0020000000949949026,-0.15330000221729279,-0.18209999799728394,-0.3375999927520752,0.15360000729560852,0.1324000060558319,0.008899999782443047,0.22920000553131104,-0.035100001841783524,-0.09319999814033508,0.037300001829862595,-0.061900001019239426]],"tok":[["велик","хрест","ліворуч"],["велик","кільц","вниз"],["велик","ромб","вниз"],["маленьк","кол","вгор"],["маленьк","кільц","центр"],["велик","хрест","вниз"],["велик","кільц","праворуч"],["велик","квадрат","вниз"]],"tokidx":[[7,4,11],[7,3,10],[7,2,10],[6,0,9],[6,3,8],[7,4,10],[7,3,12],[7,1,10]]},"zeroshot":{"idx":[2,100,201,300,420,506],"shapes":["коло","квадрат","ромб","кільце","хрест","трикутник"],"sizes":[0,0,0,0,0,0],"poss":[0,0,0,0,2,0],"imgs":[[13,0,0,1,0,68,27,0,65,17,58,99,55,15,1,38,0,0,97,0,35,0,0,14,0,18,0,0,55,27,0,21,1,0,0,0,21,36,0,71,0,0,0,0,12,0,0,0,19,0,0,0,16,66,0,0,26,30,13,0,0,0,0,0,0,13,10,22,19,0,43,0,0,0,0,0,0,58,0,28,57,0,0,0,0,99,0,0,44,6,0,67,37,44,56,75,99,7,22,0,18,0,19,75,15,7,0,0,42,14,1,0,0,64,62,0,25,0,0,23,0,0,7,53,36,14,24,0,9,0,87,83,0,0,42,23,0,11,0,0,0,20,59,66,49,99,23,0,0,0,0,0,10,20,0,0,25,32,0,0,0,68,20,7,14,10,64,0,25,0,0,0,40,80,0,0,0,61,0,0,0,44,0,0,0,0,0,0,0,10,0,27,0,0,17,0,0,0,0,0,60,5,0,3,0,0,0,60,12,0,60,0,27,39,0,0,60,41,6,0,15,0,0,0,0,0,0,14,0,79,0,40,0,0,3,26,0,83,3,33,0,0,50,0,0,51,0,33,52,32,0,64,21,72,99,26,0,43,4,0,34,0,5,0,0,26,0,99,9,0,0,18,15,0,0,25,47,0,23,58,38,0,95,0,23,0,18,0,0,41,7,0,5,90,99,81,99,99,62,55,0,52,0,0,55,0,34,0,0,50,14,1,0,0,99,16,51,0,34,15,99,99,99,99,92,0,99,0,0,14,0,33,17,33,23,0,0,56,0,0,0,0,29,18,0,6,35,0,0,99,17,89,64,79,99,0,0,0,0,0,38,57,0,74,0,78,0,0,0,0,0,45,45,74,50,85,99,99,85,99,99,99,32,93,26,2,0,0,0,0,0,1,0,12,20,0,0,0,0,0,25,87,0,20,81,83,99,99,72,99,99,0,0,0,0,0,0,0,0,20,0,23,36,0,0,26,0,77,0,0,55,0,99,93,2,99,99,76,47,0,33,28,15,0,99,0,17,22,11,0,0,58,0,65,0,24,0,60,64,0,0,99,88,78,99,99,20,47,19,13,0,0,0,0,0,42,0,33,3,1,40,0,26,75,12,0,23,18,0,10,23,32,0,22,0,0,64,0,0,19,0,35,0,7,65,28,7,0,0,12,72,63,0,16,0,0,0,68,64,0,60,0,23,41,54,0,10,31,14,16,0,0,24,0,0,0,0,0,38,0,0,0,60,0,12,0,0,0,5,27,0,0,26,0,5,0,24,10,11,62,8,84,0,0,33,45,76,16,1,40,0,57,0,0,0,72,12,53,0,37,0,15,0,0,0,20,56,1,27,0,0,0,3,0,0,0,0,22,0,18,22,29,42,0,62,50,0,47,0,40,38,0,19,2,0,27,46,9,21,0,37,14,0,0,25,0,22,48,0,0,20,0,0,22,26,0,19,0,48,23,0,68,0,33,0,0,0,0,18,87,0,0,0,70,69,0,0,7,0,96,43,99,27,18,0,0,0,0,8,0,0,0,12,19,18,4,0,0,54,89,0,0,57,56,0,13,27,0,0,0,37,40,48,0,0,46,6,41,0,0,0,0,0,0,38,0,0,59,0,5,36,18,48,0,53,26,1,99,14,7,0,80,0,15,99,32,0,83,0,0,57,66,0,82,0,40,0,91,9,0,0,38,17,0,0,0,0,0,53,0,0,0,0,34,0,0,0,0,17,34,24,78,8,10,15,0,70,0,68,63,0,56,71,99,0,0,10,0,63,58,0,0,99,0],[0,0,0,35,0,0,0,0,99,0,34,0,0,76,49,0,0,0,0,7,59,52,10,0,11,0,0,0,0,36,8,37,41,0,0,43,0,0,0,0,0,30,0,15,0,0,0,36,0,38,0,44,0,21,0,0,15,0,26,20,0,0,17,0,0,0,5,68,47,33,0,0,0,9,0,0,0,33,38,70,30,21,0,0,0,0,0,45,0,0,6,0,0,0,0,0,0,0,20,79,63,0,3,54,24,0,0,0,87,41,0,70,0,0,0,0,94,91,46,0,0,0,0,9,0,0,49,0,82,43,0,30,82,0,0,0,0,0,3,17,0,5,95,0,25,17,3,43,19,10,0,99,61,64,55,0,43,0,2,15,25,54,0,10,26,38,0,0,0,0,20,0,0,4,58,0,16,0,0,0,31,4,0,0,0,29,0,67,51,24,17,11,17,12,20,0,0,0,0,0,2,0,24,0,51,15,13,0,63,0,0,36,44,0,44,0,0,0,65,72,57,0,61,0,2,0,0,0,6,69,0,60,14,73,0,0,20,0,0,1,13,6,47,0,0,42,0,0,0,11,0,81,0,0,70,58,0,23,0,18,15,9,20,0,16,0,0,0,12,14,74,0,0,16,0,4,35,38,7,0,31,9,11,98,0,29,0,16,0,20,0,28,79,99,76,23,50,36,99,0,0,39,2,78,67,0,33,3,3,5,13,15,0,23,16,0,0,0,27,22,99,56,99,99,44,99,99,0,29,0,5,0,0,0,26,4,14,46,33,44,32,99,0,0,0,45,72,0,52,99,66,99,99,80,99,0,57,0,22,7,0,22,0,51,0,18,0,19,73,34,19,0,0,82,0,56,90,51,80,99,58,99,74,0,19,0,0,24,0,0,52,32,0,59,4,1,0,27,33,0,99,3,0,41,65,99,71,66,50,99,99,0,0,0,0,0,53,0,24,47,55,5,52,0,23,0,28,34,0,57,0,0,81,99,86,99,60,60,99,45,54,0,0,0,16,9,24,64,0,57,15,0,42,0,0,69,0,20,0,29,83,99,93,89,81,46,99,90,0,1,0,57,0,0,10,0,88,43,0,48,6,3,11,0,31,0,0,39,4,2,12,0,0,0,0,45,0,0,46,11,0,3,0,0,0,9,0,4,0,0,0,13,52,0,0,0,14,97,34,0,0,0,79,0,0,72,35,21,42,0,0,0,0,28,0,0,0,95,8,0,53,31,0,32,69,0,0,0,49,0,0,0,9,0,0,66,0,34,0,0,8,0,77,0,0,0,0,13,61,31,13,84,24,0,99,99,0,61,75,12,0,16,0,0,0,14,0,75,3,72,0,53,0,73,0,22,0,0,18,0,6,0,0,56,32,0,0,0,0,0,1,61,0,94,0,79,0,90,0,0,51,0,0,0,50,32,0,1,0,34,0,22,12,0,0,0,21,35,0,78,0,0,99,0,1,52,16,0,60,79,0,15,33,0,18,0,0,6,0,56,28,0,18,80,0,0,1,30,0,0,0,20,12,0,74,32,4,17,37,48,43,0,0,0,0,0,0,0,30,0,0,0,0,0,0,9,0,0,0,0,7,0,34,0,0,99,0,63,16,24,99,40,0,10,0,0,0,19,9,0,0,0,54,0,79,0,1,72,3,0,27,12,0,0,32,72,78,65,3,0,12,0,0,3,45,0,0,3,20,38,24,46,0,0,0,19,0,16,0,0,17,22,0,53,78,25,0,0,0,0,17,17,0,0,13,0,40,26,0,0,37,0,0,0],[8,0,0,92,0,18,0,9,53,20,6,0,0,0,0,0,7,35,79,0,0,23,61,6,0,0,0,58,0,0,0,40,99,0,22,61,34,0,36,0,0,0,99,0,0,0,0,0,0,0,84,22,57,0,0,10,0,0,0,0,0,0,49,34,58,0,15,17,0,2,0,0,0,0,6,17,0,0,24,58,1,0,90,0,58,0,42,0,0,18,99,0,7,0,9,0,0,56,52,25,0,0,0,0,0,42,13,0,0,0,61,0,23,9,0,0,0,25,27,0,59,0,0,0,6,0,46,24,0,0,0,10,37,6,0,0,0,0,6,8,0,0,0,44,39,34,63,0,20,0,0,1,7,0,52,12,0,29,0,5,32,25,0,0,7,22,0,52,40,18,0,0,55,73,0,0,33,0,99,2,38,95,31,0,99,99,0,0,0,0,22,3,58,7,0,54,20,91,14,0,8,0,0,0,30,31,0,0,0,0,43,7,10,19,12,0,50,0,1,49,0,0,0,0,22,4,0,0,66,50,0,0,32,0,92,0,0,0,0,0,42,19,0,13,50,33,0,0,0,21,28,0,38,0,0,0,72,0,34,0,43,0,29,70,10,0,0,0,62,24,0,0,42,43,57,0,0,0,0,13,0,36,2,78,0,31,27,0,0,7,0,80,0,38,83,0,0,30,0,4,59,49,9,0,30,0,0,0,62,27,53,10,0,30,0,0,28,11,0,0,0,45,19,99,0,56,0,6,75,0,0,20,12,36,0,14,73,26,34,0,39,0,42,0,0,0,55,16,0,23,0,57,99,66,4,26,50,52,9,43,77,19,0,13,0,0,4,44,0,37,0,23,0,0,0,0,0,99,81,99,99,99,0,0,54,0,34,15,0,17,0,30,0,52,0,24,21,30,0,20,3,7,0,0,99,99,42,75,0,90,99,46,0,7,0,0,15,43,0,4,0,0,45,37,0,0,9,0,0,19,22,85,99,99,67,99,99,99,51,99,26,0,0,0,26,5,34,0,29,3,0,0,0,0,49,23,46,28,78,63,99,99,47,99,99,99,99,0,67,0,0,49,11,66,0,0,0,9,0,55,43,38,99,0,15,0,39,34,15,99,99,33,99,99,0,34,29,63,19,92,0,0,45,0,61,16,0,26,0,13,53,0,9,9,60,0,34,47,99,99,60,8,75,0,0,0,41,46,0,0,16,0,0,0,32,9,6,0,27,0,0,0,13,0,0,38,35,99,0,6,35,0,0,0,75,0,99,0,0,0,0,3,0,0,61,13,0,33,0,0,86,0,48,0,0,0,7,0,22,32,20,0,0,0,0,0,37,0,0,37,0,40,0,0,0,14,0,63,68,56,49,32,0,0,0,0,51,0,18,0,0,0,7,41,0,59,0,0,0,18,58,0,0,64,71,26,38,4,0,20,28,53,63,0,82,0,52,0,85,0,0,7,35,55,0,0,0,24,0,0,0,26,0,0,0,0,0,25,53,41,0,0,16,99,21,0,0,0,0,33,0,0,0,33,0,19,6,0,0,0,0,0,0,12,37,0,0,0,0,0,0,0,40,29,0,6,0,0,0,53,4,0,78,0,16,57,41,46,0,37,3,0,47,0,0,67,14,0,0,23,99,58,32,0,5,38,73,7,4,0,0,57,29,83,0,18,32,10,45,0,0,37,0,0,0,31,0,36,0,23,46,0,0,0,0,44,0,3,13,0,10,0,12,26,33,28,22,0,0,18,75,13,99,0,0,10,0,0,20,62,17,0,72,0],[0,0,0,0,0,0,0,0,0,38,0,0,43,49,15,21,0,0,65,0,0,30,0,0,0,6,5,63,0,73,0,39,24,0,0,62,0,14,0,0,0,2,4,0,0,0,0,0,0,0,81,0,29,0,0,0,27,0,21,0,0,61,0,0,9,16,61,0,4,0,0,9,0,0,0,17,0,82,0,0,33,70,0,0,0,35,29,41,0,0,0,0,0,50,79,43,0,2,0,0,0,4,0,0,57,53,0,0,0,6,0,32,0,80,0,0,0,29,0,0,88,0,52,11,21,0,0,0,0,0,0,0,0,0,0,0,0,70,0,0,0,24,0,0,70,12,81,21,0,0,0,27,4,20,99,34,0,0,0,61,0,47,0,0,0,0,0,68,0,0,0,0,0,15,21,26,0,0,0,0,0,13,2,20,79,0,0,4,0,0,0,62,99,0,31,0,0,13,7,0,60,46,36,0,0,0,99,33,0,0,99,18,0,46,0,62,20,34,0,23,0,21,14,34,0,0,0,23,99,0,26,68,0,0,0,21,82,28,14,0,96,23,39,0,35,60,38,0,5,0,0,69,0,11,0,21,0,0,18,46,35,0,0,0,57,0,1,0,30,20,12,20,0,0,6,1,0,0,0,0,70,56,34,16,0,0,9,39,0,3,0,73,0,0,0,0,71,0,14,0,7,0,0,11,23,3,0,0,0,27,0,1,0,0,0,50,0,65,0,0,0,11,75,14,21,0,0,0,0,31,35,0,0,1,64,0,0,0,48,0,0,0,0,0,15,0,0,0,99,72,99,99,88,36,0,0,18,61,21,0,88,0,0,20,19,0,0,0,0,0,27,44,0,0,27,99,99,99,69,99,99,53,0,0,0,0,0,0,0,21,0,78,35,65,0,0,55,23,0,57,47,51,0,99,65,7,0,0,82,99,0,35,99,0,66,0,0,0,19,21,0,99,0,5,0,0,0,0,9,25,99,99,92,96,38,0,86,60,87,53,0,0,0,13,17,64,0,0,0,0,65,1,99,2,32,0,48,42,27,99,99,0,0,0,53,99,0,43,10,41,0,0,16,0,0,0,0,0,18,14,22,24,36,42,0,0,30,99,54,37,99,99,94,99,27,3,70,0,0,0,0,40,7,0,0,23,25,2,0,21,0,44,56,0,12,0,37,99,99,99,77,3,7,36,28,47,20,13,0,0,0,30,4,0,27,0,2,0,83,0,48,0,21,88,0,0,99,0,0,43,17,0,24,9,2,37,0,0,0,0,0,11,13,0,19,38,0,63,12,37,21,10,0,11,1,0,0,72,22,24,21,0,11,54,0,4,24,77,0,0,0,7,35,0,0,84,35,6,0,0,0,0,0,0,0,0,28,0,23,0,27,37,12,0,0,49,1,0,2,39,65,0,0,65,0,12,99,26,23,26,0,0,95,0,99,28,0,33,19,0,0,43,0,0,0,29,59,14,59,4,0,99,46,42,0,0,0,0,0,0,11,13,0,0,8,21,0,15,8,44,0,32,0,43,0,0,57,5,0,0,0,8,31,18,27,40,0,18,0,59,0,98,9,17,0,0,0,29,0,0,0,15,0,0,18,84,21,0,44,13,59,0,29,0,50,35,0,2,0,0,0,0,23,0,0,37,0,0,63,19,5,0,0,18,14,23,34,0,51,77,0,83,0,61,98,19,49,0,31,0,20,27,21,0,0,22,23,28,50,0,12,10,45,0,15,19,3,35,0,2,0,0,55,13,0,0,42,0,0,0,29,0,0,0],[0,0,0,0,0,0,12,0,0,30,0,0,0,15,0,9,0,59,0,53,1,0,0,0,43,0,0,0,0,0,39,0,0,57,19,5,53,70,0,55,55,31,27,0,0,0,0,0,38,22,85,0,51,0,0,9,15,8,19,0,0,0,0,10,0,0,99,37,0,19,36,15,16,0,8,0,0,24,46,0,71,58,4,38,35,0,93,31,0,26,0,0,21,0,0,41,23,0,12,0,0,0,99,5,19,0,0,9,47,55,0,31,25,29,57,7,61,0,21,0,21,0,48,38,57,0,0,0,0,16,79,34,0,0,0,0,0,80,18,0,0,5,0,57,0,3,16,49,0,99,0,0,38,3,0,0,9,53,0,0,76,0,9,0,17,0,87,0,27,0,18,0,0,37,0,0,0,0,23,0,0,0,0,16,0,11,69,37,34,0,0,46,7,60,1,0,16,0,0,87,45,0,0,0,10,26,0,34,0,66,99,0,28,80,0,0,21,19,0,0,8,0,64,0,0,69,0,0,42,25,67,85,0,26,19,0,34,48,18,0,19,15,23,0,0,14,0,0,54,0,50,0,6,3,6,85,18,70,32,0,0,0,0,1,26,0,10,18,0,41,62,0,26,0,0,0,0,70,0,0,0,20,10,69,43,5,25,11,0,31,12,0,0,19,0,0,3,46,54,29,0,0,0,0,19,79,30,12,0,30,0,35,0,9,0,37,50,0,68,24,0,46,0,0,50,42,23,0,4,0,92,8,37,27,21,0,12,33,0,0,0,0,1,0,42,0,31,0,75,0,39,35,37,99,0,0,0,0,13,25,0,0,0,0,0,49,4,0,32,63,9,28,0,0,13,39,52,5,0,22,33,0,0,0,0,5,9,0,28,27,47,31,15,0,99,99,0,24,0,0,37,28,9,2,30,0,49,27,40,0,27,0,0,0,1,0,16,47,35,99,86,30,0,0,0,13,0,0,0,68,0,41,99,99,99,41,16,0,23,6,54,0,0,0,0,38,5,36,41,0,0,94,71,1,0,0,33,99,0,24,99,85,99,0,30,58,29,0,0,46,22,4,0,0,0,0,27,62,50,0,49,0,0,0,18,19,37,1,92,99,99,20,0,67,0,42,4,99,75,0,25,0,3,0,0,0,2,3,29,0,0,0,71,90,98,85,16,92,99,99,63,74,0,0,0,20,75,78,0,0,61,0,47,0,0,9,0,0,87,0,0,61,99,49,99,91,99,59,69,99,0,72,0,7,75,15,0,0,33,38,84,0,26,48,33,23,44,0,10,81,99,99,99,99,35,99,99,99,0,0,0,0,33,56,70,99,0,24,11,0,14,0,25,69,0,0,0,27,0,63,99,99,99,0,0,0,0,0,8,97,0,0,34,0,0,51,48,63,44,48,0,0,0,0,5,38,0,22,99,99,99,7,37,41,0,0,0,0,54,0,59,55,26,0,4,89,0,13,63,0,56,22,0,36,9,73,84,99,67,0,49,95,0,99,0,0,13,1,31,0,62,7,48,5,0,32,0,0,22,87,0,0,26,29,34,9,0,19,0,45,81,0,0,62,13,0,0,0,0,0,0,1,0,0,0,27,0,0,0,76,0,35,0,91,0,0,34,0,74,8,29,0,57,0,35,49,0,0,60,0,0,21,53,0,0,0,0,19,5,23,43,0,45,28,0,0,0,71,0,0,0,0,69,0,63,48,39,24,24,31,25,0,0,0,6,0,3,20,9,0,0,0,57,99,0,0,9,39,0,0,40,59,0,33],[0,0,22,33,53,17,0,0,63,0,0,35,61,20,0,0,32,15,32,0,24,19,0,0,0,0,14,0,0,0,10,0,99,36,0,74,0,0,0,0,0,25,0,90,5,0,14,0,61,50,11,0,0,58,88,0,25,64,0,0,12,0,35,0,99,0,0,0,65,19,38,95,19,1,15,6,0,0,5,0,0,39,16,9,1,35,0,0,0,40,0,58,0,0,0,56,0,0,52,6,0,34,8,0,1,0,0,8,60,21,0,28,28,24,0,15,0,0,16,28,64,0,0,0,0,34,27,0,0,90,0,0,45,6,11,8,48,8,0,0,10,37,99,0,0,0,0,0,9,40,69,2,0,0,0,33,40,0,0,11,4,25,11,0,21,99,23,0,0,32,0,62,50,0,23,35,0,0,0,94,52,64,0,0,0,13,0,0,83,6,0,43,0,17,0,69,21,0,0,99,36,0,28,13,0,0,0,39,99,0,37,0,0,15,26,35,0,0,0,0,0,0,18,0,0,1,0,28,9,13,67,0,0,54,0,80,52,99,0,0,0,0,0,0,1,7,0,0,0,8,0,38,23,56,0,0,0,0,0,0,31,37,23,0,0,33,0,0,0,19,7,0,60,59,0,50,0,6,0,1,0,19,0,39,68,25,0,69,0,8,0,48,10,99,0,0,0,0,54,0,0,0,0,0,3,0,0,38,0,0,0,0,0,0,0,59,0,52,0,0,0,99,0,62,0,60,4,7,6,79,0,3,0,0,8,28,0,98,19,0,47,0,0,92,0,0,8,60,99,99,92,18,0,3,99,91,0,0,0,33,0,99,2,25,48,35,51,48,12,0,96,19,9,0,0,6,94,46,65,0,49,15,29,3,0,4,0,0,0,0,43,77,27,39,0,0,14,58,63,0,0,92,59,92,87,59,34,89,49,0,74,40,0,16,0,0,0,0,5,0,99,15,86,0,0,0,0,0,0,0,99,49,31,99,99,77,99,0,78,0,39,42,0,0,0,99,34,45,26,20,0,55,0,9,26,0,0,11,99,75,99,99,0,99,99,0,0,46,31,21,5,0,62,0,56,0,0,0,0,32,36,0,46,64,50,75,0,0,54,0,52,25,0,14,0,62,30,0,0,40,21,0,20,49,2,51,11,0,0,28,12,0,47,0,13,0,0,0,46,0,0,7,0,7,25,0,0,53,0,7,0,0,0,0,0,0,35,26,0,47,0,82,24,0,0,60,18,0,0,0,13,53,0,22,28,91,0,46,0,0,0,21,34,0,68,0,0,4,0,6,0,49,34,43,0,0,0,37,0,13,0,40,0,70,43,22,77,0,54,0,0,0,0,3,0,0,2,30,43,29,28,0,31,0,43,0,53,29,0,0,21,40,26,43,0,61,8,0,17,28,11,0,36,83,0,0,15,0,38,99,0,0,32,68,9,11,0,44,0,99,17,0,71,0,0,71,36,11,0,0,0,0,3,0,79,28,35,41,90,0,28,24,96,0,0,9,0,0,1,0,48,99,10,1,49,0,53,0,0,57,0,0,0,0,0,24,72,0,7,65,0,0,3,37,0,25,37,16,0,31,0,0,43,0,0,0,0,0,0,11,23,0,0,0,0,0,54,8,0,0,2,0,30,86,19,0,0,0,40,0,53,66,34,0,55,0,0,4,4,23,0,0,35,11,0,0,99,62,18,0,45,0,0,0,10,0,0,55,0,18,13,0,0,40,9,12,0,0,44,12,0,2,0,58,0,0,32,7,0,29,0,4,0,0]],"prompts":{"bare":["коло","квадрат","ромб","кільце","хрест","трикутник"],"photo":["фото кола","фото квадрата","фото ромба","фото кільця","фото хреста","фото трикутника"],"over":["маленьке коло вгорі","маленький квадрат вгорі","маленький ромб вгорі","маленьке кільце вгорі","маленький хрест вгорі","маленький трикутник вгорі"],"neg":["не коло","не квадрат","не ромб","не кільце","не хрест","не трикутник"]},"cos":{"bare":[[0.517799973487854,0.45879998803138733,0.46950000524520874,-0.17710000276565552,0.14640000462532043,0.4309000074863434],[0.4867999851703644,0.7324000000953674,0.1729000061750412,-0.4074999988079071,-0.29109999537467957,0.34049999713897705],[0.5623000264167786,0.25920000672340393,0.6717000007629395,0.10320000350475311,0.31040000915527344,0.2475000023841858],[-0.2759999930858612,-0.366100013256073,0.0658000037074089,0.6718000173568726,0.17090000212192535,-0.019600000232458115],[0.39559999108314514,-0.07159999758005142,0.6269999742507935,0.41440001130104065,0.5569000244140625,0.04450000077486038],[0.27250000834465027,0.013899999670684338,0.5527999997138977,0.43380001187324524,0.5501999855041504,0.4828999936580658]],"photo":[[0.5224000215530396,0.49320000410079956,0.5037999749183655,-0.21400000154972076,0.12370000034570694,0.4239000082015991],[0.490200012922287,0.7156999707221985,0.21850000321865082,-0.41830000281333923,-0.2946000099182129,0.3425999879837036],[0.5605999827384949,0.32019999623298645,0.6816999912261963,0.034699998795986176,0.3237000107765198,0.2854999899864197],[-0.2624000012874603,-0.349700003862381,0.04749999940395355,0.6554999947547913,0.20649999380111694,0.018799999728798866],[0.4025000035762787,0.008899999782443047,0.6103000044822693,0.3725999891757965,0.6025999784469604,0.09000000357627869],[0.2930000126361847,0.09120000153779984,0.5515999794006348,0.38920000195503235,0.539900004863739,0.4941999912261963]],"over":[[0.3961000144481659,0.3871999979019165,0.40540000796318054,-0.07440000027418137,0.19009999930858612,0.36899998784065247],[0.44690001010894775,0.6380000114440918,0.21359999477863312,-0.16740000247955322,-0.1200999990105629,0.27630001306533813],[0.2354000061750412,0.058400001376867294,0.4011000096797943,-0.04500000178813934,0.15049999952316284,0.05849999934434891],[-0.2637999951839447,-0.3472999930381775,0.04749999940395355,0.48240000009536743,0.0697999969124794,0.03280000016093254],[0.05490000173449516,-0.28360000252723694,0.3091000020503998,0.0575999990105629,0.20080000162124634,-0.10750000178813934],[0.09960000216960907,-0.0681999996304512,0.37599998712539673,0.26409998536109924,0.37779998779296875,0.40470001101493835]],"neg":[[0.44940000772476196,0.4106000065803528,0.3515999913215637,-0.2572000026702881,0.0737999975681305,0.3077999949455261],[0.26510000228881836,0.49950000643730164,0.01080000028014183,-0.5425999760627747,-0.4065000116825104,0.07360000163316727],[0.590399980545044,0.3337000012397766,0.63919997215271,0.09430000185966492,0.2761000096797943,0.218299999833107],[-0.1023000031709671,-0.17479999363422394,0.20100000500679016,0.7360000014305115,0.2712000012397766,0.1535000056028366],[0.41269999742507935,0.09629999846220016,0.6118000149726868,0.3880000114440918,0.43369999527931213,0.163100004196167],[0.38580000400543213,0.2304999977350235,0.5526999831199646,0.4180000126361847,0.5351999998092651,0.5644999742507935]]}},"comp":{"img":[12,27,0,34,11,35,12,52,0,79,54,0,29,20,0,27,0,0,0,0,3,4,0,0,0,0,0,38,28,0,0,0,6,42,1,31,14,67,0,0,0,28,0,19,0,0,0,37,31,0,8,0,1,0,0,0,0,0,0,5,0,1,0,27,0,34,59,0,78,90,20,0,0,0,79,26,34,0,0,17,0,0,23,2,23,0,27,18,0,0,0,29,13,13,8,28,42,0,0,30,0,2,0,0,0,43,49,41,9,12,0,3,0,0,9,76,0,27,30,0,14,5,0,0,0,76,99,71,0,13,17,0,0,24,0,0,0,11,0,0,60,4,0,0,96,0,80,64,0,0,63,11,0,81,8,15,2,0,6,0,23,47,48,53,67,34,0,43,0,0,13,0,66,0,0,0,0,0,0,46,0,8,0,22,0,0,58,0,0,0,29,0,0,26,85,0,2,0,88,0,0,7,0,0,0,66,0,0,52,0,62,99,0,31,0,39,2,0,28,0,8,44,54,28,0,31,0,48,0,64,23,0,13,0,26,5,50,99,99,99,94,99,99,4,0,0,0,27,0,0,11,49,0,39,21,0,14,0,30,0,37,33,0,99,92,99,99,99,99,99,99,67,73,35,7,48,25,0,45,3,28,43,43,85,10,0,0,0,31,20,62,73,81,99,59,99,28,90,99,45,99,0,4,0,1,0,38,14,9,0,22,0,0,0,27,99,0,99,55,74,99,99,36,72,0,99,99,0,57,78,7,26,0,60,0,1,43,0,58,44,0,2,0,3,58,99,40,32,99,0,0,0,1,62,99,99,99,99,47,0,44,28,12,0,0,37,0,19,19,14,2,28,38,99,99,75,0,30,0,0,48,0,0,99,0,97,0,0,42,68,52,29,16,0,2,0,0,28,0,38,31,76,56,99,0,0,0,0,0,0,98,49,89,61,99,0,0,18,75,12,0,0,0,0,2,53,22,0,58,99,71,99,54,0,26,0,53,50,0,90,99,99,0,0,0,15,0,55,38,76,49,46,42,27,0,26,0,0,99,99,28,15,21,10,67,0,99,57,99,99,0,99,0,0,0,0,52,0,61,0,37,37,7,33,17,99,99,85,99,99,27,89,99,12,76,99,99,69,0,8,76,0,11,68,49,0,0,0,0,0,39,38,60,42,99,99,65,99,84,20,99,99,99,88,99,0,32,13,0,12,0,27,0,17,0,0,0,38,6,0,30,0,29,99,99,67,83,99,99,65,71,55,18,0,99,38,53,27,0,0,66,14,0,99,34,72,0,0,0,36,0,0,99,99,99,0,88,99,99,0,17,26,0,0,0,0,0,0,27,27,0,0,25,0,78,0,99,29,76,10,24,0,0,79,34,0,46,0,29,0,3,0,0,0,0,0,5,6,0,0,0,0,0,86,37,44,53,0,0,0,8,0,0,33,24,0,0,58,20,0,6,6,0,0,0,11,4,46,46,0,71,0,42,0,0,0,0,99,7,21,0,22,28,21,61,0,19,69,28,0,57,29,0,0,0,37,15,44,99,78,6,0,63,0,0,0,13,0,12,0,0,2,32,16,0,99,45,28,15,21,0,0,11,0,27,0,32,6,0,0,0,59,62,0,7,0,64,12,0,0,24,84,5,0,0,0,0,41,0,0,0,15,10,63,44,0,0,9,0,4,0,0,0,0,0,0,3,54,0,0,0,0,11,77,15,0,46,15,84,22,31,0,63,0,0,22,32,64,51,16,15,38,16,20,0,0,0,23,0,42,33,0,1,24],"prompts":["маленьке коло","велике коло","маленький квадрат","великий квадрат","маленький ромб","великий ромб","маленьке кільце","велике кільце","маленький хрест","великий хрест","маленький трикутник","великий трикутник"],"hold":[0.1615999937057495,0.48089998960494995,-0.36160001158714294,-0.1371999979019165,0.2962000072002411,0.7408000230789185,-0.1860000044107437,0.2101999968290329,0.46320000290870667,0.8095999956130981,-0.12929999828338623,0.1535000056028366],"full":[-0.2784000039100647,-0.027699999511241913,-0.5256999731063843,-0.26840001344680786,0.023099999874830246,0.11999999731779099,0.4943999946117401,0.7495999932289124,0.1143999993801117,0.17470000684261322,-0.13030000030994415,-0.12060000002384186]},"breaks":{"two_img":[0,22,0,49,4,0,0,0,0,53,40,0,0,86,40,0,0,0,7,39,0,16,25,35,0,0,88,0,1,20,0,0,75,58,0,3,0,0,0,68,0,65,0,6,4,4,44,26,0,0,0,0,0,0,0,36,11,0,20,22,0,0,51,38,64,45,12,0,0,0,3,9,52,60,0,17,0,0,0,6,0,0,0,0,0,20,55,0,0,0,59,0,10,0,0,0,0,0,0,0,0,57,0,3,2,0,0,19,0,51,0,45,0,7,25,53,54,0,0,63,0,0,44,21,0,0,51,0,0,0,52,0,9,0,12,23,0,16,10,53,0,0,0,0,54,18,0,0,27,1,0,23,11,0,0,99,50,0,0,60,25,1,0,8,39,0,37,0,0,0,0,0,2,0,43,0,34,0,7,0,41,44,99,99,99,88,34,48,24,54,45,0,30,99,0,0,5,0,0,0,91,0,27,0,0,0,0,63,90,37,99,99,99,99,99,0,0,60,0,0,0,0,0,52,71,8,0,0,0,0,0,79,43,0,0,4,70,99,99,99,59,86,27,0,81,0,31,54,72,0,0,0,61,49,0,0,16,92,0,55,0,0,37,65,30,99,99,42,99,99,99,52,0,0,0,36,0,9,0,0,0,22,0,0,50,62,34,66,8,1,50,24,46,91,99,99,99,65,51,0,0,0,0,0,0,15,5,0,0,34,12,0,0,0,8,0,19,7,6,34,99,80,85,99,85,43,72,0,0,4,58,18,26,65,32,0,0,0,0,51,99,35,10,0,11,68,0,18,36,99,99,99,99,53,0,0,4,19,30,34,0,0,0,0,0,0,17,0,0,0,14,21,0,18,88,20,0,97,0,99,0,32,0,23,10,0,0,0,39,14,53,54,75,0,0,0,60,0,13,85,0,0,0,43,46,5,0,0,17,48,0,0,40,37,2,0,44,6,0,0,32,0,19,0,50,11,0,3,0,0,0,0,48,0,0,21,66,0,36,0,0,69,0,36,46,74,0,49,0,0,0,10,0,99,49,48,17,42,0,0,0,28,5,19,0,37,57,18,0,0,0,49,10,36,0,0,0,61,0,0,0,73,33,0,33,32,0,15,90,90,22,57,99,99,99,58,20,0,0,8,86,20,0,38,46,56,65,0,0,22,41,0,45,38,0,29,99,72,80,99,99,99,30,0,2,0,0,0,0,0,14,0,0,2,35,0,0,32,18,2,47,35,0,0,99,62,11,79,99,99,99,0,0,0,23,62,0,0,0,0,0,99,71,0,0,35,29,21,0,0,0,47,0,99,69,99,74,99,83,0,0,62,0,12,37,0,2,0,67,0,21,0,0,25,34,30,0,70,19,16,99,99,99,52,93,99,6,15,0,0,45,0,0,0,21,29,0,0,13,60,26,0,32,0,12,0,51,59,99,99,99,99,99,99,99,3,0,41,31,9,0,0,0,0,0,50,25,0,36,0,0,3,16,84,6,3,99,41,99,99,94,76,99,18,0,0,0,0,65,0,1,6,0,0,87,62,0,16,0,36,44,0,45,0,18,74,28,10,66,0,29,0,0,0,19,0,0,0,0,0,75,99,0,13,0,50,0,51,0,15,20,0,8,67,0,12,0,0,0,65,0,46,43,0,27,48,61,0,68,63,12,0,7,39,0,81,0,99,20,51,15,0,0,0,42,0,0,0,0,0,66,66,99,0,0,8,0,17,76,18,0,0,0,0,18,10,0,0,0,11,37,0,0,20,0,0,0,0,61,9,0,61,0,0],"order_prompts":["коло над квадратом","квадрат над колом"],"order_cos":[0.5361390113830566,0.5361390113830566],"text_order_cos":1.0,"neg_cos":0.909,"count_cos":1.0,"count_prompts":["коло","два кола","три кола"],"count_img_cos":[0.5178229808807373,0.5178229808807373,0.5178229808807373],"circle_img":[13,0,0,1,0,68,27,0,65,17,58,99,55,15,1,38,0,0,97,0,35,0,0,14,0,18,0,0,55,27,0,21,1,0,0,0,21,36,0,71,0,0,0,0,12,0,0,0,19,0,0,0,16,66,0,0,26,30,13,0,0,0,0,0,0,13,10,22,19,0,43,0,0,0,0,0,0,58,0,28,57,0,0,0,0,99,0,0,44,6,0,67,37,44,56,75,99,7,22,0,18,0,19,75,15,7,0,0,42,14,1,0,0,64,62,0,25,0,0,23,0,0,7,53,36,14,24,0,9,0,87,83,0,0,42,23,0,11,0,0,0,20,59,66,49,99,23,0,0,0,0,0,10,20,0,0,25,32,0,0,0,68,20,7,14,10,64,0,25,0,0,0,40,80,0,0,0,61,0,0,0,44,0,0,0,0,0,0,0,10,0,27,0,0,17,0,0,0,0,0,60,5,0,3,0,0,0,60,12,0,60,0,27,39,0,0,60,41,6,0,15,0,0,0,0,0,0,14,0,79,0,40,0,0,3,26,0,83,3,33,0,0,50,0,0,51,0,33,52,32,0,64,21,72,99,26,0,43,4,0,34,0,5,0,0,26,0,99,9,0,0,18,15,0,0,25,47,0,23,58,38,0,95,0,23,0,18,0,0,41,7,0,5,90,99,81,99,99,62,55,0,52,0,0,55,0,34,0,0,50,14,1,0,0,99,16,51,0,34,15,99,99,99,99,92,0,99,0,0,14,0,33,17,33,23,0,0,56,0,0,0,0,29,18,0,6,35,0,0,99,17,89,64,79,99,0,0,0,0,0,38,57,0,74,0,78,0,0,0,0,0,45,45,74,50,85,99,99,85,99,99,99,32,93,26,2,0,0,0,0,0,1,0,12,20,0,0,0,0,0,25,87,0,20,81,83,99,99,72,99,99,0,0,0,0,0,0,0,0,20,0,23,36,0,0,26,0,77,0,0,55,0,99,93,2,99,99,76,47,0,33,28,15,0,99,0,17,22,11,0,0,58,0,65,0,24,0,60,64,0,0,99,88,78,99,99,20,47,19,13,0,0,0,0,0,42,0,33,3,1,40,0,26,75,12,0,23,18,0,10,23,32,0,22,0,0,64,0,0,19,0,35,0,7,65,28,7,0,0,12,72,63,0,16,0,0,0,68,64,0,60,0,23,41,54,0,10,31,14,16,0,0,24,0,0,0,0,0,38,0,0,0,60,0,12,0,0,0,5,27,0,0,26,0,5,0,24,10,11,62,8,84,0,0,33,45,76,16,1,40,0,57,0,0,0,72,12,53,0,37,0,15,0,0,0,20,56,1,27,0,0,0,3,0,0,0,0,22,0,18,22,29,42,0,62,50,0,47,0,40,38,0,19,2,0,27,46,9,21,0,37,14,0,0,25,0,22,48,0,0,20,0,0,22,26,0,19,0,48,23,0,68,0,33,0,0,0,0,18,87,0,0,0,70,69,0,0,7,0,96,43,99,27,18,0,0,0,0,8,0,0,0,12,19,18,4,0,0,54,89,0,0,57,56,0,13,27,0,0,0,37,40,48,0,0,46,6,41,0,0,0,0,0,0,38,0,0,59,0,5,36,18,48,0,53,26,1,99,14,7,0,80,0,15,99,32,0,83,0,0,57,66,0,82,0,40,0,91,9,0,0,38,17,0,0,0,0,0,53,0,0,0,0,34,0,0,0,0,17,34,24,78,8,10,15,0,70,0,68,63,0,56,71,99,0,0,10,0,63,58,0,0,99,0]},"meta":{"imgParams":15136,"txtParams":2432,"vocab":17},"prompts":{"variants":[{"short":"гола назва","prompts":["коло","квадрат","ромб","кільце","хрест","трикутник"],"mean":0.867,"std":0.02,"vals":[0.893,0.847,0.86],"tag":"t-ok","cap":"ОПОРНА ТОЧКА","text":"Найкоротше з можливих формулювань — саме назва класу. 0.867 ±0.020. Решту варіантів порівнюємо саме з ним, і саме по зернах, а не по середніх."},{"short":"фото X","prompts":["фото кола","фото квадрата","фото ромба","фото кільця","фото хреста","фото трикутника"],"mean":0.863,"std":0.017,"vals":[0.887,0.848,0.855],"tag":"t-mid","cap":"РІЗНИЦІ НЕМАЄ","text":"Різниці з голою назвою по зернах: −0.007, +0.002, −0.005. Знак стрибає, модуль удесятеро менший за розкид від зерна. Ефекту немає — у нашій моделі обидва формулювання однаково звичні."},{"short":"надто точно","prompts":["маленьке коло вгорі","маленький квадрат вгорі","маленький ромб вгорі","маленьке кільце вгорі","маленький хрест вгорі","маленький трикутник вгорі"],"mean":0.849,"std":0.014,"vals":[0.868,0.842,0.837],"tag":"t-no","cap":"СТАБІЛЬНО ГІРШЕ","text":"Різниці: −0.025, −0.005, −0.023 — завжди відʼємні, на всіх трьох зернах. Підказка бреше про більшість зображень: не всі кола маленькі й не всі вгорі, а модель чесно відповідає на те, що написано."},{"short":"ансамбль","prompts":["коло  +  фото кола","квадрат  +  фото квадрата","ромб  +  фото ромба","кільце  +  фото кільця","хрест  +  фото хреста","трикутник  +  фото трикутника"],"mean":0.863,"std":0.017,"vals":[0.887,0.847,0.857],"tag":"t-mid","cap":"РІЗНИЦІ НЕМАЄ","text":"Усереднення двох формулювань: −0.007, 0.000, −0.003. Ансамбль допомагає тоді, коли формулювання справді різні за якістю; у нас вони однакові, тому й усереднювати нічого."}]}};
+
+/* ═══════════ дрібниці цієї теми ═══════════ */
+function fmt3(v){ return (v<0?'−':'')+Math.abs(v).toFixed(3); }
+function drawShape(g, px, x, y, cell){
+  var r,c,v;
+  for(r=0;r<28;r++) for(c=0;c<28;c++){
+    v=px[r*28+c]/99;
+    g.fillStyle='rgb('+Math.round(30+v*210)+','+Math.round(36+v*206)+','+Math.round(43+v*200)+')';
+    g.fillRect(x+c*cell, y+r*cell, cell+0.4, cell+0.4);
+  }
+}
+function bars(g, vec, x, y, w, h, pos, neg){
+  var k, n=vec.length, bw=w/n, mid=y+h/2, m=0;
+  for(k=0;k<n;k++) m=Math.max(m, Math.abs(vec[k]));
+  if(m<1e-9) m=1;
+  for(k=0;k<n;k++){
+    var v=vec[k]/m*(h/2-1);
+    g.fillStyle = vec[k]>=0 ? pos : neg;
+    g.fillRect(x+k*bw+0.5, v>=0? mid-v : mid, Math.max(1,bw-1), Math.abs(v));
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x,mid+0.5); g.lineTo(x+w,mid+0.5); g.stroke();
+}
+
+/* ═════════════ 1 · Дві вежі ═════════════ */
+(function(){
+  var cv=I('cTowers'); if(!cv) return;
+  var pair=0, other=false;
+  function draw(){
+    var g=dpr(cv);
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal');
+    var D=DATA.matrix, M=DATA.meta;
+    var j = other ? (pair+3)%8 : pair;
+    var cos = D.S[pair][j];
+
+    capt(g,'ВЕЖА ЗОБРАЖЕНЬ',30,26,soft,11,true);
+    capt(g,'ВЕЖА ТЕКСТУ',30,242,soft,11,true);
+
+    drawShape(g, D.imgs[pair], 30, 40, 5);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(29.5,39.5,141,141);
+    capt(g,'28 x 28 = 784 числа',30,200,soft,11);
+
+    g.strokeStyle=teal; g.lineWidth=1.5; rr(g,196,62,116,96,10); g.stroke();
+    capt(g,'згортки',254,105,ink,12,true,'center');
+    capt(g,gr(M.imgParams)+' ваг',254,124,soft,10.5,false,'center');
+    g.strokeStyle=hair; g.lineWidth=2;
+    g.beginPath(); g.moveTo(176,110); g.lineTo(192,110); g.stroke();
+    g.beginPath(); g.moveTo(316,110); g.lineTo(344,110); g.stroke();
+
+    bars(g, D.iv[pair], 348, 62, 200, 96, teal, rose);
+    capt(g,'вектор із 32 чисел',348,176,soft,11);
+
+    var cap = D.caps[other? j : pair];
+    plate(g,'«'+cap+'»',30,262,ink,12.5,'left',css('--paper'));
+    var idx = D.tokidx[other? j : pair];
+    capt(g,'основи: '+D.tok[other? j : pair].join(' · '),30,286,soft,11);
+    var k, cx=30, cy=296;
+    for(k=0;k<M.vocab;k++){
+      g.fillStyle = idx.indexOf(k)>=0 ? rose : css('--paper');
+      g.fillRect(cx+k*8, cy, 7, 14);
+      g.strokeStyle=hair; g.lineWidth=.5; g.strokeRect(cx+k*8+.25, cy+.25, 6.5, 13.5);
+    }
+    capt(g,M.vocab+' клітинок словника',30,326,soft,10.5);
+
+    g.strokeStyle=teal; g.lineWidth=1.5; rr(g,196,304,116,76,10); g.stroke();
+    capt(g,'два шари',254,336,ink,12,true,'center');
+    capt(g,gr(M.txtParams)+' ваги',254,354,soft,10.5,false,'center');
+    g.strokeStyle=hair; g.lineWidth=2;
+    g.beginPath(); g.moveTo(176,342); g.lineTo(192,342); g.stroke();
+    g.beginPath(); g.moveTo(316,342); g.lineTo(344,342); g.stroke();
+
+    bars(g, D.tv[other? j : pair], 348, 298, 200, 88, teal, rose);
+    capt(g,'вектор із 32 чисел',348,404,soft,11);
+
+    g.strokeStyle=hair; g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(552,110); g.lineTo(576,110); g.lineTo(576,342);
+    g.lineTo(552,342); g.stroke();
+    g.beginPath(); g.moveTo(576,226); g.lineTo(608,226); g.stroke();
+    g.beginPath(); g.moveTo(602,221); g.lineTo(608,226); g.lineTo(602,231); g.stroke();
+
+    var col = cos>0.6? teal : (cos>0.25? css('--amber') : rose);
+    g.strokeStyle=col; g.lineWidth=2; rr(g,620,180,220,92,12); g.stroke();
+    capt(g,'КОСИНУС',730,208,soft,11,true,'center');
+    g.fillStyle=col; g.font='700 32px "JetBrains Mono",monospace';
+    g.textAlign='center'; g.textBaseline='alphabetic'; g.fillText(fmt3(cos),730,248);
+    capt(g, other? 'із чужим описом' : 'зі своїм описом', 730, 292, ink, 12, true, 'center');
+
+    I('twPair').textContent=D.shapes[pair];
+    I('twCos').textContent=fmt3(cos);
+    if(!other){
+      verd('twVd','t-ok','ПАРА ЗІЙШЛАСЯ',
+        'Зображення і його власний опис дивляться майже в один бік: косинус '
+        +fmt3(cos)+'. Дві мережі, у яких немає жодної спільної ваги, зійшлися на '
+        +'спільній системі координат. Це й називають спільним простором.');
+    } else {
+      verd('twVd','t-no','ЧУЖИЙ ОПИС',
+        'Той самий вектор зображення проти опису «'+cap+'»: косинус '
+        +fmt3(cos)+'. Різниця між цим числом і попереднім — усе, що дало навчання.');
+    }
+  }
+  segment('twSeg', function(i){ pair=i; draw(); });
+  segment('twWho', function(i){ other=(i===1); draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 2 · Втрата по кроках ═════════════ */
+(function(){
+  var cv=I('cLoss'); if(!cv) return;
+  var step=0, N=4, TAU=0.07;
+  var LINES=['S = img @ txt.T','logits = S / tau','e = exp(logits)',
+             'part = e[i,i] / sum(e[i,:])','row = -log(part)',
+             'col = -log(e[i,i]/sum(e[:,i]))','loss = (row + col) / 2'];
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+    var S=DATA.matrix.S, k, j;
+    var x0=46, y0=64, cell=58;
+
+    capt(g,'МАТРИЦЯ СХОЖОСТІ 4 x 4',x0,30,soft,11,true);
+    capt(g,'рядки — зображення, стовпці — описи',x0,48,soft,10.5);
+
+    for(k=0;k<N;k++) for(j=0;j<N;j++){
+      var v=S[k][j], hot=(k===j), label;
+      if(step===0) label=fmt3(v);
+      else if(step===1) label=(v/TAU).toFixed(1);
+      else { var ex=Math.exp(v/TAU);
+             label = ex>=1000 ? (ex/1000).toFixed(0)+'k' : ex.toFixed(0); }
+      g.fillStyle = hot ? css('--teal-w') : css('--paper');
+      if(step>=3 && step<=4 && k===0 && !hot) g.fillStyle=css('--rose-w');
+      if(step>=5 && j===0 && !hot) g.fillStyle=css('--amber-w');
+      g.fillRect(x0+j*cell, y0+k*cell, cell-3, cell-3);
+      g.strokeStyle = hot? teal : hair; g.lineWidth = hot?2:1;
+      g.strokeRect(x0+j*cell+.5, y0+k*cell+.5, cell-4, cell-4);
+      capt(g, label, x0+j*cell+(cell-3)/2, y0+k*cell+(cell-3)/2+4,
+           hot? teal : ink, 11.5, hot, 'center');
+    }
+    capt(g,'діагональ — правильні пари',x0,y0+N*cell+16,teal,11,true);
+
+    var tx=340, ty=64;
+    var e=[], denom=0, denomCol=0, own;
+    for(j=0;j<N;j++){ e.push(Math.exp(S[0][j]/TAU)); denom+=e[j]; }
+    for(k=0;k<N;k++) denomCol+=Math.exp(S[k][0]/TAU);
+    own=Math.exp(S[0][0]/TAU);
+    var part=own/denom, rowLoss=-Math.log(part), colLoss=-Math.log(own/denomCol);
+
+    var txt;
+    if(step===0) txt=['Косинус між кожним зображенням','і кожним описом. На діагоналі —','справжні пари.'];
+    else if(step===1) txt=['Ділимо все на температуру','tau = 0.07. Різниці ростуть','у чотирнадцять разів.'];
+    else if(step===2) txt=['Експонента робить усі числа','додатними й різко підсилює','перевагу більшого.'];
+    else if(step===3) txt=['Чисельник — свій опис.','Знаменник — усі описи рядка.','Частка свого = '+part.toFixed(3)+'.'];
+    else if(step===4) txt=['Мінус логарифм частки:','втрата першого рядка '+rowLoss.toFixed(3)+'.','Зображення шукало свій опис.'];
+    else if(step===5) txt=['Те саме по стовпцю: тепер','опис шукає своє зображення.','Втрата стовпця '+colLoss.toFixed(3)+'.'];
+    else txt=['Середнє двох напрямків:','('+rowLoss.toFixed(3)+' + '+colLoss.toFixed(3)+') / 2 = '+(0.5*(rowLoss+colLoss)).toFixed(3)+'.','Ось чому втрата симетрична.'];
+    capt(g,'КРОК '+(step+1)+' / 7',tx,30,rose,11,true);
+    var t; for(t=0;t<txt.length;t++) capt(g,txt[t],tx,ty+t*22,ink,13);
+
+    /* напрямки малюємо ЗА межами матриці, щоб не закривати числа */
+    if(step>=3 && step<=4){
+      var ry=y0-8, rx=x0+N*cell-10;
+      g.strokeStyle=rose; g.lineWidth=2;
+      g.beginPath(); g.moveTo(x0, ry); g.lineTo(rx, ry); g.stroke();
+      g.beginPath(); g.moveTo(rx-5,ry-4); g.lineTo(rx,ry); g.lineTo(rx-5,ry+4); g.stroke();
+      capt(g,'по рядку', x0+N*cell+4, y0-4, rose,10.5,true);
+    }
+    if(step>=5){
+      var cx2=x0-9, cy2=y0+N*cell-12;
+      g.strokeStyle=amber; g.lineWidth=2;
+      g.beginPath(); g.moveTo(cx2, y0); g.lineTo(cx2, cy2); g.stroke();
+      g.beginPath(); g.moveTo(cx2-4,cy2-5); g.lineTo(cx2,cy2); g.lineTo(cx2+4,cy2-5); g.stroke();
+      capt(g,'по стовпцю', x0, y0+N*cell+34, amber,10.5,true);
+    }
+
+    var vy=162;
+    capt(g,'частка свого в рядку', tx, vy, soft,11,true);
+    capt(g, step>=3? part.toFixed(4) : '—', tx, vy+26, ink,17,true);
+    capt(g,'втрата рядка', tx+190, vy, soft,11,true);
+    capt(g, step>=4? rowLoss.toFixed(3) : '—', tx+190, vy+26, ink,17,true);
+    capt(g,'втрата стовпця', tx, vy+62, soft,11,true);
+    capt(g, step>=5? colLoss.toFixed(3) : '—', tx, vy+88, ink,17,true);
+    capt(g,'симетрична втрата', tx+190, vy+62, soft,11,true);
+    capt(g, step>=6? (0.5*(rowLoss+colLoss)).toFixed(3) : '—', tx+190, vy+88,
+         step>=6? teal : ink,17,true);
+
+    var html='', q;
+    for(q=0;q<LINES.length;q++)
+      html+='<div class="'+(q===step?'on':(q<step?'done':''))+'">'+LINES[q]+'</div>';
+    I('lsCode').innerHTML=html;
+    I('lsStep').textContent=(step+1)+' / 7';
+    I('lsBtn').textContent = step===LINES.length-1 ? 'спочатку' : 'крок';
+
+    if(step<3) verd('lsVd','t-mid','ГОТУЄМО ЧИСЛА',
+      'Поки що ніякої втрати немає — ми лише перетворюємо косинуси на числа, '
+      +'які можна порівнювати як частки від цілого.');
+    else if(step<5) verd('lsVd','t-mid','ОДИН НАПРЯМОК',
+      'Порахували, наскільки добре перше зображення знайшло свій опис серед '
+      +'чотирьох. Але опис теж має знайти своє зображення — цього ще немає.');
+    else verd('lsVd','t-ok','ДВА НАПРЯМКИ',
+      'Рядок — зображення, стовпець — опис: це різні сутності. Тому втрату '
+      +'рахують двічі й усереднюють. Ось звідки слово «симетрична».');
+  }
+  on('lsBtn','click',function(){ step=(step+1)%7; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 3 · Матриця схожості ═════════════ */
+(function(){
+  var cv=I('cMat'); if(!cv) return;
+  var TAUS=[0.02,0.05,0.07,0.10,0.15,0.20,0.30,0.50,0.70,1.00];
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal');
+    var D=DATA.matrix, S=D.S, N=8;
+    var tau=TAUS[+I('mtT').value], showRaw=(I('mtMode').dataset.raw==='1');
+    var k,j;
+
+    var P=[], hit=0;
+    for(k=0;k<N;k++){
+      var row=[], mx=-1e9, s=0;
+      for(j=0;j<N;j++) mx=Math.max(mx,S[k][j]/tau);
+      for(j=0;j<N;j++){ row.push(Math.exp(S[k][j]/tau-mx)); s+=row[j]; }
+      for(j=0;j<N;j++) row[j]/=s;
+      P.push(row);
+      var best=0; for(j=0;j<N;j++) if(row[j]>row[best]) best=j;
+      if(best===k) hit++;
+    }
+
+    var x0=300, y0=120, cell=46;
+    capt(g,'ЗОБРАЖЕННЯ',24,30,soft,11,true);
+    capt(g,'ОПИСИ',x0,30,soft,11,true);
+
+    for(k=0;k<N;k++){
+      drawShape(g, D.imgs[k], 30, y0+k*cell+3, 40/28);
+      capt(g, D.shapes[k], 76, y0+k*cell+26, soft, 11);
+    }
+    for(j=0;j<N;j++){
+      g.save();
+      g.translate(x0+j*cell+cell/2-6, y0-10);
+      g.rotate(-Math.PI/4);
+      capt(g, D.caps[j].length>16? D.caps[j].slice(0,15)+'…' : D.caps[j], 0,0, soft, 10.5);
+      g.restore();
+    }
+    for(k=0;k<N;k++) for(j=0;j<N;j++){
+      var raw=S[k][j], v = showRaw ? (raw+0.3)/1.3 : P[k][j];
+      g.fillStyle=heat(v);
+      g.fillRect(x0+j*cell, y0+k*cell, cell-2, cell-2);
+      if(k===j){ g.strokeStyle=teal; g.lineWidth=2;
+        g.strokeRect(x0+j*cell+1, y0+k*cell+1, cell-4, cell-4); }
+      capt(g, showRaw? raw.toFixed(2) : P[k][j].toFixed(2),
+           x0+j*cell+(cell-2)/2, y0+k*cell+(cell-2)/2+4,
+           v>0.62 ? '#fff' : ink, 10, k===j, 'center');
+    }
+
+    var dsum=0, osum=0, loss=0;
+    for(k=0;k<N;k++){
+      dsum+=S[k][k];
+      for(j=0;j<N;j++) if(j!==k) osum+=S[k][j];
+      loss += -Math.log(Math.max(P[k][k],1e-12));
+    }
+    var diag=dsum/N, off=osum/(N*N-N);
+    I('mtTv').textContent=tau.toFixed(2);
+    I('mtDiag').textContent=fmt3(diag);
+    I('mtOff').textContent=fmt3(off);
+    I('mtHit').textContent=hit+' / '+N;
+    I('mtLoss').textContent=(loss/N).toFixed(3);
+
+    capt(g, showRaw? 'у клітинках — сирі косинуси, від −0.30 до 1.00'
+                   : 'у клітинках — частки: кожен рядок додається до 1',
+         x0, y0+N*cell+26, soft, 11);
+    capt(g,'стеля повного незнання: log 8 = 2.079', x0, y0+N*cell+44, soft, 11);
+
+    if(showRaw)
+      verd('mtVd','t-ok','СИРІ КОСИНУСИ',
+        'Діагональ '+fmt3(diag)+' проти '+fmt3(off)+' поза нею. Температура тут '
+        +'ні до чого: це вивчена геометрія, і вона вже не змінюється.');
+    else if(tau<=0.05)
+      verd('mtVd','t-no','ЗАНАДТО РІЗКО',
+        'При tau = '+tau.toFixed(2)+' softmax віддає майже всю вагу одному стовпцю, '
+        +'і втрата падає до '+(loss/N).toFixed(3)+'. Модель перестає чути всіх, крім '
+        +'найсхожішого чужого: вчиться швидко, але нестійко.');
+    else if(tau>=0.70)
+      verd('mtVd','t-no','ЗАНАДТО МʼЯКО',
+        'При tau = '+tau.toFixed(2)+' стовпці майже рівні, втрата '+(loss/N).toFixed(3)
+        +' підповзає до стелі 2.079. Різниця між своїм і чужим майже не доходить '
+        +'до градієнта.');
+    else
+      verd('mtVd','t-ok','РОБОЧЕ ВІКНО',
+        'При tau = '+tau.toFixed(2)+' діагональ забирає більшу частину рядка, але '
+        +'чужі ще помітні. Максимум стоїть на діагоналі в '+hit+' рядках із '+N+'.');
+  }
+  on('mtT','input',draw);
+  on('mtMode','click',function(){
+    var b=I('mtMode'); b.dataset.raw = b.dataset.raw==='1'?'0':'1';
+    b.textContent = b.dataset.raw==='1' ? 'показати частки' : 'показати косинуси';
+    draw();
+  });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 4 · Нульовий постріл ═════════════ */
+(function(){
+  var cv=I('cZs'); if(!cv) return;
+  var pick=0;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose');
+    var Z=DATA.zeroshot, cos=Z.cos.photo[pick], prompts=Z.prompts.photo;
+    var k, best=0, second=-1;
+    for(k=0;k<6;k++) if(cos[k]>cos[best]) best=k;
+    for(k=0;k<6;k++) if(k!==best && (second<0 || cos[k]>cos[second])) second=k;
+
+    capt(g,'ЗОБРАЖЕННЯ',30,26,soft,11,true);
+    drawShape(g, Z.imgs[pick], 30, 40, 5);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(29.5,39.5,141,141);
+    capt(g,'насправді: '+Z.shapes[pick],30,202,ink,12,true);
+    capt(g,'жодної мітки не показано',30,222,soft,10.5);
+
+    capt(g,'КОСИНУС ІЗ ШІСТЬМА ОПИСАМИ',262,26,soft,11,true);
+    var x0=262, y0=44, bw=470, bh=26, gap=10;
+    for(k=0;k<6;k++){
+      var y=y0+k*(bh+gap);
+      var w=Math.max(2,(cos[k]+0.3)/1.3*bw);
+      var win=(k===best);
+      g.fillStyle = win ? (k===pick? teal : rose) : css('--hair');
+      g.fillRect(x0, y, w, bh);
+      capt(g,'«'+prompts[k]+'»', x0+8, y+18, win?'#fff':ink, 12, win);
+      capt(g, fmt3(cos[k]), x0+bw+10, y+18, win? (k===pick? teal : rose) : soft, 12, win);
+      if(k===pick) capt(g,'справжній клас', x0+bw+70, y+18, teal, 10.5, true);
+    }
+    capt(g,'шкала стовпчика: −0.30 … 1.00', x0, y0+6*(bh+gap)+14, soft, 10.5);
+
+    I('zsTrue').textContent=Z.shapes[pick];
+    I('zsSaid').textContent=Z.shapes[best];
+    I('zsGap').textContent=fmt3(cos[best]-cos[second]);
+    if(best===pick) verd('zsVd','t-ok','УГАДАЛА',
+      'Класифікатора немає взагалі. Є вектор зображення, є шість речень, '
+      +'прогнаних через текстову вежу, — і перемагає найбільший косинус, '
+      +fmt3(cos[best])+' проти '+fmt3(cos[second])+' у найближчого суперника.');
+    else verd('zsVd','t-no','ПОМИЛИЛАСЯ',
+      'Модель обрала «'+prompts[best]+'» ('+fmt3(cos[best])+') замість '
+      +'«'+prompts[pick]+'» ('+fmt3(cos[pick])+'). Такі випадки складають '
+      +'приблизно сьому частину тесту — нульовий постріл дешевий, але не безплатний '
+      +'за якістю.');
+  }
+  segment('zsSeg', function(i){ pick=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 5 · Композиційність ═════════════ */
+(function(){
+  var cv=I('cComp'); if(!cv) return;
+  var seen=false;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose');
+    var C=DATA.comp, cos = seen ? C.full : C.hold, k, best=0;
+    for(k=0;k<12;k++) if(cos[k]>cos[best]) best=k;
+    var right=C.prompts.indexOf('велике кільце');
+    var second=-1;
+    for(k=0;k<12;k++) if(k!==best && (second<0 || cos[k]>cos[second])) second=k;
+
+    capt(g,'ЗОБРАЖЕННЯ',30,26,soft,11,true);
+    drawShape(g, C.img, 30, 40, 5);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(29.5,39.5,141,141);
+    capt(g,'справжня пара:',30,202,soft,11);
+    capt(g,'«велике кільце»',30,224,ink,14,true);
+    capt(g, seen? 'пара БУЛА в навчанні' : 'пари в навчанні НЕ БУЛО',
+         30, 254, seen? teal : rose, 11.5, true);
+    capt(g, seen? 'у навчанні всі 60 комбінацій' : 'у навчанні 55 комбінацій із 60',
+         30, 274, soft, 10.5);
+
+    capt(g,'КОСИНУС ІЗ ДВАНАДЦЯТЬМА ПІДКАЗКАМИ',272,26,soft,11,true);
+    var x0=272, y0=44, bw=410, bh=22, gap=6;
+    for(k=0;k<12;k++){
+      var y=y0+k*(bh+gap);
+      var w=Math.max(2,(cos[k]+0.3)/1.3*bw);
+      var isBest=(k===best), isRight=(k===right);
+      g.fillStyle = isBest ? (isRight? teal : rose) : css('--hair');
+      g.fillRect(x0, y, w, bh);
+      capt(g,'«'+C.prompts[k]+'»', x0+8, y+15, isBest?'#fff':ink, 11.5, isBest);
+      capt(g, fmt3(cos[k]), x0+bw+10, y+15, isBest? (isRight?teal:rose) : soft, 11.5, isBest);
+      if(isRight) capt(g,'правильна пара', x0+bw+70, y+15, teal, 10.5, true);
+    }
+
+    I('cpSaid').textContent=C.prompts[best];
+    I('cpRight').textContent=fmt3(cos[right]);
+    I('cpBest').textContent=fmt3(cos[best]);
+    if(best===right) verd('cpVd','t-ok','ПАРА ЗІЙШЛАСЯ',
+      'Модель, яка бачила «велике кільце» під час навчання, впізнає його впевнено: '
+      +fmt3(cos[right])+' проти '+fmt3(cos[second])+' у найближчого суперника.');
+    else verd('cpVd','t-no','НЕ СКЛАЛА',
+      'Модель обрала «'+C.prompts[best]+'» ('+fmt3(cos[best])+') замість '
+      +'«велике кільце» ('+fmt3(cos[right])+'). Слово «велике» вона взяла правильно, '
+      +'а форму — ні: кільце вона знає тільки маленьким.');
+  }
+  segment('cpSeg', function(i){ seen=(i===1); draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 6 · Підказка має значення ═════════════ */
+(function(){
+  var cv=I('cPrompt'); if(!cv) return;
+  var pick=0;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose');
+    var P=DATA.prompts, v=P.variants[pick], base=P.variants[0], k;
+
+    capt(g,'ТОЧНІСТЬ НУЛЬОВОГО ПОСТРІЛУ',30,28,soft,11,true);
+    var x0=42, y0=48, w=540, h=232;
+    g.strokeStyle=hair; g.lineWidth=1;
+    var t;
+    for(t=0;t<=5;t++){
+      var yy=y0+h-h*(t/5);
+      g.beginPath(); g.moveTo(x0,yy+.5); g.lineTo(x0+w,yy+.5); g.stroke();
+      capt(g,(t/5).toFixed(1), x0-8, yy+4, soft, 10, false, 'right');
+    }
+    var bw=w/P.variants.length;
+    for(k=0;k<P.variants.length;k++){
+      var m=P.variants[k].mean, hh=h*m, s;
+      g.fillStyle = k===pick ? teal : css('--hair');
+      g.fillRect(x0+k*bw+bw*0.22, y0+h-hh, bw*0.56, hh);
+      for(s=0;s<P.variants[k].vals.length;s++){
+        g.fillStyle = k===pick ? ink : soft;
+        g.beginPath(); g.arc(x0+k*bw+bw*0.5, y0+h-h*P.variants[k].vals[s], 3, 0, 6.284); g.fill();
+      }
+      capt(g, m.toFixed(3), x0+k*bw+bw*0.5, y0+h-hh-8,
+           k===pick? teal : soft, 11.5, k===pick, 'center');
+      capt(g, P.variants[k].short, x0+k*bw+bw*0.5, y0+h+18,
+           k===pick? ink : soft, 11, k===pick, 'center');
+    }
+    var yc=y0+h-h*(1/6);
+    g.strokeStyle=rose; g.lineWidth=1.5; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(x0,yc); g.lineTo(x0+w,yc); g.stroke(); g.setLineDash([]);
+    plate(g,'вгадування 0.167', x0+w-4, yc-6, rose, 10.5, 'right', css('--raise'));
+    capt(g,'крапки — три зерна, стовпець — середнє', x0, y0+h+40, soft, 10.5);
+
+    capt(g,'ЩО САМЕ НАПИСАНО',616,28,soft,11,true);
+    for(k=0;k<v.prompts.length;k++)
+      capt(g,'«'+v.prompts[k]+'»', 616, 54+k*22, ink, 12);
+    if(pick===0){
+      capt(g,'це опорний варіант — з ним',616,204,soft,10.5);
+      capt(g,'порівнюємо решту трьох',616,222,soft,10.5);
+    } else {
+      capt(g,'різниця з голою назвою по зернах:',616,204,soft,10.5);
+      var dif=[];
+      for(k=0;k<3;k++){
+        var d=v.vals[k]-base.vals[k];
+        dif.push((d>=0?'+':'−')+Math.abs(d).toFixed(3));
+      }
+      capt(g, dif.join('   '), 616, 226, ink, 13, true);
+    }
+
+    I('prName').textContent=v.short;
+    I('prAcc').textContent=v.mean.toFixed(3)+' ±'+v.std.toFixed(3);
+    verd('prVd', v.tag, v.cap, v.text);
+  }
+  segment('prSeg', function(i){ pick=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 7 · Де ламається ═════════════ */
+(function(){
+  var cv=I('cBreak'); if(!cv) return;
+  var mode=0;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose');
+    var B=DATA.breaks, Z=DATA.zeroshot, img, prompts, cos, title, sub;
+    if(mode===0){ img=B.circle_img; prompts=Z.prompts.bare; cos=Z.cos.bare[0];
+                  title='звичайний'; sub='коло'; }
+    else if(mode===1){ img=B.circle_img; prompts=Z.prompts.neg; cos=Z.cos.neg[0];
+                  title='заперечення'; sub='коло'; }
+    else if(mode===2){ img=B.two_img; prompts=B.order_prompts; cos=B.order_cos;
+                  title='порядок'; sub='коло і квадрат'; }
+    else { img=B.circle_img; prompts=B.count_prompts; cos=B.count_img_cos;
+                  title='лічба'; sub='коло, одне'; }
+
+    capt(g,'ЗОБРАЖЕННЯ',30,26,soft,11,true);
+    drawShape(g, img, 30, 40, 5);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(29.5,39.5,141,141);
+    capt(g, sub, 30, 202, ink, 12, true);
+
+    capt(g,'ОПИСИ',252,26,soft,11,true);
+    var x0=252, y0=44, bw=470, bh=28, gap=12, k, best=0;
+    for(k=0;k<cos.length;k++) if(cos[k]>cos[best]) best=k;
+    var tie=true;
+    for(k=0;k<cos.length;k++) if(Math.abs(cos[k]-cos[0])>1e-9) tie=false;
+    for(k=0;k<cos.length;k++){
+      var y=y0+k*(bh+gap);
+      var w=Math.max(2,(cos[k]+0.3)/1.3*bw);
+      var win=(k===best && !tie);
+      g.fillStyle = win ? (mode===0? teal : rose) : css('--hair');
+      if(tie) g.fillStyle=css('--amber-w');
+      g.fillRect(x0,y,w,bh);
+      capt(g,'«'+prompts[k]+'»', x0+8, y+19, win?'#fff':ink, 12.5, win);
+      capt(g, cos[k].toFixed(4), x0+bw+10, y+19,
+           win? (mode===0? teal : rose) : soft, 12, win);
+    }
+
+    I('bkMode').textContent=title;
+    I('bkSaid').textContent = tie ? 'нічого' : '«'+prompts[best]+'»';
+    if(mode===0) verd('bkVd','t-ok','ТАК ВОНО ПРАЦЮЄ',
+      'Опорна точка. На звичайних описах модель обирає правильний: '
+      +fmt3(cos[best])+' проти решти.');
+    else if(mode===1) verd('bkVd','t-no','ЗАПЕРЕЧЕННЯ НЕ ПОМІЧЕНЕ',
+      'Для кола модель обрала «не коло» — тобто єдину підказку, яка точно хибна. '
+      +'Слово «не» додає в мішок одну одиницю й не має жодного способу перевернути '
+      +'зміст решти: косинус між «коло» і «не коло» — '+B.neg_cos.toFixed(3)+'.');
+    else if(mode===2) verd('bkVd','t-no','ПОРЯДКУ НЕ ІСНУЄ',
+      'Два описи дають '+cos[0].toFixed(4)+' і '+cos[1].toFixed(4)+' — різниця '
+      +Math.abs(cos[0]-cos[1]).toFixed(6)+'. Це не «майже однаково», це той самий '
+      +'вектор: мішки слів обох речень збігаються побітово.');
+    else verd('bkVd','t-no','ЛІЧБИ НЕМАЄ',
+      'Числівників у словнику немає взагалі, тому «два кола» дає той самий мішок, '
+      +'що й «коло»: косинус між описами '+B.count_cos.toFixed(4)+'. Кількість не '
+      +'виражена нічим — отже, і розрізнити її нічим.');
+  }
+  segment('bkSeg', function(i){ mode=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,2358 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swin і гібриди: як трансформеру повернули локальність та ієрархію</title>
+<meta name="description" content="Дві вади Vision Transformer — квадратична ціна уваги й пласка роздільність — і як їх лагодять. Увага у вікнах робить ціну лінійною, зсув вікон зшиває сусідів, обʼєднання патчів будує піраміду. Розбір swin_t по стадіях, відносне позиційне зміщення, ConvNeXt як згортка за рецептом трансформера і практичний вибір архітектури.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 4 · Тема 21</p>
+    <h1>Swin і гібриди</h1>
+    <p class="stand">Vision Transformer викинув із мережі локальність та ієрархію —
+      і одразу заплатив за це двічі: квадратичною ціною уваги й відсутністю
+      піраміди масштабів. Swin повертає обидві речі, не відмовляючись від уваги.
+      А ConvNeXt заходить із другого боку й показує дещо незручне: частина переваги
+      трансформерів була не в архітектурі.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Що лишилось не так</a></li>
+        <li><a href="#s2">Увага всередині вікна</a></li>
+        <li><a href="#s3">Вікна не спілкуються</a></li>
+        <li><a href="#s4">Зсунуті вікна</a></li>
+        <li><a href="#s5">Ієрархія: обʼєднання патчів</a></li>
+        <li><a href="#s6">Відносне позиційне зміщення</a></li>
+        <li><a href="#s7">Розбір справжнього Swin-T</a></li>
+        <li><a href="#s8">Три моделі на нашій задачі</a></li>
+        <li><a href="#s9">Що це дало галузі</a></li>
+        <li><a href="#s10">ConvNeXt: згортка за рецептом трансформера</a></li>
+        <li><a href="#s11">Гібриди взагалі</a></li>
+        <li><a href="#s12">Що обирати на практиці</a></li>
+        <li><a href="#s13">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../20-vision-transformer/lecture.html">← 20. Vision Transformer</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../22-clip/lecture.html">22. CLIP і мультимодальність →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Попередня тема зібрала Vision Transformer і чесно назвала два місця,
+де він тріщить. Перше: увага рахує вагу для кожної пари токенів, тому ціна росте
+як квадрат їхньої кількості. Друге: роздільність у ViT не міняється від першого
+блоку до останнього — жодної піраміди, жодного пулінга. Цікаво, що обидві втрати
+— це рівно те, що згортка мала задарма. Ця тема про те, як обидві речі повернули
+назад, не викидаючи увагу.</p>
+
+<h2 id="s1"><span class="num">01 / Діагноз</span>Що лишилось не так</h2>
+
+<p>Почнемо з чисел, які вже стоять у курсі, щоб не вигадувати проблему на порожньому
+місці.</p>
+
+<h3>Вада перша: ціна квадратична</h3>
+
+<p>У <a href="../19-conv-to-attention/lecture.html">темі 19</a> ми порахували, у що
+обходиться увага на зображенні 28×28. Патч 2×2 дає 196 токенів, а це 38 416 пар
+і 2 458 624 множення на одному-єдиному шарі. Для картинки завбільшки з долоню.</p>
+
+<p>Сама по собі квадратична залежність — не вирок. Вирок починається там, де
+задача вимагає високої роздільності. Класифікації досить сітки 7×7: питання
+«що на фото» не потребує знати, де саме проходить межа предмета. А сегментація
+має пофарбувати <em>кожен піксель</em>, детекція — поставити рамку з точністю
+до пікселів. Обом потрібна густа сітка ознак, тобто багато токенів.</p>
+
+<p>Порахуємо, у що це виливається. Беремо фотографію 224×224 і патч 4×4 — сітка
+виходить 56×56, тобто <b>3 136 токенів</b>. Пар уваги: 3 136 × 3 136 =
+<b>9 834 496</b>. Майже десять мільйонів пар на кожному шарі, а шарів дванадцять.
+Подвоїш сторону зображення — кількість токенів зросте вчетверо, а кількість пар
+у <b>шістнадцять</b> разів.</p>
+
+<h3>Вада друга: немає ієрархії</h3>
+
+<p>Згорткова мережа влаштована як лійка. У <a href="../08-pooling/lecture.html">темі
+08</a> ми додали пулінг, який ділить сторону карти навпіл, а
+в <a href="../09-cnn-complete/lecture.html">темі 09</a> сформулювали правило
+подвоєння: зменшив сторону вдвічі — подвой кількість каналів. Виходить
+послідовність рівнів, де перший бачить краї на дрібній сітці, а останній —
+цілі предмети на грубій.</p>
+
+<p>ViT цього не робить взагалі. Усі дванадцять блоків ViT-B/16 працюють з однією
+й тією самою сіткою 14×14. Роздільність на вході й на виході однакова, каналів
+скрізь 768. Це не помилка реалізації, це властивість задуму: трансформер для
+тексту теж не міняє довжину послідовності від шару до шару.</p>
+
+<p>Для класифікації воно й не заважає. Але детектори й сегментатори будуються
+на <b>ознаках кількох масштабів</b> одразу: дрібна сітка ловить маленькі предмети,
+груба — великі. Мережа, яка віддає лише один рівень, для них незручна.</p>
+
+<div class="note"><b>Одна причина на дві вади.</b> Обидві проблеми ростуть з
+одного кореня — ViT відмовився від локальності. Локальність не лише вносила в
+мережу правильне припущення про світ, вона ще й <em>обмежувала обчислення</em>:
+ядро 3×3 дивиться на девʼять сусідів незалежно від розміру картинки, тому ціна
+згортки лінійна за кількістю пікселів. І саме локальність робила осмисленим
+пулінг: якщо звʼязки й так короткі, згрубити сітку не страшно.</div>
+
+<p>Swin Transformer (від <em>shifted windows</em> — «зсунуті вікна») повертає
+обидві речі. Увага лишається головною операцією, але їй ставлять два обмеження:
+дивитись тільки всередині невеликого вікна й час від часу згрублювати сітку.
+Далі — по одному обмеженню за раз.</p>
+
+<h2 id="s2"><span class="num">02 / Вікна</span>Увага всередині вікна</h2>
+
+<p>Ідея настільки проста, що її можна описати одним реченням: <b>поділимо сітку
+токенів на квадратні вікна w×w і рахуватимемо увагу окремо в кожному вікні</b>.
+Токен із лівого верхнього вікна не бачить токенів із правого нижнього — просто
+тому, що вони не потрапили в одну матрицю уваги.</p>
+
+<p>Тепер порахуємо ціну. Це той рідкісний випадок, коли вся суть теми
+вміщується в дві формули з двох множників.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Крок 1 · Повна увага</span>
+    <p>Кожен з <b>n</b> токенів рахує вагу до кожного з <b>n</b> токенів. Пар
+    виходить n × n.</p>
+    <div class="eq">пар = n<span class="sup">2</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 2 · Скільки вікон</span>
+    <p>Одне вікно вміщує w × w = w<span class="sup">2</span> токенів. Щоб покрити
+    всі n токенів, потрібно n ділити на w<span class="sup">2</span> вікон.</p>
+    <div class="eq">вікон = n ÷ w<span class="sup">2</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 3 · Скільки пар в одному вікні</span>
+    <p>Усередині вікна працює звичайна повна увага, тільки над
+    w<span class="sup">2</span> токенами. Отже, пар у вікні —
+    квадрат цього числа, тобто w<span class="sup">4</span>.</p>
+    <div class="eq">пар у вікні = (w<span class="sup">2</span>)<span class="sup">2</span> = w<span class="sup">4</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 4 · Множимо</span>
+    <p>Пар усього — це кількість вікон помножена на кількість пар у кожному.
+    Два множники частково скорочуються, і лишається просто добуток.</p>
+    <div class="eq">пар = (n ÷ w<span class="sup">2</span>) × w<span class="sup">4</span> = n × w<span class="sup">2</span></div>
+  </div>
+</div>
+
+<p>Прочитай останній рядок повільно. Зліва в повній увазі стояло
+n<span class="sup">2</span> — <b>n множилось саме на себе</b>. Тепер n множиться
+на w<span class="sup">2</span>, а <b>w — це стала</b>, її обирає розробник і не
+міняє при зміні розміру зображення. Отже, ціна перестала бути квадратичною за
+кількістю токенів і стала <b>лінійною</b>: подвоїв кількість токенів — подвоїв
+ціну, а не вчетверив.</p>
+
+<p>Числа, які це показують. Вікно скрізь 7×7, патч 4×4, тобто саме те, що бере
+справжній Swin.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>зображення</th><th>сітка</th><th>токенів</th><th>повна увага</th><th>вікна 7×7</th><th>вікон</th><th>дешевше</th></tr>
+<tr><td>28×28</td><td>7×7</td><td>49</td><td>2 401</td><td>2 401</td><td>1</td><td>—</td></tr>
+<tr><td>56×56</td><td>14×14</td><td>196</td><td>38 416</td><td>9 604</td><td>4</td><td>4×</td></tr>
+<tr><td>112×112</td><td>28×28</td><td>784</td><td>614 656</td><td>38 416</td><td>16</td><td>16×</td></tr>
+<tr class="hot"><td>224×224</td><td>56×56</td><td>3 136</td><td>9 834 496</td><td>153 664</td><td>64</td><td>64×</td></tr>
+<tr><td>448×448</td><td>112×112</td><td>12 544</td><td>157 351 936</td><td>614 656</td><td>256</td><td>256×</td></tr>
+</table>
+</div>
+
+<p>Перший рядок таблиці — наша навчальна картинка 28×28 з патчем 4. Сітка виходить
+7×7, тобто <b>рівно одне вікно 7×7</b>, і віконна увага збігається з повною до
+останнього біта. Це не збіг обставин, а корисна перевірка: у практиці ми беремо
+власну реалізацію віконної уваги, ставимо вікно на всю сітку й звіряємо
+з <code>nn.MultiheadAttention</code>. <code>np.allclose</code> дає <b>True</b>,
+найбільша різниця <b>0.0</b> — не «майже нуль», а точний нуль, бо це буквально
+той самий обчислювальний шлях.</p>
+
+<p>Другий висновок таблиці ще простіший: <b>на маленьких зображеннях вікна не
+дають нічого</b>. Виграш зʼявляється рівно тоді, коли токенів більше, ніж уміщує
+одне вікно, і росте разом із роздільністю. На 224×224 це вже 64 рази.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Ціна: повна увага проти вікон</p>
+  <p class="fig-sub">Повзунок міняє роздільність зображення. Дві криві на
+    логарифмічній шкалі: скільки пар уваги рахує один шар при повній увазі
+    й при вікнах 7×7. Дивись не на самі числа, а на <b>нахил</b>: одна крива
+    крута, друга майже вдвічі пологіша.</p>
+  <div class="panel">
+    <div><canvas id="cCost" width="940" height="400" aria-label="Дві криві кількості пар уваги залежно від кількості токенів: квадратична для повної уваги і лінійна для вікон"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="res2">роздільність <output id="res2v">224</output></label>
+        <input type="range" id="res2" min="0" max="5" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>токенів</b><i id="res2tok">—</i></div>
+        <div class="cellv"><b>вікон 7×7</b><i id="res2nw">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пар: повна</b><i id="res2full" class="sm">—</i></div>
+        <div class="cellv"><b>пар: вікна</b><i id="res2win" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>дешевше в</b><i id="res2gain">—</i></div>
+      </div>
+      <div class="verdict" id="res2vd"></div>
+    </div>
+  </div>
+  <figcaption>Патч скрізь 4×4, вікно 7×7. «Пар» — кількість елементів матриці
+    уваги, які треба порахувати на одному шарі. Крива вікон обривається там, де
+    сторона сітки перестає ділитись на 7 без остачі.</figcaption>
+</figure>
+
+<p>Тепер про сам розмір вікна. Це та сама ручка компромісу, що й розмір патча
+в <a href="../20-vision-transformer/lecture.html">темі 20</a>, тільки з іншого
+боку. Велике вікно — ближче до повної уваги: більше видно, дорожче рахувати.
+Мале вікно — дешево, але токен майже нічого не бачить навколо себе.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Сітка вікон і лічильник пар</p>
+  <p class="fig-sub">Сітка 28×28 токенів (це зображення 112×112 з патчем 4).
+    Повзунок міняє розмір вікна. Лічильники показують окремо, скільки пар
+    усередині одного вікна, і скільки їх виходить на всю сітку.</p>
+  <div class="panel">
+    <div><canvas id="cWin" width="940" height="380" aria-label="Сітка двадцять вісім на двадцять вісім токенів, поділена на квадратні вікна; праворуч стовпчики кількості пар уваги"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="w3">сторона вікна <output id="w3v">7</output></label>
+        <input type="range" id="w3" min="0" max="5" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вікон</b><i id="w3nw">—</i></div>
+        <div class="cellv"><b>токенів у вікні</b><i id="w3tw">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пар в одному вікні</b><i id="w3pw" class="sm">—</i></div>
+        <div class="cellv"><b>пар усього</b><i id="w3pt" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="w3vd"></div>
+    </div>
+  </div>
+  <figcaption>Сітка 28×28 = 784 токени. Повна увага на ній коштує 614 656 пар —
+    це значення відповідає вікну 28. Справжній Swin бере вікно 7 в усіх чотирьох
+    стадіях.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Проблема</span>Вікна не спілкуються</h2>
+
+<p>Тепер найважливіше місце теми. Вікна зробили увагу дешевою — і одночасно
+розрізали зображення на незалежні шматки, які нічого не знають одне про одного.
+Причому це не «майже не знають», а <b>рівно нічого</b>, і довести це можна
+без жодного навчання.</p>
+
+<p>Дослід такий. Беремо сітку 14×14 токенів і вікно 7×7 — виходить чотири вікна.
+Беремо два випадкові набори токенів, які відрізняються <b>одним-єдиним токеном</b>
+у лівому верхньому вікні. Проганяємо обидва набори крізь один шар віконної уваги
+з однаковими вагами й дивимось, у скількох токенах виходи розійшлися.</p>
+
+<div class="eq">змінили 1 токен із 196 → на виході змінилось <b>49</b> токенів</div>
+
+<p>Сорок девʼять — це рівно розмір одного вікна. Змінений токен вплинув на всіх
+своїх сусідів по вікну й <b>ні на кого більше</b>. Різниця в трьох інших вікнах
+дорівнює нулю — не «дуже маленькому числу», а нулю, бо ці числа взагалі не
+брали участі в тому самому обчисленні.</p>
+
+<p>Далі найцікавіше. Додаємо другий шар, третій, четвертий — і нічого не міняється.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>шарів віконної уваги</th><th>1</th><th>2</th><th>3</th><th>4</th></tr>
+<tr><td>зачеплено токенів із 196</td><td>49</td><td>49</td><td>49</td><td>49</td></tr>
+</table>
+</div>
+
+<p>Скільки шарів не став — інформація не вийде за межу вікна ніколи. У згортковій
+мережі так не буває: там рецептивне поле росте з кожним шаром
+(<a href="../09-cnn-complete/lecture.html">тема 09</a>), і за тринадцять шарів
+ядро 3×3 доростає до 27×27. Тут воно не росте зовсім. Мережа з віконної уваги
+без жодної добавки — це чотири окремі маленькі мережі, склеєні скотчем.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Хто з ким може обмінятись інформацією</p>
+  <p class="fig-sub">Сітка 14×14 токенів. Рожевим позначено токен, який ми
+    змінили; бірюзовим — усі токени, на які зміна вже вплинула. Додавай шари
+    й перемикай режим. У режимі «звичайні» бірюзова пляма не росте ніколи.</p>
+  <div class="panel">
+    <div><canvas id="cTalk" width="940" height="470" aria-label="Сітка чотирнадцять на чотирнадцять токенів; підсвічено область, до якої дійшла інформація від одного зміненого токена"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">режим вікон</span>
+        <div class="seg" id="seg4">
+          <button data-i="0" aria-pressed="true">звичайні</button>
+          <button data-i="1" aria-pressed="false">чергування зі зсунутими</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="l4">шарів <output id="l4v">1</output></label>
+        <input type="range" id="l4" min="1" max="4" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зачеплено токенів</b><i id="l4n">—</i></div>
+        <div class="cellv"><b>частка сітки</b><i id="l4p">—</i></div>
+      </div>
+      <div class="verdict" id="l4vd"></div>
+    </div>
+  </div>
+  <figcaption>Змінений токен — рядок 3, стовпець 6, тобто край лівого верхнього
+    вікна. Числа 49 · 100 · 196 заміряні в практиці прямим прогоном
+    <code>nn.MultiheadAttention</code>, а не намальовані.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Лікування</span>Зсунуті вікна</h2>
+
+<p>Розвʼязок, який дали автори Swin, теж уміщується в одне речення: <b>у сусідньому
+шарі зсунемо всю сітку вікон на пів вікна по діагоналі</b>. Межі опиняться в
+інших місцях, і токени, які були по різні боки старої межі, тепер лежать в
+одному вікні.</p>
+
+<p>Для вікна 7 зсув дорівнює 7 ÷ 2 = 3 (ділимо націло). Шари чергуються:
+непарний — звичайні вікна, парний — зсунуті, і так до кінця стадії. Саме тому
+блоки в Swin завжди йдуть парами: блок зі зсувом сам по собі нічого не дає,
+працює саме <b>чергування</b>.</p>
+
+<div class="note warn"><b>Перевір це на собі.</b> Легко подумати, що справа у
+зсуві як такому. Ні. Якщо зсунути <em>усі</em> шари однаково, розбиття на вікна
+знову буде однаковим у всіх шарах — і замір дасть ті самі 49 токенів назавжди.
+Ми це перевірили: «усі шари зсунуті» дає 49, 49, 49, 49. Працює тільки різниця
+між сусідніми шарами.</div>
+
+<p>Тепер той самий дослід із чергуванням.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>шарів</th><th>1</th><th>2</th><th>3</th><th>4</th></tr>
+<tr><td>звичайні вікна</td><td>49</td><td>49</td><td>49</td><td>49</td></tr>
+<tr class="hot"><td>чергування зі зсунутими</td><td>49</td><td>100</td><td>196</td><td>196</td></tr>
+<tr><td>усі шари зсунуті однаково</td><td>49</td><td>49</td><td>49</td><td>49</td></tr>
+</table>
+</div>
+
+<p>Після другого шару зачеплено вже 100 токенів замість 49 — інформація перетекла
+через межу. Після третього — усі 196, тобто вся сітка. Три шари, і крайній лівий
+верхній токен уже впливає на крайній правий нижній.</p>
+
+<h3>Дві технічні деталі, без яких воно не працює</h3>
+
+<p>Зсув створює проблему на краях. Якщо просто посунути сітку вікон на три
+клітинки, з країв вилізуть <b>неповні вікна</b>: замість чотирьох вікон 7×7
+вийде девʼять шматків різного розміру — 7×7, 7×4, 7×3, 4×4 і так далі. Рахувати
+увагу для девʼяти різних форм незручно й повільно.</p>
+
+<ol class="steps">
+  <li><b>Циклічний зсув.</b> Замість того щоб рухати межі вікон, рухають самі дані:
+    беруть усю сітку й прокручують її на три клітинки вгору й уліво, як барабан.
+    Те, що вилізло згори, підклеюється знизу. Тепер сітку знову можна різати на
+    рівні вікна 7×7, і їх знову рівно чотири. У коді це один
+    рядок — <code>torch.roll</code>.</li>
+  <li><b>Маска.</b> Прокручування підклеїло верхній край до нижнього — а це
+    протилежні кінці зображення, вони не повинні бачити одне одного. Тому в
+    матрицю уваги додають маску: пари, які зійшлися лише через прокручування,
+    забороняють. Технічно це означає підставити −∞ перед softmax, і після
+    softmax така пара дістає рівно нульову вагу.</li>
+</ol>
+
+<p>Скільки пар доводиться заборонити — цифри з практики, сітка 14×14, вікно 7,
+зсув 3:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>вікно після зсуву</th><th>заблоковано пар</th><th>із</th><th>частка</th></tr>
+<tr><td>ліве верхнє</td><td>0</td><td>2 401</td><td>0 %</td></tr>
+<tr><td>праве верхнє</td><td>1 176</td><td>2 401</td><td>49 %</td></tr>
+<tr><td>ліве нижнє</td><td>1 176</td><td>2 401</td><td>49 %</td></tr>
+<tr><td>праве нижнє</td><td>1 776</td><td>2 401</td><td>74 %</td></tr>
+</table>
+</div>
+
+<p>Ліве верхнє вікно після прокручування зібралось із суцільного шматка сітки —
+блокувати нема чого. Праве нижнє склеїлось із чотирьох різних кутів зображення,
+тому в ньому дозволено лише чверть пар. Загальний рахунок такий: маска ріже
+частину роботи, але не міняє ані форми тензорів, ані кількості вікон — а саме це
+й потрібно, щоб операція лишалась швидкою.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Зсув по кроках</p>
+  <p class="fig-sub">Найскладніша механіка теми, розкладена на чотири кроки.
+    Тисни «наступний крок» і дивись, що відбувається з сіткою 14×14: звичайні
+    вікна → зсунуті межі → циклічний зсув даних → маска. Кожен крок пояснено
+    підписом під картинкою.</p>
+  <div class="panel">
+    <div><canvas id="cShift" width="940" height="480" aria-label="Чотири кроки побудови зсунутих вікон: звичайне розбиття, зсунуті межі з неповними вікнами, циклічний зсув даних і маска заборонених пар"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">крок</span>
+        <div class="seg wrap" id="seg5">
+          <button data-i="0" aria-pressed="true">1 · вікна</button>
+          <button data-i="1" aria-pressed="false">2 · зсув межі</button>
+          <button data-i="2" aria-pressed="false">3 · torch.roll</button>
+          <button data-i="3" aria-pressed="false">4 · маска</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>шматків уваги</b><i id="s5n">—</i></div>
+        <div class="cellv"><b>різних розмірів</b><i id="s5f">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>заблоковано пар</b><i id="s5m" class="sm">—</i></div>
+      </div>
+      <div class="btnrow"><button id="s5next">наступний крок</button></div>
+      <div class="verdict" id="s5vd"></div>
+    </div>
+  </div>
+  <figcaption>Кольори на кроках 3 і 4 позначають, з якої частини вихідної сітки
+    прийшов токен. Однаковий колір усередині вікна означає «можна дивитись
+    одне на одного», різний — «заборонено маскою».</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Піраміда</span>Ієрархія: обʼєднання патчів</h2>
+
+<p>Друга вада ViT — пласка роздільність. Лікують її прийомом, який ти вже
+знаєш під іншою назвою.</p>
+
+<p><b>Обʼєднання патчів</b> (patch merging) робить із чотирьох сусідніх токенів
+один. Механіка буквальна:</p>
+
+<ol class="steps">
+  <li>Беремо квадрат 2×2 сусідніх токенів. У кожного вектор довжини C.</li>
+  <li><b>Зчіплюємо</b> чотири вектори в один — виходить вектор довжини 4C.
+    Нічого не втрачено: усі числа на місці, просто складені в стовпчик.</li>
+  <li>Пропускаємо крізь LayerNorm і лінійний шар 4C → 2C. Ось тут половина
+    чисел і зникає — але зникає <em>навчено</em>, а не за правилом «бери
+    найбільше», як у пулінгу.</li>
+</ol>
+
+<div class="eq">сітка 56×56, C=96 &nbsp;→&nbsp; сітка 28×28, C=192</div>
+
+<p>Сторона сітки поділилась навпіл, кількість токенів упала вчетверо, а каналів
+стало вдвічі більше. Це дослівно <b>правило подвоєння</b>
+з <a href="../09-cnn-complete/lecture.html">теми 09</a>, тільки замість пулінга
+й згортки з кроком 2 стоїть зчеплення й лінійний шар. Ідея та сама, механізм
+інший.</p>
+
+<p>Тепер порахуємо форми наскрізь для справжнього Swin-T на зображенні 224×224.
+Патч 4×4, початкова розмірність 96, чотири стадії.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>стадія</th><th>сітка</th><th>каналів</th><th>токенів</th><th>чисел у карті</th><th>пар: вікна 7</th><th>пар: повна увага</th></tr>
+<tr><td>1</td><td>56×56</td><td>96</td><td>3 136</td><td>301 056</td><td>153 664</td><td>9 834 496</td></tr>
+<tr><td>2</td><td>28×28</td><td>192</td><td>784</td><td>150 528</td><td>38 416</td><td>614 656</td></tr>
+<tr><td>3</td><td>14×14</td><td>384</td><td>196</td><td>75 264</td><td>9 604</td><td>38 416</td></tr>
+<tr><td>4</td><td>7×7</td><td>768</td><td>49</td><td>37 632</td><td>2 401</td><td>2 401</td></tr>
+</table>
+</div>
+
+<p>Порівняй із ResNet із <a href="../14-resnet/lecture.html">теми 14</a>, який
+працює з тим самим входом 224×224:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>рівень</th><th>ResNet: сітка</th><th>каналів</th><th>Swin-T: сітка</th><th>каналів</th></tr>
+<tr><td>1</td><td>56×56</td><td>64</td><td>56×56</td><td>96</td></tr>
+<tr><td>2</td><td>28×28</td><td>128</td><td>28×28</td><td>192</td></tr>
+<tr><td>3</td><td>14×14</td><td>256</td><td>14×14</td><td>384</td></tr>
+<tr><td>4</td><td>7×7</td><td>512</td><td>7×7</td><td>768</td></tr>
+</table>
+</div>
+
+<p>Роздільності <b>збігаються повністю</b>, канали більші рівно в півтора раза.
+Це не випадковість, а свідоме рішення: Swin будували так, щоб його можна було
+вставити замість ResNet у будь-який готовий детектор чи сегментатор без переробки
+всього іншого. Про наслідки — у розділі 9.</p>
+
+<p>Зверни увагу й на останній стовпчик попередньої таблиці. На четвертій стадії
+сітка 7×7 — це рівно одне вікно, і віконна увага там знову перетворюється на
+повну. Тобто Swin обмежує увагу вікном лише там, де це справді дорого, а на
+глибоких стадіях спокійно дивиться на всю карту.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Скільки додавати каналів при кожному обʼєднанні</p>
+  <p class="fig-sub">Чотири стадії Swin. Роздільність падає вдвічі завжди —
+    а от у скільки разів рости каналам, вирішує розробник. Покрути множник
+    і подивись на дві речі: як худне карта ознак і у що обходяться самі шари
+    обʼєднання. Пунктиром — ResNet для порівняння.</p>
+  <div class="panel">
+    <div><canvas id="cStage" width="940" height="420" aria-label="Чотири стадії з роздільністю, кількістю каналів і обсягом карти ознак; поруч пунктиром рівні ResNet"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="mul6">множник каналів <output id="mul6v">×2</output></label>
+        <input type="range" id="mul6" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>каналів на стадії 4</b><i id="mul6c">—</i></div>
+        <div class="cellv"><b>чисел у карті стадії 4</b><i id="mul6m" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>ваг у трьох шарах обʼєднання</b><i id="mul6w" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="mul6vd"></div>
+    </div>
+  </div>
+  <figcaption>Один шар обʼєднання коштує 8C ваг на LayerNorm плюс 4C×kC на
+    лінійний шар без зсуву, де C — каналів до обʼєднання, k — множник.
+    Для порівняння: уся мережа swin_t важить 28 288 354 ваги. «Без зсуву» тут
+    означає <code>bias=False</code> — вектора зсуву в цього лінійного шару
+    немає.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Геометрія</span>Відносне позиційне зміщення</h2>
+
+<p>У <a href="../20-vision-transformer/lecture.html">темі 20</a> ми бачили, що
+увага не знає порядку, і геометрію їй доводиться повідомляти окремо. ViT робить
+це <b>абсолютним</b> позиційним кодуванням: до кожного токена один раз на вході
+додається вектор, який означає «я токен номер 37». У ViT-B/16 це 151 296 ваг.</p>
+
+<p>Swin так не може, і на те дві причини.</p>
+
+<ol class="steps">
+  <li><b>Вікна зсуваються.</b> Один і той самий токен у сусідніх шарах опиняється
+    на різних місцях усередині свого вікна. Абсолютний номер токена в кадрі
+    вікну нічого не каже.</li>
+  <li><b>Усередині вікна важлива не адреса, а відстань.</b> Питання, на яке
+    відповідає увага, звучить не «ти токен номер 37?», а «ти мій сусід зверху
+    чи через три клітинки праворуч?». Це <em>відносна</em> геометрія.</li>
+</ol>
+
+<p>Тому Swin додає до <b>оцінки пари</b> (тобто до числа перед softmax) окреме
+навчене число, яке залежить лише від того, на скільки клітинок один токен
+зсунутий відносно іншого.</p>
+
+<div class="note warn"><b>Про слово «зміщення».</b> В оригіналі це
+<em>relative position bias</em>, а <code>bias</code> у нейроні в цьому курсі
+зветься «зсув». Тут ми свідомо кажемо <b>зміщення</b>: слово «зсув» у цій темі
+вже намертво зайняте зсунутими вікнами, і два різні «зсуви» в одному абзаці
+зробили б текст нечитабельним. Зустрінеш у коді <code>relative_position_bias_table</code>
+— це воно.</div>
+
+<div class="eq">оцінка(i, j) = (q<span class="sub">i</span> · k<span class="sub">j</span>) ÷ √d &nbsp;+&nbsp; B[Δрядок, Δстовпець]</div>
+
+<p>Тут <code>q</code> і <code>k</code> — запит і ключ із теми 19, <code>√d</code> —
+той самий масштаб, <b>B</b> — таблиця зміщень. <code>Δрядок</code> — різниця
+номерів рядків двох токенів усередині вікна, <code>Δстовпець</code> — те саме
+для стовпців.</p>
+
+<p>Порахуємо розмір таблиці руками. Вікно 7×7. Різниця рядків може бути від −6
+до +6 — це 13 різних значень, тобто 2×7−1. Так само 13 значень для стовпців.
+Разом 13 × 13 = <b>169</b> можливих взаємних положень. По одному числу на кожне
+положення й на кожну голову уваги.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>стадія</th><th>розмірність</th><th>голів</th><th>таблиця зміщень</th></tr>
+<tr><td>1</td><td>96</td><td>3</td><td>169 × 3 = 507</td></tr>
+<tr><td>2</td><td>192</td><td>6</td><td>169 × 6 = 1 014</td></tr>
+<tr><td>3</td><td>384</td><td>12</td><td>169 × 12 = 2 028</td></tr>
+<tr><td>4</td><td>768</td><td>24</td><td>169 × 24 = 4 056</td></tr>
+<tr class="sumrow"><td>усього по всіх блоках</td><td></td><td></td><td>23 322</td></tr>
+</table>
+</div>
+
+<p>Двадцять три тисячі ваг на всю геометрію мережі — це <b>0,08 %</b> від
+28 288 354. Порівняй: абсолютне кодування для самої лише першої стадії, де сітка
+56×56 і 96 каналів, коштувало б 301 056 ваг — у тринадцять разів більше, ніж уся
+відносна геометрія Swin разом узята.</p>
+
+<div class="note"><b>Побічна вигода, яку легко не помітити.</b> Відносне
+зміщення дає мережі <em>терпимість до зсуву</em> задарма. Пересунь предмет на
+пʼять пікселів — абсолютні номери токенів зміняться всі, а взаємні відстані
+всередині вікна лишаться ті самі, і таблиця B дасть ті самі числа. Це та сама
+властивість, за яку ми любимо згортку
+(<a href="../07-conv-layer/lecture.html">тема 07</a>), тільки здобута іншим
+шляхом.</div>
+
+<h2 id="s7"><span class="num">07 / Розклад</span>Розбір справжнього Swin-T</h2>
+
+<p>Тепер зберемо <code>swin_t</code> із <code>torchvision</code> і подивимось,
+де саме сидять його ваги. Як і в темі 20, будуємо з <code>weights=None</code> —
+нічого не завантажується, це чиста арифметика будови.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>частина</th><th>ваг</th><th>частка</th><th>що там усередині</th></tr>
+<tr><td>проєкція патча</td><td>4 896</td><td>0,0 %</td><td>Conv2d(3, 96, ядро 4, крок 4) + LayerNorm</td></tr>
+<tr><td>стадія 1 · 2 блоки</td><td>224 694</td><td>0,8 %</td><td>сітка 56×56, dim 96</td></tr>
+<tr><td>обʼєднання 1→2</td><td>74 496</td><td>0,3 %</td><td>384 → 192</td></tr>
+<tr><td>стадія 2 · 2 блоки</td><td>891 756</td><td>3,2 %</td><td>сітка 28×28, dim 192</td></tr>
+<tr><td>обʼєднання 2→3</td><td>296 448</td><td>1,0 %</td><td>768 → 384</td></tr>
+<tr class="hot"><td>стадія 3 · 6 блоків</td><td>10 658 952</td><td>37,7 %</td><td>сітка 14×14, dim 384</td></tr>
+<tr><td>обʼєднання 3→4</td><td>1 182 720</td><td>4,2 %</td><td>1536 → 768</td></tr>
+<tr class="hot"><td>стадія 4 · 2 блоки</td><td>14 183 856</td><td>50,1 %</td><td>сітка 7×7, dim 768</td></tr>
+<tr><td>фінальна норма</td><td>1 536</td><td>0,0 %</td><td>LayerNorm(768)</td></tr>
+<tr><td>класифікатор</td><td>769 000</td><td>2,7 %</td><td>768 → 1000 класів</td></tr>
+<tr class="sumrow"><td>усього</td><td>28 288 354</td><td>100 %</td><td></td></tr>
+</table>
+</div>
+
+<p>Перше, що впадає в око: <b>87,8 % ваг сидять у двох останніх стадіях</b>, де
+токенів найменше. Це не парадокс, а пряме продовження правила подвоєння: чим
+глибше, тим товщі вектори, а ваги ростуть як квадрат розмірності. Стадія 4 має
+лише 49 токенів і половину всіх ваг мережі.</p>
+
+<p>Тепер розкладемо самі блоки — за призначенням, а не за стадіями:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>що</th><th>ваг</th><th>частка від усієї мережі</th></tr>
+<tr><td>віконна увага</td><td>8 667 162</td><td>30,6 %</td></tr>
+<tr><td>· з них відносне зміщення</td><td>23 322</td><td>0,08 %</td></tr>
+<tr class="hot"><td>MLP усередині блоків</td><td>17 274 432</td><td>61,1 %</td></tr>
+<tr><td>LayerNorm усередині блоків</td><td>17 664</td><td>0,06 %</td></tr>
+<tr class="sumrow"><td>разом у блоках</td><td>25 959 258</td><td>91,8 %</td></tr>
+</table>
+</div>
+
+<p>І тут головна несподіванка розділу. <b>Увага — не найдорожча частина
+трансформера.</b> На неї припадає 30,6 % ваг, а на звичайні поточкові
+MLP-шари — вдвічі більше, 61,1 %. І це не особливість Swin — те саме
+випливає прямо з формул для будь-якого блоку трансформера. Увага має чотири
+матриці d×d (запити, ключі, значення й вихід), тобто 4d<span class="sup">2</span>
+ваг. MLP має дві матриці d×4d, тобто 8d<span class="sup">2</span> — рівно вдвічі
+більше. Підстав d = 384 нашого блоку стадії 3: 4 × 384<span class="sup">2</span>
+= 589 824 проти 8 × 384<span class="sup">2</span> = 1 179 648, і в таблиці вище
+стоять саме ці числа плюс вектори зсуву (<code>bias</code>). Трансформер, який усі памʼятають як «мережу з уваги», за вагою
+переважно складається з простих лінійних перетворень каналів.</p>
+
+<div class="note"><b>Чому тоді увагу обмежують вікном, а не MLP?</b> Бо ваги й
+обчислення — різні речі, і ми це вже бачили в <a
+href="../15-efficient-architectures/lecture.html">темі 15</a>. MLP обробляє
+кожен токен окремо: подвоїш кількість токенів — робота подвоїться, лінійно.
+Матриця уваги росте як <em>квадрат</em> кількості токенів, хоча ваг у ній
+стільки ж. Вікно ріже саме те, що росте швидше.</div>
+
+<p>Розберемо ще й один блок стадії 3, щоб було видно кожне число:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>частина блоку (dim 384)</th><th>ваг</th><th>звідки</th></tr>
+<tr><td>LayerNorm перед увагою</td><td>768</td><td>2 × 384</td></tr>
+<tr><td>qkv</td><td>443 520</td><td>384 × 1152 + 1152</td></tr>
+<tr><td>вихідна проєкція уваги</td><td>147 840</td><td>384 × 384 + 384</td></tr>
+<tr><td>відносне зміщення</td><td>2 028</td><td>169 × 12 голів</td></tr>
+<tr><td>LayerNorm перед MLP</td><td>768</td><td>2 × 384</td></tr>
+<tr><td>MLP 384 → 1536 → 384</td><td>1 181 568</td><td>у чотири рази ширший усередині</td></tr>
+<tr class="sumrow"><td>один блок</td><td>1 776 492</td><td></td></tr>
+</table>
+</div>
+
+<p>І порівняння трьох моделей одного покоління, усі на 224×224 і 1000 класів:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>модель</th><th>ваг</th><th>увага</th><th>роздільність усередині</th></tr>
+<tr><td>vit_b_16</td><td>86 567 656</td><td>повна, на всі 197 токенів</td><td>14×14 від початку до кінця</td></tr>
+<tr class="hot"><td>swin_t</td><td>28 288 354</td><td>у вікнах 7×7, зі зсувом</td><td>56 → 28 → 14 → 7</td></tr>
+<tr><td>convnext_tiny</td><td>28 589 128</td><td>немає взагалі</td><td>56 → 28 → 14 → 7</td></tr>
+</table>
+</div>
+
+<p>Swin утричі легший за ViT-B/16 — і не тому, що хтось урізав розмірності, а
+тому, що піраміда сама по собі економить: більшість токенів живе на стадіях,
+де вектор короткий. Про третій рядок цієї таблиці — окремий розділ, і це
+найцікавіша частина теми.</p>
+
+<h2 id="s8"><span class="num">08 / Замір</span>Три моделі на нашій задачі</h2>
+
+<p>Теорія каже, що вікна дешевші за повну увагу. Перевіримо це на нашій задачі —
+шість фігур 28×28, шум 0,45, центр гуляє на ±5 пікселів. Той самий датасет,
+що в блоках 2 і 3.</p>
+
+<p>Щоб порівняння було чесним за мірками
+<a href="../18-architecture-comparison/lecture.html">теми 18</a>, дві перші
+моделі відрізняються <b>рівно одним</b>: розміром вікна. Патч 2×2 дає сітку
+14×14, тобто 196 токенів. Перша модель рахує увагу на всіх 196 одразу, друга —
+у вікнах 7×7 із чергуванням зсуву. Усе інше — розмірність, кількість блоків,
+голови, MLP, позиційне кодування, рецепт навчання — однакове. Тому й ваг у них
+однаково, до одиниці. Третя модель — маленька згорткова мережа, підігнана
+під той самий розмір.</p>
+
+<p>Рецепт: AdamW, швидкість навчання 0,003, чотирнадцять епох, 1000 прикладів
+на навчання, 600 на перевірку. Три зерна на кожну точку. Рецепт однаковий для
+всіх трьох — саме цього вимагає тема 18.</p>
+
+<div class="scroll-x">
+<table class="nums" id="tbl3">
+<tr><th>модель</th><th>ваг</th><th>точність</th><th>розкид</th><th>час: вільна машина</th><th>час: машина зайнята</th><th>пар уваги на шар</th></tr>
+<tr><td>повна увага</td><td>23 782</td><td>0.361</td><td>±0.032</td><td>47,1 с</td><td>46,7 с</td><td>38 416</td></tr>
+<tr><td>вікна 7×7 зі зсувом</td><td>23 782</td><td>0.436</td><td>±0.012</td><td>26,0 с</td><td>38,5 с</td><td>9 604</td></tr>
+<tr class="hot"><td>згортка</td><td>21 430</td><td>0.907</td><td>±0.018</td><td>7,9 с</td><td>10,6 с</td><td>—</td></tr>
+</table>
+</div>
+
+<p>Читаємо результат чесно, а не так, як хотілося б.</p>
+
+<p><b>Вікна виявились не гіршими, а кращими.</b> 0,436 проти 0,361 при однаковій
+кількості ваг. Різниця — 0,075, а найбільший розкид від зерна серед цих двох
+моделей — ±0,032, тобто різниця більша за розкид, і за правилом
+<a href="../18-architecture-comparison/lecture.html">теми 18</a> її можна
+називати різницею.</p>
+
+<p>Звучить це дивно: вікно бачить менше, а виходить краще. Найімовірніше
+пояснення таке саме, як у темі 20 з позиційним кодуванням. На тисячі прикладів
+повна увага мусить <em>вивчити з даних</em>, що сусідні патчі важливіші за
+далекі. Вікно отримує це припущення задарма, разом із будовою. Обмеження
+виявилось підказкою — рівно так само, як локальність згортки була підказкою
+в <a href="../06-why-not-dense/lecture.html">темі 06</a>.</p>
+
+<p><b>Вікна швидші.</b> 26,0 с проти 47,1 с при однаковій кількості ваг —
+майже вдвічі. Параметри ті самі, а обчислень менше: замість однієї матриці
+уваги 196×196 рахуються чотири по 49×49, тобто 9 604 елементи замість 38 416.</p>
+
+<div class="note warn"><b>Ось навіщо в таблиці два стовпчики часу.</b> Той самий
+зошит ми прогнали тричі. <b>Точності збіглися до останнього знака в усіх трьох
+прогонах</b> — 0.361, 0.436, 0.907, — бо вони задані зернами й від завантаження
+машини не залежать зовсім. А секунди попливли: коли зошит ішов паралельно з іншою
+важкою задачею, виграш вікон скоротився з 1,8 раза до 1,2. Третій прогін, на
+вільнішій машині, дав 47,3 / 28,2 / 8,2 с, тобто знову 1,7 раза — саме ці числа
+ти побачиш у <a href="practice.html">практиці</a>. Отже, надійне число тут —
+<b>9 604 проти 38 416 елементів матриці уваги, тобто рівно вчетверо</b>; секунди
+його лише підтверджують, і то приблизно. У себе ти побачиш ще інші секунди — це
+нормально, і саме тому в курсі ми намагаємось зводити твердження до величини,
+яку можна порахувати, а не заміряти секундоміром.</div>
+
+<p><b>Згортка виграє з великим відривом і швидша за всіх.</b> Точність 0,907
+проти 0,436 при меншій кількості ваг і за 7,9 секунди — утричі швидше за
+віконну модель і в шість разів за повну увагу. Це той самий висновок,
+що в темі 20: на тисячі прикладів жоден трансформер згортку не наздожене,
+і від зміни різновиду уваги це не міняється.</p>
+
+<div class="note warn"><b>Що тут <em>не</em> доведено.</b> Із цього заміру не
+випливає, що Swin кращий за ViT узагалі. Наша сітка — 14×14 токенів, тобто
+чотири вікна; справжній Swin працює з 3 136 токенами й 64 вікнами, і саме
+там його виграш у ціні стає вирішальним. Ми поміряли інше й скромніше:
+на маленькій задачі обмеження уваги вікном не шкодить точності й помітно
+економить час.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Три моделі однакового розміру</p>
+  <p class="fig-sub">Перемикай, що показувати: точність, час чи ваги. Для
+    точності й часу видно всі три прогони окремими рисками — щоб було видно,
+    наскільки результат хиткий. Смуга навколо стовпчика — розкид від зерна.</p>
+  <div class="panel">
+    <div><canvas id="cThree" width="940" height="380" aria-label="Три стовпчики: повна увага, вікна і згортка — з точністю, часом і кількістю ваг"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показати</span>
+        <div class="seg" id="seg7">
+          <button data-i="0" aria-pressed="true">точність</button>
+          <button data-i="1" aria-pressed="false">час</button>
+          <button data-i="2" aria-pressed="false">ваги</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкраща</b><i id="b7best" class="sm">—</i></div>
+        <div class="cellv"><b>відрив</b><i id="b7gap" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найбільший розкид від зерна</b><i id="b7sp" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="b7vd"></div>
+    </div>
+  </div>
+  <figcaption>Три зерна на точку, AdamW, чотирнадцять епох, 1000 прикладів на
+    навчання. Рівень випадкового вгадування на шести класах — 0,167. Час заміряний
+    в один потік на чотирьох ядрах без відеокарти; на іншій машині секунди будуть
+    іншими, стале тут — співвідношення, і то приблизно.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Наслідок</span>Що це дало галузі</h2>
+
+<p>Найважливіше в Swin — не приріст точності на ImageNet, а те, що після нього
+трансформер став придатним на роль <b>backbone</b>.</p>
+
+<p>Термін уже був у <a href="../15-efficient-architectures/lecture.html">темі
+15</a>: backbone — це частина детектора чи сегментатора, яка просто перетворює
+зображення на карти ознак; голови зверху вже вирішують конкретну задачу.
+Класичні детектори вимагають від backbone чотирьох рівнів ознак різного
+масштабу — і саме тому ViT їм не підходив: у нього рівень один.</p>
+
+<p>У Swin рівні є, і роздільності в них ті самі, що в ResNet: 56, 28, 14, 7.
+Практичний наслідок буквальний — щоб перевести детектор із ResNet на Swin,
+достатньо підмінити backbone. Решта архітектури лишається.</p>
+
+<p>Звідси й повна назва роботи: «ієрархічний трансформер зору». Слово
+«ієрархічний» тут головніше за «трансформер».</p>
+
+<div class="note"><b>Місток уперед.</b> Блок 5 цього курсу — про детекцію,
+блок 6 — про сегментацію. Там ми будемо збирати мережу з backbone, «шиї»
+й голови, і питання «що поставити в backbone» стане робочим. Swin і ConvNeXt
+із цієї теми — саме ті відповіді, які там знадобляться.</div>
+
+<h2 id="s10"><span class="num">10 / Розворот</span>ConvNeXt: згортка за рецептом трансформера</h2>
+
+<p>Тепер найцікавіше в темі. Поки одні дослідники повертали в трансформер
+локальність та ієрархію, інші поставили зворотне питання: <b>а що, як
+причина переваги трансформерів узагалі не в увазі?</b></p>
+
+<p>Дослід був такий. Узяли ResNet-50, нічого в ньому концептуально не міняючи,
+і почали крок за кроком приміряти на нього все, що прийшло разом із
+трансформерами: спершу сучасний рецепт навчання, потім по одній архітектурній
+дрібниці. Після кожного кроку міряли точність на ImageNet. Результат назвали
+ConvNeXt.</p>
+
+<p>Спершу — арифметика будови, її ми поміряли самі:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>модель</th><th>ваг</th><th>стем</th><th>блоків по стадіях</th><th>каналів</th></tr>
+<tr><td>swin_t</td><td>28 288 354</td><td>Conv2d 4×4, крок 4 → 4 896 ваг</td><td>2, 2, 6, 2</td><td>96, 192, 384, 768</td></tr>
+<tr class="hot"><td>convnext_tiny</td><td>28 589 128</td><td>Conv2d 4×4, крок 4 → 4 896 ваг</td><td>3, 3, 9, 3</td><td>96, 192, 384, 768</td></tr>
+<tr><td>resnet50</td><td>25 557 032</td><td>Conv2d 7×7, крок 2</td><td>3, 4, 6, 3</td><td>256, 512, 1024, 2048</td></tr>
+</table>
+</div>
+
+<p>Різниця в розмірі між Swin-T і ConvNeXt-T — 300 774 ваги, тобто <b>1,1 %</b>.
+Стем збігається <b>до одиниці</b>: обидві мережі починають із згортки 4×4 з
+кроком 4, і в обох це 4 896 ваг. Тільки в Swin ця операція зветься «проєкція
+патча», а в ConvNeXt — «patchify stem». Це буквально той самий шар під двома
+іменами.</p>
+
+<h3>Що ConvNeXt узяла в трансформера</h3>
+
+<p>Розберемо блок ConvNeXt. Ось він повністю, для першої стадії:</p>
+
+<div class="eq left">Conv2d(96 → 96, ядро 7×7, груп 96)   ← глибинна згортка, змішує сусідів
+LayerNorm(96)
+Linear(96 → 384)                     ← у чотири рази ширше
+GELU
+Linear(384 → 96)</div>
+
+<p>Порівняй із блоком трансформера з теми 20: норма, операція змішування,
+норма, MLP «вужче → ширше вчетверо → вужче». Форма та сама. Різниця одна:
+на місці уваги стоїть глибинна згортка 7×7.</p>
+
+<div class="scroll-x">
+<table class="plain">
+<tr><th>елемент</th><th>звідки</th><th>що було в ResNet</th></tr>
+<tr><td>Ядро 7×7</td><td>від трансформера</td><td>3×3 — Swin дивиться у вікно 7×7, ядро 7×7 накриває стільки ж</td></tr>
+<tr><td>GELU замість ReLU</td><td>від трансформера</td><td>ReLU</td></tr>
+<tr><td>LayerNorm замість BatchNorm</td><td>від трансформера</td><td>BatchNorm після кожної згортки</td></tr>
+<tr><td>Одна активація на блок</td><td>від трансформера</td><td>три ReLU у блоці</td></tr>
+<tr><td>Співвідношення блоків 3, 3, 9, 3</td><td>від Swin (2, 2, 6, 2)</td><td>3, 4, 6, 3</td></tr>
+<tr><td>Стем 4×4 з кроком 4</td><td>від ViT</td><td>згортка 7×7 з кроком 2 і пулінг</td></tr>
+<tr><td>Глибинна згортка</td><td>своє, від MobileNet</td><td>звичайна 3×3 — див. тему 15</td></tr>
+<tr><td>Залишковий звʼязок</td><td>своє, від ResNet</td><td>він самий — тема 14</td></tr>
+</table>
+</div>
+
+<p>Кількість шарів нормалізації та активації ми порахували прямо: у блоці
+ConvNeXt їх разом <b>два</b> — один LayerNorm і один GELU. У блоці ResNet-50
+таких модулів <b>пʼять</b>, причому ReLU застосовується тричі. Мережа стала
+помітно «тихішою».</p>
+
+<h3>Скільки в ConvNeXt лишилось від згортки</h3>
+
+<p>Питання не риторичне, на нього є число. Розкладемо ваги
+<code>convnext_tiny</code> за типом шару:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>тип шару</th><th>штук</th><th>ваг</th><th>частка</th></tr>
+<tr class="hot"><td>Linear (поточкові)</td><td>37</td><td>26 680 648</td><td>93,3 %</td></tr>
+<tr><td>Conv2d (усі)</td><td>22</td><td>1 885 536</td><td>6,6 %</td></tr>
+<tr><td>· з них глибинні 7×7</td><td>18</td><td>331 200</td><td>1,2 %</td></tr>
+<tr><td>LayerNorm</td><td>23</td><td>16 320</td><td>0,06 %</td></tr>
+<tr><td>масштаб шару (layer scale)</td><td>18</td><td>6 624</td><td>0,02 %</td></tr>
+<tr class="sumrow"><td>усього</td><td></td><td>28 589 128</td><td>100 %</td></tr>
+</table>
+</div>
+
+<p>Ось вона, головна цифра розділу. У мережі, яка вважається згортковою,
+<b>усе просторове змішування — тобто всі шари, що взагалі дивляться на сусідів,
+— важить 331 200 ваг, або 1,2 %</b>. Решта 93 % — поточкові перетворення
+каналів, які в трансформері звуться MLP.</p>
+
+<p>Порівняй із ResNet-50, де 53 згортки тримають 23 454 912 ваг, тобто
+<b>91,8 %</b> усієї мережі. Це два зовсім різні способи витратити однаковий
+бюджет параметрів.</p>
+
+<p>І тепер той самий погляд на Swin: увага 30,6 %, MLP 61,1 %. Обидві мережі —
+і ConvNeXt, і Swin — переважно складаються з поточкових лінійних шарів, а
+відрізняються тим, <b>як саме змішують сусідів</b>: вікном уваги чи глибинним
+ядром 7×7. І займає це в обох випадках меншість ваг.</p>
+
+<h3>Що дав кожен крок — числа з літератури</h3>
+
+<p>Тепер результати самого дослідження. <b>Ці числа взяті з опублікованої
+роботи, а не заміряні нами</b> — навчити ResNet-50 на ImageNet у зошиті
+неможливо. Точність на ImageNet-1K, зображення 224×224:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<tr><th>крок</th><th>точність</th><th>приріст</th></tr>
+<tr><td>ResNet-50 як є</td><td>76,1</td><td>—</td></tr>
+<tr class="hot"><td>той самий ResNet-50, сучасний рецепт навчання</td><td>78,8</td><td>+2,7</td></tr>
+<tr><td>співвідношення блоків 3, 3, 9, 3</td><td>79,4</td><td>+0,6</td></tr>
+<tr><td>стем 4×4 з кроком 4</td><td>79,5</td><td>+0,1</td></tr>
+<tr><td>глибинна згортка, каналів 64 → 96</td><td>80,5</td><td>+1,0</td></tr>
+<tr><td>перевернуте вузьке місце</td><td>80,6</td><td>+0,1</td></tr>
+<tr><td>глибинну згортку підняли на початок блоку</td><td>79,9</td><td><b>−0,7</b></td></tr>
+<tr><td>ядро 7×7 замість 3×3</td><td>80,6</td><td>+0,7</td></tr>
+<tr><td>ReLU → GELU</td><td>80,6</td><td><b>+0,0</b></td></tr>
+<tr><td>менше активацій</td><td>81,3</td><td>+0,7</td></tr>
+<tr><td>менше нормалізацій</td><td>81,4</td><td>+0,1</td></tr>
+<tr><td>BatchNorm → LayerNorm</td><td>81,5</td><td>+0,1</td></tr>
+<tr><td>окремі шари зменшення</td><td>82,0</td><td>+0,5</td></tr>
+<tr><td>Swin-T для порівняння</td><td>81,3</td><td></td></tr>
+</table>
+</div>
+
+<p>Два спостереження, і обидва варті окремої уваги.</p>
+
+<p><b>Найбільший стрибок дав рецепт, а не архітектура.</b> +2,7 бали з
+загальних +5,9 — це половина всього шляху, і вона отримана <em>без жодної
+зміни в мережі</em>. Той самий ResNet-50, який у 2015-му дав 76,1, у 2022-му
+дає 78,8 — просто тому, що його навчали довше, іншим оптимізатором і з іншими
+аугментаціями.</p>
+
+<p>Це прямо продовжує <a href="../18-architecture-comparison/lecture.html">тему
+18</a>, де ми поміряли те саме на своїй задачі: зміна рецепта дала 0,467 і
+0,367, а зміна архітектури — 0,083 і 0,017, тобто у <b>5,6 раза</b> менше.
+Різні дані, різний масштаб, той самий висновок.</p>
+
+<p><b>Заміна ReLU на GELU не дала нічого.</b> Рівно нуль. А це, мабуть, найчастіша
+«модернізація», яку копіюють у чужі мережі, бо «так у трансформерах». Корисною
+вона стала лише разом із наступним кроком — прибрати зайві активації, — і ось
+там уже +0,7.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · ConvNeXt: що звідки взялося</p>
+  <p class="fig-sub">Перемикай елемент — і дивись, що саме він міняє у блоці
+    порівняно з ResNet, а також скільки цей крок дав за опублікованими числами.
+    Одна зміна дає рівно нуль; знайди її.</p>
+  <div class="panel">
+    <div><canvas id="cNext" width="940" height="430" aria-label="Порівняння блоку ResNet і блоку ConvNeXt із підсвіченим обраним елементом"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що змінили</span>
+        <div class="seg wrap" id="seg8">
+          <button data-i="0" aria-pressed="true">рецепт навчання</button>
+          <button data-i="1" aria-pressed="false">блоки 3,3,9,3</button>
+          <button data-i="2" aria-pressed="false">стем 4×4</button>
+          <button data-i="3" aria-pressed="false">ядро 7×7</button>
+          <button data-i="4" aria-pressed="false">GELU</button>
+          <button data-i="5" aria-pressed="false">менше активацій</button>
+          <button data-i="6" aria-pressed="false">LayerNorm</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>приріст</b><i id="n8d">—</i></div>
+        <div class="cellv"><b>точність після</b><i id="n8a">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>звідки взято</b><i id="n8s" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="n8vd"></div>
+    </div>
+  </div>
+  <figcaption>Точності — з опублікованої роботи про ConvNeXt, ImageNet-1K,
+    224×224, середнє по трьох зернах. Ліворуч блок ResNet-50, праворуч блок
+    ConvNeXt; підсвічено те, що міняє обраний крок.</figcaption>
+</figure>
+
+<p>Головна думка цього розділу не «згортка перемогла» і не «увага не потрібна».
+Вона така: <b>частина переваги трансформерів була рецептом, а не
+архітектурою</b>. Коли згортковій мережі дали той самий рецепт і кілька ідей
+про будову блоку, вона наздогнала й перегнала — при тому самому бюджеті ваг
+і тій самій швидкості.</p>
+
+<h2 id="s11"><span class="num">11 / Суміші</span>Гібриди взагалі</h2>
+
+<p>Swin і ConvNeXt — два крайні випадки. Між ними живе ціле сімейство мереж,
+які беруть від згортки й від уваги по шматку. Три найпоширеніші прийоми,
+коротко.</p>
+
+<h3>Згортковий стем перед трансформером</h3>
+
+<p>Перше, що ламається в чистому ViT, — початок. Проєкція патча ріже зображення
+одним грубим кроком 16×16 і одразу викидає всю дрібну структуру. Заміна цього
+шару на кілька звичайних згорток 3×3 із кроком 2 дає ту саму роздільність на
+виході, але з поступовим згрубленням. Мережа після цього навчається стійкіше
+й терпить ширший діапазон швидкостей навчання.</p>
+
+<p>Причина зрозуміла з теми 20: локальність на перших шарах — правда про світ,
+і вивчати її з даних невигідно, якщо можна вписати в будову.</p>
+
+<h3>Згортка всередині MLP-блоку</h3>
+
+<p>MLP у блоці трансформера обробляє кожен токен окремо й нічого не знає про
+сусідів. Прийом: вставити між двома лінійними шарами глибинну згортку 3×3.
+Ваг вона додає копійки (для dim 384 і ядра 3×3 це 3 456 чисел), а токен
+дістає ще один канал звʼязку з сусідами — незалежний від уваги.</p>
+
+<p>Помітно, що це зустрічний рух: ConvNeXt зробила згортковий блок схожим на
+трансформерний, а тут трансформерний блок отримує згортку всередину.</p>
+
+<h3>Увага лише на глибоких стадіях</h3>
+
+<p>Найпрагматичніший гібрид. Перші дві стадії — звичайні згортки, останні дві —
+блоки уваги. Логіка проста й видно її просто з наших таблиць: на першій стадії
+3 136 токенів і увага там найдорожча, зате саме там потрібні прості локальні
+ознаки, з якими згортка чудово впорається. На четвертій стадії токенів 49,
+увага майже безкоштовна, а користь від «кожен бачить кожного» найбільша.</p>
+
+<div class="eq">рання стадія: багато токенів, прості ознаки → згортка
+пізня стадія: мало токенів, складні звʼязки → увага</div>
+
+<p>Саме за цим принципом побудована більшість мереж, які сьогодні стоять у
+мобільних застосунках: там бюджет обчислень жорсткий, і платити за увагу
+на високій роздільності ніхто не готовий.</p>
+
+<h2 id="s12"><span class="num">12 / Вибір</span>Що обирати на практиці</h2>
+
+<p>Тепер коротко й по суті. Спираємось на числа з цієї теми й
+на <a href="../18-architecture-comparison/lecture.html">тему 18</a>.</p>
+
+<div class="scroll-x">
+<table class="plain">
+<tr><th>ситуація</th><th>що брати</th><th>чому</th></tr>
+<tr><td>Своя невелика задача, тисячі прикладів, немає передтренованих ваг</td>
+    <td>звичайна CNN</td>
+    <td>0,907 проти 0,436 у нашому замірі, і втричі швидше. Трансформеру
+        нема з чого вивчити локальність</td></tr>
+<tr><td>Класифікація, є передтреновані ваги, важлива швидкість</td>
+    <td>ConvNeXt або сучасна CNN</td>
+    <td>та сама точність за той самий бюджет, простіший код, менше сюрпризів
+        із налаштуванням</td></tr>
+<tr><td>Детекція чи сегментація, потрібні ознаки кількох масштабів</td>
+    <td>Swin або ConvNeXt</td>
+    <td>обидві дають чотири рівні з роздільностями ResNet і вставляються
+        замість нього</td></tr>
+<tr><td>Дуже великі дані або передтренування на мільярдах зображень</td>
+    <td>ViT</td>
+    <td>найменше вбудованих припущень, тому найбільше виграє від масштабу
+        — див. тему 20</td></tr>
+<tr><td>Потрібні ознаки, сумісні з текстом</td>
+    <td>ViT</td>
+    <td>про це — наступна тема</td></tr>
+<tr><td>Дуже високі роздільності, щільне передбачення</td>
+    <td>Swin або гібрид</td>
+    <td>лінійна ціна замість квадратичної: на 448×448 різниця вже
+        256-кратна</td></tr>
+</table>
+</div>
+
+<p>І одне правило поверх усієї таблиці, здобуте в темі 18 й підтверджене тут
+числами ConvNeXt: <b>перш ніж міняти архітектуру, полагодь рецепт</b>. Половина
+шляху від ResNet-50 до ConvNeXt пройдена без жодної зміни в мережі.</p>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Підсумок і місток далі</h2>
+
+<p>Що ми зібрали:</p>
+
+<ul>
+  <li><b>Увага у вікнах робить ціну лінійною.</b> Замість n<span class="sup">2</span>
+    пар виходить n×w<span class="sup">2</span>, де w — стала. На 224×224 це
+    153 664 пари замість 9 834 496, тобто в 64 рази дешевше.</li>
+  <li><b>Вікна самі по собі розрізають зображення.</b> Доведено без навчання:
+    зміна одного токена зачіпає рівно 49 із 196 і скільки шарів не став — так
+    і лишається 49.</li>
+  <li><b>Лікує це чергування зі зсунутими вікнами</b>, а не зсув як такий.
+    Із чергуванням: 49 → 100 → 196. Якщо зсунути всі шари однаково — знову
+    49, 49, 49.</li>
+  <li><b>Обʼєднання патчів будує піраміду</b> 56 → 28 → 14 → 7 із подвоєнням
+    каналів — ті самі роздільності, що в ResNet, тому Swin можна поставити
+    в детектор замість нього.</li>
+  <li><b>Геометрія коштує 0,08 %.</b> Відносне зміщення для вікна 7×7 — це
+    169 чисел на голову, разом 23 322 ваги на всю мережу.</li>
+  <li><b>Увага — не найдорожча частина трансформера.</b> У swin_t на неї
+    припадає 30,6 % ваг, а на MLP — 61,1 %.</li>
+  <li><b>На малій задачі вікна виявились кращими за повну увагу</b> —
+    0,436 проти 0,361 при однакових вагах, і рахуються вони вчетверо дешевше
+    (9 604 елементи матриці уваги замість 38 416) — а згортка перемогла обидві
+    з великим відривом (0,907).</li>
+  <li><b>ConvNeXt важить майже стільки ж, скільки Swin</b> (28 589 128 проти
+    28 288 354), має той самий стем до одиниці, і в ній усе просторове
+    змішування — 1,2 % ваг.</li>
+  <li><b>Половина шляху від ResNet-50 до ConvNeXt — це рецепт навчання</b>,
+    +2,7 бали з +5,9, без жодної зміни в мережі.</li>
+</ul>
+
+<p>І тепер про те, що обʼєднує геть усі мережі цього блоку — ViT, Swin,
+ConvNeXt, і заразом усі мережі блоків 2 і 3. Кожна з них навчена на
+<b>розмічених зображеннях</b>: хтось узяв мільйон фотографій і до кожної
+приписав номер класу з наперед складеного списку. Уся сила цих моделей
+упирається в цей список: мережа знає рівно ті тисячу понять, які були в
+розмітці, і жодного більше.</p>
+
+<p>Розмітка дорога, список завжди короткий, а нове поняття вимагає нової
+розмітки й нового навчання. У <a href="../16-self-supervised/lecture.html">темі
+16</a> ми вже пробували обійтися без міток — і брали нагляд із самого
+зображення.</p>
+
+<p>Наступна тема, <b><a href="../22-clip/lecture.html">22 «CLIP і
+мультимодальність»</a></b>, бере зовсім інше
+джерело нагляду: <b>текст, який і так лежить поруч із фотографією</b> в
+інтернеті. Підпис, назва файлу, alt-текст. Ніхто його не складав спеціально
+для навчання — і саме тому його мільярди. Побачимо, що з цим можна зробити
+і чому мережа, навчена так, раптом уміє впізнавати класи, яких їй ніхто
+не показував.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../20-vision-transformer/lecture.html"><span class="dir">попередня</span><span class="ttl">20. Vision Transformer</span></a>
+    <a class="next" href="../22-clip/lecture.html"><span class="dir">наступна</span><span class="ttl">22. CLIP і мультимодальність</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function plate(g,txt,x,y,color,px,align,bg){
+  g.font=mono(px,true);
+  var w=g.measureText(txt).width+8;
+  var left = align==='right' ? x-w+4 : (align==='center' ? x-w/2 : x-4);
+  g.fillStyle=bg; g.fillRect(left, y-px-2, w, px+6);
+  g.fillStyle=color; g.textAlign=align; g.textBaseline='alphabetic';
+  g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+function токенів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'токен';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'токени';
+  return 'токенів';
+}
+function вікон(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'вікно';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'вікна';
+  return 'вікон';
+}
+function крат(v){
+  if(Math.abs(v-Math.round(v))<1e-9) return v.toFixed(0)+' '+разів(Math.round(v));
+  return v.toFixed(1)+' раза';
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function segSet(id, i){
+  var box=I(id); if(!box) return;
+  var all=box.querySelectorAll('button'), k;
+  for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', k===i?'true':'false');
+}
+/* детермінований генератор — картинка однакова у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)&0x7fffffff; return s/0x7fffffff; };
+}
+/* Чи темна зараз тема — визначаємо за яскравістю тла, а не за медіазапитом. */
+function darkNow(){
+  var c=css('--paper');
+  var m=/^#([0-9a-f]{6})$/i.exec(c);
+  if(!m) return false;
+  var v=parseInt(m[1],16);
+  return (((v>>16)&255)*0.299 + ((v>>8)&255)*0.587 + (v&255)*0.114) < 128;
+}
+/* девʼять кольорів для областей, з яких склеюються зсунуті вікна */
+function regionColor(k){
+  var hue=[172,208,254,26,44,320,140,286,10][k%9];
+  return darkNow() ? 'hsl('+hue+',42%,38%)' : 'hsl('+hue+',52%,74%)';
+}
+
+/* ═════════ дані — усі числа заміряні, друкуються зошитом ═════════ */
+
+/* Замір 1 · ціна повної уваги проти віконної, патч 4, вікно 7 */
+var COST = [
+  {img:28,  grid:7,   tok:49,    full:2401,       win:2401,      nw:1},
+  {img:56,  grid:14,  tok:196,   full:38416,      win:9604,      nw:4},
+  {img:112, grid:28,  tok:784,   full:614656,     win:38416,     nw:16},
+  {img:224, grid:56,  tok:3136,  full:9834496,    win:153664,    nw:64},
+  {img:448, grid:112, tok:12544, full:157351936,  win:614656,    nw:256},
+  {img:896, grid:224, tok:50176, full:2517630976, win:2458624,   nw:1024}
+];
+
+/* Замір 2 · поширення інформації, сітка 14×14, вікно 7, зсув 3 */
+var GRID3=14, WIN3=7, SHIFT3=3;
+
+/* Замір 5 · роздільності Swin-T і ResNet */
+var RESN = [{res:56,ch:64},{res:28,ch:128},{res:14,ch:256},{res:7,ch:512}];
+
+/* Замір 5 · кроки модернізації ResNet-50 → ConvNeXt-T (числа з літератури) */
+var NEXT = [
+  {k:'рецепт навчання', from:76.1, to:78.8,
+   src:'ViT і Swin: AdamW, 300 епох, Mixup, CutMix, RandAugment',
+   what:'у самій мережі не змінено нічого',
+   res:['Conv 1×1','BatchNorm + ReLU','Conv 3×3','BatchNorm + ReLU','Conv 1×1','BatchNorm','+ вхід, ReLU'],
+   cnx:['Conv 7×7 глибинна','LayerNorm','Linear ×4','GELU','Linear ÷4','','+ вхід'],
+   hl:-1},
+  {k:'блоки 3, 3, 9, 3', from:78.8, to:79.4,
+   src:'Swin-T зі співвідношенням 2, 2, 6, 2',
+   what:'стадія 3 стала втричі глибшою за решту',
+   res:['Conv 1×1','BatchNorm + ReLU','Conv 3×3','BatchNorm + ReLU','Conv 1×1','BatchNorm','+ вхід, ReLU'],
+   cnx:['Conv 7×7 глибинна','LayerNorm','Linear ×4','GELU','Linear ÷4','','+ вхід'],
+   hl:-1},
+  {k:'стем 4×4 з кроком 4', from:79.4, to:79.5,
+   src:'ViT: проєкція патча',
+   what:'згортка 7×7 з кроком 2 і пулінг → одна згортка 4×4',
+   res:['Conv 1×1','BatchNorm + ReLU','Conv 3×3','BatchNorm + ReLU','Conv 1×1','BatchNorm','+ вхід, ReLU'],
+   cnx:['Conv 7×7 глибинна','LayerNorm','Linear ×4','GELU','Linear ÷4','','+ вхід'],
+   hl:-1},
+  {k:'ядро 7×7', from:79.9, to:80.6,
+   src:'Swin: вікно уваги 7×7',
+   what:'глибинне ядро 3×3 → 7×7, стільки ж сусідів, скільки бачить вікно',
+   res:['Conv 1×1','BatchNorm + ReLU','Conv 3×3','BatchNorm + ReLU','Conv 1×1','BatchNorm','+ вхід, ReLU'],
+   cnx:['Conv 7×7 глибинна','LayerNorm','Linear ×4','GELU','Linear ÷4','','+ вхід'],
+   hl:0, hlres:2},
+  {k:'ReLU → GELU', from:80.6, to:80.6,
+   src:'блок трансформера',
+   what:'замінили функцію активації, більше нічого',
+   res:['Conv 1×1','BatchNorm + ReLU','Conv 3×3','BatchNorm + ReLU','Conv 1×1','BatchNorm','+ вхід, ReLU'],
+   cnx:['Conv 7×7 глибинна','LayerNorm','Linear ×4','GELU','Linear ÷4','','+ вхід'],
+   hl:3, hlres:1},
+  {k:'менше активацій', from:80.6, to:81.3,
+   src:'у блоці трансформера активація одна',
+   what:'три ReLU у блоці → один GELU',
+   res:['Conv 1×1','BatchNorm + ReLU','Conv 3×3','BatchNorm + ReLU','Conv 1×1','BatchNorm','+ вхід, ReLU'],
+   cnx:['Conv 7×7 глибинна','LayerNorm','Linear ×4','GELU','Linear ÷4','','+ вхід'],
+   hl:3, hlres:6},
+  {k:'BatchNorm → LayerNorm', from:81.4, to:81.5,
+   src:'трансформери нормують по каналах, а не по батчу',
+   what:'усі BatchNorm замінено на LayerNorm, і їх стало менше',
+   res:['Conv 1×1','BatchNorm + ReLU','Conv 3×3','BatchNorm + ReLU','Conv 1×1','BatchNorm','+ вхід, ReLU'],
+   cnx:['Conv 7×7 глибинна','LayerNorm','Linear ×4','GELU','Linear ÷4','','+ вхід'],
+   hl:1, hlres:5}
+];
+
+/* ═════════════ 1 · Ціна: повна увага проти вікон ═════════════ */
+(function(){
+  var cv=I('cCost'); if(!cv) return;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), i=+I('res2').value, d=COST[i];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), raise=css('--raise');
+
+    var L=78, R=W-150, T=52, B=H-58;
+    /* логарифмічна шкала по обох осях */
+    var xmin=Math.log10(49), xmax=Math.log10(50176);
+    var ymin=Math.log10(700), ymax=Math.log10(2.6e9);
+    function X(tok){ return L+(Math.log10(tok)-xmin)/(xmax-xmin)*(R-L); }
+    function Y(v){ return B-(Math.log10(v)-ymin)/(ymax-ymin)*(B-T); }
+
+    /* сітка */
+    g.strokeStyle=hair; g.lineWidth=1;
+    var dec, k;
+    for(dec=3;dec<=9;dec++){
+      var y=Y(Math.pow(10,dec));
+      g.beginPath(); g.moveTo(L,y); g.lineTo(R,y); g.stroke();
+      capt(g,'10'+['³','⁴','⁵','⁶','⁷','⁸','⁹'][dec-3], L-10, y+4, soft,11,false,'right');
+    }
+    for(k=0;k<COST.length;k++){
+      var x=X(COST[k].tok);
+      g.strokeStyle=hair; g.beginPath(); g.moveTo(x,T); g.lineTo(x,B); g.stroke();
+      capt(g, gr(COST[k].tok), x, B+20, k===i?rose:soft, 11, k===i, 'center');
+      capt(g, COST[k].img+'×'+COST[k].img, x, B+36, soft, 10, false, 'center');
+    }
+    capt(g,'ТОКЕНІВ У СІТЦІ', (L+R)/2, B+52, soft,11,true,'center');
+    g.save(); g.translate(20,(T+B)/2); g.rotate(-Math.PI/2);
+    capt(g,'ПАР УВАГИ НА ОДНОМУ ШАРІ',0,0,soft,11,true,'center'); g.restore();
+
+    /* криві */
+    function curve(field, color, wd){
+      g.strokeStyle=color; g.lineWidth=wd; g.beginPath();
+      for(k=0;k<COST.length;k++){
+        var x=X(COST[k].tok), y=Y(COST[k][field]);
+        if(k===0) g.moveTo(x,y); else g.lineTo(x,y);
+      }
+      g.stroke();
+      for(k=0;k<COST.length;k++){
+        g.fillStyle=color; g.beginPath();
+        g.arc(X(COST[k].tok), Y(COST[k][field]), k===i?6:3.5, 0, 6.284); g.fill();
+      }
+    }
+    curve('full', rose, 2.5);
+    curve('win',  teal, 2.5);
+
+    /* підписи кривих — праворуч від останньої точки, у вільній зоні */
+    capt(g,'повна увага: n²', R+10, Y(COST[5].full)+4, rose,12,true);
+    capt(g,'вікна 7×7: n × 49', R+10, Y(COST[5].win)+4, teal,12,true);
+
+    /* виділена точка */
+    var px=X(d.tok);
+    g.strokeStyle=rose; g.lineWidth=1; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(px,T); g.lineTo(px,B); g.stroke(); g.setLineDash([]);
+    /* біля правого краю підпис ставимо ліворуч від точки, інакше він
+       наїжджає на підпис кривої */
+    var al = px > R-140 ? 'right' : 'center';
+    var ax = al==='right' ? px-10 : px;
+    if(d.full===d.win){
+      plate(g, gr(d.full)+' — однаково', ax, Y(d.full)-14, ink, 12, al, raise);
+    } else {
+      plate(g, gr(d.full), ax, Y(d.full)-12, rose, 12, al, raise);
+      plate(g, gr(d.win),  ax, Y(d.win)+22,  teal, 12, al, raise);
+    }
+
+    capt(g,'ЗАЛЕЖНІСТЬ ЦІНИ ВІД КІЛЬКОСТІ ТОКЕНІВ · ОБИДВІ ОСІ ЛОГАРИФМІЧНІ',L,26,soft,11,true);
+
+    I('res2v').textContent=d.img;
+    I('res2tok').textContent=gr(d.tok);
+    I('res2nw').textContent=gr(d.nw);
+    I('res2full').textContent=gr(d.full);
+    I('res2win').textContent=gr(d.win);
+    var gain=d.full/d.win;
+    I('res2gain').textContent=gain<1.5?'—':крат(gain);
+
+    if(i===0){
+      verd('res2vd','t-mid','ВІКНА НЕ ПОТРІБНІ',
+        'Сітка 7×7 — це рівно одне вікно 7×7. Віконна увага збігається з повною '
+        +'до останнього біта, виграшу нема. Саме на цьому й перевіряють власну реалізацію.');
+    } else if(i<=2){
+      verd('res2vd','t-mid','ВИГРАШ Є, АЛЕ СКРОМНИЙ',
+        'Дешевше в '+крат(gain)+'. Вікна вже працюють, але на такій роздільності '
+        +'і повна увага ще підйомна.');
+    } else {
+      verd('res2vd','t-ok','ОСЬ ЗАРАДИ ЧОГО ВСЕ',
+        'Дешевше в '+крат(gain)+'. Рожева крива йде вгору вдвічі крутіше за бірюзову: '
+        +'подвоїв токени — повна увага подорожчала вчетверо, віконна вдвічі.');
+    }
+  }
+  on('res2','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 2 · Сітка вікон і лічильник пар ═════════════ */
+(function(){
+  var cv=I('cWin'); if(!cv) return;
+  var WS=[1,2,4,7,14,28], N=28, TOK=784;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), i=+I('w3').value, w=WS[i];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), raise=css('--raise');
+    var nw=(N/w)*(N/w), tw=w*w, ppw=tw*tw, tot=TOK*w*w;
+
+    /* ліворуч — сітка токенів із межами вікон */
+    var s=10, ox=34, oy=54, r, c;
+    capt(g,'СІТКА 28×28 ТОКЕНІВ',ox,34,soft,11,true);
+    for(r=0;r<N;r++) for(c=0;c<N;c++){
+      var wi=Math.floor(r/w)*(N/w)+Math.floor(c/w);
+      g.fillStyle = (wi%2===0) ? css('--teal-w') : css('--rose-w');
+      g.fillRect(ox+c*s, oy+r*s, s, s);
+      g.strokeStyle=hair; g.lineWidth=.4;
+      g.strokeRect(ox+c*s+.2, oy+r*s+.2, s-.4, s-.4);
+    }
+    g.strokeStyle=rose; g.lineWidth=1.8;
+    for(r=0;r<=N;r+=w){
+      g.beginPath(); g.moveTo(ox, oy+r*s); g.lineTo(ox+N*s, oy+r*s); g.stroke();
+      g.beginPath(); g.moveTo(ox+r*s, oy); g.lineTo(ox+r*s, oy+N*s); g.stroke();
+    }
+    capt(g,'вікно '+w+'×'+w+' · '+gr(nw)+' '+вікон(nw), ox, oy+N*s+24, ink,12,true);
+
+    /* праворуч — два стовпчики: пари в одному вікні й пари всього */
+    var bx=400, by=64, bw=200, maxH=210;
+    var maxv=614656;
+    function bar(x, val, color, top, bottom){
+      var h=Math.max(3, Math.log10(Math.max(val,1))/Math.log10(maxv)*maxH);
+      g.fillStyle=color; rr(g, x, by+maxH-h, bw, h, 6); g.fill();
+      /* у високому стовпчику підпис ставимо всередину — інакше він наїжджає
+         на підпис довідкової лінії вгорі */
+      if(h>46) capt(g, gr(val), x+bw/2, by+maxH-h+22, raise, 13, true, 'center');
+      else     plate(g, gr(val), x+bw/2, by+maxH-h-9, color, 13, 'center', raise);
+      capt(g, top, x, by+maxH+22, ink,12,true);
+      capt(g, bottom, x, by+maxH+40, soft,11);
+    }
+    capt(g,'ПАР УВАГИ · ВИСОТА ЗА ЛОГАРИФМОМ',400,34,soft,11,true);
+    bar(400, ppw, css('--teal'), 'в одному вікні', '(w×w)² = '+w+'⁴');
+    bar(650, tot, css('--rose'), 'на всю сітку', '784 × '+w+'² = n × w²');
+
+    /* довідковий рівень — повна увага */
+    var fullH=maxH;
+    g.strokeStyle=css('--amber'); g.lineWidth=1.5; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(392, by); g.lineTo(880, by); g.stroke(); g.setLineDash([]);
+    capt(g,'повна увага на всій сітці: 614 656', 392, by-9, css('--amber'),11,true);
+
+    I('w3v').textContent=w;
+    I('w3nw').textContent=gr(nw);
+    I('w3tw').textContent=gr(tw);
+    I('w3pw').textContent=gr(ppw);
+    I('w3pt').textContent=gr(tot);
+
+    if(w===28){
+      verd('w3vd','t-no','ЦЕ ВЖЕ НЕ ВІКНА',
+        'Одне вікно на всю сітку — та сама повна увага, 614 656 пар. '
+        +'Жодної економії: ми просто назвали старе новим словом.');
+    } else if(w===1){
+      verd('w3vd','t-no','ВІКНО ЗАМАЛЕ',
+        'Кожен токен бачить тільки себе — 784 пари на всю сітку, тобто увага '
+        +'не рахує нічого. Дешево й безглуздо.');
+    } else if(w===7){
+      verd('w3vd','t-ok','ВИБІР SWIN',
+        '16 вікон, 38 416 пар — у 16 разів дешевше за повну увагу. '
+        +'Саме це значення стоїть в усіх чотирьох стадіях справжнього Swin.');
+    } else if(w<7){
+      verd('w3vd','t-mid','ДЕШЕВО, АЛЕ ВУЗЬКО',
+        gr(tot)+' пар — у '+крат(614656/tot)+' дешевше за повну увагу. '
+        +'Зате токен бачить лише '+gr(tw)+' сусідів, і зшивати вікна зсувом доведеться довго.');
+    } else {
+      verd('w3vd','t-mid','ШИРОКО, АЛЕ ДОРОГО',
+        gr(tot)+' пар — усього в '+крат(614656/tot)+' дешевше. '
+        +'Вікно 14×14 бачить чверть сітки, але й коштує майже як повна увага.');
+    }
+  }
+  on('w3','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 3 · Хто з ким може обмінятись інформацією ═════════════ */
+(function(){
+  var cv=I('cTalk'); if(!cv) return;
+  var mode3=0;
+  var START_R=3, START_C=6;
+
+  /* група рядка/стовпця: у звичайному шарі це просто номер вікна,
+     у зсунутому — три смуги, бо частина сітки прокрутилась через край */
+  function groupPlain(i){ return Math.floor(i/WIN3); }
+  function groupShift(i){
+    if(i>=SHIFT3 && i<SHIFT3+WIN3) return 0;   /* 3…9  — суцільний шматок */
+    if(i>=SHIFT3+WIN3) return 1;               /* 10…13 — не прокрутились */
+    return 2;                                  /* 0…2   — прийшли з іншого краю */
+  }
+  /* множина токенів, до яких дійшла інформація після k шарів */
+  function reach(layers, alternate){
+    var set=[], r, c;
+    for(r=0;r<GRID3;r++){ set.push([]); for(c=0;c<GRID3;c++) set[r].push(false); }
+    set[START_R][START_C]=true;
+    var L;
+    for(L=0;L<layers;L++){
+      var shifted = alternate && (L%2===1);
+      var gf = shifted ? groupShift : groupPlain;
+      var hitR={}, hitC={}, cells={};
+      for(r=0;r<GRID3;r++) for(c=0;c<GRID3;c++) if(set[r][c]) cells[gf(r)+'|'+gf(c)]=true;
+      for(r=0;r<GRID3;r++) for(c=0;c<GRID3;c++)
+        if(cells[gf(r)+'|'+gf(c)]) set[r][c]=true;
+    }
+    return set;
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), layers=+I('l4').value;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), raise=css('--raise');
+    var set=reach(layers, mode3===1), r, c, n=0;
+    for(r=0;r<GRID3;r++) for(c=0;c<GRID3;c++) if(set[r][c]) n++;
+
+    var s=22, ox=40, oy=64;
+    capt(g,'СІТКА 14×14 ТОКЕНІВ · ШАРІВ: '+layers, ox, 34, soft,11,true);
+    for(r=0;r<GRID3;r++) for(c=0;c<GRID3;c++){
+      g.fillStyle = set[r][c] ? css('--teal-w') : raise;
+      g.fillRect(ox+c*s, oy+r*s, s, s);
+      g.strokeStyle=hair; g.lineWidth=.6;
+      g.strokeRect(ox+c*s+.3, oy+r*s+.3, s-.6, s-.6);
+    }
+    /* межі звичайних вікон */
+    g.strokeStyle=soft; g.lineWidth=1.6;
+    for(r=0;r<=GRID3;r+=WIN3){
+      g.beginPath(); g.moveTo(ox, oy+r*s); g.lineTo(ox+GRID3*s, oy+r*s); g.stroke();
+      g.beginPath(); g.moveTo(ox+r*s, oy); g.lineTo(ox+r*s, oy+GRID3*s); g.stroke();
+    }
+    /* межі зсунутих вікон — лише коли режим із чергуванням */
+    if(mode3===1){
+      g.strokeStyle=css('--amber'); g.lineWidth=1.4; g.setLineDash([4,4]);
+      var b=[SHIFT3, SHIFT3+WIN3];
+      for(r=0;r<b.length;r++){
+        g.beginPath(); g.moveTo(ox, oy+b[r]*s); g.lineTo(ox+GRID3*s, oy+b[r]*s); g.stroke();
+        g.beginPath(); g.moveTo(ox+b[r]*s, oy); g.lineTo(ox+b[r]*s, oy+GRID3*s); g.stroke();
+      }
+      g.setLineDash([]);
+    }
+    /* змінений токен */
+    g.fillStyle=rose; g.fillRect(ox+START_C*s+3, oy+START_R*s+3, s-6, s-6);
+
+    capt(g,'суцільна лінія — межі звичайних вікон', ox, oy+GRID3*s+24, soft,11);
+    if(mode3===1) capt(g,'пунктир — межі зсунутих вікон', ox, oy+GRID3*s+42, css('--amber'),11);
+
+    /* праворуч — стовпчик зростання */
+    var bx=500, by=64, bh=250, bwd=78, gap=24;
+    capt(g,'ЗАЧЕПЛЕНО ТОКЕНІВ ПІСЛЯ КОЖНОГО ШАРУ', 372, 34, soft,11,true);
+    var L;
+    for(L=1;L<=4;L++){
+      var m=reach(L, mode3===1), k=0, rr2, cc2;
+      for(rr2=0;rr2<GRID3;rr2++) for(cc2=0;cc2<GRID3;cc2++) if(m[rr2][cc2]) k++;
+      var h=k/196*bh, x=bx+(L-1)*(bwd+gap);
+      g.fillStyle = L<=layers ? teal : hair;
+      rr(g, x, by+bh-h, bwd, h, 6); g.fill();
+      capt(g, String(k), x+bwd/2, by+bh-h-9, L<=layers?teal:soft, 14, true, 'center');
+      capt(g, 'шар '+L, x+bwd/2, by+bh+22, L===layers?ink:soft, 11, L===layers, 'center');
+    }
+    var right=bx+3*(bwd+gap)+bwd;
+    g.strokeStyle=hair; g.lineWidth=1; g.setLineDash([4,4]);
+    g.beginPath(); g.moveTo(bx-10, by); g.lineTo(right, by); g.stroke();
+    g.beginPath(); g.moveTo(bx-10, by+bh-49/196*bh); g.lineTo(right, by+bh-49/196*bh); g.stroke();
+    g.setLineDash([]);
+    capt(g,'уся сітка — 196', 372, by+4, soft,11);
+    capt(g,'одне вікно — 49', 372, by+bh-49/196*bh+4, soft,11);
+
+    I('l4v').textContent=layers;
+    I('l4n').textContent=n+' із 196';
+    I('l4p').textContent=Math.round(n/196*100)+' %';
+
+    if(mode3===0){
+      verd('l4vd','t-no','ГЛУХА СТІНА',
+        'Скільки шарів не додавай — зачеплено рівно 49 токенів, тобто одне вікно. '
+        +'Три чверті зображення про цю зміну не дізнаються ніколи.');
+    } else if(layers===1){
+      verd('l4vd','t-mid','ПЕРШИЙ ШАР ЗВИЧАЙНИЙ',
+        'Поки що те саме одне вікно — 49 токенів. Чергування починає працювати '
+        +'з другого шару, коли межі поїдуть.');
+    } else if(layers===2){
+      verd('l4vd','t-ok','МЕЖУ ПЕРЕЙДЕНО',
+        '100 токенів замість 49. Зсунуті вікна накрили обидва боки старої межі, '
+        +'і інформація перетекла до сусідів.');
+    } else {
+      verd('l4vd','t-ok','УСЯ СІТКА',
+        'Усі 196 токенів. Трьох шарів уже вистачило, щоб крайній лівий верхній токен '
+        +'вплинув на крайній правий нижній — при вікні всього 7×7.');
+    }
+  }
+  segment('seg4', function(i){ mode3=i; draw(); });
+  on('l4','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 4 · Зсув по кроках ═════════════ */
+(function(){
+  var cv=I('cShift'); if(!cv) return;
+  var step4=0;
+  var BANDS=[[0,SHIFT3],[SHIFT3,SHIFT3+WIN3],[SHIFT3+WIN3,GRID3]];  /* 0-2, 3-9, 10-13 */
+
+  /* до якої з девʼяти областей належить токен вихідної сітки */
+  function band(i){ return i<SHIFT3 ? 0 : (i<SHIFT3+WIN3 ? 1 : 2); }
+  function regionOf(r,c){ return band(r)*3+band(c); }
+
+  var INFO=[
+    {n:4, f:1, m:0,
+     ttl:'КРОК 1 · ЗВИЧАЙНІ ВІКНА',
+     txt:'Сітку 14×14 ріжемо на чотири вікна 7×7. Усі однакового розміру, рахувати зручно.',
+     tag:'t-mid', cap:'ПОЧАТКОВИЙ СТАН',
+     vd:'Чотири однакові вікна. Швидко, але саме тут інформація й застрягає — це замір із розділу 3.'},
+    {n:9, f:6, m:0,
+     ttl:'КРОК 2 · МЕЖІ ЗСУНУЛИ НА ПІВ ВІКНА',
+     txt:'Межі поїхали на 3 клітинки. Тепер вони проходять посеред старих вікон — саме цього ми й хотіли.',
+     tag:'t-no', cap:'ЗШИЛО, АЛЕ ЗЛАМАЛО ФОРМУ',
+     vd:'Замість чотирьох рівних вікон вийшло девʼять шматків шести різних розмірів: 7×7, 7×4, 7×3, 4×4, 4×3, 3×3. Рахувати увагу для девʼяти різних форм повільно.'},
+    {n:4, f:1, m:0,
+     ttl:'КРОК 3 · ЦИКЛІЧНИЙ ЗСУВ ДАНИХ',
+     txt:'Межі лишаємо на місці, а прокручуємо саму сітку на 3 клітинки вгору й уліво. Що вилізло згори — підклеїлось знизу.',
+     tag:'t-mid', cap:'ФОРМА ВІДНОВЛЕНА',
+     vd:'Знову чотири вікна 7×7 однакової форми — один рядок torch.roll. Але тепер у праве нижнє вікно потрапили токени з чотирьох різних кутів зображення, і вони не повинні бачити одне одного.'},
+    {n:4, f:1, m:4128,
+     ttl:'КРОК 4 · МАСКА',
+     txt:'У матрицю уваги додаємо маску: пари з різних областей отримують −∞ перед softmax, тобто нульову вагу.',
+     tag:'t-ok', cap:'ГОТОВО',
+     vd:'Заблоковано 4 128 пар із 9 604. Форма тензорів не змінилась, кількість вікон теж — тому операція лишилась швидкою, а склеєні краї одне одного не бачать.'}
+  ];
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), d=INFO[step4];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), raise=css('--raise');
+    var s=22, r, c;
+
+    capt(g, d.ttl, 34, 28, ink, 12, true);
+    capt(g, d.txt, 34, 50, soft, 11);
+
+    /* ── ліворуч: вихідна сітка ── */
+    var ox=40, oy=94;
+    capt(g,'ВИХІДНА СІТКА 14×14', ox, oy-10, soft,11,true);
+    for(r=0;r<GRID3;r++) for(c=0;c<GRID3;c++){
+      g.fillStyle = (step4>=2) ? regionColor(regionOf(r,c)) : raise;
+      g.fillRect(ox+c*s, oy+r*s, s, s);
+      g.strokeStyle=hair; g.lineWidth=.5;
+      g.strokeRect(ox+c*s+.25, oy+r*s+.25, s-.5, s-.5);
+    }
+    /* межі: звичайні або зсунуті */
+    g.lineWidth=2;
+    if(step4===0 || step4>=2){
+      g.strokeStyle = step4===0 ? rose : hair;
+      for(r=0;r<=GRID3;r+=WIN3){
+        g.beginPath(); g.moveTo(ox, oy+r*s); g.lineTo(ox+GRID3*s, oy+r*s); g.stroke();
+        g.beginPath(); g.moveTo(ox+r*s, oy); g.lineTo(ox+r*s, oy+GRID3*s); g.stroke();
+      }
+    }
+    if(step4===1){
+      g.strokeStyle=rose;
+      var cuts=[0,SHIFT3,SHIFT3+WIN3,GRID3], k;
+      for(k=0;k<cuts.length;k++){
+        g.beginPath(); g.moveTo(ox, oy+cuts[k]*s); g.lineTo(ox+GRID3*s, oy+cuts[k]*s); g.stroke();
+        g.beginPath(); g.moveTo(ox+cuts[k]*s, oy); g.lineTo(ox+cuts[k]*s, oy+GRID3*s); g.stroke();
+      }
+    }
+    capt(g, step4===1 ? 'девʼять шматків різного розміру' : 'чотири вікна 7×7',
+         ox, oy+GRID3*s+22, step4===1?rose:soft, 11, true);
+
+    /* ── праворуч: після прокручування ── */
+    if(step4>=2){
+      var tx=430;
+      capt(g,'ПІСЛЯ torch.roll НА 3 УГОРУ Й УЛІВО', tx, oy-10, soft,11,true);
+      for(r=0;r<GRID3;r++) for(c=0;c<GRID3;c++){
+        var sr=(r+SHIFT3)%GRID3, sc=(c+SHIFT3)%GRID3;
+        g.fillStyle=regionColor(regionOf(sr,sc));
+        g.fillRect(tx+c*s, oy+r*s, s, s);
+        g.strokeStyle=hair; g.lineWidth=.5;
+        g.strokeRect(tx+c*s+.25, oy+r*s+.25, s-.5, s-.5);
+        if(step4===3){
+          /* хрестиком позначаємо токени, що прийшли з протилежного краю */
+          var wrapped=(sr<SHIFT3)||(sc<SHIFT3);
+          if(wrapped){
+            g.strokeStyle=css('--rose'); g.lineWidth=1.2;
+            g.beginPath();
+            g.moveTo(tx+c*s+5, oy+r*s+5); g.lineTo(tx+c*s+s-5, oy+r*s+s-5);
+            g.moveTo(tx+c*s+s-5, oy+r*s+5); g.lineTo(tx+c*s+5, oy+r*s+s-5);
+            g.stroke();
+          }
+        }
+      }
+      g.strokeStyle=rose; g.lineWidth=2;
+      for(r=0;r<=GRID3;r+=WIN3){
+        g.beginPath(); g.moveTo(tx, oy+r*s); g.lineTo(tx+GRID3*s, oy+r*s); g.stroke();
+        g.beginPath(); g.moveTo(tx+r*s, oy); g.lineTo(tx+r*s, oy+GRID3*s); g.stroke();
+      }
+      capt(g, step4===3 ? 'хрестики — прийшли з протилежного краю' : 'колір — звідки прийшов токен',
+           tx, oy+GRID3*s+22, soft, 11, true);
+      if(step4===3){
+        /* скільки заблоковано в кожному вікні */
+        var blocked=[0,1176,1176,1776], wk;
+        for(wk=0;wk<4;wk++){
+          var wr=Math.floor(wk/2), wc=wk%2;
+          plate(g, gr(blocked[wk]), tx+wc*WIN3*s+WIN3*s/2, oy+wr*WIN3*s+WIN3*s/2+5,
+                blocked[wk]===0?teal:rose, 13, 'center', raise);
+        }
+        capt(g,'числа у вікнах — скільки пар заборонено з 2 401', tx, oy+GRID3*s+40, soft, 11);
+      }
+    } else if(step4===0){
+      capt(g,'ЩО З ЦИМ НЕ ТАК', 430, oy-10, soft,11,true);
+      var lines0=['Кожне вікно рахує увагу окремо.',
+                  'Токен із лівого верхнього вікна',
+                  'ніколи не побачить правого нижнього:',
+                  'вони не потрапляють в одну матрицю.',
+                  '',
+                  'Замір із розділу 3: змінили один',
+                  'токен — на виході змінилось 49 із 196,',
+                  'і скільки шарів не додавай,',
+                  'лишається 49.'];
+      for(r=0;r<lines0.length;r++) capt(g, lines0[r], 430, oy+22+r*22, r>=5?rose:ink, 12, r>=5);
+    } else {
+      capt(g,'ДЕВʼЯТЬ ШМАТКІВ, ШІСТЬ РІЗНИХ РОЗМІРІВ', 430, oy-10, soft,11,true);
+      var sizes=[['7×7','1 шматок','49 токенів'],['7×4','2 шматки','28 токенів'],
+                 ['7×3','2 шматки','21 токен'],['4×4','1 шматок','16 токенів'],
+                 ['4×3','2 шматки','12 токенів'],['3×3','1 шматок','9 токенів']];
+      for(r=0;r<sizes.length;r++){
+        var yy=oy+22+r*34;
+        g.fillStyle=css('--rose-w'); rr(g, 430, yy-16, 300, 26, 6); g.fill();
+        capt(g, sizes[r][0], 442, yy+2, rose, 13, true);
+        capt(g, sizes[r][1], 500, yy+2, ink, 12, false);
+        capt(g, sizes[r][2], 610, yy+2, soft, 12, false);
+      }
+      capt(g,'кожну форму довелося б рахувати окремо', 430, oy+22+6*34+2, soft, 11);
+    }
+
+    I('s5n').textContent=d.n;
+    I('s5f').textContent=d.f;
+    I('s5m').textContent=d.m===0 ? 'нічого' : gr(d.m)+' із 9 604';
+    verd('s5vd', d.tag, d.cap, d.vd);
+    segSet('seg5', step4);
+  }
+  segment('seg5', function(i){ step4=i; draw(); });
+  on('s5next','click',function(){ step4=(step4+1)%4; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 5 · Скільки додавати каналів при обʼєднанні ═════════════ */
+(function(){
+  var cv=I('cStage'); if(!cv) return;
+  var MULS=[1,2,3,4];
+
+  function stagesFor(k){
+    var out=[], res=56, ch=96, i;
+    for(i=0;i<4;i++){
+      out.push({res:res, ch:ch, tok:res*res, vals:res*res*ch});
+      res=res/2; ch=ch*k;
+    }
+    return out;
+  }
+  /* один шар обʼєднання: LayerNorm(4C) = 8C ваг плюс Linear(4C → kC) без зсуву */
+  function mergeCost(k){
+    var st=stagesFor(k), tot=0, i;
+    for(i=0;i<3;i++){ var C=st[i].ch; tot += 8*C + 4*C*(k*C); }
+    return tot;
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), mi=+I('mul6').value, k=MULS[mi];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), raise=css('--raise');
+    var st=stagesFor(k), i;
+
+    capt(g,'ЧОТИРИ СТАДІЇ · РОЗДІЛЬНІСТЬ ПАДАЄ ВДВІЧІ ЗАВЖДИ',34,30,soft,11,true);
+
+    /* смуга стадій */
+    var x0=40, y0=58, colw=212;
+    for(i=0;i<4;i++){
+      var x=x0+i*colw;
+      g.fillStyle = i===3 ? css('--rose-w') : css('--teal-w');
+      rr(g, x, y0, colw-18, 108, 10); g.fill();
+      g.strokeStyle=hair; g.lineWidth=1; g.stroke();
+      capt(g,'СТАДІЯ '+(i+1), x+14, y0+22, soft,11,true);
+      capt(g, st[i].res+'×'+st[i].res, x+14, y0+50, ink, 20, true);
+      capt(g, gr(st[i].ch)+' каналів', x+14, y0+72, rose, 12, true);
+      capt(g, gr(st[i].tok)+' '+токенів(st[i].tok), x+14, y0+92, soft, 11);
+    }
+    /* стрілки обʼєднання */
+    for(i=0;i<3;i++){
+      var ax=x0+(i+1)*colw-16;
+      g.strokeStyle=amber; g.lineWidth=2;
+      g.beginPath(); g.moveTo(ax-8, y0+54); g.lineTo(ax+8, y0+54); g.stroke();
+      g.beginPath(); g.moveTo(ax+3, y0+49); g.lineTo(ax+8, y0+54); g.lineTo(ax+3, y0+59); g.stroke();
+    }
+
+    /* графік: чисел у карті ознак */
+    var gx=70, gy=222, gw=W-190, gh=132;
+    var maxv=Math.max(301056, st[3].vals, 200704)*1.28;
+    function PX(i){ return gx + i*(gw/3); }
+    function PY(v){ return gy+gh - v/maxv*gh; }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(gx-10, gy+gh); g.lineTo(gx+gw+10, gy+gh); g.stroke();
+    capt(g,'ЧИСЕЛ У КАРТІ ОЗНАК (ТОКЕНІВ × КАНАЛІВ)', gx-10, gy-16, soft,11,true);
+
+    /* ResNet пунктиром */
+    g.strokeStyle=soft; g.lineWidth=1.6; g.setLineDash([5,4]); g.beginPath();
+    for(i=0;i<4;i++){
+      var v=RESN[i].res*RESN[i].res*RESN[i].ch;
+      if(i===0) g.moveTo(PX(i),PY(v)); else g.lineTo(PX(i),PY(v));
+    }
+    g.stroke(); g.setLineDash([]);
+
+    /* Swin із обраним множником */
+    g.strokeStyle=rose; g.lineWidth=2.5; g.beginPath();
+    for(i=0;i<4;i++){ if(i===0) g.moveTo(PX(i),PY(st[i].vals)); else g.lineTo(PX(i),PY(st[i].vals)); }
+    g.stroke();
+    for(i=0;i<4;i++){
+      g.fillStyle=rose; g.beginPath(); g.arc(PX(i),PY(st[i].vals),5,0,6.284); g.fill();
+      plate(g, gr(st[i].vals), PX(i), PY(st[i].vals)-12, rose, 12, i===3?'right':'center', raise);
+      capt(g,'ст. '+(i+1), PX(i), gy+gh+18, soft, 11, false, 'center');
+    }
+    /* легенда — у рядку заголовка, де ніколи немає кривих */
+    var ly=gy-20, lx=gx+gw-330;
+    g.strokeStyle=rose; g.lineWidth=2.5;
+    g.beginPath(); g.moveTo(lx, ly); g.lineTo(lx+22, ly); g.stroke();
+    capt(g,'Swin ×'+k, lx+28, ly+4, rose, 12, true);
+    g.strokeStyle=soft; g.lineWidth=1.6; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(lx+110, ly); g.lineTo(lx+132, ly); g.stroke(); g.setLineDash([]);
+    capt(g,'ResNet 64 · 128 · 256 · 512', lx+138, ly+4, soft, 12, true);
+
+    var mc=mergeCost(k);
+    I('mul6v').textContent='×'+k;
+    I('mul6c').textContent=gr(st[3].ch);
+    I('mul6m').textContent=gr(st[3].vals);
+    I('mul6w').textContent=gr(mc)+' ('+(mc/28288354*100).toFixed(1)+' % від swin_t)';
+
+    if(k===1){
+      verd('mul6vd','t-no','МЕРЕЖА ГЛУХНЕ',
+        'Канали не ростуть, тож карта худне вчетверо на кожній стадії: до четвертої '
+        +'лишається '+gr(st[3].vals)+' чисел проти 301 056 на першій. Місткості для '
+        +'складних ознак просто немає.');
+    } else if(k===2){
+      verd('mul6vd','t-ok','ПРАВИЛО ПОДВОЄННЯ',
+        'Обсяг карти падає рівно вдвічі на кожній стадії — плавно, без обривів. '
+        +'Три шари обʼєднання коштують '+gr(mc)+' ваг, тобто 5,5 % мережі. '
+        +'Саме це значення бере Swin, і це те саме правило, що в темі 09.');
+    } else if(k===3){
+      verd('mul6vd','t-mid','ЩЕ ТЕРПИМО, АЛЕ ДОРОГО',
+        'Карта майже не худне, зате шари обʼєднання розпухли до '+gr(mc)
+        +' ваг — це вже третина всієї мережі, витрачена на перекладання чисел.');
+    } else {
+      verd('mul6vd','t-no','ЦІНА ВИЙШЛА З-ПІД КОНТРОЛЮ',
+        'Множник 4 тримає обсяг карти незмінним на всіх стадіях — піраміди немає зовсім. '
+        +'А три шари обʼєднання важать '+gr(mc)+' ваг, тобто більше, ніж уся swin_t.');
+    }
+  }
+  on('mul6','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 7 · ConvNeXt: що звідки взялося ═════════════ */
+(function(){
+  var cv=I('cNext'); if(!cv) return;
+  var sel8=0;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), d=NEXT[sel8];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), raise=css('--raise');
+    var i;
+
+    capt(g,'БЛОК ResNet-50', 60, 34, soft, 11, true);
+    capt(g,'БЛОК ConvNeXt', 400, 34, soft, 11, true);
+
+    /* дві колонки рядків блоку */
+    function column(x, rows, hl, color){
+      var y=54, k;
+      for(k=0;k<rows.length;k++){
+        if(!rows[k]) continue;
+        var isHl = (k===hl);
+        g.fillStyle = isHl ? css('--rose-w') : raise;
+        rr(g, x, y, 250, 34, 8); g.fill();
+        g.strokeStyle = isHl ? rose : hair; g.lineWidth = isHl?2:1; g.stroke();
+        capt(g, rows[k], x+13, y+22, isHl?rose:ink, 12, isHl);
+        y+=42;
+      }
+      return y;
+    }
+    column(50,  d.res, (d.hlres===undefined?-1:d.hlres), rose);
+    column(390, d.cnx, (d.hl===undefined?-1:d.hl), rose);
+
+    /* стрілка між колонками */
+    g.strokeStyle=hair; g.lineWidth=2;
+    g.beginPath(); g.moveTo(312, 180); g.lineTo(370, 180); g.stroke();
+    g.beginPath(); g.moveTo(363,175); g.lineTo(370,180); g.lineTo(363,185); g.stroke();
+
+    /* праворуч — приріст */
+    var bx=690, by=60;
+    capt(g,'ТОЧНІСТЬ НА ImageNet-1K', bx, by-14, soft, 11, true);
+    capt(g,'числа з опублікованої роботи', bx, by+2, soft, 10);
+
+    var lo=75.5, hi=82.5, bh=190, bwd=64;
+    function BY(v){ return by+40+bh - (v-lo)/(hi-lo)*bh; }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(bx-6, by+40+bh); g.lineTo(bx+200, by+40+bh); g.stroke();
+    /* довідкова лінія Swin-T; підпис виносимо в легенду, щоб він ніколи
+       не наїжджав на вершину стовпчика */
+    g.strokeStyle=teal; g.lineWidth=1.4; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(bx-6, BY(81.3)); g.lineTo(bx+200, BY(81.3)); g.stroke();
+    g.beginPath(); g.moveTo(bx, by+18); g.lineTo(bx+20, by+18); g.stroke();
+    g.setLineDash([]);
+    capt(g,'Swin-T 81,3', bx+26, by+22, teal, 11, true);
+
+    var pairs=[['було', d.from, soft],['стало', d.to, d.to>d.from?rose:amber]];
+    for(i=0;i<2;i++){
+      var x=bx+i*100, v=pairs[i][1], y=BY(v);
+      g.fillStyle = i===0 ? hair : (d.to>d.from ? rose : amber);
+      rr(g, x, y, bwd, by+40+bh-y, 6); g.fill();
+      capt(g, v.toFixed(1).replace('.',','), x+bwd/2, y-9, pairs[i][2], 14, true, 'center');
+      capt(g, pairs[i][0], x+bwd/2, by+40+bh+20, soft, 11, false, 'center');
+    }
+
+    capt(g,'ЩО САМЕ ЗМІНИЛОСЬ', 50, 372, soft, 11, true);
+    capt(g, d.what, 50, 394, ink, 12, false);
+
+    var delta=d.to-d.from;
+    I('n8d').textContent=(delta>0?'+':'')+delta.toFixed(1).replace('.',',');
+    I('n8a').textContent=d.to.toFixed(1).replace('.',',');
+    I('n8s').textContent=d.src;
+
+    if(Math.abs(delta)<0.05){
+      verd('n8vd','t-no','РІВНО НУЛЬ',
+        'Заміна ReLU на GELU не дала нічого: 80,6 до і 80,6 після. А це найчастіше '
+        +'копійована «модернізація». Користь зʼявилась лише на наступному кроці, коли '
+        +'зайві активації прибрали зовсім.');
+    } else if(delta<0){
+      verd('n8vd','t-no','ШАГ УНИЗ',
+        'Крок сам по собі втратив '+Math.abs(delta).toFixed(1).replace('.',',')
+        +' бала. Його роблять не заради точності, а щоб звільнити місце під наступний: '
+        +'широке ядро дешевше ставити там, де каналів мало.');
+    } else if(sel8===0){
+      verd('n8vd','t-ok','НАЙБІЛЬШИЙ ВНЕСОК — І ВІН НЕ АРХІТЕКТУРНИЙ',
+        '+2,7 бала з усіх +5,9, і в мережі не змінено жодного шару. Половина шляху '
+        +'від ResNet-50 до ConvNeXt — це рецепт навчання, а не будова.');
+    } else {
+      verd('n8vd','t-mid','АРХІТЕКТУРНИЙ КРОК',
+        '+'+delta.toFixed(1).replace('.',',')+' бала. Для порівняння: сам лише рецепт '
+        +'навчання дав +2,7. Архітектурні кроки тут дрібніші, зате їх багато.');
+    }
+    segSet('seg8', sel8);
+  }
+  segment('seg8', function(i){ sel8=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 6 · Три моделі однакового розміру ═════════════ */
+(function(){
+  var cv=I('cThree'); if(!cv) return;
+  var view6=0;
+  /* заміряно: три зерна, AdamW, 14 епох, 1000 прикладів на навчання */
+  var M6 = [
+    {n1:'повна увага', n2:'196 токенів одразу', acc:0.361, sec:47.1, par:23782, sp:0.032, runs:[0.388,0.323,0.370]},
+    {n1:'вікна 7×7',   n2:'чотири вікна, зі зсувом', acc:0.436, sec:26.0, par:23782, sp:0.012,
+     runs:[0.448,0.437,0.423]},
+    {n1:'згортка',     n2:'три ядра 3×3', acc:0.907, sec:7.9, par:21430, sp:0.018,
+     runs:[0.893,0.898,0.928]}
+  ];
+  var VIEWS=[
+    {key:'acc', ttl:'ТОЧНІСТЬ НА ПЕРЕВІРЦІ', unit:'', dec:3, hi:1},
+    {key:'sec', ttl:'ЧАС НАВЧАННЯ, СЕКУНД',  unit:' с', dec:1, hi:0},
+    {key:'par', ttl:'ВАГ У МОДЕЛІ',          unit:'',   dec:0, hi:0}
+  ];
+
+  function val(m,key){
+    if(key==='acc') return m.acc;
+    if(key==='sec') return m.sec;
+    return m.par;
+  }
+  function spread(m){ return m.sp; }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), v=VIEWS[view6];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), raise=css('--raise');
+    var i, k;
+
+    capt(g, v.ttl, 40, 32, soft, 11, true);
+
+    var gx=150, gy=64, gh=232, bwd=118, gap=100;
+    var vals=[], m;
+    for(i=0;i<3;i++) vals.push(val(M6[i], v.key));
+    var maxv=Math.max.apply(null, vals)*1.22;
+    if(v.key==='acc') maxv=1.0;
+    function BY(x){ return gy+gh - x/maxv*gh; }
+
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(gx-30, gy+gh); g.lineTo(W-40, gy+gh); g.stroke();
+
+    /* рівень вгадування для точності */
+    if(v.key==='acc'){
+      g.strokeStyle=amber; g.lineWidth=1.4; g.setLineDash([5,4]);
+      g.beginPath(); g.moveTo(gx-30, BY(1/6)); g.lineTo(W-40, BY(1/6)); g.stroke();
+      g.setLineDash([]);
+      capt(g,'випадкове вгадування 0.167', W-40, BY(1/6)-8, amber, 11, true, 'right');
+    }
+
+    for(i=0;i<3;i++){
+      m=M6[i];
+      var x=gx+i*(bwd+gap), y=BY(vals[i]);
+      g.fillStyle = [rose, teal, amber][i];
+      rr(g, x, y, bwd, gy+gh-y, 8); g.fill();
+
+      /* окремі прогони показуємо лише для точності — час міряли як середнє */
+      if(v.key==='acc'){
+        for(k=0;k<m.runs.length;k++){
+          var ry=BY(m.runs[k]);
+          /* усередині стовпчика риска має бути світлою, над ним — кольоровою */
+          g.strokeStyle = m.runs[k] <= vals[i] ? raise : [rose,teal,amber][i];
+          g.lineWidth=2.5;
+          g.beginPath(); g.moveTo(x+14, ry); g.lineTo(x+bwd-14, ry); g.stroke();
+        }
+      }
+      var txt = v.key==='par' ? gr(m.par)
+              : (v.key==='acc' ? vals[i].toFixed(3) : vals[i].toFixed(1)+' с');
+      plate(g, txt, x+bwd/2, y-12, [rose,teal,amber][i], 14, 'center', raise);
+      /* назва моделі — у два рядки, щоб не наїжджала на сусідню */
+      capt(g, m.n1, x+bwd/2, gy+gh+22, ink, 12, true, 'center');
+      capt(g, m.n2, x+bwd/2, gy+gh+38, soft, 11, false, 'center');
+      capt(g, gr(m.par)+' ваг', x+bwd/2, gy+gh+56, soft, 10, false, 'center');
+    }
+
+    if(v.key==='acc') capt(g,'риски всередині стовпчика — три окремі прогони', gx-30, gy+gh+80, soft, 11);
+    if(v.key==='sec') capt(g,'середнє по трьох прогонах, один потік, без відеокарти', gx-30, gy+gh+80, soft, 11);
+    if(v.key==='par') capt(g,'перші дві моделі відрізняються лише розміром вікна', gx-30, gy+gh+80, soft, 11);
+
+    /* табло */
+    var best=0;
+    for(i=1;i<3;i++) if(v.hi ? vals[i]>vals[best] : vals[i]<vals[best]) best=i;
+    var sorted=vals.slice().sort(function(a,b){return v.hi ? b-a : a-b;});
+    I('b7best').textContent=M6[best].n1;
+    I('b7gap').textContent = v.key==='par'
+      ? gr(Math.abs(vals[0]-vals[2]))+' ваг'
+      : (v.key==='acc' ? (sorted[0]-sorted[1]).toFixed(3)
+                       : (sorted[1]-sorted[0]).toFixed(1)+' с');
+    var mx=0;
+    for(i=0;i<3;i++) if(spread(M6[i])>mx) mx=spread(M6[i]);
+    I('b7sp').textContent='±'+mx.toFixed(3)+' (точність)';
+
+    if(view6===0){
+      var d01=Math.abs(M6[0].acc-M6[1].acc), sp01=Math.max(spread(M6[0]),spread(M6[1]));
+      var win = d01>sp01
+        ? 'Різниця між повною увагою і вікнами — '+d01.toFixed(3)+' при розкиді ±'
+          +sp01.toFixed(3)+', тобто більша за розкид. Вікна тут справді не гірші.'
+        : 'Різниця між повною увагою і вікнами — '+d01.toFixed(3)+' при розкиді ±'
+          +sp01.toFixed(3)+'. Вона менша за розкид, отже різниці ми <b>не виявили</b>.';
+      verd('b7vd','t-ok','ЗГОРТКА ПОПЕРЕДУ',
+        'Згортка дає '+M6[2].acc.toFixed(3)+' проти '+M6[1].acc.toFixed(3)
+        +' у вікон, маючи менше ваг. '+win);
+    } else if(view6===1){
+      verd('b7vd','t-mid','ВІКНА ШВИДШІ, АЛЕ СЕКУНДИ ХИТКІ',
+        M6[1].sec.toFixed(1)+' с проти '+M6[0].sec.toFixed(1)
+        +' с при однаковій кількості ваг. Згортка ще швидша: '+M6[2].sec.toFixed(1)
+        +' с. Але секунди залежать від завантаження машини: у другому прогоні '
+        +'той самий виграш скоротився з 1,8 раза до 1,2. Надійне число — '
+        +'9 604 елементи матриці уваги замість 38 416.');
+    } else {
+      verd('b7vd','t-mid','ВАГИ ОДНАКОВІ НАВМИСНЕ',
+        'Перші дві моделі мають рівно '+gr(M6[0].par)+' ваги кожна: вони відрізняються '
+        +'тільки розміром вікна. Тому будь-яка різниця між ними — від уваги, а не від розміру.');
+    }
+  }
+  segment('seg7', function(i){ view6=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+})();
+</script>
+</body>
+</html>

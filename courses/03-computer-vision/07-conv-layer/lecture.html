@@ -1,0 +1,2004 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Згортковий шар</title>
+<meta name="description" content="Згортковий шар як деталь нейромережі: тензор (N, C, H, W), ядро з глибиною C_in, багато фільтрів і карти ознак. Формула параметрів out×in×k×k + out і чому в ній немає розміру зображення. padding, stride і розмір виходу з округленням униз. Рецептивне поле, два шари 3×3 проти одного 5×5, згортка 1×1 і те, що nn.Conv2d рахує кореляцію.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .nums td, .nums th, .ctl .cap, .kgrid input{font-variant-ligatures:none}
+</style>
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .nums td, .nums th,
+.ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code,
+figcaption code{overflow-wrap:normal; white-space:nowrap}
+
+/* таблиця з числами: колонки праворуч моноширинні й по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:inherit; font-size:15px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg button{min-width:0}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 2 · Тема 07</p>
+    <h1>Згортковий шар</h1>
+    <p class="stand">Та сама операція, що й у темі 04, з однією зміною: коефіцієнти ядра
+      більше ніхто не вписує руками. Їх знаходить градієнтний спуск — і саме з цього
+      виростає вся сучасна архітектура зору.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Ядро перестали писати руками</a></li>
+        <li><a href="#s2">Форма даних: N, C, H, W</a></li>
+        <li><a href="#s3">Ядро має глибину</a></li>
+        <li><a href="#s4">Багато фільтрів — багато карт ознак</a></li>
+        <li><a href="#s5">Скільки в шарі чисел</a></li>
+        <li><a href="#s6"><code>padding</code> і доля краю</a></li>
+        <li><a href="#s7"><code>stride</code> і розмір виходу</a></li>
+        <li><a href="#s8">Що фільтр вивчає насправді</a></li>
+        <li><a href="#s9">Рецептивне поле</a></li>
+        <li><a href="#s10">Згортка 1 × 1</a></li>
+        <li><a href="#s11">Це кореляція, а не згортка</a></li>
+        <li><a href="#s12">Куди далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../06-why-not-dense/lecture.html">← 06. Чому повнозвʼязна мережа не годиться</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../08-pooling/lecture.html">08. Пулінг і зменшення розмірності →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Попередня тема закінчилась трьома рецептами. Щоб мережа впоралася із
+зображенням, їй потрібні: <strong>локальність</strong> — нейрон дивиться на маленьку
+ділянку, а не на всю картинку; <strong>спільні ваги</strong> — та сама ділянка
+обробляється тим самим набором чисел, де б вона не була; і <strong>зменшення
+розмірності</strong>, щоб стос таких шарів не розрісся до непристойних розмірів.</p>
+
+<p>Третій рецепт бере на себе <a href="../08-pooling/lecture.html">тема 08</a>. Перші
+два — це рівно один обʼєкт, і ти вже вмієш його рахувати. Це згортка з
+<a href="../04-convolution-by-hand/lecture.html">теми 04</a>: вікно ковзає по зображенню,
+у кожному положенні відбувається кілька множень і одна сума. Локальність — це вікно.
+Спільні ваги — це те, що ядро в усіх положеннях одне.</p>
+
+<p>Тобто нової операції в цій темі не буде. Буде одна зміна, на вигляд дрібна, а за
+наслідками — та, що розділила історію компʼютерного зору навпіл.</p>
+
+<h2 id="s1"><span class="num">01 / Зміна</span>Ядро перестали писати руками</h2>
+
+<p>У темі 04 ми складали ядра самі. Ядро розмиття — девʼять однакових коефіцієнтів
+<code>1/9</code>. Ядро Собеля по горизонталі — три відʼємні числа зліва, три додатні
+справа. Ядро різкості — центр більший за одиницю, сусіди відʼємні. Кожен раз
+працювала та сама схема: людина розуміла, яку властивість хоче побачити, і вигадувала
+табличку чисел, яка на цю властивість реагує.</p>
+
+<p><a href="../05-classic-features/lecture.html">Тема 05</a> показала, куди це впирається.
+Придумана ознака працює рівно доти, доки задача схожа на ту, під яку її придумували.
+Собель чудово знаходить межі — але «межа» і «кіт» це різні речі, і між ними лежить
+десяток кроків, кожен з яких треба вигадати окремо.</p>
+
+<p>Згортковий шар (convolutional layer) робить один-єдиний крок убік. Він каже:
+<strong>нехай коефіцієнти ядра будуть параметрами моделі</strong> — такими самими, як
+ваги звичайного нейрона. Ми їх не вписуємо. Ми ставимо туди випадкові числа, показуємо
+мережі приклади, рахуємо помилку, і градієнтний спуск сам зсуває кожен коефіцієнт у бік,
+який помилку зменшує.</p>
+
+<div class="note"><b>Одне речення, яке варто перечитати.</b> Ядро — це просто числа.
+Числа, які підбирають навчанням, називаються вагами. Отже, ядро згортки — це набір ваг,
+а згортка з навченим ядром — це шар нейромережі. Більше в означенні згорткового шару
+нічого немає.</div>
+
+<p>Наслідок номер один: ми більше не мусимо знати, яку саме ознаку шукати. Наслідок
+номер два, менш очевидний і значно приємніший: одне ядро — це <strong>дуже мало
+чисел</strong>. Ядро 3 × 3 на сірому зображенні має девʼять коефіцієнтів. Девʼять
+чисел обробляють картинку будь-якого розміру, бо ковзають по ній. Саме звідси
+береться та різниця в тринадцять разів, яку показала попередня тема: у повнозвʼязній
+мережі на тому самому завданні було 50 435 параметрів, у згортковій — 3 735, і
+згорткова при цьому виявилась кращою.</p>
+
+<h2 id="s2"><span class="num">02 / Форма</span>Форма даних: N, C, H, W</h2>
+
+<p>Перш ніж рахувати, треба домовитись, як лежать дані. У темі 01 зображення було
+масивом <code>(висота, ширина, канали)</code> — саме так його віддає OpenCV. У PyTorch
+порядок інший, і на цьому спотикаються всі без винятку:</p>
+
+<div class="eq">(N, C, H, W)</div>
+
+<p>Чотири літери означають ось що. <strong>N</strong> (batch) — скільки зображень у пачці,
+яку ми подаємо в мережу за один раз. <strong>C</strong> (channels) — скільки каналів у
+кожного зображення: 1 для сірого, 3 для кольорового. <strong>H</strong> (height) — висота
+в пікселях. <strong>W</strong> (width) — ширина. Тобто тензор
+<code>(64, 3, 28, 28)</code> — це 64 кольорові картинки 28 × 28.</p>
+
+<p>Слово «тензор» тут не означає нічого страшного: це просто багатовимірний масив чисел,
+рідний брат <code>np.ndarray</code>. Чотиривимірний — бо в нас чотири незалежні осі,
+по яких можна рухатись.</p>
+
+<h3>Чому канали окремою віссю</h3>
+
+<p>Могло ж бути інакше: скласти три канали в один довгий вектор, як робить повнозвʼязна
+мережа. Але тоді ми втратимо саме те, заради чого затіяли згортку. Ядро має ковзати
+по <strong>просторових</strong> осях — вправо й униз. Канал — не просторова вісь: «сусіднього»
+каналу поруч із зеленим не існує, червоний не лежить ліворуч від синього. Тому осі
+розділені: по H і W вікно рухається, по C — ні, воно накриває всі канали одразу.
+Розділ 03 покаже, що з цього виходить.</p>
+
+<p>Порядок саме такий («канали спереду», channels-first) з міркувань швидкості: усі
+числа одного каналу лежать у памʼяті поспіль. У TensorFlow і Keras прийнято протилежне —
+<code>(N, H, W, C)</code>, «канали ззаду», — тож код із туторіалу на іншому фреймворку
+без перестановки осей не запрацює.</p>
+
+<div class="note warn"><b>Найчастіша помилка перших годин.</b> Подати в
+<code>nn.Conv2d</code> масив із OpenCV як є. Він має форму <code>(28, 28, 3)</code>, а шар
+чекає <code>(N, 3, 28, 28)</code>: спершу треба переставити осі
+(<code>np.transpose</code> або <code>tensor.permute(2, 0, 1)</code>), потім додати вісь
+пачки (<code>[None]</code> або <code>unsqueeze(0)</code>). Помилка гучна — шар скаржиться
+на кількість каналів, — але тільки якщо H і W не дорівнюють 3. Квадратне зображення 3 × 3
+проїде без жодного слова й дасть безглуздий результат.</div>
+
+<h2 id="s3"><span class="num">03 / Глибина</span>Ядро має глибину</h2>
+
+<p>А тепер головне непорозуміння теми, і воно варте окремого розділу.</p>
+
+<p>Коли кажуть «ядро 3 × 3», у голові малюється квадратик із девʼяти чисел. На сірому
+зображенні так і є. Але щойно на вході три канали, ядро 3 × 3 перестає бути плоским.
+Насправді воно має розмір <strong>3 × 3 × 3</strong>: три числа вшир, три вгору-вниз і
+<strong>стільки шарів углиб, скільки каналів на вході</strong>.</p>
+
+<div class="eq">розмір ядра = C<span class="sub">in</span> × k × k</div>
+
+<p>Прочитаємо словами. <code>C_in</code> — кількість каналів входу, <code>k</code> —
+сторона вікна. Ядро — це стос із <code>C_in</code> квадратних табличок <code>k × k</code>,
+по одній на кожен вхідний канал.</p>
+
+<p>І другий пункт, ще важливіший: <strong>усе це дає один-єдиний канал на виході</strong>.
+Не три. Один. Робиться так: перша табличка множиться на червоний канал, друга — на
+зелений, третя — на синій; усі добутки складаються <em>разом</em>, в одну купу; до суми
+додається зсув. Виходить одне число.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · вікно</span>
+    <p>Ставимо вікно 3 × 3 у певне місце зображення. Воно вирізає три квадратики
+      3 × 3 — по одному з кожного каналу.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · три поверхи</span>
+    <p>Кожен квадратик множимо поелементно на свою табличку ядра й складаємо девʼять
+      добутків. Три канали — три проміжні суми.</p>
+    <div class="eq left">канал R: сума 9 добутків = s<span class="sub">R</span>
+канал G: сума 9 добутків = s<span class="sub">G</span>
+канал B: сума 9 добутків = s<span class="sub">B</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · одна відповідь</span>
+    <p>Три проміжні суми складаємо між собою й додаємо зсув <code>b</code> — одне число
+      на все ядро.</p>
+    <div class="eq left">вихід = s<span class="sub">R</span> + s<span class="sub">G</span> + s<span class="sub">B</span> + b</div>
+    <p>Разом задіяно 3 × 9 = 27 множень і один додаток зсуву. Результат — <b>одне</b>
+      число в <b>одній</b> вихідній карті.</p>
+  </div>
+</div>
+
+<p>Чому канали складаються, а не лишаються окремо? Бо ознака, яку шукає фільтр, може
+жити в комбінації кольорів: «різкий перехід від жовтого до синього» — це одночасно
+перепад у червоному, зеленому й синьому, кожен зі своїм знаком. Даючи ядру різні
+коефіцієнти для різних каналів і складаючи їхні внески, ми даємо йому шанс таку
+комбінацію помітити.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Ядро має глибину</p>
+  <p class="fig-sub">Три канали входу, одне ядро 3 × 3 × 3, один вихід. Тисни «канал» — і дивись, як три окремі суми зливаються в одне число.</p>
+  <div class="panel">
+    <div><canvas id="cDep" width="940" height="430" aria-label="Три канали входу по 3 на 3, три таблички ядра й одне вихідне число"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">вікно на зображенні</span>
+        <div class="seg" id="depSeg">
+          <button type="button" data-i="0" aria-pressed="true">межа</button>
+          <button type="button" data-i="1" aria-pressed="false">рівна ділянка</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>каналів пройдено</b><i id="depN">0 / 3</i></div>
+        <div class="cellv"><b>внесок каналу</b><i id="depC">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>сума + зсув</b><i id="depS">—</i></div>
+      </div>
+      <div class="btnrow">
+        <button type="button" id="depNext">канал</button>
+        <button type="button" id="depAll">усе</button>
+      </div>
+      <button type="button" id="depReset">спочатку</button>
+      <div class="verdict" id="depVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Порахуй обидва положення вікна.</b> Ядро тут реагує на вертикальну межу:
+    ліві коефіцієнти додатні, праві відʼємні. На межі три канали дають великі внески
+    одного знака, і сума виходить велика. На рівній ділянці внески гасяться майже в нуль.
+    Три канали — три суми, але <b>вихідне число одне</b>.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Фільтри</span>Багато фільтрів — багато карт ознак</h2>
+
+<p>Одне ядро вміє шукати одну річ. Мережі цього мало: вертикальні межі, горизонтальні
+межі, плями, кути, перепади кольору — усе це різні ознаки, і кожній потрібне своє ядро.
+Тому згортковий шар тримає не одне ядро, а <strong>цілий набір</strong>, і всі вони
+працюють по тому самому входу паралельно, нічого одне про одного не знаючи.</p>
+
+<p>Скільки їх — вирішуєш ти, аргументом <code>out_channels</code>. Кожне ядро дає свій
+окремий канал на виході. Ці вихідні канали називають <strong>картами ознак</strong>
+(feature map): карта, на якій у кожній точці записано, наскільки сильно саме цей фільтр
+відгукнувся саме тут.</p>
+
+<div class="eq">вхід (N, C<span class="sub">in</span>, H, W) → шар → вихід (N, C<span class="sub">out</span>, H<span class="sub">out</span>, W<span class="sub">out</span>)</div>
+
+<p>Ось як це виглядає в коді:</p>
+
+<div class="eq left">layer = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, padding=1)
+x = torch.zeros(8, 3, 28, 28)
+y = layer(x)          # форма y : (8, 16, 28, 28)</div>
+
+<p>Читаємо: подали 8 кольорових картинок 28 × 28, отримали 8 стосів по 16 карт ознак,
+кожна теж 28 × 28. Число 3 у <code>in_channels</code> описує <em>вхід</em> і мусить
+збігатися з тим, що подаєш. Число 16 в <code>out_channels</code> — це наше рішення:
+скільки різних ознак шар має право вивчити.</p>
+
+<p>Зверни увагу на симетрію, яка робить згорткові мережі складаними в стос. Вихід шару —
+це знову тензор <code>(N, C, H, W)</code>, просто з іншим <code>C</code>. Отже, його можна
+подати в наступний згортковий шар, у якого <code>in_channels = 16</code>. Другий шар
+дивитиметься вже не на пікселі, а на карти ознак першого: його ядра 3 × 3 × 16 шукатимуть
+комбінації на кшталт «тут одночасно є вертикальна межа й пляма». Так із простих ознак
+збираються складні — і саме так виглядає будь-яка згорткова мережа зсередини.</p>
+
+<div class="note"><b>Термінологічна пастка.</b> Слова «фільтр», «ядро» і «канал виходу» в
+літературі часто означають те саме, і це збиває. Домовимось так, як прийнято в PyTorch:
+<b>фільтр</b> — цілий обʼєкт <code>C_in × k × k</code>, який дає одну карту ознак;
+<b>ядро</b> — одна його табличка <code>k × k</code> для одного вхідного каналу. Фільтрів
+у шарі рівно <code>out_channels</code>, а ядер — <code>out_channels × in_channels</code>.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Карти ознак</p>
+  <p class="fig-sub">Ліворуч — вхідне зображення. Праворуч — карти ознак після згорткового шару. Перемикай кількість фільтрів і дивись, скільки картинок виходить із однієї.</p>
+  <div class="panel">
+    <div><canvas id="cMaps" width="940" height="420" aria-label="Вхідне зображення фігури і сітка карт ознак після згорткового шару"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="mapsK">фільтрів <output id="mapsKv">4</output></label>
+        <input type="range" id="mapsK" min="1" max="8" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <span class="cap">вхідна фігура</span>
+        <div class="seg" id="mapsSeg">
+          <button type="button" data-i="0" aria-pressed="true">коло</button>
+          <button type="button" data-i="1" aria-pressed="false">квадрат</button>
+          <button type="button" data-i="2" aria-pressed="false">хрест</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>форма виходу</b><i id="mapsSh" class="sm">—</i></div>
+        <div class="cellv"><b>чисел на виході</b><i id="mapsNum">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>параметрів у шарі</b><i id="mapsP">—</i></div>
+      </div>
+      <div class="verdict" id="mapsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Ваги тут не вигадані</b> — це справжні фільтри першого шару мережі,
+    навченої на фігурах у практиці цієї теми; до них ми повернемось у розділі 08.
+    Головне, що видно вже зараз: різні фільтри світяться на різних місцях однієї фігури,
+    а параметрів у шарі лишається однаково мало, скільки б карт він не породив.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Рахунок</span>Скільки в шарі чисел</h2>
+
+<p>Тепер порахуємо параметри — і зробимо це так, щоб більше ніколи не гадати.</p>
+
+<p>У шарі є <code>out_channels</code> фільтрів. Кожен фільтр — це <code>in_channels</code>
+табличок <code>k × k</code>. Плюс у кожного фільтра свій зсув — одне число:</p>
+
+<div class="eq">параметрів = C<span class="sub">out</span> × C<span class="sub">in</span> × k × k + C<span class="sub">out</span></div>
+
+<p>Перший доданок — усі коефіцієнти ядер, другий — зсуви. Підставимо числа для
+<code>nn.Conv2d(3, 16, 3)</code>: множимо 16 × 3 × 3 × 3 = 432, додаємо 16 зсувів,
+разом <strong>448</strong>. Перевірено запуском: <code>sum(p.numel() for p in
+layer.parameters())</code> дає рівно 448.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>Шар</th><th>ядра</th><th>зсуви</th><th>разом</th></tr></thead>
+  <tbody>
+    <tr><td><code>Conv2d(1, 8, 3)</code></td><td>72</td><td>8</td><td>80</td></tr>
+    <tr><td><code>Conv2d(3, 16, 3)</code></td><td>432</td><td>16</td><td>448</td></tr>
+    <tr><td><code>Conv2d(3, 16, 5)</code></td><td>1 200</td><td>16</td><td>1 216</td></tr>
+    <tr><td><code>Conv2d(3, 32, 7)</code></td><td>4 704</td><td>32</td><td>4 736</td></tr>
+    <tr><td><code>Conv2d(64, 64, 3)</code></td><td>36 864</td><td>64</td><td>36 928</td></tr>
+    <tr><td><code>Conv2d(256, 256, 1)</code></td><td>65 536</td><td>256</td><td>65 792</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Чого у формулі немає</h3>
+
+<p>Придивись до правої частини ще раз. Там є <code>C_in</code>, <code>C_out</code> і
+<code>k</code>. Там <strong>немає H і W</strong>. Розмір зображення на кількість
+параметрів не впливає взагалі.</p>
+
+<p>Це не фокус, а прямий наслідок спільних ваг. Ядро одне на все зображення: воно
+проїжджає по 28 × 28 і по 512 × 512 тими самими коефіцієнтами. Більша картинка означає
+більше <em>роботи</em> — більше положень вікна, більше множень, довший час, — але не
+більше <em>чисел</em>, які треба вивчити. Перевірено: той самий
+<code>nn.Conv2d(3, 16, 3, padding=1)</code> на входах 28 × 28, 128 × 128 і 512 × 512 дає
+виходи 16 × 28 × 28, 16 × 128 × 128 і 16 × 512 × 512 — і 448 параметрів у всіх трьох
+випадках.</p>
+
+<p>Порівняй із повнозвʼязним шаром, який на цьому й ламається. Щоб перетворити той самий
+вхід 3 × 28 × 28 на 16 × 28 × 28 «кожен з кожним», йому потрібно
+2 352 × 12 544 ваг плюс 12 544 зсувів — це <strong>29 516 032</strong> числа проти наших
+448. У 65 884 рази більше, і кожне з них залежить від розміру картинки: зміни вхід на
+32 × 32 — і всю матрицю доведеться будувати заново.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Лічильник параметрів</p>
+  <p class="fig-sub">Крути три ручки згорткового шару й дивись, як росте кількість чисел у ньому — і як поруч стоїть повнозвʼязний шар на тому самому вході.</p>
+  <div class="panel">
+    <div><canvas id="cPar" width="940" height="400" aria-label="Стовпчики: параметри згорткового й повнозвʼязного шарів на однаковому вході"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="parIn"><span class="raw">in_channels</span> <output id="parInv">3</output></label>
+        <input type="range" id="parIn" min="1" max="64" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <label for="parOut"><span class="raw">out_channels</span> <output id="parOutv">16</output></label>
+        <input type="range" id="parOut" min="1" max="64" step="1" value="16">
+      </div>
+      <div class="ctl">
+        <label for="parK">розмір ядра <output id="parKv">3</output></label>
+        <input type="range" id="parK" min="1" max="9" step="2" value="3">
+      </div>
+      <div class="ctl">
+        <label for="parS">сторона зображення <output id="parSv">28</output></label>
+        <input type="range" id="parS" min="8" max="64" step="4" value="28">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>згортковий</b><i id="parA">—</i></div>
+        <div class="cellv"><b>повнозвʼязний</b><i id="parB">—</i></div>
+      </div>
+      <div class="verdict" id="parVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Посунь останній повзунок — і зверни увагу, що змінилось.</b> Число
+    згорткового шару не ворухнеться: розмір зображення в його формулу не входить. Число
+    повнозвʼязного шару зростає як четвертий степінь сторони, бо від неї залежать і вхід,
+    і вихід одночасно.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Край</span><code>padding</code> і доля краю</h2>
+
+<p>Тепер повернімось до питання, яке вже виникало в темі 04: що робити з краєм. Вікно
+3 × 3, поставлене в кутовий піксель, наполовину звисає за межі масиву. Варіантів два:
+не ставити його туди взагалі або домалювати навколо зображення рамку.</p>
+
+<p>Перший варіант зветься <code>padding=0</code>, або <strong>valid</strong>: вікно
+рахується тільки там, де воно повністю всередині. Ціна — зображення зменшується.
+Для ядра <code>k</code> зникає по <code>(k−1)/2</code> пікселя з кожного боку:
+28 × 28 після ядра 3 × 3 стає 26 × 26, після 5 × 5 — 24 × 24.</p>
+
+<p>Один раз це дрібниця. Але згорткові мережі складають десятки шарів, і кожен ядром
+3 × 3 зʼїдає по два пікселі. Від зображення 28 × 28 на чотирнадцятому шарі не лишилось
+би нічого.</p>
+
+<p>Другий варіант зветься <strong>same</strong>: домалювати рамку такої товщини, щоб
+вихід вийшов рівно такого самого розміру, як вхід. Для непарного ядра при кроці 1
+товщина рамки рахується просто:</p>
+
+<div class="eq">p = (k − 1) / 2</div>
+
+<p>Для <code>k = 3</code> це 1, для <code>k = 5</code> — 2, для <code>k = 7</code> — 3.
+Легко перевірити на формулі розміру виходу, до якої ми дійдемо в наступному розділі:
+підстав <code>p = (k−1)/2</code> — і вихід збігається зі входом. Для парного ядра
+симетричної цілої рамки не існує взагалі, і це одна з причин, чому в мережах майже
+завжди беруть непарні ядра. У PyTorch можна писати
+<code>padding='same'</code> словом — але тільки при <code>stride=1</code>.</p>
+
+<h3>Чим саме заповнити рамку</h3>
+
+<p>Тема 03 дала чотири режими межі OpenCV: константа, повторення краю, дзеркало,
+дзеркало без повторення пікселя. У нейромережах з усього цього багатства майже завжди
+використовують найпростіший — <strong>нулі</strong>. Замовчування
+<code>nn.Conv2d</code> саме таке: <code>padding_mode='zeros'</code>. Інші режими є
+(<code>'reflect'</code>, <code>'replicate'</code>, <code>'circular'</code>), але
+трапляються рідко.</p>
+
+<p>І це не безневинно. Нуль — не «немає даних», нуль — це чорний піксель. Мережа не
+знає, що там нічого немає: вона бачить чорну рамку й вчиться на ній так само старанно,
+як на справжніх даних.</p>
+
+<p>Наслідок можна порахувати руками. Візьмемо вхід 8 × 8 і ядро 3 × 3. Скільки разів
+кожен піксель потрапляє у вікно?</p>
+
+<ul>
+  <li><strong>Без рамки</strong> (<code>valid</code>, вихід 6 × 6): центральний піксель
+    потрапляє у вікно <b>9</b> разів, кутовий — <b>1</b> раз. Утричі менше по кожній
+    осі.</li>
+  <li><strong>З рамкою</strong> (<code>same</code>, вихід 8 × 8): центральний піксель —
+    ті самі <b>9</b> разів, кутовий — <b>4</b>. Краще, але й досі менше половини.</li>
+</ul>
+
+<p>Тобто кутовий піксель за будь-якого режиму впливає на результат слабше за
+центральний, а вікна, що його накривають, наполовину заповнені вигаданими нулями. Для
+класифікації, де предмет зазвичай у середині, це майже неважливо. Для сегментації, де
+відповідь потрібна в кожній точці включно з краєм, моделі часто мажуть уздовж рамки.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · <code>padding</code> і доля краю</p>
+  <p class="fig-sub">Кожна клітинка показує, скільки разів цей піксель потрапив у вікно згортки. Перемикай режим — і дивись, що стається з кутом.</p>
+  <div class="panel">
+    <div><canvas id="cPad" width="940" height="410" aria-label="Сітка 8 на 8, у кожній клітинці число: скільки разів піксель потрапив у вікно згортки"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">режим</span>
+        <div class="seg" id="padSeg">
+          <button type="button" data-i="0" aria-pressed="true">valid (p = 0)</button>
+          <button type="button" data-i="1" aria-pressed="false">same</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="padK">розмір ядра <output id="padKv">3</output></label>
+        <input type="range" id="padK" min="3" max="7" step="2" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кут бачать</b><i id="padC">—</i></div>
+        <div class="cellv"><b>центр бачать</b><i id="padM">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>форма виходу</b><i id="padSh" class="sm">—</i></div>
+        <div class="cellv"><b>нулів у рамці</b><i id="padZ">—</i></div>
+      </div>
+      <div class="verdict" id="padVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав ядро 7 × 7 і подивись на режим valid.</b> Вихід ужимається з
+    8 × 8 до 2 × 2, кутовий піксель потрапляє в одне-єдине вікно, а центральний — у
+    чотири. Режим same зберігає розмір, але платить за це рамкою з нулів, яких у
+    зображенні не було.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Крок</span><code>stride</code> і розмір виходу</h2>
+
+<p>Досі вікно рухалось на один піксель за раз. Але воно може стрибати — через два, через
+три. Цей крок і зветься <code>stride</code>.</p>
+
+<p><code>stride=2</code> означає: порахували вікно, перескочили на дві клітинки, порахували
+знову. Половина положень просто не рахується, і вихід виходить приблизно вдвічі меншим
+по кожній осі. Це найпряміший спосіб зменшити розмір карти ознак — і саме тому
+<code>stride</code> ще зʼявиться в <a href="../08-pooling/lecture.html">темі 08</a>,
+де зменшення розмірності розбирають окремо. Нам тут <code>stride</code> потрібен
+рівно як четвертий аргумент згортки, який впливає на форму виходу.</p>
+
+<p>А форма виходу рахується однією формулою. Вона виглядає страшнувато, тому спершу
+словами: <em>беремо довжину доріжки, по якій може проїхати вікно, ділимо на довжину
+кроку — і додаємо одиницю, бо перше положення вікна теж рахується.</em></p>
+
+<div class="eq">H<span class="sub">out</span> = ⌊(H + 2p − k) / s⌋ + 1</div>
+
+<p>Розберемо символи. <code>H</code> — висота входу. <code>p</code> — товщина рамки
+(<code>padding</code>) з одного боку, тому в формулі стоїть <code>2p</code>: рамка є
+згори й знизу. <code>k</code> — сторона ядра. <code>s</code> — крок
+(<code>stride</code>). Кутові дужки <b>⌊ ⌋</b> означають округлення <strong>вниз</strong>:
+2.9 стає 2, 3.0 лишається 3. Для ширини формула та сама, з <code>W</code> замість
+<code>H</code>.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · довжина доріжки</span>
+    <p>Вікно шириною <code>k</code> їде по рядку довжиною <code>H + 2p</code> (зображення
+      разом із рамкою). Його ліва межа може стояти в позиціях від 0 до
+      <code>H + 2p − k</code> — далі вікно звисає. Це і є доріжка.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · скільки зупинок</span>
+    <p>Зупинки — через кожні <code>s</code> клітинок: доріжка, поділена на <code>s</code>
+      і округлена вниз. Плюс сама стартова позиція.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · підставляємо числа</span>
+    <p>Вхід 28, ядро 3, рамка 1, крок 2: доріжка = 28 + 2 − 3 = 27; 27 ÷ 2 = 13.5,
+      округлюємо вниз до 13; додаємо 1 — виходить <b>14</b>. Перевірено запуском:
+      <code>nn.Conv2d(1, 1, 3, stride=2, padding=1)</code> на вході 28 × 28 дає
+      справді 14 × 14.</p>
+  </div>
+</div>
+
+<h3>Округлення вниз — це викинуті дані</h3>
+
+<p>Округлення в формулі не косметичне. Воно означає, що останні пікселі рядка можуть
+не потрапити в жодне вікно взагалі. Дивись: вхід 28, ядро 3, <b>без</b> рамки, крок 2.
+Доріжка = 25, 25 ÷ 2 = 12.5 → 12, плюс 1 = <b>13</b>. Але 12 кроків по 2 доводять ліву
+межу вікна до позиції 24, і вікно накриває пікселі 24, 25, 26. Піксель номер 27 — останній
+у рядку — не бачив жодного фільтра. Його просто немає в результаті.</p>
+
+<p>Ознака така: якщо <code>(H + 2p − k)</code> не ділиться на <code>s</code> націло,
+частина краю відрізана мовчки. Ніякої помилки, ніякого попередження. Тому пари
+<code>stride</code> і <code>padding</code> у мережах підбирають так, щоб ділилось
+рівно — найпоширеніша комбінація <code>k=3, s=2, p=1</code> рівно вдвічі зменшує
+парний розмір і нічого не викидає.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>Вхід H</th><th>k</th><th>s</th><th>p</th><th>вихід</th><th>обрізано</th></tr></thead>
+  <tbody>
+    <tr><td>28</td><td>3</td><td>1</td><td>0</td><td>26</td><td>0</td></tr>
+    <tr><td>28</td><td>3</td><td>1</td><td>1</td><td>28</td><td>0</td></tr>
+    <tr><td>28</td><td>5</td><td>1</td><td>2</td><td>28</td><td>0</td></tr>
+    <tr><td>28</td><td>3</td><td>2</td><td>1</td><td>14</td><td>0</td></tr>
+    <tr><td>28</td><td>3</td><td>2</td><td>0</td><td>13</td><td>1</td></tr>
+    <tr><td>28</td><td>7</td><td>2</td><td>3</td><td>14</td><td>0</td></tr>
+    <tr><td>28</td><td>4</td><td>3</td><td>0</td><td>9</td><td>0</td></tr>
+    <tr><td>10</td><td>3</td><td>3</td><td>0</td><td>3</td><td>1</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Останній стовпчик рахує <em>справжні</em> пікселі, які не потрапили в жодне вікно.
+Шостий рядок показує тонкість: там <code>(28 + 6 − 7) = 27</code> теж не ділиться на 2,
+і одна позиція справді пропадає — але пропадає вона в <b>рамці з нулів</b>, а не в
+зображенні. Тому втрати нема. Коли рамка досить товста, залишок відрізається від неї,
+а не від даних.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Форма наскрізь</p>
+  <p class="fig-sub">Чотири ручки згортки й одна формула. Сірим показано рамку з нулів, рожевим — пікселі, які не потрапили в жодне вікно.</p>
+  <div class="panel">
+    <div><canvas id="cShp" width="940" height="420" aria-label="Схема входу з рамкою, положення вікон і квадрат виходу з підписаними розмірами"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="shpH">сторона входу <output id="shpHv">28</output></label>
+        <input type="range" id="shpH" min="6" max="40" step="1" value="28">
+      </div>
+      <div class="ctl">
+        <label for="shpK">розмір ядра k <output id="shpKv">3</output></label>
+        <input type="range" id="shpK" min="1" max="7" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <label for="shpS"><span class="raw">stride</span> <output id="shpSv">1</output></label>
+        <input type="range" id="shpS" min="1" max="4" step="1" value="1">
+      </div>
+      <div class="ctl">
+        <label for="shpP"><span class="raw">padding</span> <output id="shpPv">0</output></label>
+        <input type="range" id="shpP" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вихід</b><i id="shpOut">—</i></div>
+        <div class="cellv"><b>обрізано</b><i id="shpCut">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>підстановка</b><i id="shpEq" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="shpVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав крок 3 при ядрі 3 без рамки.</b> Формула дасть дробове число,
+    воно округлиться вниз, і рожеві смужки праворуч і знизу покажуть пікселі, які
+    не побачив жоден фільтр. Комбінація <code>k=3, s=2, p=1</code> — єдина в цьому
+    наборі, що ділить розмір рівно навпіл і нічого не втрачає.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Ваги</span>Що фільтр вивчає насправді</h2>
+
+<p>Дійшли до найцікавішого. Ми стільки разів сказали «коефіцієнти підбирає навчання» —
+але що там опиняється в кінці? Подивімось.</p>
+
+<p>У практиці цієї теми ми беремо датасет фігур 28 × 28 — шість класів: коло, квадрат,
+ромб, кільце, хрест, трикутник, — кладемо першим шаром
+<code>nn.Conv2d(1, 8, 5, padding=2)</code> (вісім фільтрів 5 × 5 на сірому вході, разом
+208 параметрів) і вчимо мережу дванадцять епох на 1 200 прикладах. Точність на
+перевірці — 0.993. Ніде, жодного разу, ми не кажемо мережі, що таке межа: ми показуємо
+картинки й назви фігур.</p>
+
+<p>Після навчання дістаємо <code>model.conv1.weight</code> і дивимось на числа. Ось
+перший фільтр із запуску, який лежить у зошиті:</p>
+
+<div class="eq left">−0.032  +0.035  −0.269  −0.319  −0.240    сума рядка  −0.825
++0.085  +0.019  +0.095  −0.111  −0.021    сума рядка  +0.067
++0.081  +0.074  −0.133  −0.094  −0.019    сума рядка  −0.091
++0.199  +0.301  +0.340  +0.066  +0.097    сума рядка  +1.003
++0.226  +0.385  +0.200  +0.428  +0.230    сума рядка  +1.469</div>
+
+<p>Верхні рядки відʼємні, нижні — додатні. Це рівно та схема, яку ми в темі 04
+<em>вписували руками</em> в ядро Собеля: одна половина зі знаком мінус, друга зі знаком
+плюс, і велика відповідь там, де між ними є перепад. Тільки Собель по вертикалі, тобто
+детектор <strong>горизонтальних</strong> меж. Мережа дійшла до цієї ідеї сама, з
+градієнтів — і жоден рядок коду їй цього не підказував.</p>
+
+<p>Серед восьми фільтрів <strong>немає двох однакових</strong>, і вони діляться на
+впізнавані типи. <b>Чотири</b> мають описану асиметрію згори вниз — детектори
+горизонтальних меж; найсильніший із них дає різницю «верх мінус низ» −3.23 при
+різниці «ліво мінус право» лише 1.36. У <b>пʼятого</b> великі обидві асиметрії одразу
+(+2.67 і −2.43) — він реагує не на межу, а на <b>кут</b>: там, де перепад є і по
+горизонталі, і по вертикалі. Останні <b>три</b> мають майже всі коефіцієнти одного
+знака: із сумами ваг +3.89 і +3.26 це підсумовувачі яскравості, тобто детектори світлої
+плями, а з сумою −1.66 — той самий детектор навпаки, що гасить світле й підсвічує
+темне.</p>
+
+<div class="note warn"><b>А тепер чесно, бо це важливо.</b> По-перше, набір вийшов
+перекошений: чистого детектора <em>вертикальних</em> меж серед восьми не зʼявилось
+жодного — тільки чотири горизонтальні, один похилий і три детектори яскравості. Розподіл залежить
+від випадкової ініціалізації, і при іншому зерні він буде іншим; ми зафіксували
+<code>torch.manual_seed(0)</code>, щоб у тебе вийшли рівно ці числа. По-друге, фільтри
+шумні: знаки правильні, а всередині кожної половини числа стрибають. Причина проста —
+датасет із простих фігур мережа розвʼязує майже до 100 % за кілька епох, після чого
+градієнт майже зникає, і ваги перестають рухатись, не встигнувши причесатись. Красиві
+смугасті фільтри з відомих ілюстрацій — це перший шар великих мереж, навчених на мільйоні
+різноманітних фотографій. На шести видах фігур такого не буде, і підставити натомість
+чужу картинку було б обманом.</div>
+
+<p>Це і є відповідь на питання, з якого почалась уся тема. Ознаку не треба вигадувати.
+Достатньо дати мережі місце, куди ознаку можна записати, і причину її знайти.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Що вивчив фільтр</p>
+  <p class="fig-sub">Вісім фільтрів 5 × 5 із першого шару навченої мережі. Ліворуч — самі числа, праворуч — відгук цього фільтра на тестову фігуру.</p>
+  <div class="panel">
+    <div><canvas id="cW" width="940" height="420" aria-label="Ваги обраного фільтра числами й кольором, поруч його відгук на зображення фігури"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="wF">фільтр <output id="wFv">1</output></label>
+        <input type="range" id="wF" min="1" max="8" step="1" value="1">
+      </div>
+      <div class="ctl">
+        <span class="cap">фігура</span>
+        <div class="seg" id="wSeg">
+          <button type="button" data-i="0" aria-pressed="true">квадрат</button>
+          <button type="button" data-i="1" aria-pressed="false">коло</button>
+          <button type="button" data-i="2" aria-pressed="false">хрест</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сума ваг</b><i id="wSum">—</i></div>
+        <div class="cellv"><b>макс відгук</b><i id="wMax">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ліво − право</b><i id="wLR">—</i></div>
+        <div class="cellv"><b>верх − низ</b><i id="wTB">—</i></div>
+      </div>
+      <div class="verdict" id="wVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Два числа внизу вирішують усе.</b> «Ліво − право» — це різниця сум
+    лівого й правого стовпців фільтра: велика за модулем різниця означає детектор
+    вертикальної межі. «Верх − низ» — те саме по рядках. Коли обидві близькі до нуля,
+    а сума ваг велика, фільтр не шукає межу, а просто міряє яскравість.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Поле</span>Рецептивне поле</h2>
+
+<p>Одне число на виході згорткового шару порахували з вікна 3 × 3 — тобто на нього
+вплинуло девʼять вхідних пікселів. Ця ділянка входу, від якої залежить конкретне
+вихідне число, зветься <strong>рецептивним полем</strong> (receptive field).</p>
+
+<p>Для одного шару це просто саме ядро. Цікаве починається, коли шари складають у стос.
+Візьмемо другий шар із ядром 3 × 3 і поставимо його на вихід першого. Одне число після
+другого шару зібране з девʼяти чисел першого шару. Але кожне з тих девʼяти саме зібране
+з вікна 3 × 3 у вхідному зображенні. Вікна сусідніх позицій перекриваються, і разом вони
+накривають квадрат <strong>5 × 5</strong>.</p>
+
+<div class="eq">поле після L шарів (k = 3, крок 1) = 2·L + 1</div>
+
+<p>Один шар — 3 × 3, два — 5 × 5, три — 7 × 7, пʼять — 11 × 11. Кожен новий шар додає по
+одному пікселю з кожного боку, тобто <code>k − 1</code> до сторони. Ось звідки береться
+головна властивість глибоких мереж: перші шари бачать крихітні шматочки й можуть помітити
+тільки межу чи пляму, а глибокі шари дивляться вже на пів зображення — і тільки тому
+здатні відрізнити колесо від тарілки.</p>
+
+<h3>Чому два шари 3 × 3 краще за один 5 × 5</h3>
+
+<p>Обидва варіанти дають рецептивне поле 5 × 5, обидва перетворюють вхід 32 × 32 на
+28 × 28. Порахуймо ціну для 16 каналів на вході й 16 на виході:</p>
+
+<div class="eq left">два шари 3 × 3 : 2 × (16 × 16 × 3 × 3 + 16) = 2 × 2 320 = 4 640
+один шар 5 × 5 : 16 × 16 × 5 × 5 + 16 = 6 400 + 16     = 6 416</div>
+
+<p>Стос із двох дешевший на 28 % — обидва числа перевірені через
+<code>sum(p.numel())</code>. І це ще не вся вигода: між двома шарами стоїть
+нелінійність (ReLU), тобто пара шарів уміє виражати складніші залежності, ніж один
+лінійний фільтр більшого розміру. Саме тому в сучасних мережах ядра майже завжди 3 × 3,
+а «широкі» 7 × 7 лишились хіба що в найпершому шарі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Рецептивне поле</p>
+  <p class="fig-sub">Додавай шари й дивись, яка ділянка входу впливає на одне вихідне число. Праворуч — ціна стосу проти ціни одного широкого ядра з тим самим полем.</p>
+  <div class="panel">
+    <div><canvas id="cRF" width="940" height="400" aria-label="Сітка входу з підсвіченим рецептивним полем і стос шарів збоку"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="rfL">шарів <output id="rfLv">2</output></label>
+        <input type="range" id="rfL" min="1" max="6" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="rfK">ядро k <output id="rfKv">3</output></label>
+        <input type="range" id="rfK" min="3" max="5" step="2" value="3">
+      </div>
+      <div class="ctl">
+        <label for="rfC">каналів <output id="rfCv">16</output></label>
+        <input type="range" id="rfC" min="4" max="64" step="4" value="16">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рецептивне поле</b><i id="rfF">—</i></div>
+        <div class="cellv"><b>частка входу</b><i id="rfSh">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>стос</b><i id="rfA">—</i></div>
+        <div class="cellv"><b>одне широке ядро</b><i id="rfB">—</i></div>
+      </div>
+      <div class="verdict" id="rfVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Порівняння чесне лише за однакового поля.</b> Праворуч стоїть один шар
+    із ядром такого розміру, щоб його рецептивне поле збігалося з полем усього стосу.
+    Стос виграє тим сильніше, чим він довший — і при цьому ще й має нелінійність між
+    шарами, якої в одному широкому ядрі немає.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Один</span>Згортка 1 × 1</h2>
+
+<p>Ядро розміром один піксель на перший погляд безглузде: уся ідея згортки була в
+сусідах, а воно на них не дивиться. Але <code>kernel_size=1</code> — один із
+найуживаніших шарів у сучасних мережах.</p>
+
+<p>Згадай, що ядро має глибину. Ядро 1 × 1 при 256 каналах на вході — це не одне число,
+а <strong>256 чисел</strong>: по одному коефіцієнту на канал. Воно бере в кожній точці
+стовпчик значень усіх каналів, множить кожне на свій коефіцієнт і складає. Тобто це
+звичайний повнозвʼязний шар — але не по пікселях, а <strong>по каналах</strong>, і той
+самий у кожній точці зображення.</p>
+
+<p>Звідси три застосування, які ти зустрінеш у будь-якій архітектурі:</p>
+
+<ul>
+  <li><strong>Змішати канали.</strong> Після звичайної згортки кожна карта ознак жила
+    своїм життям. Шар 1 × 1 дозволяє скласти з них комбінації: «нова ознака = ця плюс
+    та мінус третя».</li>
+  <li><strong>Змінити кількість каналів.</strong> Стиснути 256 карт до 64 або, навпаки,
+    роздути 64 до 256. Просторовий розмір при цьому не змінюється взагалі.</li>
+  <li><strong>Зробити це дешево.</strong> Ось у чому головна принада.</li>
+</ul>
+
+<p>Порахуємо ціну. Стиснути 256 каналів до 64 ядром 3 × 3 коштує
+64 × 256 × 9 + 64 = <strong>147 520</strong> параметрів. Те саме ядром 1 × 1 —
+64 × 256 × 1 + 64 = <strong>16 448</strong>. Рівно в девʼять разів дешевше, бо
+<code>k × k</code> у формулі перетворюється з девʼятки на одиницю. Множень при цьому
+теж удевʼятеро менше.</p>
+
+<p>Звідси й типовий прийом: перед дорогою згорткою 3 × 3 стиснути канали шаром 1 × 1,
+порахувати 3 × 3 на вузькому місці й розтиснути назад. У темах про архітектури ця
+конструкція зветься «пляшковим горлом» (bottleneck).</p>
+
+<h2 id="s11"><span class="num">11 / Назва</span>Це кореляція, а не згортка</h2>
+
+<p>Коротка чесна примітка, обіцяна ще в темі 04. Там ми зʼясували, що
+<code>cv2.filter2D</code> рахує не згортку, а <strong>кореляцію</strong>: справжня
+згортка перед роботою перевертає ядро на 180°, а <code>filter2D</code> цього не робить.</p>
+
+<p>З <code>nn.Conv2d</code> рівно та сама історія. Перевірено запуском: подаємо на вхід
+чорний квадрат з єдиною білою точкою й ядро <code>1 2 3 / 4 5 6 / 7 8 9</code>. Відгук
+виходить такий:</p>
+
+<div class="eq left">9  8  7
+6  5  4
+3  2  1</div>
+
+<p>Це ядро, повернуте на пів оберта, — характерна ознака кореляції. Звірка зі
+<code>scipy.ndimage</code>, де обидві операції існують окремими функціями, підтверджує
+прямо: <code>Conv2d == correlate</code> дає <code>True</code>, а
+<code>Conv2d == convolve</code> дає <code>False</code>.</p>
+
+<p>Чому ж шар називають згортковим? Бо коли коефіцієнти <strong>навчаються</strong>,
+різниці немає жодної. Якщо для задачі потрібне ядро <code>A</code>, а операція
+фактично рахує кореляцію, градієнтний спуск просто знайде дзеркальне ядро — і результат
+буде той самий. Мережі однаково, у якому порядку лежать її власні числа. Назва прижилася
+історично, з математичної традиції, і міняти її пізно.</p>
+
+<div class="note"><b>Коли різниця все-таки є.</b> Рівно тоді, коли ядро пишеш ти.
+Якщо береш готові коефіцієнти з підручника — Собеля, Лапласа, будь-яке несиметричне
+ядро — і кладеш їх у <code>nn.Conv2d</code> руками, результат вийде дзеркальним. Ліки
+одні: перевернути ядро самому (<code>np.flip</code> по обох осях) перед тим, як
+покласти у ваги.</div>
+
+<h2 id="s12"><span class="num">12 / Далі</span>Куди далі</h2>
+
+<p>Підсумуймо, що тепер відомо про згортковий шар.</p>
+
+<p>Це та сама операція з теми 04, у якої коефіцієнти стали параметрами. Вхід і вихід —
+тензори <code>(N, C, H, W)</code>. Ядро має глибину <code>C_in</code> і дає <b>один</b>
+канал на виході; фільтрів у шарі стільки, скільки просиш у <code>out_channels</code>.
+Параметрів — <code>C_out × C_in × k × k + C_out</code>, і розміру зображення в цій
+формулі немає. <code>padding</code> вирішує долю краю, <code>stride</code> — крок вікна,
+а розмір виходу дає <code>⌊(H + 2p − k)/s⌋ + 1</code> з округленням униз, яке мовчки
+викидає залишок. Стос шарів нарощує рецептивне поле дешевше за одне широке ядро, а ядро
+1 × 1 перемішує канали за девʼяту частину ціни. І так, усередині це кореляція.</p>
+
+<p>Лишилось те, що ми весь час обходили. Подивись на форму виходу ще раз:
+<code>(8, 16, 28, 28)</code>. Картинка була 28 × 28 з одним каналом — 784 числа. Після
+одного шару з шістнадцятьма фільтрами стало 12 544. Шар додав ознак, але просторовий
+розмір не зменшив анітрохи: карти ознак лишились завбільшки з зображення. Другий такий
+шар — і чисел стане ще більше, третій — ще. Стос виходить дорогим за памʼяттю й
+повільним, а рецептивне поле росте всього по два пікселі за шар: щоб побачити половину
+картинки, знадобилося б сім шарів.</p>
+
+<p>Тому третій рецепт із теми 06 — <strong>зменшення розмірності</strong> — не розкіш,
+а необхідність. Як саме зменшувати, чим за це платять і чому це заодно дає ту саму
+терпимість до зсуву, якої повнозвʼязній мережі так бракувало, — про це
+<a href="../08-pooling/lecture.html"><strong>тема 08, «Пулінг і зменшення
+розмірності»</strong></a>.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти напишеш
+згортковий шар на numpy й доведеш через <code>np.allclose</code>, що він збігається з
+<code>nn.Conv2d</code>; звіриш ручний підрахунок параметрів із
+<code>sum(p.numel())</code>, а формулу розміру виходу — з фактичним
+<code>.shape</code>; доведеш імпульсом, що шар рахує кореляцію; і навчиш маленьку
+мережу, щоб подивитись на ваги її першого шару.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../06-why-not-dense/lecture.html"><span class="dir">попередня</span><span class="ttl">06. Чому повнозвʼязна мережа не годиться</span></a>
+    <a class="next" href="../08-pooling/lecture.html"><span class="dir">наступна</span><span class="ttl">08. Пулінг і зменшення розмірності</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function sans(px){return '600 '+px+'px Unbounded,system-ui,sans-serif';}
+function fmt(v,d){return (Math.round(v*Math.pow(10,d))/Math.pow(10,d)).toFixed(d);}
+/* «+1.36» / «−3.23» / «0.00» — знак лише там, де число справді ненульове */
+function sgn(v,d){
+  var r=Math.round(v*Math.pow(10,d))/Math.pow(10,d);
+  if(r===0) return (0).toFixed(d);
+  return (r>0?'+':'−')+Math.abs(r).toFixed(d);
+}
+/* «31 раз», але «5 разів» — інакше вердикт читається як помилка */
+function razWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+/* «1 піксель», але «5 пікселів» */
+function pxWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'піксель';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'пікселі';
+  return 'пікселів';
+}
+/* «1 фільтр», «2 фільтри», «5 фільтрів» */
+function filWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'фільтр';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'фільтри';
+  return 'фільтрів';
+}
+/* «1 параметр», «2 параметри», «5 параметрів» */
+function parWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'параметр';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'параметри';
+  return 'параметрів';
+}
+/* «1 число», «2 числа», «5 чисел» */
+function numWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'число';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'числа';
+  return 'чисел';
+}
+/* «1 карту», «2 карти», «5 карт» */
+function kartWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'карту';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'карти';
+  return 'карт';
+}
+/* великі числа з розрядами: 68719738880 → «68 719 738 880» */
+function grp(n){
+  var s=String(Math.round(n)), out='', c=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; c++; if(c%3===0 && i>0) out=' '+out; }
+  return out;
+}
+/* колір із CSS-змінної у вигляді «r,g,b», щоб домішувати прозорість */
+function rgbOf(varName){
+  var h=css(varName);
+  if(h.charAt(0)==='#'){
+    if(h.length===4) h='#'+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2)+h.charAt(3)+h.charAt(3);
+    return parseInt(h.substr(1,2),16)+','+parseInt(h.substr(3,2),16)+','+parseInt(h.substr(5,2),16);
+  }
+  var m=h.match(/(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+  return m ? (m[1]+','+m[2]+','+m[3]) : '128,128,128';
+}
+/* розбіжна шкала: відʼємне — рожеве, додатне — бірюзове, нуль — прозоре */
+function divCol(t,rose,teal){
+  var a=Math.min(1,Math.abs(t));
+  return 'rgba('+(t>=0?teal:rose)+','+(0.08+0.86*a).toFixed(3)+')';
+}
+/* сірий піксель зображення: 0 — темний, 1 — світлий */
+function grayCol(v){
+  var q=Math.round(Math.max(0,Math.min(1,v))*255);
+  return 'rgb('+q+','+q+','+q+')';
+}
+
+/* ═══════ спільні дані лекції ═══════ */
+
+/* Ваги першого шару nn.Conv2d(1, 8, 5, padding=2) після 12 епох на фігурах
+   28×28 (шість класів, torch.manual_seed(0)). Числа взяті з practice.ipynb
+   руками — JS не відтворює генератор PyTorch (грабля №13). Правлячи навчання
+   в зошиті, перепиши й цей масив. */
+var W1=[
+  [-0.032,0.035,-0.269,-0.319,-0.240,0.085,0.019,0.095,-0.111,-0.021,0.081,0.074,-0.133,-0.094,-0.019,0.199,0.301,0.340,0.066,0.097,0.226,0.385,0.200,0.428,0.230],
+  [0.002,0.099,-0.265,-0.155,-0.075,-0.077,0.017,-0.112,0.013,-0.217,-0.214,-0.117,0.147,0.124,-0.065,-0.048,-0.027,0.130,-0.045,-0.203,-0.251,-0.040,-0.042,-0.169,-0.070],
+  [0.102,0.182,0.087,0.060,0.195,-0.120,0.066,-0.101,-0.044,0.013,0.181,0.223,0.041,0.251,0.302,0.120,0.212,0.280,0.371,0.425,-0.065,0.089,0.275,0.375,0.370],
+  [0.161,0.011,-0.322,-0.262,-0.371,-0.127,0.224,0.097,-0.347,-0.204,0.078,0.081,-0.017,-0.002,-0.256,0.227,0.299,0.279,0.154,-0.145,0.016,0.254,0.213,-0.001,-0.008],
+  [0.473,0.427,0.224,0.175,0.007,0.068,-0.185,-0.215,-0.021,0.052,-0.056,-0.036,-0.278,0.093,0.084,-0.160,-0.199,-0.174,-0.059,0.005,0.063,-0.087,-0.185,0.128,-0.063],
+  [-0.166,-0.072,-0.145,-0.078,-0.138,0.010,0.118,-0.031,0.118,0.301,0.102,0.202,0.193,0.263,0.321,0.380,0.392,0.476,0.249,0.080,0.024,0.331,0.192,0.103,0.039],
+  [-0.302,-0.304,-0.173,-0.044,-0.013,-0.207,0.075,-0.218,-0.121,-0.143,0.073,0.056,-0.161,-0.189,-0.030,0.231,0.127,0.246,-0.111,0.016,0.443,0.182,0.403,0.226,-0.036],
+  [0.221,0.109,0.043,0.278,-0.076,0.093,0.026,0.205,0.098,0.126,0.101,-0.040,-0.069,-0.201,0.043,0.166,0.098,-0.239,-0.109,-0.260,-0.127,-0.203,-0.107,-0.313,-0.204]
+];
+var B1=[-0.033,0.295,-0.113,-0.021,-0.018,0.117,-0.013,0.229];
+
+/* фігури 28×28 — ті самі формули, що в зошиті, тільки без шуму */
+function shapeImg(kind){
+  var a=new Float32Array(784), r, c;
+  for(r=0;r<28;r++){
+    for(c=0;c<28;c++){
+      var dy=r-13.5, dx=c-13.5, lit;
+      if(kind===0) lit = dy*dy+dx*dx<=64;
+      else if(kind===1) lit = Math.abs(dy)<=7 && Math.abs(dx)<=7;
+      else lit = (Math.abs(dy)<=8 && Math.abs(dx)<=2.5) || (Math.abs(dx)<=8 && Math.abs(dy)<=2.5);
+      a[r*28+c]= lit ? 1 : 0;
+    }
+  }
+  return a;
+}
+/* згортка з рамкою з нулів — рівно те, що робить nn.Conv2d за замовчуванням */
+function convSame(img,H,W,ker,k,bias){
+  var p=(k-1)>>1, out=new Float32Array(H*W), r,c,i,j;
+  for(r=0;r<H;r++){
+    for(c=0;c<W;c++){
+      var s=bias||0;
+      for(i=0;i<k;i++){
+        for(j=0;j<k;j++){
+          var y=r+i-p, x=c+j-p;
+          if(y<0||y>=H||x<0||x>=W) continue;
+          s+=ker[i*k+j]*img[y*W+x];
+        }
+      }
+      out[r*W+c]=s;
+    }
+  }
+  return out;
+}
+/* малює масив H×W квадратиками; mode 'gray' або 'div' */
+function drawMap(g,arr,H,W,x0,y0,cell,mode,scale,rose,teal){
+  var r,c,v;
+  for(r=0;r<H;r++){
+    for(c=0;c<W;c++){
+      v=arr[r*W+c];
+      g.fillStyle = (mode==='gray') ? grayCol(v) : divCol(v/scale,rose,teal);
+      g.fillRect(x0+c*cell, y0+r*cell, cell+0.5, cell+0.5);
+    }
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(x0-0.5,y0-0.5,W*cell+1,H*cell+1);
+}
+function label(g,txt,x,y,col,px){
+  g.fillStyle=col; g.font=mono(px||11); g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillText(txt,x,y);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Інтерактив 1 · Ядро має глибину
+   ═══════════════════════════════════════════════════════════════ */
+(function(){
+  var cv=I('cDep'); if(!cv) return;
+  /* два положення вікна: на вертикальній межі та на рівній ділянці */
+  var WIN=[
+    [[8,8,1, 8,9,1, 8,8,2],[7,7,1, 7,8,1, 7,7,1],[6,6,1, 6,7,0, 6,6,1]],
+    [[7,7,7, 7,8,7, 7,7,8],[6,6,6, 6,7,6, 6,6,6],[5,5,5, 5,5,6, 5,5,5]]
+  ];
+  var KER=[[1,0,-1, 2,0,-2, 1,0,-1],[1,0,-1, 2,0,-2, 1,0,-1],[0,0,0, 1,0,-1, 0,0,0]];
+  var BIAS=-2, CH=['R','G','B'];
+  var pick=0, stage=0;
+
+  function partial(ci){
+    var s=0,i; for(i=0;i<9;i++) s+=WIN[pick][ci][i]*KER[ci][i];
+    return s;
+  }
+  function cell3(g,x,y,cs,vals,hot,rose,teal,divs){
+    var i,r,c;
+    for(i=0;i<9;i++){
+      r=(i/3)|0; c=i%3;
+      var vx=x+c*cs, vy=y+r*cs;
+      if(divs) g.fillStyle=divCol(vals[i]/2,rose,teal);
+      else g.fillStyle= hot ? 'rgba('+teal+',0.10)' : css('--paper');
+      g.fillRect(vx,vy,cs,cs);
+      g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(vx+0.5,vy+0.5,cs-1,cs-1);
+      g.fillStyle=css('--ink'); g.font=mono(13,hot); g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(String(vals[i]), vx+cs/2, vy+cs/2+1);
+    }
+    if(hot){ g.strokeStyle=css('--teal'); g.lineWidth=2; g.strokeRect(x-1,y-1,3*cs+2,3*cs+2); }
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv);
+    var rose=rgbOf('--rose'), teal=rgbOf('--teal');
+    var cs=32, ci, i;
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillText('вхід · 3 канали', 108, 26);
+    g.fillText('ядро · 3 таблички', 240, 26);
+    g.fillText('сума каналу', 400, 26);
+    g.fillText('одне число на виході', 556, 26);
+
+    var total=0, shown=0;
+    for(ci=0;ci<3;ci++){
+      var y=44+ci*112, hot=(ci<stage);
+      g.fillStyle= hot ? css('--teal') : css('--soft');
+      g.font=mono(12,hot); g.textAlign='left'; g.textBaseline='middle';
+      g.fillText('канал '+CH[ci], 40, y+48);
+      cell3(g, 108, y, cs, WIN[pick][ci], hot, rose, teal, false);
+      g.fillStyle=css('--soft'); g.font=mono(16); g.textAlign='center';
+      g.fillText('×', 220, y+48);
+      cell3(g, 240, y, cs, KER[ci], hot, rose, teal, true);
+      g.fillStyle=css('--soft'); g.font=mono(16); g.textAlign='center';
+      g.fillText('=', 352, y+48);
+      var s=partial(ci);
+      rr(g, 376, y+22, 146, 52, 9);
+      g.fillStyle= hot ? 'rgba('+teal+',0.12)' : css('--paper'); g.fill();
+      g.strokeStyle= hot ? css('--teal') : css('--hair'); g.lineWidth= hot?2:1; g.stroke();
+      g.fillStyle= hot ? css('--teal') : css('--soft');
+      g.font=mono(hot?20:15,hot); g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(hot ? (s>=0?'+':'')+s : '?', 449, y+48);
+      if(hot){ total+=s; shown++; }
+    }
+
+    /* права колонка: як складається підсумок */
+    var bx=556, by=70;
+    rr(g,bx,by,354,230,12);
+    g.fillStyle=css('--paper'); g.fill();
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.stroke();
+    g.textAlign='left'; g.textBaseline='alphabetic';
+    for(i=0;i<3;i++){
+      var done=(i<stage);
+      g.fillStyle= done?css('--ink'):css('--hair');
+      g.font=mono(14,done);
+      g.fillText('канал '+CH[i]+' : '+(done?((partial(i)>=0?'+':'')+partial(i)):'—'), bx+24, by+40+i*30);
+    }
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(bx+24,by+142); g.lineTo(bx+330,by+142); g.stroke();
+    g.fillStyle=css('--soft'); g.font=mono(13);
+    g.fillText('зсув b : '+BIAS, bx+24, by+166);
+    var all=(stage===3);
+    g.fillStyle= all?css('--rose'):css('--soft');
+    g.font=mono(all?26:16,true);
+    g.fillText(all ? 'вихід = '+(total+BIAS) : 'вихід = ?', bx+24, by+205);
+
+    I('depN').textContent=stage+' / 3';
+    I('depC').textContent= stage>0 ? ((partial(stage-1)>=0?'+':'')+partial(stage-1)) : '—';
+    I('depS').textContent= all ? String(total+BIAS) : (stage>0 ? String(total)+' + b' : '—');
+    I('depNext').disabled=(stage>=3);
+    I('depAll').disabled=(stage>=3);
+
+    if(!all){
+      verd('depVd','t-mid','ПРОЙДЕНО '+stage+' / 3',
+        'Три канали рахуються окремо, але вихідне число буде <b>одне</b>. Тисни «канал», щоб додати наступний внесок.');
+    }else if(pick===0){
+      verd('depVd','t-ok','ФІЛЬТР СПРАЦЮВАВ',
+        'Внески трьох каналів (+'+partial(0)+', +'+partial(1)+', +'+partial(2)+') однакового знака й дають '+total+
+        '. Разом зі зсувом вихід — <b>'+(total+BIAS)+'</b>. Одне ядро 3 × 3 × 3, одне число.');
+    }else{
+      verd('depVd','t-no','ФІЛЬТР МОВЧИТЬ',
+        'На рівній ділянці внески гасяться: '+partial(0)+', '+partial(1)+', '+partial(2)+
+        ' — разом '+total+'. Вихід <b>'+(total+BIAS)+'</b>, майже нуль. Той самий фільтр, інше місце.');
+    }
+  }
+  on('depNext','click',function(){ if(stage<3){stage++; draw();} });
+  on('depAll','click',function(){ stage=3; draw(); });
+  on('depReset','click',function(){ stage=0; draw(); });
+  var seg=I('depSeg');
+  seg.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    pick=+b.dataset.i; stage=0;
+    Array.prototype.forEach.call(seg.querySelectorAll('button'),function(x){
+      x.setAttribute('aria-pressed', x===b ? 'true':'false');
+    });
+    draw();
+  });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   Інтерактив 2 · Карти ознак
+   ═══════════════════════════════════════════════════════════════ */
+(function(){
+  var cv=I('cMaps'); if(!cv) return;
+  var kind=0;
+  function draw(){
+    var g=dpr(cv);
+    var rose=rgbOf('--rose'), teal=rgbOf('--teal');
+    var n=+I('mapsK').value; I('mapsKv').textContent=n;
+    var img=shapeImg(kind), f, r, c;
+
+    label(g,'вхід  1 × 28 × 28',30,26,css('--soft'));
+    drawMap(g,img,28,28,30,40,5,'gray',1,rose,teal);
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left';
+    g.fillText('одна картинка,',30,205);
+    g.fillText('784 числа',30,221);
+
+    label(g,'карти ознак після nn.Conv2d(1, '+n+', 5, padding=2)',250,26,css('--soft'));
+    var cols=Math.min(4,n), cell=4, tw=175, th=175, maxAbs=0;
+    var maps=[];
+    for(f=0;f<n;f++){
+      var m=convSame(img,28,28,W1[f],5,B1[f]);
+      maps.push(m);
+      for(r=0;r<784;r++) if(Math.abs(m[r])>maxAbs) maxAbs=Math.abs(m[r]);
+    }
+    if(maxAbs<1e-6) maxAbs=1;
+    for(f=0;f<n;f++){
+      var cx=250+(f%cols)*tw, cy=44+((f/cols)|0)*th;
+      drawMap(g,maps[f],28,28,cx,cy,cell,'div',maxAbs,rose,teal);
+      g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left';
+      g.fillText('фільтр '+(f+1),cx,cy+112+16);
+    }
+
+    I('mapsSh').textContent='(1, '+n+', 28, 28)';
+    I('mapsNum').textContent=grp(n*784);
+    I('mapsP').textContent=grp(n*25+n)+' (= '+n+'×25 + '+n+')';
+    var pTot=n*25+n, nTot=n*784;
+    if(n===1){
+      verd('mapsVd','t-mid','ОДИН ФІЛЬТР',
+        'Одне ядро вміє шукати одну річ — і дає одну карту ознак, '+grp(784)+' '+numWord(784)+
+        '. Шар коштує <b>26</b> '+parWord(26)+'. Додай фільтрів: кожен наступний коштує рівно стільки ж.');
+    }else{
+      verd('mapsVd','t-ok',n+' '+filWord(n).toUpperCase(),
+        'Одна картинка (784 '+numWord(784)+') перетворилась на <b>'+n+'</b> '+kartWord(n)+
+        ' ознак — це '+grp(nTot)+' '+numWord(nTot)+'. А ваг у шарі всього <b>'+grp(pTot)+
+        '</b>: кожен фільтр додає рівно 26.');
+    }
+  }
+  on('mapsK','input',draw);
+  var seg=I('mapsSeg');
+  seg.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    kind=+b.dataset.i;
+    Array.prototype.forEach.call(seg.querySelectorAll('button'),function(x){
+      x.setAttribute('aria-pressed', x===b ? 'true':'false');
+    });
+    draw();
+  });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   Інтерактив 3 · Лічильник параметрів
+   ═══════════════════════════════════════════════════════════════ */
+(function(){
+  var cv=I('cPar'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv);
+    var ci=+I('parIn').value, co=+I('parOut').value, k=+I('parK').value, S=+I('parS').value;
+    I('parInv').textContent=ci; I('parOutv').textContent=co;
+    I('parKv').textContent=k; I('parSv').textContent=S;
+
+    var conv=co*ci*k*k+co;
+    var inN=ci*S*S, outN=co*S*S;
+    var dense=inN*outN+outN;
+
+    g.fillStyle=css('--soft'); g.font=mono(12); g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillText('вхід ('+ci+', '+S+', '+S+')  →  вихід ('+co+', '+S+', '+S+')', 40, 30);
+
+    var x0=40, barMax=690, L1=Math.log10(Math.max(conv,1)), L2=Math.log10(Math.max(dense,1));
+    var Lmax=Math.max(L1,L2,1);
+    var rows=[
+      {y:70, v:conv,  L:L1, col:'--teal', name:'згортковий шар',
+       f:'Cout × Cin × k × k + Cout  =  '+co+'×'+ci+'×'+k+'×'+k+' + '+co},
+      {y:190, v:dense, L:L2, col:'--rose', name:'повнозвʼязний шар',
+       f:'вхід × вихід + вихід  =  '+grp(inN)+' × '+grp(outN)+' + '+grp(outN)}
+    ];
+    rows.forEach(function(rw){
+      g.fillStyle=css('--ink'); g.font=sans(15); g.textAlign='left';
+      g.fillText(rw.name, x0, rw.y);
+      g.fillStyle=css('--soft'); g.font=mono(11.5);
+      g.fillText(rw.f, x0, rw.y+20);
+      var w=Math.max(4, barMax*(rw.L/Lmax));
+      rr(g,x0,rw.y+32,w,34,7);
+      g.fillStyle='rgba('+rgbOf(rw.col)+',0.22)'; g.fill();
+      g.strokeStyle=css(rw.col); g.lineWidth=1.5; g.stroke();
+      g.fillStyle=css(rw.col); g.font=mono(17,true); g.textAlign='left'; g.textBaseline='middle';
+      var tx=x0+w+12, txt=grp(rw.v);
+      if(tx+txt.length*10>x0+barMax+150){ tx=x0+12; g.textAlign='left'; }
+      g.fillText(txt, tx, rw.y+49);
+      g.textBaseline='alphabetic';
+    });
+
+    /* шкала: підписи степенів десятки під нижнім стовпчиком */
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    var e, ticks=Math.ceil(Lmax);
+    for(e=0;e<=ticks;e++){
+      var tx2=x0+barMax*(e/Lmax);
+      if(tx2>x0+barMax+2) break;
+      g.beginPath(); g.moveTo(tx2,296); g.lineTo(tx2,304); g.stroke();
+      g.fillStyle=css('--soft'); g.font=mono(10); g.textAlign='center';
+      g.fillText(e===0?'1':('10^'+e), tx2, 320);
+    }
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left';
+    g.fillText('шкала логарифмічна: кожна поділка — у десять разів більше', x0, 348);
+    g.fillText('розмір зображення входить у формулу повнозвʼязного шару й не входить у формулу згорткового', x0, 368);
+
+    I('parA').textContent=grp(conv);
+    I('parB').textContent=grp(dense);
+    var ratio=dense/conv;
+    var big = ratio>=1000;
+    var rTxt = big ? grp(Math.round(ratio)) : fmt(ratio,1);
+    /* «у 65 884 рази», але «у 50.7 раза» — дробове число вимагає іншої форми */
+    var rWord = big ? razWord(Math.round(ratio)) : 'раза';
+    if(ratio>=25){
+      verd('parVd','t-ok','ЗГОРТКА ДЕШЕВША',
+        'Повнозвʼязний шар коштує <b>'+rTxt+'</b> '+rWord+
+        ' більше. У згортковому — '+grp(conv)+' '+numWord(conv)+
+        ', і вони не залежать від того, картинка це 8 × 8 чи 64 × 64.');
+    }else if(ratio>1){
+      verd('parVd','t-mid','РІЗНИЦЯ НЕВЕЛИКА',
+        'Тут повнозвʼязний шар дорожчий лише в <b>'+rTxt+'</b> '+rWord+
+        ': зображення крихітне, і йому просто нема де розгулятись. Збільш сторону — і розрив побіжить угору.');
+    }else{
+      verd('parVd','t-no','ЗГОРТКА ДОРОЖЧА',
+        'Рідкісний випадок: при такому крихітному зображенні й такому великому ядрі згортковий шар ('+
+        grp(conv)+') обійшовся дорожче за повнозвʼязний ('+grp(dense)+').');
+    }
+  }
+  ['parIn','parOut','parK','parS'].forEach(function(id){ on(id,'input',draw); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   Інтерактив 4 · padding і доля краю
+   ═══════════════════════════════════════════════════════════════ */
+(function(){
+  var cv=I('cPad'); if(!cv) return;
+  var mode=0, H=8;
+  /* скільки разів піксель (r,c) потрапив у вікно, крок 1 */
+  function cover1(i,p,k){
+    var pi=i+p, lo=Math.max(0, pi-k+1), hi=Math.min(H+2*p-k, pi);
+    return Math.max(0, hi-lo+1);
+  }
+  function draw(){
+    var g=dpr(cv);
+    var k=+I('padK').value; I('padKv').textContent=k;
+    var p = mode===0 ? 0 : (k-1)>>1;
+    var out=H+2*p-k+1;
+    var side=H+2*p, cs=Math.floor(300/side), x0=40, y0=54, r, c;
+    var teal=rgbOf('--teal'), rose=rgbOf('--rose');
+
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillText('вхід 8 × 8'+(p?(' + рамка '+p+' по кожному боку'):'  (рамки немає)'), x0, 28);
+
+    /* рамка з нулів */
+    if(p){
+      g.fillStyle='rgba('+rgbOf('--soft')+',0.14)';
+      g.fillRect(x0,y0,side*cs,side*cs);
+    }
+    var maxCov=0, cov=[];
+    for(r=0;r<H;r++){
+      cov.push([]);
+      for(c=0;c<H;c++){
+        var v=cover1(r,p,k)*cover1(c,p,k);
+        cov[r].push(v); if(v>maxCov) maxCov=v;
+      }
+    }
+    if(maxCov<1) maxCov=1;
+    for(r=0;r<H;r++){
+      for(c=0;c<H;c++){
+        var x=x0+(c+p)*cs, y=y0+(r+p)*cs, t=cov[r][c]/maxCov;
+        g.fillStyle='rgba('+teal+','+(0.06+0.72*t).toFixed(3)+')';
+        g.fillRect(x,y,cs,cs);
+        g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(x+0.5,y+0.5,cs-1,cs-1);
+        if(cs>=22){
+          g.fillStyle=css('--ink'); g.font=mono(cs>28?12:10); g.textAlign='center'; g.textBaseline='middle';
+          g.fillText(String(cov[r][c]), x+cs/2, y+cs/2+1);
+        }
+      }
+    }
+    g.strokeStyle=css('--soft'); g.lineWidth=1.5;
+    g.strokeRect(x0+p*cs-0.5, y0+p*cs-0.5, H*cs+1, H*cs+1);
+    g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('число в клітинці — скільки вікон її накрили', x0, y0+side*cs+22);
+    if(p) g.fillText('сіре поле — рамка з нулів, яких у зображенні не було', x0, y0+side*cs+40);
+
+    /* праворуч: вихід і два стовпчики порівняння */
+    var bx=420;
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('вихід '+out+' × '+out, bx, 28);
+    var oy=54, ocs=Math.min(28, Math.floor(226/Math.max(out,1)));
+    for(r=0;r<out;r++){
+      for(c=0;c<out;c++){
+        g.fillStyle='rgba('+rose+',0.28)';
+        g.fillRect(bx+c*ocs, oy+r*ocs, ocs, ocs);
+        g.strokeStyle=css('--hair'); g.lineWidth=1;
+        g.strokeRect(bx+c*ocs+0.5, oy+r*ocs+0.5, ocs-1, ocs-1);
+      }
+    }
+    var corner=cov[0][0], mid=cov[H>>1][H>>1];
+    var by=296;
+    g.fillStyle=css('--ink'); g.font=sans(14); g.textAlign='left';
+    g.fillText('кут проти центра', bx, by);
+    var w1=Math.round(240*corner/mid), w2=240;
+    g.fillStyle='rgba('+rose+',0.28)'; rr(g,bx,by+14,Math.max(w1,3),26,6); g.fill();
+    g.fillStyle='rgba('+teal+',0.28)'; rr(g,bx,by+50,w2,26,6); g.fill();
+    g.fillStyle=css('--ink'); g.font=mono(12,true); g.textBaseline='middle';
+    g.fillText('кут: '+corner, bx+Math.max(w1,3)+10, by+27);
+    g.fillText('центр: '+mid, bx+w2+10, by+63);
+    g.textBaseline='alphabetic';
+
+    I('padC').textContent=corner+' '+razWord(corner);
+    I('padM').textContent=mid+' '+razWord(mid);
+    I('padSh').textContent=out+' × '+out+(mode===0?' (valid)':' (same)');
+    I('padZ').textContent = p ? grp((H+2*p)*(H+2*p)-H*H) : '0';
+
+    var ratio=corner/mid;
+    if(mode===0){
+      verd('padVd','t-no','VALID · КАРТИНКА ЗМЕНШИЛАСЬ',
+        'Вихід ужався з 8 × 8 до <b>'+out+' × '+out+'</b>. Кутовий піксель потрапив у вікно '+corner+' '+razWord(corner)+
+        ', центральний — '+mid+'. Це '+fmt(ratio*100,0)+' % від уваги, яку дістав центр.');
+    }else{
+      verd('padVd','t-mid','SAME · РОЗМІР ЗБЕРЕЖЕНО',
+        'Розмір лишився <b>8 × 8</b>, але ціна — '+grp((H+2*p)*(H+2*p)-H*H)+
+        ' вигаданих нулів по краю. Кут усе одно бачать '+corner+' '+razWord(corner)+' проти '+mid+
+        ' у центра — '+fmt(ratio*100,0)+' %.');
+    }
+  }
+  on('padK','input',draw);
+  var seg=I('padSeg');
+  seg.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    mode=+b.dataset.i;
+    Array.prototype.forEach.call(seg.querySelectorAll('button'),function(x){
+      x.setAttribute('aria-pressed', x===b ? 'true':'false');
+    });
+    draw();
+  });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   Інтерактив 5 · Форма наскрізь
+   ═══════════════════════════════════════════════════════════════ */
+(function(){
+  var cv=I('cShp'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv);
+    var H=+I('shpH').value, k=+I('shpK').value, s=+I('shpS').value, p=+I('shpP').value;
+    I('shpHv').textContent=H; I('shpKv').textContent=k;
+    I('shpSv').textContent=s; I('shpPv').textContent=p;
+    var teal=rgbOf('--teal'), rose=rgbOf('--rose');
+
+    var track=H+2*p-k;
+    var ok=(track>=0);
+    var out= ok ? Math.floor(track/s)+1 : 0;
+    var side=H+2*p, cs=Math.max(4,Math.floor(300/side)), x0=40, y0=64, i, r, c;
+
+    /* які справжні пікселі накрило хоч одне вікно */
+    var covered=[];
+    for(i=0;i<H;i++) covered.push(false);
+    for(i=0;i<out;i++){
+      var lo=i*s, hi=lo+k-1;
+      for(r=Math.max(lo,p); r<=Math.min(hi,p+H-1); r++) covered[r-p]=true;
+    }
+    var cut=0; for(i=0;i<H;i++) if(!covered[i]) cut++;
+
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillText('вхід '+H+' × '+H+(p?(' + рамка '+p):''), x0, 30);
+
+    if(p){ g.fillStyle='rgba('+rgbOf('--soft')+',0.14)'; g.fillRect(x0,y0,side*cs,side*cs); }
+    for(r=0;r<H;r++){
+      for(c=0;c<H;c++){
+        var live=covered[r]&&covered[c];
+        g.fillStyle= live ? 'rgba('+teal+',0.22)' : 'rgba('+rose+',0.40)';
+        g.fillRect(x0+(c+p)*cs, y0+(r+p)*cs, cs, cs);
+      }
+    }
+    if(cs>=8){
+      g.strokeStyle=css('--hair'); g.lineWidth=1;
+      for(i=0;i<=side;i++){
+        g.beginPath(); g.moveTo(x0+i*cs+0.5,y0); g.lineTo(x0+i*cs+0.5,y0+side*cs); g.stroke();
+        g.beginPath(); g.moveTo(x0,y0+i*cs+0.5); g.lineTo(x0+side*cs,y0+i*cs+0.5); g.stroke();
+      }
+    }
+    g.strokeStyle=css('--soft'); g.lineWidth=1.5;
+    g.strokeRect(x0+p*cs-0.5, y0+p*cs-0.5, H*cs+1, H*cs+1);
+    /* перше й останнє положення вікна */
+    if(ok){
+      g.strokeStyle=css('--teal'); g.lineWidth=2;
+      g.strokeRect(x0+0.5, y0+0.5, k*cs, k*cs);
+      var last=(out-1)*s;
+      g.strokeRect(x0+last*cs+0.5, y0+last*cs+0.5, k*cs, k*cs);
+    }
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left';
+    g.fillText('бірюзові рамки — перше й останнє положення вікна', x0, y0+side*cs+22);
+    g.fillStyle= cut? css('--rose') : css('--soft');
+    g.fillText(cut? ('рожеві смуги — '+cut+' '+pxWord(cut)+', які не побачив жоден фільтр')
+                  : 'рожевих смуг немає: жоден піксель не пропав', x0, y0+side*cs+40);
+
+    /* праворуч: вихід і підстановка у формулу */
+    var bx=420;
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('вихід '+out+' × '+out, bx, 30);
+    var ocs=Math.max(3,Math.min(cs*2, Math.floor(160/Math.max(out,1))));
+    for(r=0;r<out;r++){
+      for(c=0;c<out;c++){
+        g.fillStyle='rgba('+rose+',0.28)';
+        g.fillRect(bx+c*ocs, y0+r*ocs, ocs, ocs);
+      }
+    }
+    if(ocs>=8){
+      g.strokeStyle=css('--hair'); g.lineWidth=1;
+      for(i=0;i<=out;i++){
+        g.beginPath(); g.moveTo(bx+i*ocs+0.5,y0); g.lineTo(bx+i*ocs+0.5,y0+out*ocs); g.stroke();
+        g.beginPath(); g.moveTo(bx,y0+i*ocs+0.5); g.lineTo(bx+out*ocs,y0+i*ocs+0.5); g.stroke();
+      }
+    }
+    var ty=270;
+    g.fillStyle=css('--ink'); g.font=mono(14,true); g.textAlign='left';
+    g.fillText('Hout = floor((H + 2p − k) / s) + 1', bx, ty);
+    g.fillStyle=css('--soft'); g.font=mono(13);
+    if(ok){
+      g.fillText('= floor(('+H+' + '+(2*p)+' − '+k+') / '+s+') + 1', bx, ty+26);
+      g.fillText('= floor('+track+' / '+s+') + 1 = '+Math.floor(track/s)+' + 1', bx, ty+48);
+      g.fillStyle=css('--rose'); g.font=mono(20,true);
+      g.fillText('= '+out, bx, ty+78);
+    }else{
+      g.fillStyle=css('--rose'); g.font=mono(13);
+      g.fillText('ядро більше за вхід разом із рамкою —', bx, ty+26);
+      g.fillText('жодне положення вікна не поміщається', bx, ty+48);
+    }
+
+    I('shpOut').textContent = ok ? (out+' × '+out) : 'помилка';
+    I('shpCut').textContent = ok ? (cut+' '+pxWord(cut)) : '—';
+    I('shpEq').textContent = ok ? ('floor('+track+'/'+s+') + 1') : ('H+2p−k = '+track);
+
+    if(!ok){
+      verd('shpVd','t-no','ШАР НЕ ЗБЕРЕТЬСЯ',
+        'H + 2p − k = <b>'+track+'</b> — відʼємне. Ядро '+k+' × '+k+' не влазить у вхід '+
+        (H+2*p)+' × '+(H+2*p)+' навіть один раз. PyTorch у такому разі кидає помилку.');
+    }else if(cut>0){
+      verd('shpVd','t-mid','КРАЙ ОБРІЗАНО',
+        '('+H+' + '+(2*p)+' − '+k+') = '+track+' не ділиться на '+s+' націло. Вихід '+out+' × '+out+
+        ', а <b>'+cut+' '+pxWord(cut)+'</b> з кожного боку не побачив жоден фільтр. Помилки не буде — вони просто зникнуть.');
+    }else if(out===H){
+      verd('shpVd','t-ok','РОЗМІР ЗБЕРЕЖЕНО',
+        'Вихід <b>'+out+' × '+out+'</b> — рівно як вхід. Це режим same: p = (k − 1) / 2 = '+p+' при кроці 1.');
+    }else{
+      verd('shpVd','t-ok','НІЧОГО НЕ ВТРАЧЕНО',
+        'Вихід <b>'+out+' × '+out+'</b>, і кожен вхідний піксель потрапив щонайменше в одне вікно. '+
+        'Залишок від ділення '+track+' на '+s+' або нульовий, або припадає на рамку — дані цілі.');
+    }
+  }
+  ['shpH','shpK','shpS','shpP'].forEach(function(id){ on(id,'input',draw); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   Інтерактив 6 · Що вивчив фільтр
+   ═══════════════════════════════════════════════════════════════ */
+(function(){
+  var cv=I('cW'); if(!cv) return;
+  var kinds=[1,0,2], pick=0;
+  function draw(){
+    var g=dpr(cv);
+    var f=(+I('wF').value)-1; I('wFv').textContent=(f+1);
+    var teal=rgbOf('--teal'), rose=rgbOf('--rose');
+    var w=W1[f], i, r, c;
+
+    /* ваги числами */
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillText('ваги фільтра '+(f+1)+' · 5 × 5', 40, 30);
+    var cs=52, x0=40, y0=46, maxAbs=0;
+    for(i=0;i<25;i++) if(Math.abs(w[i])>maxAbs) maxAbs=Math.abs(w[i]);
+    for(r=0;r<5;r++){
+      for(c=0;c<5;c++){
+        var v=w[r*5+c], x=x0+c*cs, y=y0+r*cs;
+        g.fillStyle=divCol(v/maxAbs,rose,teal);
+        g.fillRect(x,y,cs,cs);
+        g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(x+0.5,y+0.5,cs-1,cs-1);
+        g.fillStyle=css('--ink'); g.font=mono(11); g.textAlign='center'; g.textBaseline='middle';
+        g.fillText(sgn(v,3), x+cs/2, y+cs/2+1);
+      }
+    }
+    g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('бірюзове — додатне, рожеве — відʼємне', x0, y0+5*cs+22);
+    g.fillText('зсув b = '+fmt(B1[f],3), x0, y0+5*cs+40);
+
+    /* вхід і відгук */
+    var img=shapeImg(kinds[pick]);
+    var resp=convSame(img,28,28,w,5,B1[f]);
+    var mx=0; for(i=0;i<784;i++) if(Math.abs(resp[i])>mx) mx=Math.abs(resp[i]);
+    if(mx<1e-6) mx=1;
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('вхід 28 × 28', 350, 30);
+    drawMap(g,img,28,28,350,46,6,'gray',1,rose,teal);
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('відгук фільтра', 570, 30);
+    drawMap(g,resp,28,28,570,46,6,'div',mx,rose,teal);
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('світле — сильна додатна відповідь,', 570, 46+168+22);
+    g.fillText('рожеве — сильна відʼємна', 570, 46+168+40);
+
+    /* два числа, за якими класифікуємо фільтр */
+    var sum=0, lr=0, tb=0;
+    for(i=0;i<25;i++) sum+=w[i];
+    for(r=0;r<5;r++){
+      lr += w[r*5]+w[r*5+1] - w[r*5+3] - w[r*5+4];
+      tb += w[r]+w[5+r] - w[15+r] - w[20+r];
+    }
+    I('wSum').textContent=sgn(sum,2);
+    I('wMax').textContent=fmt(mx,2);
+    I('wLR').textContent=sgn(lr,2);
+    I('wTB').textContent=sgn(tb,2);
+
+    var aS=Math.abs(sum), aL=Math.abs(lr), aT=Math.abs(tb);
+    var bigEdge=Math.max(aL,aT), smallEdge=Math.min(aL,aT);
+    if(aS<bigEdge && smallEdge>=0.8*bigEdge){
+      verd('wVd','t-mid','ПОХИЛА МЕЖА',
+        'Обидві асиметрії великі: ліво мінус право <b>'+sgn(lr,2)+
+        '</b>, верх мінус низ <b>'+sgn(tb,2)+'</b>. Фільтр реагує і на вертикальний, '+
+        'і на горизонтальний перепад одразу — тобто на <b>кут</b> фігури.');
+    }else if(aS>=aL && aS>=aT){
+      verd('wVd', sum>0?'t-ok':'t-mid', sum>0?'ДЕТЕКТОР ПЛЯМИ':'ДЕТЕКТОР НАВПАКИ',
+        'Сума ваг <b>'+sgn(sum,2)+'</b>, і за модулем вона більша за обидві асиметрії ('+
+        fmt(aL,2)+' і '+fmt(aT,2)+'). Фільтр не шукає межу, а міряє яскравість: '+(sum>0?'світле дає велику відповідь':'світле дає відʼємну відповідь, темне — додатну')+'.');
+    }else if(aT>aL){
+      verd('wVd','t-ok','ГОРИЗОНТАЛЬНА МЕЖА',
+        'Верх мінус низ = <b>'+sgn(tb,2)+'</b>, а ліво мінус право лише '+fmt(aL,2)+
+        '. Половини фільтра різного знака по вертикалі — це Собель по y, який ми в темі 04 писали руками.');
+    }else{
+      verd('wVd','t-ok','ВЕРТИКАЛЬНА МЕЖА',
+        'Ліво мінус право = <b>'+sgn(lr,2)+'</b>, а верх мінус низ лише '+fmt(aT,2)+
+        '. Половини фільтра різного знака по горизонталі — це Собель по x, тільки ніхто його не вписував.');
+    }
+  }
+  on('wF','input',draw);
+  var seg=I('wSeg');
+  seg.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    pick=+b.dataset.i;
+    Array.prototype.forEach.call(seg.querySelectorAll('button'),function(x){
+      x.setAttribute('aria-pressed', x===b ? 'true':'false');
+    });
+    draw();
+  });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   Інтерактив 7 · Рецептивне поле
+   ═══════════════════════════════════════════════════════════════ */
+(function(){
+  var cv=I('cRF'); if(!cv) return;
+  var GRID=21;
+  function draw(){
+    var g=dpr(cv);
+    var L=+I('rfL').value, k=+I('rfK').value, C=+I('rfC').value;
+    I('rfLv').textContent=L; I('rfKv').textContent=k; I('rfCv').textContent=C;
+    var teal=rgbOf('--teal'), rose=rgbOf('--rose');
+
+    var rf=1+L*(k-1);
+    var cs=13, x0=40, y0=60, r, c, i;
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillText('вхід 21 × 21', x0, 30);
+    var half=(rf-1)/2, mid=(GRID-1)/2;
+    for(r=0;r<GRID;r++){
+      for(c=0;c<GRID;c++){
+        var inRF=Math.abs(r-mid)<=half && Math.abs(c-mid)<=half;
+        var lvl = inRF ? (1 - Math.max(Math.abs(r-mid),Math.abs(c-mid))/(half+1)) : 0;
+        g.fillStyle= inRF ? 'rgba('+teal+','+(0.18+0.5*lvl).toFixed(3)+')' : css('--paper');
+        g.fillRect(x0+c*cs, y0+r*cs, cs, cs);
+        g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(x0+c*cs+0.5, y0+r*cs+0.5, cs-1, cs-1);
+      }
+    }
+    g.fillStyle=css('--rose');
+    g.fillRect(x0+mid*cs+3, y0+mid*cs+3, cs-6, cs-6);
+    g.strokeStyle=css('--teal'); g.lineWidth=2;
+    var hx=Math.max(0,mid-half), hn=Math.min(GRID,rf);
+    g.strokeRect(x0+hx*cs-1, y0+hx*cs-1, hn*cs+2, hn*cs+2);
+    g.fillStyle=css('--soft'); g.font=mono(11);
+    g.fillText('підсвічено те, що впливає на одне вихідне число', x0, y0+GRID*cs+22);
+    g.fillText('рожевий квадратик — сам цей піксель', x0, y0+GRID*cs+40);
+    if(rf>GRID) g.fillText('поле вже більше за показану сітку', x0, y0+GRID*cs+58);
+
+    /* праворуч: ціна стосу проти одного широкого ядра */
+    var bx=390;
+    var stack=L*(C*C*k*k+C);
+    var single=C*C*rf*rf+C;
+    g.fillStyle=css('--ink'); g.font=sans(15); g.textAlign='left';
+    g.fillText('рецептивне поле  '+rf+' × '+rf, bx, 40);
+    g.fillStyle=css('--soft'); g.font=mono(12);
+    g.fillText('1 + L × (k − 1) = 1 + '+L+' × '+(k-1)+' = '+rf, bx, 62);
+
+    var maxV=Math.max(stack,single), barMax=470;
+    var rows=[
+      {y:110, v:stack, col:'--teal', t:L+' '+(L===1?'шар':(L<5?'шари':'шарів'))+' по '+k+' × '+k,
+       f:L+' × ('+C+'×'+C+'×'+k+'×'+k+' + '+C+')'},
+      {y:210, v:single, col:'--rose', t:'одне ядро '+rf+' × '+rf,
+       f:C+'×'+C+'×'+rf+'×'+rf+' + '+C}
+    ];
+    rows.forEach(function(rw){
+      g.fillStyle=css('--ink'); g.font=sans(14); g.textAlign='left';
+      g.fillText(rw.t, bx, rw.y);
+      g.fillStyle=css('--soft'); g.font=mono(11);
+      g.fillText(rw.f, bx, rw.y+18);
+      var w=Math.max(4, barMax*(rw.v/maxV));
+      rr(g,bx,rw.y+28,w,30,7);
+      g.fillStyle='rgba('+rgbOf(rw.col)+',0.22)'; g.fill();
+      g.strokeStyle=css(rw.col); g.lineWidth=1.5; g.stroke();
+      g.fillStyle=css(rw.col); g.font=mono(15,true); g.textBaseline='middle';
+      var tx=bx+w+10;
+      if(tx>bx+barMax-30) tx=bx+12;
+      g.fillText(grp(rw.v), tx, rw.y+43);
+      g.textBaseline='alphabetic';
+    });
+    g.fillStyle=css('--soft'); g.font=mono(11); g.textAlign='left';
+    g.fillText('обидва варіанти дають однакове рецептивне поле — порівняння чесне', bx, 300);
+    g.fillText('між шарами стосу ще й стоїть ReLU, якої в одному ядрі немає', bx, 320);
+
+    I('rfF').textContent=rf+' × '+rf;
+    I('rfSh').textContent=fmt(100*Math.min(rf,GRID)*Math.min(rf,GRID)/(GRID*GRID),1)+' %';
+    I('rfA').textContent=grp(stack);
+    I('rfB').textContent=grp(single);
+
+    if(L===1){
+      verd('rfVd','t-mid','ОДИН ШАР',
+        'Поле дорівнює самому ядру: <b>'+rf+' × '+rf+'</b>. Порівнювати нема з чим — обидва стовпчики це той самий шар ('+
+        grp(stack)+' '+parWord(stack)+'). Додай другий шар.');
+    }else if(stack<single){
+      var save=Math.round(100*(1-stack/single));
+      verd('rfVd','t-ok','СТОС ДЕШЕВШИЙ НА '+save+' %',
+        'Поле <b>'+rf+' × '+rf+'</b> у обох. Стос коштує '+grp(stack)+' '+parWord(stack)+', одне широке ядро — '+
+        grp(single)+'. Економія '+grp(single-stack)+' '+numWord(single-stack)+
+        ', і це ще без урахування нелінійності між шарами.');
+    }else{
+      verd('rfVd','t-no','СТОС ДОРОЖЧИЙ',
+        'Тут стос коштує '+grp(stack)+' проти '+grp(single)+' в одного ядра '+rf+' × '+rf+
+        ' — рідкісний випадок, коли ділити шар невигідно.');
+    }
+  }
+  ['rfL','rfK','rfC'].forEach(function(id){ on(id,'input',draw); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+})();
+</script>
+</body>
+</html>

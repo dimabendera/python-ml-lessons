@@ -1,0 +1,2023 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Аугментація даних: як сказати мережі, що саме не має значення</title>
+<meta name="description" content="Аугментація — не спосіб «намалювати більше картинок», а заява про інваріантність: повертаючи зображення, ти стверджуєш, що клас не залежить від кута. Перевірено числами на датасеті фігур: квадрат, повернутий на 45°, збігається з ромбом попіксельно (IoU 1.000), мітка ламається вже на 16°. Виміряний виграш на 120 прикладах і його зникнення на 1200, шкода від надто сильного повороту й чому аугментувати перевірочну вибірку не можна.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+/* рядок голови мережі — підсвічуємо, бо саме він і є відкриттям теми */
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* блок коду мережі в тексті: моноширинний, зі збереженням відступів */
+pre.arch{font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.6;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 18px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow)}
+pre.arch b{color:var(--rose); font-weight:700}
+pre.arch i{color:var(--soft); font-style:normal}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 2 · Тема 10</p>
+    <h1>Аугментація даних</h1>
+    <p class="stand">Повернути зображення — це не фокус, щоб було більше картинок. Це
+      твердження про світ: «клас не залежить від кута». Іноді воно істинне, іноді хибне —
+      і вся тема про те, як їх розрізнити.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Даних скінченна кількість</a></li>
+        <li><a href="#s2">Одне зображення — багато прикладів</a></li>
+        <li><a href="#s3">Аугментація — це заява про інваріантність</a></li>
+        <li><a href="#s4">Геометричні перетворення</a></li>
+        <li><a href="#s5">Фотометричні перетворення</a></li>
+        <li><a href="#s6">Стирання шматка</a></li>
+        <li><a href="#s7">Коли аугментація шкодить</a></li>
+        <li><a href="#s8">Скільки це дає</a></li>
+        <li><a href="#s9">Тільки на навчальній вибірці</a></li>
+        <li><a href="#s10">TTA: аугментація на прогнозі</a></li>
+        <li><a href="#s11">Як це виглядає в коді</a></li>
+        <li><a href="#s12">Підсумок</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../09-cnn-complete/lecture.html">← 09. CNN цілком</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../11-training-cnn/lecture.html">11. Навчання CNN →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Попередня тема закінчилась незручним фактом. Мережа зібрана, форми зійшлись,
+<a href="../09-cnn-complete/lecture.html">24 774 параметри</a> на місці — а навчальних прикладів
+у нас сто двадцять, по 784 пікселі кожен. Мережа з такою місткістю не мусить <em>розуміти</em>, що таке
+коло: їй значно дешевше <strong>запамʼятати</strong> сто двадцять картинок разом із відповідями.
+І вона це робить.</p>
+
+<p>Даних більше не буде — розмітка коштує грошей, і її завжди менше, ніж хочеться. Але в
+зображення є властивість, якої немає в таблиці з цінами: <strong>його можна зсунути, повернути,
+притемнити — і предмет на ньому лишиться тим самим</strong>. Саме на цьому будується аугментація
+(augmentation).</p>
+
+<p>Найпоширеніше пояснення аугментації звучить так: «беремо картинку, крутимо-вертимо, отримуємо
+більше даних». Це формулювання не просто неточне — воно шкідливе, бо з нього не випливає жодного
+правила, коли аугментацію застосовувати не можна. Тому вся тема тримається на іншому
+формулюванні:</p>
+
+<div class="note"><b>Головна думка теми.</b> Аугментація — це спосіб сказати мережі,
+<strong>що саме не має значення</strong>. Повертаючи зображення, ти стверджуєш: «клас не залежить
+від кута». Це твердження може бути хибним — і тоді аугментація не допомагає, а псує. Тому питання
+теми не «які бувають перетворення», а <strong>яке перетворення зберігає мітку саме в цій
+задачі</strong>.</div>
+
+<div class="note"><b>Наскрізний приклад теми.</b> Той самий датасет, що й у попередніх темах блоку:
+зображення 28×28 у відтінках сірого, шість класів фігур — коло, квадрат, ромб, кільце, хрест,
+трикутник. Нічого не завантажуємо, усе <strong>малюється формулами</strong>. Проти теми 09 розкид
+більший: центр гуляє на ±4 пікселі, радіус від 5 до 8, шум 0.20 — інакше задача занадто легка й
+аугментації нема чого рятувати. Усі числа нижче ти повториш у <code>practice.ipynb</code>.</div>
+
+<h2 id="s1"><span class="num">01 / Межа</span>Даних скінченна кількість</h2>
+
+<p>Почнемо з того, щоб побачити проблему числом, а не на словах. Беремо мережу з теми 09 без жодних
+змін, беремо 120 навчальних зображень (по двадцять на кожен із шести класів) і навчаємо
+250 кроків. Після кожних 25 кроків міряємо дві точності: на навчальній вибірці, яку мережа бачить,
+і на окремій перевірочній із 600 зображень, яку вона не бачила ніколи.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>крок</th><th>на навчальній</th><th>на перевірочній</th><th>розрив</th></tr>
+<tr><td>25</td><td>0.408</td><td>0.353</td><td>0.055</td></tr>
+<tr><td>75</td><td>0.892</td><td>0.807</td><td>0.085</td></tr>
+<tr><td>150</td><td>1.000</td><td>0.880</td><td>0.120</td></tr>
+<tr class="sumrow"><td>250</td><td>1.000</td><td>0.880</td><td>0.120</td></tr>
+</table></div>
+
+<p>Читається це так. На навчальній вибірці точність доходить до 1.000 — мережа відповідає
+правильно на кожному зображенні, яке бачила, без винятку. На перевірочній вона зупиняється на
+0.880 і далі не росте. Різниця між цими двома числами — 0.120 — і є ціна
+запамʼятовування: стільки мережа «знає» про конкретні картинки понад те, що вона знає про фігури
+взагалі.</p>
+
+<p>Причина в співвідношенні. У 120 зображеннях 120 × 784 = 94 080 чисел, і більшість із них —
+однаковий фон; у мережі 24 774 параметри. Місткості цілком вистачає, щоб для кожного зображення
+завести кілька прикмет, які є тільки в ньому: пляма шуму отут, край фігури отам. На навчальній
+вибірці вони бездоганні, на новому зображенні не варті нічого.</p>
+
+<div class="note"><b>Це не нова хвороба.</b> Перенавчання ти вже бачив у курсі машинного навчання
+на таблицях. Нового тут лише те, <strong>чим його лікувати</strong>: у таблиці рядок не можна
+«трохи посунути» й лишити тим самим рядком, а зображення — можна. Регуляризація ваг, дропаут і
+рання зупинка теж працюють, але вони приборкують мережу; аугментація натомість працює з даними,
+тому розбирається окремо і <strong>раніше</strong>. Про решту засобів — у темі
+<a href="../11-training-cnn/lecture.html">11 «Навчання CNN»</a>.</div>
+
+<h2 id="s2"><span class="num">02 / Ідея</span>Одне зображення — багато прикладів</h2>
+
+<p>Візьмемо одне зображення кола й зсунемо його на три пікселі вправо. Це досі коло. Повернемо на
+десять градусів — досі коло. Притемнимо на чверть — досі коло. Мітка не змінилась, а числа в
+масиві змінились усі до єдиного.</p>
+
+<p>Звідси прийом: перед тим як подати зображення в мережу, застосувати до нього випадкове
+перетворення. Мережа щоразу бачить ту саму фігуру трохи інакше й не може завчити конкретне
+розташування пікселів — бо конкретного розташування більше немає.</p>
+
+<p>А тепер найважливіше уточнення теми, без якого все решта розсиплеться.</p>
+
+<div class="note warn"><b>Аугментація не додає даних.</b> Зсунуте коло не несе про світ жодної
+нової інформації — воно зроблене з того самого зображення й нічого нового про класи не розповідає.
+Що воно несе — це <strong>обмеження</strong>: «ось ці два масиви чисел мусять дістати одну
+відповідь». Ти не збільшуєш вибірку, ти <strong>вкладаєш у мережу власне знання про задачу</strong>
+у формі, яку мережа розуміє — у формі прикладів.</div>
+
+<p>Різниця не термінологічна. Якби копії справді були даними, на тисячі копій одного зображення
+можна було б навчити мережу. Насправді ж усе впирається в те, скільки <em>різних</em> тверджень
+ти встиг зробити, а вони вичерпуються швидко.</p>
+
+<p>Побутова аналогія. Дитині показують чашку й повертають її в руках: «дивись, це та сама чашка».
+Дитина не дізналась нічого нового про чашки — вона дізналась, що <em>поворот не важить</em>. Саме
+це ми й повідомляємо мережі, тільки єдиною зрозумілою їй мовою — парами «картинка, відповідь».</p>
+
+<h2 id="s3"><span class="num">03 / Заява</span>Аугментація — це заява про інваріантність</h2>
+
+<p>Запишемо це точно. Нехай <code>T</code> — перетворення зображення: поворот,
+дзеркало, зміна яскравості. Нехай <code>y(x)</code> — правильна мітка зображення
+<code>x</code>. Додаючи <code>T</code> в аугментацію, ти стверджуєш:</p>
+
+<div class="eq">y( T(x) ) = y(x) &nbsp; для всіх x у цій задачі</div>
+
+<p>Словами: <strong>що б перетворення не зробило з пікселями, правильна відповідь лишається
+тією самою</strong>. Символ <code>T(x)</code> читається «перетворення, застосоване до
+зображення»; <code>y</code> — це функція «яка тут насправді фігура». Слова «для всіх x
+у цій задачі» — найважливіша частина запису: твердження мусить бути істинним не для однієї
+вдалої картинки, а для кожної, яку мережа побачить.</p>
+
+<p>Ця властивість зветься <strong>інваріантністю</strong> (invariance). Аугментація не робить
+мережу інваріантною чарами: вона показує стільки пар «до і після», що найдешевшим способом усі їх
+задовольнити стає справді ігнорувати перетворення.</p>
+
+<p>І звідси головний наслідок. Якщо рівність <code>y(T(x)) = y(x)</code>
+<strong>хибна</strong>, то ти показуєш мережі зображення з неправильною міткою. Не «слабко
+корисний приклад», а буквально брехню: ось ромб, і написано, що це квадрат. Такі приклади
+називаються шумом у мітках — і ти згенерував його власноруч, своїм же конвеєром.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Яке припущення ти щойно зробив</p>
+  <p class="fig-sub">Одне перетворення, три різні задачі. Ліворуч — оригінал, посередині — після
+    перетворення, праворуч — до чого це найближче. Мітка визначається не на око, а виміряним
+    числом: для фігур і цифр — перекриттям із шаблоном класу (IoU; цифра вважається впізнаною
+    від 0.70), для знімка — правилом «ущільнення є, якщо десь яскравість вища за 0.70».</p>
+  <div class="panel">
+    <div><canvas id="cInv" width="940" height="320" aria-label="Оригінал, перетворене зображення й найближчий до нього клас, з мірою перекриття"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">задача</span>
+        <div class="seg" id="invTask">
+          <button type="button" data-i="0" aria-pressed="true">фігури</button>
+          <button type="button" data-i="1" aria-pressed="false">цифри</button>
+          <button type="button" data-i="2" aria-pressed="false">знімок</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">перетворення</span>
+        <div class="seg" id="invOp">
+          <button type="button" data-i="0" aria-pressed="true">дзеркало</button>
+          <button type="button" data-i="1" aria-pressed="false">поворот</button>
+          <button type="button" data-i="2" aria-pressed="false">яскравість</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="invPow">сила <output id="invPowV">45°</output></label>
+        <input type="range" id="invPow" min="0" max="100" step="5" value="50">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>було</b><i id="invWas">—</i></div>
+        <div class="cellv"><b>стало</b><i id="invNow">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b id="invMlab">збіг із класом «стало»</b><i id="invIou">—</i></div>
+      </div>
+      <div class="verdict" id="invVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав задачу «цифри», перетворення «поворот» і доведи силу до кінця: на 180°
+    шістка стає девʼяткою зі збігом 1.000.</b> Дзеркало натомість істинне для фігур і хибне для
+    цифр, а яскравість — навпаки: фігурам байдуже, а на знімку саме яскравість і є діагнозом. Одне
+    й те саме перетворення в одній задачі безпечне, а в іншій — генератор хибних міток.</figcaption>
+</figure>
+
+<p>Ось той самий список словами. Перетворення ліворуч, твердження, яке ти робиш, — праворуч.
+Останній стовпчик — де це твердження ламається.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>перетворення</th><th>твердження про світ</th><th>де воно хибне</th></tr>
+<tr><td>Дзеркало по горизонталі</td><td>Клас не залежить від того, ліва це чи права версія</td><td>Текст, цифри, дорожні знаки з напрямком, «ліва / права рука», медична латеральність</td></tr>
+<tr><td>Поворот на довільний кут</td><td>Клас не залежить від орієнтації предмета</td><td>Цифри 6 і 9, літери, наш квадрат і ромб, будь-яка задача, де «догори дриґом» — окремий клас</td></tr>
+<tr><td>Зсув</td><td>Клас не залежить від того, де в кадрі предмет</td><td>Задачі, де важлива позиція: розмітка документа, положення дефекту на деталі</td></tr>
+<tr><td>Масштаб і обрізка</td><td>Клас не залежить від розміру предмета в кадрі</td><td>Коли розмір і є ознакою: відрізнити монету від тарілки, дитину від дорослого</td></tr>
+<tr><td>Яскравість і контраст</td><td>Клас не залежить від освітлення</td><td>Медичні знімки, де щільність тканини видно саме як яскравість; контроль якості за відтінком</td></tr>
+<tr><td>Колірний тон</td><td>Клас не залежить від кольору</td><td>Стиглий чи зелений плід, колір світлофора, індикаторні смужки тестів</td></tr>
+<tr><td>Шум і розмиття</td><td>Клас не залежить від якості знімка</td><td>Задача «оцінити різкість» або «виявити підробку за артефактами»</td></tr>
+</table></div>
+
+<p>Заучувати таблицю не треба — треба засвоїти спосіб: <strong>перш ніж додати перетворення в
+конвеєр, вимов уголос твердження, яке воно робить, і пошукай контрприклад</strong>. Знайшовся за
+півхвилини — перетворення або не піде туди зовсім, або піде з дуже малою силою.</p>
+
+<h2 id="s4"><span class="num">04 / Геометрія</span>Геометричні перетворення</h2>
+
+<p>Геометричні перетворення міняють, <em>де</em> що лежить, не чіпаючи яскравості. Це найстаріша
+й найдієвіша група — і водночас найнебезпечніша, бо саме форма зазвичай і визначає клас.</p>
+
+<ul>
+  <li><strong>Дзеркало по горизонталі</strong> (<code>RandomHorizontalFlip</code>). Найдешевше
+    перетворення взагалі: перестановка стовпців, жодної інтерполяції, жодного втраченого пікселя.
+    Для наших фігур воно ідеальне — усі шість симетричні, і після дзеркала збіг із власним
+    шаблоном дорівнює рівно 1.000. Для тексту й цифр — заборонене.</li>
+  <li><strong>Дзеркало по вертикалі</strong> (<code>RandomVerticalFlip</code>). Значно рідше
+    істинне: світ має верх і низ. Небо зверху, тіні знизу, люди стоять ногами вниз. Вмикають
+    хіба що для знімків згори — супутник, мікроскоп, вигляд з дрона.</li>
+  <li><strong>Поворот</strong> (<code>RandomRotation</code>). Найкорисніше перетворення там, де
+    орієнтація випадкова, і найнебезпечніше там, де ні. Про це — окремий розділ 07.</li>
+  <li><strong>Зсув</strong> (<code>RandomAffine(translate=…)</code>). Здавалося б, зайвий: у темі
+    <a href="../08-pooling/lecture.html">08</a> ми бачили, що згортка з пулінгом дають терпимість
+    до зсуву. Але ключове слово там — <strong>часткова</strong>: у головному замірі блоку CNN на
+    зсунутих предметах давала 0.607, а не одиницю. Зсув в аугментації доробляє те, чого архітектура
+    не доробила.</li>
+  <li><strong>Масштаб і обрізка</strong> (<code>RandomResizedCrop</code>). Дуже сильне
+    перетворення: воно одночасно міняє розмір предмета й показує його шматок. У класифікації
+    ImageNet це головна робоча аугментація; у задачах, де предмет може виявитись цілком за межами
+    обрізки, вона починає генерувати порожні картинки з міткою.</li>
+  <li><strong>Перспектива</strong> (<code>RandomPerspective</code>). Імітує зйомку під кутом.
+    Істинна там, де камера справді може стояти збоку — фото документів, номерів, вивісок.</li>
+</ul>
+
+<h3>Дві деталі, про які згадують після першої поламаної моделі</h3>
+
+<p><strong>Краї.</strong> Поверни квадратне зображення на 20° — і в кутах утворюється порожнеча,
+якої в оригіналі не було. Чим її заповнити, вирішує аргумент <code>fill</code>: нулями (чорне),
+середнім кольором, віддзеркаленням країв. Вибір не косметичний: якщо всі аугментовані зображення
+мають чорні кути, а неаугментовані ні, мережа може навчитись розрізняти саме кути — і на
+перевірочній вибірці все розсиплеться.</p>
+
+<p><strong>Інтерполяція.</strong> Поворот на не кратний 90° кут не переводить піксель у піксель:
+нове значення доводиться <a href="../03-opencv-basics/lecture.html">інтерполювати</a>, і тонкі
+лінії від цього бліднуть. На фігурах завтовшки в три пікселі це помітно, на фото 512×512 — ні.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Конструктор аугментації</p>
+  <p class="fig-sub">Вмикай перетворення, крути силу — і дивись на вісім випадкових варіантів того
+    самого зображення. Під кожним написано, чи вцілила мітка: варіант класифікується найближчим
+    шаблоном, як в інтерактиві 1.</p>
+  <div class="panel">
+    <div><canvas id="cBuild" width="940" height="400" aria-label="Оригінальна фігура й вісім її випадкових варіантів після вибраних перетворень"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що вмикаємо</span>
+        <div class="seg wrap" id="buildOps">
+          <button type="button" data-i="0" aria-pressed="true">дзеркало</button>
+          <button type="button" data-i="1" aria-pressed="true">зсув</button>
+          <button type="button" data-i="2" aria-pressed="false">поворот</button>
+          <button type="button" data-i="3" aria-pressed="false">масштаб</button>
+          <button type="button" data-i="4" aria-pressed="false">яскравість</button>
+          <button type="button" data-i="5" aria-pressed="false">стирання</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="buildPow">сила <output id="buildPowV">50 %</output></label>
+        <input type="range" id="buildPow" min="0" max="100" step="10" value="50">
+      </div>
+      <div class="ctl">
+        <span class="cap">клас</span>
+        <div class="seg wrap" id="buildCls">
+          <button type="button" data-i="0" aria-pressed="false">коло</button>
+          <button type="button" data-i="1" aria-pressed="true">квадрат</button>
+          <button type="button" data-i="3" aria-pressed="false">кільце</button>
+          <button type="button" data-i="4" aria-pressed="false">хрест</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>мітка вціліла</b><i id="buildOk">—</i></div>
+        <div class="cellv"><b>середній збіг</b><i id="buildIou">—</i></div>
+      </div>
+      <div class="verdict" id="buildVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Дзеркало й зсув не ламають жодного з восьми варіантів навіть на повній
+    силі.</b> Поворот на повній силі лишає квадрату 2 правильні мітки з восьми, а стирання
+    на повній силі не лишає хресту жодної — бо затирає ту саму рису, якою хрест
+    відрізняється від решти.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Фотометрія</span>Фотометричні перетворення</h2>
+
+<p>Друга група нічого не рухає, а міняє самі значення пікселів: яскравість, контраст, насиченість,
+тон, шум, розмиття. У <code>torchvision</code> перші чотири зібрані в один
+<code>ColorJitter</code>, шум зазвичай додають руками, розмиття — <code>GaussianBlur</code>.</p>
+
+<p>Ці перетворення <strong>зазвичай безпечніші за геометричні</strong>, і причина проста. У
+переважній більшості задач компʼютерного зору клас визначається <em>формою</em>, а яскравість і
+колір залежать від освітлення, камери й часу доби — тобто від обставин зйомки, а не від предмета.
+Кіт при свічці лишається котом; кіт, знятий дешевою камерою з шумом, теж кіт. Тому фотометрична
+аугментація потрапляє майже в кожен конвеєр і майже ніколи не шкодить.</p>
+
+<p>«Майже» тут стоїть не для краси. Є цілі галузі, де яскравість <strong>і є</strong> сигнал:</p>
+
+<ul>
+  <li><strong>Медичні знімки.</strong> На рентгені й КТ яскравість пікселя — це фізична величина
+    (щільність тканини, одиниці Гаунсфілда). Змінити яскравість означає змінити щільність, тобто
+    змінити діагноз. Тут допустимі хіба що мікроскопічні зсуви, і те з обережністю.</li>
+  <li><strong>Задачі про колір.</strong> Стиглий помідор від зеленого відрізняється тільки
+    відтінком. Колір світлофора, колір індикаторної смужки тесту, сортування деталей за
+    маркуванням — скрізь <code>hue</code> в <code>ColorJitter</code> має стояти в нулі.</li>
+  <li><strong>Задачі про якість зображення.</strong> Якщо мережа оцінює різкість або шукає сліди
+    перетиснутого JPEG, то розмиття й шум — не перешкода, а власне предмет. Аугментувати ними —
+    стерти задачу.</li>
+</ul>
+
+<div class="note"><b>Порядок має значення.</b> Фотометричні перетворення застосовують
+<strong>до</strong> нормалізації (віднімання середнього й ділення на стандартне відхилення), а не
+після. Після нормалізації числа вже не є яскравістю, і «збільшити яскравість на 20 %» перетворюється
+на беззмістовну арифметику. У <code>torchvision.transforms.v2</code> це виходить само собою, якщо
+<code>Normalize</code> стоїть останнім у <code>Compose</code>.</div>
+
+<h2 id="s6"><span class="num">06 / Стирання</span>Стирання шматка</h2>
+
+<p>Третя група стоїть окремо, бо не імітує жодного явища зі зйомки. <code>RandomErasing</code>
+(у літературі — cutout) просто затирає випадковий прямокутник зображення суцільним кольором або
+шумом. Ніяка камера так не знімає. Навіщо тоді?</p>
+
+<p>Затим, що мережа завжди шукає найкоротший шлях. Якщо всі собаки в датасеті зняті з нашийником,
+найдешевша ознака «собаки» — нашийник, і на собаці без нашийника мережа помилиться. Стирання ламає
+цю стратегію: коли вирішальна ділянка час від часу зникає, доводиться впізнавати предмет ще й
+<strong>по решті</strong>.</p>
+
+<p>Формально це теж заява, тільки хитріша: «клас видно більш ніж з одного місця зображення». Для
+кота це правда — вуха, лапи, хвіст, шерсть. Для нашого <strong>кільця</strong> — ні: кільце
+відрізняється від кола рівно однією деталлю, дірою посередині. Затри її — і залишиться коло з
+міткою «кільце». Тому сила стирання добирається так, щоб прямокутник рідко накривав вирішальну
+частину предмета; типові значення — від 2 % до 15 % площі.</p>
+
+<div class="note"><b>Сусідні прийоми, які ми не розбираємо.</b> З тієї самої родини —
+<strong>mixup</strong> (два зображення змішують по прозорості, і мітка стає дробовою: 0.7 кота й
+0.3 собаки) і <strong>CutMix</strong> (шматок одного зображення вклеюють в інше). Обидва працюють,
+обидва вимагають, щоб функція втрат приймала дробові мітки, і обидва належать радше до режиму
+навчання, ніж до підготовки даних. Знай, що вони існують.</div>
+
+<h2 id="s7"><span class="num">07 / Шкода</span>Коли аугментація шкодить</h2>
+
+<p>Тепер найцікавіше. У нашому датасеті є пара класів, яка перетворює абстрактну обережність на
+конкретну катастрофу: <strong>квадрат і ромб</strong>. Ромб — це квадрат, повернутий на 45°. Не
+«схожий на», а буквально він: обидва класи задані формулами, і одна формула переходить в іншу
+поворотом.</p>
+
+<p>Це означає, що перетворення «поворот на випадковий кут до 45°» у цьому датасеті
+<strong>гарантовано</strong> генерує зображення з чужою міткою. Не іноді, не в поганому випадку —
+кожного разу, коли кут наближається до 45°, а клас — квадрат або ромб.</p>
+
+<p>Перевіримо це не на око. Візьмемо квадрат, повернемо його на кут θ і порівняємо з шаблонами
+всіх шести класів за мірою перекриття IoU (Intersection over Union — площа спільної частини,
+поділена на площу обʼєднання; ти зустрічав її в темі
+<a href="../02-cv-task-map/lecture.html">02</a>). Найближчий шаблон і є тим, чим фігура тепер
+виглядає. Перед порівнянням фігуру зсуваємо в центр і беремо шаблон із найближчою площею — інакше
+ми міряли б не форму, а положення й розмір.</p>
+
+<div class="note"><b>Чому сітка вдвічі дрібніша.</b> У цьому й наступних розділах фігури намальовані
+тими самими формулами, але на сітці 56×56 замість 28×28. Причина суто технічна: на грубому растрі
+поворот лишає зубці, і збіг падає через них, а не через форму. Нас цікавить геометрія класів, тож
+растр беремо дрібніший. Класи, формули й висновки — ті самі.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Квадрат проти ромба</p>
+  <p class="fig-sub">Крути кут повороту. Ліворуч — повернутий квадрат, праворуч — шаблони квадрата
+    і ромба та збіг із кожним. Табло каже, чи мітка «квадрат» ще правильна.</p>
+  <div class="panel">
+    <div><canvas id="cSqd" width="940" height="264" aria-label="Повернутий квадрат поряд із шаблонами квадрата й ромба та смуги перекриття з кожним"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="sqdAng">кут повороту <output id="sqdAngV">0°</output></label>
+        <input type="range" id="sqdAng" min="0" max="90" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>збіг із квадратом</b><i id="sqdA">—</i></div>
+        <div class="cellv"><b>збіг із ромбом</b><i id="sqdB">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найближчий клас</b><i id="sqdBest" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="sqdVd"></div>
+    </div>
+  </div>
+  <figcaption><b>На 45° збіг із ромбом дорівнює 1.000 — це той самий масив пікселів.</b> Мітка
+    «квадрат» перестає бути правильною значно раніше: вже на 16° найближчим стає коло. Від 0 до 15°
+    поворот безпечний, далі — генератор брехні.</figcaption>
+</figure>
+
+<p>Той самий рахунок для решти класів на 45° дає повну картину датасету:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>клас</th><th>після повороту на 45° найближчий</th><th>збіг</th><th>мітка</th></tr>
+<tr><td>коло</td><td>коло</td><td>0.987</td><td>ціла</td></tr>
+<tr><td>кільце</td><td>кільце</td><td>0.978</td><td>ціла</td></tr>
+<tr class="hot"><td>квадрат</td><td>ромб</td><td>1.000</td><td>зламана</td></tr>
+<tr class="hot"><td>ромб</td><td>квадрат</td><td>0.980</td><td>зламана</td></tr>
+<tr class="hot"><td>хрест</td><td>квадрат</td><td>0.622</td><td>зламана</td></tr>
+<tr class="hot"><td>трикутник</td><td>квадрат</td><td>0.689</td><td>зламана</td></tr>
+</table></div>
+
+<p>Чотири класи з шести псуються. Коло й кільце вціліли з очевидної причини — вони круглі, і
+поворот для них нічого не змінює (0.987 і 0.978 замість рівно одиниці — це слід пікселізації, а не
+зміна форми). Це, до речі, зручний спосіб дивитись на аугментацію: перетворення
+безпечне рівно для тих класів, які самі по собі щодо нього симетричні.</p>
+
+<p>Для порівняння — дзеркало по горизонталі на тому самому датасеті дає збіг
+<strong>1.000 для всіх шести класів</strong>. Усі наші фігури симетричні відносно вертикальної осі,
+тож твердження «клас не залежить від дзеркала» тут істинне без винятків. Одне перетворення
+бездоганне, інше — руйнівне, і різниця не в перетворенні, а в тому, які саме класи ти розрізняєш.</p>
+
+<h3>Скільки це коштує в точності</h3>
+
+<p>Геометрія показала, що мітка ламається. Тепер поміряймо, у що це обходиться мережі. Беремо той
+самий набір із 120 зображень і той самий конвеєр аугментації — дзеркало, зсув на 20 %, масштаб
+0.85-1.15 — і міняємо в ньому <strong>рівно одне число</strong>: максимальний кут повороту.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>аугментація</th><th>мітка ціла</th><th>на навчальній</th><th>на перевірочній</th></tr>
+<tr><td>немає</td><td>100 %</td><td>1.000</td><td>0.880</td></tr>
+<tr><td>поворот до 8°</td><td>100 %</td><td>0.942</td><td>0.965</td></tr>
+<tr class="hot"><td>поворот до 20°</td><td>84 %</td><td>0.958</td><td>0.982</td></tr>
+<tr><td>поворот до 45°</td><td>57 %</td><td>0.692</td><td>0.688</td></tr>
+</table></div>
+
+<p>Числа виявились не такими простими, як обіцяла геометрія, і це найцінніше місце теми.
+Слабкий поворот до 8°, де мітку зберігають усі приклади, підняв точність із
+0.880 до 0.965. Поворот до 20°, де мітку зберігають лише 84 %, дав
+<strong>ще більше</strong> — 0.982. І тільки поворот до 45°, де брехнею стає майже
+половина прикладів, обвалив точність до 0.688 — нижче, ніж узагалі без
+аугментації.</p>
+
+<p>Читається це так. Аугментація робить одночасно дві протилежні речі: додає
+<strong>різноманітності</strong> (корисно) і додає <strong>брехні</strong> (шкідливо). Поки
+брехні мало, різноманітність переважає — і мережа спокійно витримує шістнадцять відсотків
+неправильно підписаних прикладів. Коли брехнею стає більшість, переважає вона.</p>
+
+<div class="note warn"><b>Що з цього робити на практиці.</b> Геометричний рахунок — це не
+заборона, а <strong>попередження</strong>: він каже, скільки прикладів стануть брехливими,
+але не каже, чи буде від цього шкода. Тому силу перетворення <strong>добирають
+замірами</strong>, а геометрію використовують, щоб знати, де взагалі є сенс шукати і де
+точно не варто. Без геометричного рахунку ти шукав би наосліп; спираючись тільки на
+нього — зупинився б на 15° і втратив би найкращий результат.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Сила перетворення</p>
+  <p class="fig-sub">Повзунок — максимальний кут повороту в аугментації. Угорі: скільки прикладів
+    зберігає мітку при такому куті (порахувано геометрією по всіх шести класах). Унизу: виміряна
+    точність там, де ми її міряли.</p>
+  <div class="panel">
+    <div><canvas id="cPow" width="940" height="430" aria-label="Частка прикладів зі збереженою міткою та виміряна точність залежно від максимального кута повороту"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="powAng">кут в аугментації <output id="powAngV">8°</output></label>
+        <input type="range" id="powAng" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>мітка вціліла</b><i id="powKeep">—</i></div>
+        <div class="cellv"><b>точність</b><i id="powAcc">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>без аугментації було</b><i id="powBase">—</i></div>
+      </div>
+      <div class="verdict" id="powVd"></div>
+    </div>
+  </div>
+  <figcaption><b>До 10° мітку зберігають усі 100 % прикладів; на 20° — 84 %, на 45° — 57 %.</b>
+    Точність за цією кривою не йде: найкращий вимір — саме на 20°, де мітки вже частково
+    зіпсовані. Обвал настає на 45°, коли брехнею стає майже половина прикладів.</figcaption>
+</figure>
+
+<h3>Класичні випадки, які варто знати напамʼять</h3>
+
+<ul>
+  <li><strong>Дзеркало для тексту й цифр.</strong> Віддзеркалена «5» не є жодною цифрою, а
+    віддзеркалена «b» — це «d». Розпізнавання тексту дзеркалом не аугментують ніколи.</li>
+  <li><strong>Поворот на 180°, який плутає 6 і 9.</strong> Найвідоміший приклад у машинному
+    навчанні. Для рукописних цифр максимальний безпечний кут — близько 10-15°, стільки, скільки
+    людина природно нахиляє папір.</li>
+  <li><strong>Медична латеральність.</strong> Дзеркало на рентгені міняє місцями ліву й праву
+    легеню. Якщо в задачі є висновок «ущільнення в правій легені», дзеркало генерує неправильні
+    висновки — при тому що зображення виглядає бездоганно правдоподібно.</li>
+  <li><strong>Обрізка, що зрізає предмет.</strong> <code>RandomResizedCrop</code> зі
+    <code>scale=(0.08, 1.0)</code> — типове значення для ImageNet, де предмет великий. На датасеті
+    дрібних дефектів така обрізка регулярно дає порожній фон із міткою «дефект».</li>
+</ul>
+
+<h2 id="s8"><span class="num">08 / Виграш</span>Скільки це дає</h2>
+
+<p>Тепер найпрактичніше питання: наскільки взагалі варта заходу правильно підібрана аугментація.
+Дослід простий і чесний. Та сама мережа, той самий бюджет навчання — 250 кроків, — та сама
+перевірочна вибірка з 600 зображень. Міняється дві речі: розмір навчальної вибірки й наявність
+аугментації.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>навчальних</th><th>без аугментації</th><th>з аугментацією</th><th>виграш</th></tr>
+<tr><td>120</td><td>0.880</td><td>0.965</td><td>+0.085</td></tr>
+<tr><td>360</td><td>0.972</td><td>0.985</td><td>+0.013</td></tr>
+<tr class="sumrow"><td>1200</td><td>0.990</td><td>0.970</td><td>-0.020</td></tr>
+</table></div>
+
+<p>Три числа й один чіткий висновок. На 120 прикладах аугментація дає +0.085 — це
+велика різниця, майже десята частка точності. На 360 лишається +0.013. На 1200 виграш
+не просто зникає, а стає <strong>відʼємним</strong>: -0.020.</p>
+
+<p>Останнє число варто пояснити, бо на перший погляд воно суперечить усьому попередньому.
+Аугментований набір <strong>важче вивчити</strong>: мережа щоразу бачить нову картинку й за
+ті самі 250 кроків встигає менше — на навчальній вибірці 0.960 проти
+1.000 без аугментації. Коли даних мало, ця ціна окупається з надлишком, бо
+альтернатива — завчити сто двадцять картинок напамʼять. Коли даних досить, окупати вже
+нема чого: мережа й так бачить достатньо різних фігур, а сповільнення нікуди не зникає.</p>
+
+<div class="note"><b>Чесна осторога до цього заміру.</b> Бюджет навчання тут фіксований —
+250 кроків на кожен дослід. Якби ми вчили довше, мережа з аугментацією на 1200 прикладах
+найімовірніше наздогнала б, а може, й обігнала б. Висновок точний саме у своїй постановці:
+<strong>при однаковій кількості обчислень</strong> користь від аугментації падає зі
+зростанням даних. Це і є та постановка, у якій опиняється більшість практичних задач, де
+час навчання обмежений.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Розрив між навчальною й перевірочною</p>
+  <p class="fig-sub">Дві пари кривих для 120 навчальних зображень: суцільна — точність на
+    навчальній вибірці, пунктирна — на перевірочній. Рожеві без аугментації, бірюзові з нею.
+    Повзунок веде по кроках навчання.</p>
+  <div class="panel">
+    <div><canvas id="cGap" width="940" height="360" aria-label="Криві точності на навчальній і перевірочній вибірках з аугментацією й без неї"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="gapStep">крок навчання <output id="gapStepV">250</output></label>
+        <input type="range" id="gapStep" min="1" max="10" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розрив без аугм.</b><i id="gapNo">—</i></div>
+        <div class="cellv"><b>розрив з аугм.</b><i id="gapYes">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>на перевірочній</b><i id="gapTe" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="gapVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Без аугментації навчальна крива відривається від перевірочної й далі росте сама.</b>
+    З аугментацією вони йдуть поруч: мережі просто нічого запамʼятовувати, бо однакових картинок
+    вона не бачить двічі.</figcaption>
+</figure>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Скільки даних, стільки й користі</p>
+  <p class="fig-sub">Повзунок — розмір навчальної вибірки з трьох виміряних. Стовпчики: точність без
+    аугментації й з нею; поруч — виграш і те, як він тане.</p>
+  <div class="panel">
+    <div><canvas id="cSize" width="940" height="330" aria-label="Точність з аугментацією й без неї для трьох розмірів навчальної вибірки та виграш від аугментації"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="sizeN">навчальних зображень <output id="sizeNV">120</output></label>
+        <input type="range" id="sizeN" min="0" max="2" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>без аугментації</b><i id="sizeNo">—</i></div>
+        <div class="cellv"><b>з аугментацією</b><i id="sizeYes">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>виграш</b><i id="sizeGain">—</i></div>
+      </div>
+      <div class="verdict" id="sizeVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Виграш найбільший на найменшій вибірці, тане з її зростанням і на 1200
+    стає відʼємним.</b> Аугментація каже мережі те, що вона й так дізналася б із даних, якби
+    даних вистачало, — а платити за це доводиться однаково.</figcaption>
+</figure>
+
+<p>Звідси практичне правило, яке варто запамʼятати краще за список перетворень. <strong>Аугментація
+найцінніша там, де даних мало.</strong> Коли розмічених прикладів десятки чи сотні — це один із
+найдешевших способів витягти з них більше. Коли їх сотні тисяч, аугментація перетворюється на
+дрібне полірування, а часом і на гальмо: кожне перетворення коштує процесорного часу на кожному
+кроці навчання.</p>
+
+<h2 id="s9"><span class="num">09 / Межа</span>Тільки на навчальній вибірці</h2>
+
+<p>Тепер помилка, яку роблять частіше за всі інші разом узяті: <strong>аугментацію застосовують до
+перевірочної вибірки</strong>. Зазвичай випадково — тому що конвеєр перетворень описали один раз і
+підклали і в навчальний, і в перевірочний завантажувач.</p>
+
+<p>Чому це руйнівно, найкраще видно, якщо згадати, навіщо взагалі потрібна перевірочна вибірка. Вона
+відповідає на одне питання: <em>наскільки добре модель працюватиме на даних, які їй трапляться
+насправді</em>. Аугментувавши її, ти міняєш питання на інше — «наскільки добре модель працює на
+випадково спотворених даних» — і робиш це мовчки.</p>
+
+<p>Але є наслідок гірший за зміну питання. Аугментація випадкова, тож число, яке ти отримуєш,
+<strong>перестає бути числом</strong> і стає випадковою величиною.</p>
+
+<p>Дослід поставимо так. Візьмемо дві моделі, які на чистій перевірочній вибірці показують
+майже однакову якість: <strong>А</strong> — навчена на 1200 прикладах без аугментації
+(0.990), <strong>Б</strong> — навчена на 360 прикладах із нею (0.985).
+Різниця між ними 0.005, і вона повторюється від запуску до запуску. Тепер поміряємо
+обидві вісім разів на <strong>аугментованій</strong> перевірочній вибірці, міняючи лише
+зерно.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Що стається, коли аугментувати перевірку</p>
+  <p class="fig-sub">Модель А навчена на 1200 прикладах без аугментації, модель Б — на 360 з нею.
+    Перемикач міняє спосіб перевірки: на чистій вибірці кожна дає одне число, на аугментованій —
+    хмару з восьми прогонів із різними зернами.</p>
+  <div class="panel">
+    <div><canvas id="cEval" width="940" height="320" aria-label="Точність двох моделей на чистій перевірочній вибірці та розкид тієї самої точності на аугментованій"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">перевірочна вибірка</span>
+        <div class="seg" id="evalSeg">
+          <button type="button" data-i="0" aria-pressed="true">чиста</button>
+          <button type="button" data-i="1" aria-pressed="false">аугментована</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>модель А</b><i id="evalA">—</i></div>
+        <div class="cellv"><b>модель Б</b><i id="evalB">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>розкид проти різниці</b><i id="evalCmp" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="evalVd"></div>
+    </div>
+  </div>
+  <figcaption><b>На чистій вибірці кращою виходить модель А, різниця 0.005 — і вона
+    повторювана.</b> Перемкни на аугментовану: кожне число починає стрибати, а «кращою»
+    стає Б — у всіх вісьмох прогонах. Відповідь змінилася разом зі способом перевірки, а не
+    з якістю моделей.</figcaption>
+</figure>
+
+<p>Результат вийшов різкіший, ніж очікувалось. По-перше, число справді плаває: у моделі А
+воно гуляє в межах 0.085 від самого лише зерна, у моделі Б — 0.037.
+Одна модель, одна вибірка, різні відповіді.</p>
+
+<p>По-друге — і це важливіше — <strong>аугментована перевірка не шумить нейтрально, вона
+міняє відповідь</strong>. На чистій вибірці кращою була модель А: 0.990 проти
+0.985. На аугментованій виграє <strong>Б</strong> — у всіх вісьмох прогонах без
+винятку, і з відривом 0.134 замість 0.005. Моделі ті самі, дані ті самі;
+змінився лише спосіб перевірки — і відповідь на питання «яка модель краща» перевернулась.</p>
+
+<p>Причина проста: модель Б навчали саме з цим перетворенням, тож вона до нього звикла, а
+модель А бачить його вперше. Аугментувавши перевірку, ти став міряти не якість моделі, а її
+знайомство з твоїм конвеєром перетворень.</p>
+
+<div class="note warn"><b>І ще одна пастка, дорожча за попередню.</b> Ніколи не аугментуй
+<strong>до</strong> поділу на навчальну й перевірочну частини. Інакше три варіанти одного
+зображення розійдуться так, що два потраплять у навчальну вибірку, а один — у перевірочну. Модель
+бачила це зображення, перевірка покаже чудове число, і воно буде повною фікцією. Правильний
+порядок завжди один: спершу поділ, потім аугментація — і тільки навчальної частини.</div>
+
+<h2 id="s10"><span class="num">10 / TTA</span>Аугментація на прогнозі — це інше</h2>
+
+<p>Сказане вище не означає, що на етапі прогнозу перетворення заборонені взагалі. Існує окремий
+прийом, який називається <strong>TTA</strong> (test-time augmentation, аугментація під час
+перевірки), і він робить принципово інше.</p>
+
+<p>Ідея: спитати мережу не про одне зображення, а про кілька його варіантів — оригінал, дзеркало,
+злегка зсунуту копію — і <strong>усереднити прогнози</strong>. Різниця з помилкою з розділу 09 в
+одному слові: <em>усереднення</em>. Там випадковий варіант <strong>заміняв</strong> оригінал, і
+число стрибало; тут усі варіанти враховуються разом, а результат детермінований, поки набір
+варіантів фіксований.</p>
+
+<p>Але працює це не завжди, і наш дослід показує, коли саме. Ми взяли ті самі дві моделі з
+розділу 09 і дали кожній TTA з пʼяти варіантів — оригінал плюс чотири аугментовані копії:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>модель</th><th>звичайно</th><th>з TTA</th><th>різниця</th></tr>
+<tr><td>А · 1200 без аугментації</td><td>0.990</td><td>0.958</td><td>-0.032</td></tr>
+<tr class="hot"><td>Б · 360 з аугментацією</td><td>0.985</td><td>0.990</td><td>+0.005</td></tr>
+</table></div>
+
+<p>Читається однозначно. Моделі А, яка під час навчання цих перетворень не бачила, TTA
+<strong>зашкодив</strong>: 0.990 впало до 0.958. Модель Б, навчена саме з ними,
+дістала невеликий, але справжній виграш: 0.985 → 0.990.</p>
+
+<p>Це не парадокс, а той самий принцип із іншого боку. TTA питає мережу про кілька
+перетворених копій і вірить середньому. Якщо мережа цих перетворень не терпить, кожна копія
+додає в середнє впевнену помилку — і середнє виходить гіршим за один чистий прогноз.</p>
+
+<div class="note"><b>Дві умови, без яких TTA не працює.</b> Перша: набір варіантів має
+складатися з перетворень, які <strong>зберігають мітку</strong> — тих самих, що пройшли
+перевірку з розділу 03. Якщо серед варіантів опиниться поворот на 45°, мережа побачить ромб
+замість квадрата й упевнено додасть у середнє неправильну відповідь. Друга: модель має бути
+<strong>навчена з цими ж перетвореннями</strong>. Інакше TTA підсовує їй картинки з розподілу,
+якого вона не бачила, — і псує відповідь замість того, щоб її уточнити.</div>
+
+<p>Ціна в обох випадках однакова: <strong>пʼять прогонів мережі замість одного на кожне
+зображення</strong>. У змаганнях, де важлива десята частка відсотка, це вигідно; у сервісі,
+який відповідає за 50 мілісекунд, — рідко.</p>
+
+<h2 id="s11"><span class="num">11 / Код</span>Як це виглядає в коді</h2>
+
+<p>У <code>torchvision</code> перетворення описуються списком, який застосовується до кожного
+зображення на льоту — щоразу з новими випадковими параметрами. Сучасний варіант живе в модулі
+<code>transforms.v2</code>.</p>
+
+<pre class="arch">from torchvision.transforms import v2
+
+train_transform = v2.Compose([
+    <b>v2.RandomHorizontalFlip(p=0.5)</b>,                       <i># геометрія</i>
+    <b>v2.RandomAffine(degrees=8, translate=(0.2, 0.2),</b>
+                    <b>scale=(0.85, 1.15))</b>,
+    <b>v2.ColorJitter(brightness=0.2, contrast=0.2)</b>,          <i># фотометрія</i>
+    <b>v2.Normalize(mean=[0.5], std=[0.5])</b>,                   <i># нормалізація</i>
+    <b>v2.RandomErasing(p=0.25, scale=(0.02, 0.15))</b>,          <i># стирання — після неї</i>
+])
+
+test_transform = v2.Compose([
+    <b>v2.Normalize(mean=[0.5], std=[0.5])</b>,                   <i># і більше нічого</i>
+])</pre>
+
+<p>Порядок у цьому списку не довільний, і кожен рядок стоїть саме там, де стоїть:</p>
+
+<ol class="steps">
+  <li><strong>Геометрія — першою.</strong> Вона працює з розташуванням пікселів, і чим менше до неї
+    встигли змінити значення, тим передбачуваніший результат інтерполяції.</li>
+  <li><strong>Фотометрія — після геометрії, але до нормалізації.</strong> Причина в розділі 05:
+    після <code>Normalize</code> числа вже не яскравість.</li>
+  <li><strong>Нормалізація — передостання.</strong></li>
+  <li><strong>Стирання — останнє.</strong> <code>RandomErasing</code> у <code>torchvision</code>
+    затирає ділянку нулем, а нуль після нормалізації означає «середня яскравість», що якраз і
+    потрібно. Постав його перед <code>Normalize</code> — і затерта пляма стане чорною, тобто
+    помітною ознакою.</li>
+</ol>
+
+<p>Другий важливий вибір — <strong>на льоту чи заздалегідь</strong>. На льоту (як вище)
+перетворення робиться під час навчання, і кожна епоха бачить нові варіанти: різноманітність
+нескінченна, але процесорний час витрачається на кожному кроці. Заздалегідь означає один раз
+згенерований і збережений набір: швидше, зате варіантів скінченна кількість, і мережа з часом
+запамʼятає вже їх. За замовчуванням роблять на льоту.</p>
+
+<div class="note warn"><b>Про сумісність бібліотек.</b> Найпопулярніша бібліотека аугментації —
+<code>albumentations</code>: у ній більше перетворень, вона швидша й уміє синхронно перетворювати
+зображення разом із масками та рамками. У середовищі цього курсу вона <strong>не працює</strong>:
+встановлена версія тягне за собою <code>scikit-image</code>, зібраний під старий numpy, і будь-який
+імпорт падає з <code>ValueError: numpy.dtype size changed</code>. Це типова, а не рідкісна ситуація:
+пакет із скомпільованими розширеннями звʼязаний із версією numpy, під яку його збирали. Тому
+перевіряй сумісність <strong>до того</strong>, як побудуєш на бібліотеці половину проєкту — одним
+рядком <code>import</code> у чистому середовищі. Нам вистачає
+<code>torchvision.transforms.v2</code>, і всі числа теми отримані на ньому.</div>
+
+<div class="note"><b>Відтворюваність.</b> Перетворення <code>v2</code> беруть випадковість із
+генератора PyTorch, тому <code>torch.manual_seed(0)</code> на початку зошита робить усю аугментацію
+повторюваною: другий запуск дає ті самі картинки й ті самі числа. Без зафіксованого зерна твої
+результати не збіжаться ні з лекцією, ні з твоїм же вчорашнім прогоном.</div>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Що винести з теми</h2>
+
+<ul>
+  <li><strong>Аугментація — це не «більше картинок», а твердження
+    <code>y(T(x)) = y(x)</code>.</strong> Кожне перетворення в конвеєрі — окрема заява
+    про те, що в цій задачі не має значення.</li>
+  <li><strong>Хибна заява — це шум у мітках, який ти зробив сам.</strong> У нашому датасеті поворот
+    на 45° перетворює квадрат на ромб зі збігом 1.000, а мітка «квадрат» ламається вже на 16°.</li>
+  <li><strong>Геометрія небезпечніша за фотометрію</strong>, бо клас зазвичай визначається формою,
+    а не освітленням. Виняток — задачі, де яскравість і є сигналом: медицина, колір, якість знімка.</li>
+  <li><strong>Виграш найбільший там, де даних мало.</strong> У нашому замірі на 120 зображеннях
+    аугментація дала +0.085, на 1200 — -0.020, тобто вже програш.</li>
+  <li><strong>Перевірочну вибірку не аугментують ніколи.</strong> Інакше метрика стає випадковою
+    величиною, і порівнювати моделі стає нічим — у нашому замірі різниця між моделями
+    роздулася з 0.005 до 0.134 на порожньому місці. TTA — це інше: там прогнози
+    усереднюються, але й він допомагає лише моделі, навченій із тими самими перетвореннями.</li>
+  <li><strong>Сила добирається замірами, а не зі стелі.</strong> Занадто сильне перетворення
+    гірше за жодне: поворот до 45° дав 0.688 проти 0.880 без
+    аугментації. Але й геометрія сама по собі не вирішує: найкращим виявився кут, при
+    якому 16 % міток уже зіпсовані.</li>
+</ul>
+
+<p>І місток далі. Дані ми підготували: тепер мережа бачить кожне зображення щоразу трохи інакше й
+не може його завчити. Але подивись іще раз на криві з інтерактиву 5 — навіть із аугментацією
+навчання виглядає нерівно, точність стрибає, і незрозуміло, коли зупинятись. Це вже не про дані,
+а про <strong>сам режим навчання</strong>: яку швидкість навчання брати, чи ставити батчнорм, коли
+вмикати дропаут, як зрозуміти, що далі вчити немає сенсу. Про це — наступна тема.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти згенеруєш датасет фігур,
+напишеш дзеркало по горизонталі власними руками на numpy й переконаєшся, що воно
+<strong>точно</strong> збігається з <code>torchvision</code>; поміряєш геометрією, який поворот
+ламає мітку і на якому куті; проженеш чотири заміри цієї лекції власноруч — виграш на малій вибірці,
+його зникнення на великій, шкоду від надто сильного повороту й нестабільність аугментованої
+перевірки; і зробиш TTA, щоб побачити його ціну.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../09-cnn-complete/lecture.html"><span class="dir">попередня</span><span class="ttl">09. CNN цілком</span></a>
+    <a class="next" href="../11-training-cnn/lecture.html"><span class="dir">наступна</span><span class="ttl">11. Навчання CNN</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g, txt, x, y, color, px, align){
+  g.fillStyle = color || css('--soft'); g.font = mono(px||11, false);
+  g.textAlign = align || 'left'; g.fillText(txt, x, y); g.textAlign='left';
+}
+function frame(g,x,y,w,h,color,lw){
+  g.strokeStyle=color; g.lineWidth=lw||1; g.strokeRect(x+0.5,y+0.5,w-1,h-1);
+}
+/* «1 варіант», «2 варіанти», «5 варіантів» */
+function варіантів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'варіант';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'варіанти';
+  return 'варіантів';
+}
+/* «1 клас», «2 класи», «5 класів» */
+function класів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'клас';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'класи';
+  return 'класів';
+}
+/* «1 градус», «2 градуси», «5 градусів» */
+function градусів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'градус';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'градуси';
+  return 'градусів';
+}
+/* сегментний перемикач із одним вибором */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* перемикач із кількома одночасно натиснутими кнопками */
+function multiseg(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    b.setAttribute('aria-pressed', b.getAttribute('aria-pressed')==='true'?'false':'true');
+    fn();
+  });
+}
+function segOn(id){
+  var box=I(id), all=box.querySelectorAll('button'), out={}, k;
+  for(k=0;k<all.length;k++) out[+all[k].dataset.i] = all[k].getAttribute('aria-pressed')==='true';
+  return out;
+}
+/* детермінований генератор: картинка однакова в усіх читачів */
+function LCG(seed){
+  var s = seed|0; if(!isFinite(s) || s===0) s = 1;
+  return function(){ s = (s*1103515245 + 12345) & 0x7fffffff; return s/0x7fffffff; };
+}
+/* колір як три числа — щоб змішувати фон і чорнило під обидві теми */
+function rgb(varname){
+  var c = css(varname), m;
+  if(c.charAt(0)==='#'){
+    if(c.length===4) return [parseInt(c[1]+c[1],16), parseInt(c[2]+c[2],16), parseInt(c[3]+c[3],16)];
+    return [parseInt(c.substr(1,2),16), parseInt(c.substr(3,2),16), parseInt(c.substr(5,2),16)];
+  }
+  m = c.match(/\d+/g);
+  return m ? [+m[0],+m[1],+m[2]] : [0,0,0];
+}
+
+/* ═══════ виміряні числа (усі з practice.ipynb, зерно 0 / 42) ═══════ */
+var M = {"rot": {"0": 0.88, "8": 0.965, "20": 0.982, "45": 0.688}, "curves": {"noaug120": [[25, 0.408, 0.353], [50, 0.617, 0.547], [75, 0.892, 0.807], [100, 1.0, 0.868], [125, 1.0, 0.86], [150, 1.0, 0.88], [175, 1.0, 0.878], [200, 1.0, 0.88], [225, 1.0, 0.88], [250, 1.0, 0.88]], "aug120": [[25, 0.267, 0.267], [50, 0.5, 0.507], [75, 0.558, 0.54], [100, 0.758, 0.71], [125, 0.633, 0.617], [150, 0.917, 0.928], [175, 0.85, 0.865], [200, 0.958, 0.975], [225, 0.95, 0.952], [250, 0.942, 0.965]]}, "sizes": [120, 360, 1200], "bySize": {"120": [0.88, 0.965], "360": [0.972, 0.985], "1200": [0.99, 0.97]}, "clean": {"A": 0.99, "B": 0.985}, "noisy": {"A": [0.828, 0.798, 0.795, 0.83, 0.745, 0.76, 0.775, 0.762], "B": [0.938, 0.915, 0.925, 0.935, 0.902, 0.922, 0.92, 0.907]}};
+
+/* ═══════ спільне ядро: фігури, перетворення, класифікація ═══════
+
+   Фігури малюються тими самими формулами, що й датасет у зошиті, але на
+   вдвічі дрібнішій сітці 56×56: нас цікавить геометрія класів, а не зубці,
+   які лишає поворот на грубому растрі.
+
+   «Мітка» перетвореного зображення визначається найближчим шаблоном класу.
+   Перед порівнянням зображення центрується за центром мас, а шаблон свого
+   класу береться з найближчою площею — тому зсув і масштаб мітку не міняють,
+   а поворот міняє. Саме так і мусить поводитись класифікатор форми.        */
+var SZ = 56, C0 = (SZ-1)/2, RBASE = 14;
+var CLS = ['коло','квадрат','ромб','кільце','хрест','трикутник'];
+var RADII = [8,10,12,14,16,18,20];
+
+function shapeMask(kind, r){
+  var m = new Float32Array(SZ*SZ), y, x, dy, dx, d, on;
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++){
+    dy = y - C0; dx = x - C0; on = 0;
+    if(kind===0){ on = (dy*dy + dx*dx <= r*r) ? 1 : 0; }
+    else if(kind===1){ on = (Math.abs(dy) <= r*0.85 && Math.abs(dx) <= r*0.85) ? 1 : 0; }
+    else if(kind===2){ on = (Math.abs(dy) + Math.abs(dx) <= r) ? 1 : 0; }
+    else if(kind===3){ d = dy*dy + dx*dx; on = (d <= r*r && d >= (r-5)*(r-5)) ? 1 : 0; }
+    else if(kind===4){ on = ((Math.abs(dy) <= 3 && Math.abs(dx) <= r) ||
+                             (Math.abs(dx) <= 3 && Math.abs(dy) <= r)) ? 1 : 0; }
+    else { on = (dy >= -r*0.8 && dy <= r*0.8 && Math.abs(dx) <= (dy + r*0.8)*0.6) ? 1 : 0; }
+    m[y*SZ+x] = on;
+  }
+  return m;
+}
+
+/* поворот, зсув, масштаб, дзеркало — зворотним відображенням, найближчий
+   сусід; далі множення на яскравість і стирання прямокутника */
+function xform(src, p){
+  var out = new Float32Array(SZ*SZ);
+  var a = (p.ang||0)*Math.PI/180, ca = Math.cos(a), sa = Math.sin(a);
+  var sc = p.sc || 1, tx = p.tx || 0, ty = p.ty || 0, fl = p.flip ? -1 : 1;
+  var b = (p.bright===undefined) ? 1 : p.bright;
+  var y, x, dy, dx, sy, sx, ry, rx, v;
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++){
+    dy = (y - C0 - ty)/sc; dx = (x - C0 - tx)/sc;
+    ry = dy*ca - dx*sa; rx = dy*sa + dx*ca;
+    rx = rx*fl;
+    sy = Math.round(ry + C0); sx = Math.round(rx + C0);
+    v = (sy>=0 && sy<SZ && sx>=0 && sx<SZ) ? src[sy*SZ+sx] : 0;
+    v = v*b; if(v>1) v = 1;
+    out[y*SZ+x] = v;
+  }
+  if(p.erase){
+    var e = p.erase, r0, c0;
+    for(r0=e.y; r0<e.y+e.h; r0++) for(c0=e.x; c0<e.x+e.w; c0++)
+      if(r0>=0 && r0<SZ && c0>=0 && c0<SZ) out[r0*SZ+c0] = 0;
+  }
+  return out;
+}
+
+/* поріг — половина власного максимуму (тому яскравість не заважає),
+   потім центр мас зводимо в центр кадру (тому не заважає й зсув) */
+function norm(img){
+  var mx = 0, k, out = new Uint8Array(SZ*SZ);
+  for(k=0;k<img.length;k++) if(img[k] > mx) mx = img[k];
+  if(mx <= 0) return {m:out, area:0};
+  var lim = mx*0.5, n = 0, sy = 0, sx = 0, y, x;
+  var tmp = new Uint8Array(SZ*SZ);
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++) if(img[y*SZ+x] >= lim){
+    tmp[y*SZ+x] = 1; n++; sy += y; sx += x;
+  }
+  if(!n) return {m:out, area:0};
+  var dy = Math.round(C0 - sy/n), dx = Math.round(C0 - sx/n), yy, xx;
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++) if(tmp[y*SZ+x]){
+    yy = y + dy; xx = x + dx;
+    if(yy>=0 && yy<SZ && xx>=0 && xx<SZ) out[yy*SZ+xx] = 1;
+  }
+  return {m:out, area:n};
+}
+function iouBin(a, b){
+  var inter = 0, uni = 0, k;
+  for(k=0;k<a.length;k++){
+    if(a[k] && b[k]){ inter++; uni++; }
+    else if(a[k] || b[k]) uni++;
+  }
+  return uni ? inter/uni : 0;
+}
+
+var TPL = [];
+(function(){
+  var k, j, n;
+  for(k=0;k<6;k++){
+    TPL.push([]);
+    for(j=0;j<RADII.length;j++){
+      n = norm(shapeMask(k, RADII[j]));
+      TPL[k].push(n);
+    }
+  }
+})();
+/* шаблон свого класу з найближчою площею — одне порівняння на клас */
+function scoreFor(nq, cls){
+  var best = TPL[cls][0], k, d, bd = Math.abs(TPL[cls][0].area - nq.area);
+  for(k=1;k<TPL[cls].length;k++){
+    d = Math.abs(TPL[cls][k].area - nq.area);
+    if(d < bd){ bd = d; best = TPL[cls][k]; }
+  }
+  return iouBin(nq.m, best.m);
+}
+function nearest(img){
+  var nq = norm(img), k, v, best = -1, bk = 0;
+  for(k=0;k<6;k++){ v = scoreFor(nq, k); if(v > best){ best = v; bk = k; } }
+  return {k:bk, iou:best};
+}
+function iouWith(img, cls){ return scoreFor(norm(img), cls); }
+
+/* малюємо зображення плиткою: 0 → колір паперу, 1 → колір чорнила,
+   тож картинка читається і в світлій, і в темній темі */
+function tile(g, img, x0, y0, px){
+  var p = rgb('--paper'), q = rgb('--ink'), y, x, v, r, gg, bb;
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++){
+    v = img[y*SZ+x]; if(v<0) v=0; if(v>1) v=1;
+    r = Math.round(p[0] + (q[0]-p[0])*v);
+    gg = Math.round(p[1] + (q[1]-p[1])*v);
+    bb = Math.round(p[2] + (q[2]-p[2])*v);
+    g.fillStyle = 'rgb('+r+','+gg+','+bb+')';
+    g.fillRect(x0 + x*px, y0 + y*px, px, px);
+  }
+}
+
+/* ═════ Інтерактив 1 · яке припущення ти щойно зробив ═════ */
+(function(){
+  var cv = I('cInv'); if(!cv) return;
+  var task = 0, op = 0, pow = 50;
+
+  /* цифра «6»: чаша внизу плюс похилий хвіст угору-праворуч */
+  function digitSix(){
+    var m = new Float32Array(SZ*SZ), y, x, dy, dx, d, on, t, py, px2, ddy, ddx;
+    var ay = 12, ax = 37, by = 33, bx = 17;            /* відрізок хвоста */
+    for(y=0;y<SZ;y++) for(x=0;x<SZ;x++){
+      on = 0;
+      dy = y - 37; dx = x - 27.5; d = dy*dy + dx*dx;
+      if(d <= 11.2*11.2 && d >= 6.2*6.2) on = 1;        /* чаша */
+      if(!on){
+        ddy = by - ay; ddx = bx - ax;                   /* відстань до відрізка */
+        t = ((y-ay)*ddy + (x-ax)*ddx) / (ddy*ddy + ddx*ddx);
+        if(t < 0) t = 0; if(t > 1) t = 1;
+        py = ay + ddy*t; px2 = ax + ddx*t;
+        if((y-py)*(y-py) + (x-px2)*(x-px2) <= 3.4*3.4) on = 1;
+      }
+      m[y*SZ+x] = on;
+    }
+    return m;
+  }
+  var SIX = digitSix();
+  var NINE = xform(SIX, {ang:180});                     /* девʼятка — це шістка догори дриґом */
+  var DIG = [{n:'6', v:norm(SIX)}, {n:'9', v:norm(NINE)}];
+
+  /* «знімок»: два світлі поля й одне яскраве ущільнення праворуч угорі */
+  function xray(){
+    var m = new Float32Array(SZ*SZ), y, x, v, d1, d2, d3;
+    for(y=0;y<SZ;y++) for(x=0;x<SZ;x++){
+      d1 = (y-30)*(y-30)/160 + (x-16)*(x-16)/72;
+      d2 = (y-30)*(y-30)/160 + (x-38)*(x-38)/72;
+      d3 = (y-20)*(y-20)/20  + (x-38)*(x-38)/20;
+      v = 0.26 + 0.14*Math.exp(-d1) + 0.14*Math.exp(-d2) + 0.42*Math.exp(-d3);
+      m[y*SZ+x] = v > 1 ? 1 : v;
+    }
+    return m;
+  }
+  var XRAY = xray();
+  var XTHR = 0.70;                                       /* поріг «є ущільнення» */
+  function xmax(img){ var mx=0,k; for(k=0;k<img.length;k++) if(img[k]>mx) mx=img[k]; return mx; }
+
+  function nearestDigit(img){
+    var q = norm(img), best = 0, bi = 0, k, v;
+    for(k=0;k<DIG.length;k++){ v = iouBin(q.m, DIG[k].v.m); if(v > best){ best = v; bi = k; } }
+    return {n:DIG[bi].n, iou:best};
+  }
+
+  function params(){
+    var p = {};
+    if(op === 0) p.flip = true;
+    else if(op === 1) p.ang = pow*1.8;                    /* 0…180°: на 180° шістка стає девʼяткою */
+    else p.bright = 1 - pow*0.007;                        /* 1.0 … 0.30 */
+    return p;
+  }
+
+  function draw(){
+    var g = dpr(cv), p = params(), src, res, wasTxt, nowTxt, meas, measTxt, ok, mlab;
+    var px = 4, tw = SZ*px, y0 = 50;
+    var x1 = 34, x2 = x1 + tw + 52, x3 = x2 + tw + 62;
+
+    if(task === 0){
+      src = shapeMask(1, RBASE);
+      res = xform(src, p);
+      var nb = nearest(res);
+      wasTxt = 'квадрат'; nowTxt = CLS[nb.k]; ok = (nb.k === 1);
+      meas = nb.iou; measTxt = meas.toFixed(3); mlab = 'збіг із класом «стало»';
+    } else if(task === 1){
+      src = SIX;
+      res = xform(src, p);
+      var nd = nearestDigit(res);
+      wasTxt = '6';
+      ok = (nd.n === '6') && nd.iou >= 0.70;   /* нижче 0.70 це вже не цифра */
+      nowTxt = nd.iou < 0.70 ? 'не цифра' : nd.n;
+      meas = nd.iou; measTxt = meas.toFixed(3); mlab = 'збіг із класом «стало»';
+    } else {
+      src = XRAY;
+      res = xform(src, p);
+      var mx = xmax(res);
+      wasTxt = 'ущільнення';
+      ok = mx >= XTHR;
+      nowTxt = ok ? 'ущільнення' : 'чисто';
+      meas = mx; measTxt = mx.toFixed(3); mlab = 'найбільша яскравість';
+    }
+
+    tile(g, src, x1, y0, px);
+    frame(g, x1, y0, tw, tw, css('--hair'));
+    capt(g, 'оригінал', x1, y0 - 12);
+    capt(g, 'мітка: ' + wasTxt, x1, y0 + tw + 20, css('--ink'), 12);
+
+    tile(g, res, x2, y0, px);
+    frame(g, x2, y0, tw, tw, ok ? css('--teal') : css('--rose'), 2);
+    capt(g, 'після перетворення', x2, y0 - 12);
+    capt(g, 'мітка: ' + nowTxt, x2, y0 + tw + 20, ok ? css('--teal') : css('--rose'), 12);
+
+    if(task === 0){
+      var nb2 = nearest(res);
+      tile(g, shapeMask(nb2.k, RBASE), x3, y0, px);
+      frame(g, x3, y0, tw, tw, css('--hair'));
+      capt(g, 'найближчий шаблон', x3, y0 - 12);
+      capt(g, 'збіг: ' + measTxt, x3, y0 + tw + 20, ok ? css('--teal') : css('--rose'), 12);
+    } else if(task === 1){
+      tile(g, (nearestDigit(res).n === '6') ? SIX : NINE, x3, y0, px);
+      frame(g, x3, y0, tw, tw, css('--hair'));
+      capt(g, 'найближчий шаблон', x3, y0 - 12);
+      capt(g, 'збіг: ' + measTxt, x3, y0 + tw + 20, ok ? css('--teal') : css('--rose'), 12);
+    } else {
+      var bw = tw, bh = 30, by = y0 + tw/2 - bh/2;
+      g.fillStyle = css('--paper'); g.fillRect(x3, by, bw, bh);
+      g.fillStyle = ok ? css('--teal') : css('--rose');
+      g.fillRect(x3, by, bw*Math.min(1, meas), bh);
+      frame(g, x3, by, bw, bh, css('--hair'));
+      g.strokeStyle = css('--amber'); g.lineWidth = 2;
+      g.beginPath(); g.moveTo(x3 + bw*XTHR, by - 10); g.lineTo(x3 + bw*XTHR, by + bh + 10); g.stroke();
+      capt(g, 'яскравість проти порога', x3, y0 - 12);
+      capt(g, 'поріг 0.70', x3 + bw*XTHR - 30, by + bh + 26, css('--amber'), 11);
+      capt(g, 'максимум: ' + measTxt, x3, y0 + tw + 20, ok ? css('--teal') : css('--rose'), 12);
+    }
+
+    I('invWas').textContent = wasTxt;
+    I('invNow').textContent = nowTxt;
+    I('invIou').textContent = measTxt;
+    I('invMlab').textContent = mlab;
+    I('invPowV').textContent = op === 0 ? 'не діє' :
+      (op === 1 ? Math.round(pow*1.8) + '°' : '×' + (1 - pow*0.007).toFixed(2));
+
+    var claim = ['клас не залежить від дзеркала',
+                 'клас не залежить від кута',
+                 'клас не залежить від освітлення'][op];
+    if(ok)
+      verd('invVd','t-ok','ПРИПУЩЕННЯ СПРАВДЖУЄТЬСЯ',
+        'Ти стверджуєш: «' + claim + '». Для цього положення воно істинне — мітка після ' +
+        'перетворення та сама, виміряно ' + measTxt + '. Але твердження мусить бути істинним ' +
+        'для <em>кожної</em> сили, а не для однієї вдалої: прожени повзунок до кінця.');
+    else
+      verd('invVd','t-no','ПРИПУЩЕННЯ ХИБНЕ',
+        'Ти стверджуєш: «' + claim + '», але мітка змінилася з «' + wasTxt + '» на «' + nowTxt +
+        '» (' + measTxt + '). Кожне таке зображення потрапить у навчання з неправильною ' +
+        'відповіддю — це шум у мітках, який ти згенерував сам.');
+  }
+
+  segment('invTask', function(i){ task = i; draw(); });
+  segment('invOp', function(i){ op = i; draw(); });
+  on('invPow','input', function(){ pow = +I('invPow').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 2 · конструктор аугментації ═════ */
+(function(){
+  var cv = I('cBuild'); if(!cv) return;
+  var pow = 50, cls = 1;
+
+  function variants(){
+    var flags = segOn('buildOps'), r = LCG(20250902), out = [], k, p, s = pow/100;
+    for(k=0;k<8;k++){
+      p = {};
+      if(flags[0] && r() < 0.5) p.flip = true;
+      if(flags[1]){ p.tx = (r()*2-1)*14*s; p.ty = (r()*2-1)*14*s; }
+      if(flags[2]) p.ang = (r()*2-1)*60*s;
+      if(flags[3]) p.sc = 1 + (r()*2-1)*0.40*s;
+      if(flags[4]) p.bright = 1 - r()*0.6*s;
+      if(flags[5]){
+        var side = Math.round(6 + 24*s);
+        p.erase = {x: Math.round(r()*(SZ-side)), y: Math.round(r()*(SZ-side)), w: side, h: side};
+      }
+      out.push(p);
+    }
+    return out;
+  }
+
+  function draw(){
+    var g = dpr(cv), base = shapeMask(cls, RBASE), vs = variants();
+    var px = 2, tw = SZ*px, k, img, nb, ok, okCount = 0, sum = 0;
+    var x0 = 30, y0 = 54, bpx = 3, btw = SZ*bpx;
+
+    tile(g, base, x0, y0 + 22, bpx);
+    frame(g, x0, y0 + 22, btw, btw, css('--hair'));
+    capt(g, 'оригінал', x0, y0 + 10);
+    capt(g, CLS[cls], x0, y0 + 22 + btw + 20, css('--ink'), 12);
+
+    var gx = x0 + btw + 60;
+    for(k=0;k<8;k++){
+      img = xform(base, vs[k]);
+      nb = nearest(img);
+      ok = (nb.k === cls);
+      if(ok) okCount++;
+      sum += iouWith(img, cls);
+      var col = k % 4, row = (k/4)|0;
+      var tx = gx + col*(tw + 32), ty = y0 + 22 + row*(tw + 44);
+      tile(g, img, tx, ty, px);
+      frame(g, tx, ty, tw, tw, ok ? css('--teal') : css('--rose'), 2);
+      capt(g, ok ? CLS[cls] : CLS[nb.k], tx, ty + tw + 16, ok ? css('--teal') : css('--rose'), 11);
+    }
+    capt(g, 'вісім випадкових варіантів того самого зображення', gx, y0 + 10);
+
+    I('buildOk').textContent = okCount + ' / 8';
+    I('buildIou').textContent = (sum/8).toFixed(3);
+    I('buildPowV').textContent = pow + ' %';
+
+    var flags = segOn('buildOps'), names = [], k2;
+    var caption = ['дзеркало','зсув','поворот','масштаб','яскравість','стирання'];
+    for(k2=0;k2<6;k2++) if(flags[k2]) names.push(caption[k2]);
+    var listed = names.length ? names.join(', ') : 'нічого не ввімкнено';
+
+    if(!names.length)
+      verd('buildVd','t-mid','ПЕРЕТВОРЕНЬ НЕМАЄ',
+        'Усі вісім варіантів — це та сама картинка. Мережа побачить її вісім разів і завчить ' +
+        'саме її: рівно те, від чого аугментація й рятує.');
+    else if(okCount === 8)
+      verd('buildVd','t-ok','УСІ ВІСІМ ЗБЕРЕГЛИ МІТКУ',
+        'Набір «' + listed + '» на силі ' + pow + ' % не зіпсував жодного з восьми варіантів, ' +
+        'середній збіг із класом «' + CLS[cls] + '» — ' + (sum/8).toFixed(3) +
+        '. Такому конвеєру можна довіряти.');
+    else if(okCount >= 5)
+      verd('buildVd','t-mid','ЧАСТИНА ВАРІАНТІВ ЗІПСОВАНА',
+        'Чужу мітку дістали ' + (8-okCount) + ' ' + варіантів(8-okCount) + ' із восьми. Мережа ' +
+        'вчитиметься на них із неправильною відповіддю. Спробуй зменшити силу або вимкнути ' +
+        'найагресивніше перетворення.');
+    else
+      verd('buildVd','t-no','КОНВЕЄР ЛАМАЄ МІТКУ',
+        'Правильну мітку має лише ' + okCount + ' ' + варіантів(okCount) + ' із восьми, середній збіг ' +
+        (sum/8).toFixed(3) + '. Це вже не аугментація, а генератор брехливих прикладів: ' +
+        'більшість того, що побачить мережа, підписано неправильно.');
+  }
+
+  multiseg('buildOps', draw);
+  segment('buildCls', function(i){ cls = i; draw(); });
+  on('buildPow','input', function(){ pow = +I('buildPow').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 3 · квадрат проти ромба ═════ */
+(function(){
+  var cv = I('cSqd'); if(!cv) return;
+  var ang = 0;
+
+  function draw(){
+    var g = dpr(cv);
+    var src = shapeMask(1, RBASE), img = xform(src, {ang:ang});
+    var iSq = iouWith(img, 1), iRo = iouWith(img, 2), nb = nearest(img);
+    var px = 3, tw = SZ*px, y0 = 46;
+    var x1 = 28, x2 = x1 + tw + 58, x3 = x2 + tw + 34;
+
+    tile(g, img, x1, y0, px);
+    frame(g, x1, y0, tw, tw, nb.k === 1 ? css('--teal') : css('--rose'), 2);
+    capt(g, 'квадрат, повернутий на ' + ang + '°', x1, y0 - 12);
+
+    tile(g, shapeMask(1, RBASE), x2, y0, px);
+    frame(g, x2, y0, tw, tw, css('--hair'));
+    capt(g, 'шаблон «квадрат»', x2, y0 - 12);
+
+    tile(g, shapeMask(2, RBASE), x3, y0, px);
+    frame(g, x3, y0, tw, tw, css('--hair'));
+    capt(g, 'шаблон «ромб»', x3, y0 - 12);
+
+    var bx = x3 + tw + 66, bw = 150, bh = 22, k;
+    var rows = [{lbl:'із квадратом', v:iSq, c:'--teal'}, {lbl:'із ромбом', v:iRo, c:'--rose'}];
+    for(k=0;k<2;k++){
+      var by = y0 + 32 + k*70;
+      capt(g, rows[k].lbl, bx, by - 8);
+      g.fillStyle = css('--paper'); g.fillRect(bx, by, bw, bh);
+      g.fillStyle = css(rows[k].c); g.fillRect(bx, by, bw*rows[k].v, bh);
+      frame(g, bx, by, bw, bh, css('--hair'));
+      capt(g, rows[k].v.toFixed(3), bx + bw + 10, by + 16, css('--ink'), 13);
+    }
+    capt(g, 'збіг за IoU', bx, y0 - 12);
+
+    I('sqdAngV').textContent = ang + '°';
+    I('sqdA').textContent = iSq.toFixed(3);
+    I('sqdB').textContent = iRo.toFixed(3);
+    I('sqdBest').textContent = CLS[nb.k] + ' · ' + nb.iou.toFixed(3);
+
+    if(ang === 0)
+      verd('sqdVd','t-ok','ПОЧАТКОВЕ ПОЛОЖЕННЯ',
+        'Поворот ще не застосовано: збіг із власним шаблоном 1.000, із ромбом — ' +
+        iRo.toFixed(3) + '. Тягни повзунок і дивись, у який момент друге число ' +
+        'обжене перше.');
+    else if(nb.k === 1)
+      verd('sqdVd','t-ok','МІТКА ЩЕ ПРАВИЛЬНА',
+        'Найближчим лишається шаблон квадрата (' + iSq.toFixed(3) + ' проти ' + iRo.toFixed(3) +
+        ' у ромба). Поворот на ' + ang + ' ' + градусів(ang) + ' мітку не ламає — такий кут ' +
+        'в аугментації безпечний.');
+    else if(nb.k === 2)
+      verd('sqdVd','t-no','ЦЕ ВЖЕ РОМБ',
+        'Збіг із ромбом ' + iRo.toFixed(3) + ' проти ' + iSq.toFixed(3) + ' у квадрата. ' +
+        (ang === 45 ? 'На 45° це той самий масив пікселів, що й ромб: 1.000. ' : '') +
+        'Приклад із міткою «квадрат» тут просто неправильний.');
+    else
+      verd('sqdVd','t-no','ВЖЕ НЕ КВАДРАТ',
+        'Найближчим став шаблон «' + CLS[nb.k] + '» (' + nb.iou.toFixed(3) + '), а збіг із ' +
+        'квадратом упав до ' + iSq.toFixed(3) + '. Мітка «квадрат» перестала бути правильною ' +
+        'ще до того, як фігура стала ромбом.');
+  }
+  on('sqdAng','input', function(){ ang = +I('sqdAng').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 4 · сила перетворення ═════ */
+(function(){
+  var cv = I('cPow'); if(!cv) return;
+  var ANG = [0, 8, 20, 45];              /* кути, на яких точність справді міряли */
+  var idx = 1;
+
+  /* для кожного класу й кожного кута — чи зберігається мітка. Рахуємо раз. */
+  var KEEP = [], MAXA = 60;
+  (function(){
+    var k, d, m;
+    for(k=0;k<6;k++){
+      KEEP.push([]);
+      m = shapeMask(k, RBASE);
+      for(d=0; d<=MAXA; d++) KEEP[k].push(nearest(xform(m, {ang:d})).k === k ? 1 : 0);
+    }
+  })();
+  function survive(a){
+    var k, d, ok = 0, all = 0;
+    for(k=0;k<6;k++) for(d=0; d<=a; d++){ all++; ok += KEEP[k][d]; }
+    return all ? ok/all : 1;
+  }
+
+  function draw(){
+    var g = dpr(cv), a = ANG[idx];
+    var keep = survive(a), acc = M.rot[String(a)], base = M.rot['0'];
+
+    var gx = 62, gy = 40, gw = 440, gh = 190;
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    var t, ty2;
+    for(t=0;t<=4;t++){
+      ty2 = gy + gh - gh*t/4;
+      g.beginPath(); g.moveTo(gx, ty2); g.lineTo(gx+gw, ty2); g.stroke();
+      capt(g, (t*25) + ' %', gx - 10, ty2 + 4, css('--soft'), 10, 'right');
+    }
+    for(t=0;t<=6;t++) capt(g, (t*10) + '°', gx + gw*t/6, gy + gh + 18, css('--soft'), 10, 'center');
+    capt(g, 'частка прикладів, де мітка вціліла', gx, gy - 14, css('--ink'), 12);
+
+    g.strokeStyle = css('--teal'); g.lineWidth = 2; g.beginPath();
+    var d;
+    for(d=0; d<=MAXA; d++){
+      var px2 = gx + gw*d/MAXA, py2 = gy + gh - gh*survive(d);
+      if(d === 0) g.moveTo(px2, py2); else g.lineTo(px2, py2);
+    }
+    g.stroke();
+
+    var cx = gx + gw*a/MAXA;
+    g.strokeStyle = css('--rose'); g.lineWidth = 2; g.setLineDash([4,4]);
+    g.beginPath(); g.moveTo(cx, gy - 4); g.lineTo(cx, gy + gh + 4); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = css('--rose');
+    g.beginPath(); g.arc(cx, gy + gh - gh*keep, 4.5, 0, 6.2832); g.fill();
+
+    var bx = gx + gw + 108, bw = 190, k2;
+    capt(g, 'виміряна точність', bx, gy - 14, css('--ink'), 12);
+    for(k2=0;k2<4;k2++){
+      var by = gy + 14 + k2*46, v = M.rot[String(ANG[k2])];
+      var lo = 0.60, hi = 1.0, frac = (v - lo)/(hi - lo);
+      capt(g, ANG[k2] === 0 ? 'без аугментації' : 'поворот до ' + ANG[k2] + '°', bx, by - 6);
+      g.fillStyle = css('--paper'); g.fillRect(bx, by, bw, 18);
+      g.fillStyle = k2 === idx ? css('--rose') : css('--teal');
+      g.fillRect(bx, by, bw*frac, 18);
+      frame(g, bx, by, bw, 18, css('--hair'));
+      capt(g, v.toFixed(3), bx + bw + 10, by + 14, k2 === idx ? css('--rose') : css('--ink'), 12.5);
+    }
+
+    var px = 2, tw = SZ*px, r = LCG(31337), k3;
+    capt(g, 'квадрат при куті до ' + a + '°', gx, gy + gh + 48, css('--ink'), 12);
+    for(k3=0;k3<4;k3++){
+      var img = xform(shapeMask(1, RBASE), {ang:(r()*2-1)*a});
+      var okk = nearest(img).k === 1;
+      var xx = gx + k3*(tw + 26), yy = gy + gh + 58;
+      tile(g, img, xx, yy, px);
+      frame(g, xx, yy, tw, tw, okk ? css('--teal') : css('--rose'), 2);
+    }
+
+    I('powAngV').textContent = a + '°';
+    I('powKeep').textContent = (keep*100).toFixed(0) + ' %';
+    I('powAcc').textContent = acc.toFixed(3);
+    I('powBase').textContent = base.toFixed(3);
+
+    var diff = acc - base, k4, bestV = -1, bestA = 0;
+    for(k4=0;k4<4;k4++) if(M.rot[String(ANG[k4])] > bestV){ bestV = M.rot[String(ANG[k4])]; bestA = ANG[k4]; }
+
+    if(a === 0)
+      verd('powVd','t-mid','АУГМЕНТАЦІЇ НЕМАЄ',
+        'Точка відліку: без жодного перетворення точність на перевірочній вибірці — ' +
+        base.toFixed(3) + '. Мітки, звісно, всі цілі: 100 %. Далі дивись, що дає кожен кут.');
+    else if(a === bestA)
+      verd('powVd','t-ok','НАЙКРАЩЕ З ВИМІРЯНОГО',
+        'При куті до ' + a + '° точність ' + acc.toFixed(3) + ' — найвища з чотирьох замірів, ' +
+        'на ' + (diff*100).toFixed(1) + ' пункта вище за ' + base.toFixed(3) + ' без аугментації. ' +
+        'І це при тому, що мітку зберігають ' + (keep*100).toFixed(0) + ' % прикладів: трохи ' +
+        'зіпсованих міток мережа витримує, якщо взамін бачить більше різних картинок.');
+    else if(diff > 0.005)
+      verd('powVd','t-mid','ДОПОМАГАЄ, АЛЕ НЕ НАЙКРАЩЕ',
+        'Точність ' + acc.toFixed(3) + ' вища за ' + base.toFixed(3) + ' без аугментації, але ' +
+        'нижча за ' + bestV.toFixed(3) + ' при куті до ' + bestA + '°. Мітку тут зберігають ' +
+        (keep*100).toFixed(0) + ' % прикладів.');
+    else
+      verd('powVd','t-no','ГІРШЕ, НІЖ ЗОВСІМ БЕЗ АУГМЕНТАЦІЇ',
+        'Мітку зберігають лише ' + (keep*100).toFixed(0) + ' % прикладів, і точність упала до ' +
+        acc.toFixed(3) + ' проти ' + base.toFixed(3) + ' без жодної аугментації. ' +
+        'Надто сильне перетворення — це не «сильніша регуляризація», а зіпсовані дані.');
+  }
+  on('powAng','input', function(){ idx = +I('powAng').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 5 · розрив між навчальною й перевірочною ═════ */
+(function(){
+  var cv = I('cGap'); if(!cv) return;
+  var step = 10;
+
+  function draw(){
+    var g = dpr(cv);
+    var A = M.curves.noaug120, B = M.curves.aug120, n = A.length;
+    var gx = 74, gy = 42, gw = 620, gh = 250, k, i;
+
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    for(k=0;k<=8;k++){
+      var yy = gy + gh - gh*k/8;
+      g.beginPath(); g.moveTo(gx, yy); g.lineTo(gx+gw, yy); g.stroke();
+      capt(g, (0.2 + k*0.1).toFixed(1), gx - 14, yy + 4, css('--soft'), 10, 'right');
+    }
+    for(k=0;k<n;k++){
+      var xx = gx + gw*k/(n-1);
+      capt(g, String(A[k][0]), xx, gy + gh + 20, css('--soft'), 10, 'center');
+    }
+    capt(g, 'точність', gx - 52, gy - 14, css('--ink'), 12);
+    capt(g, 'крок навчання', gx + gw/2, gy + gh + 40, css('--soft'), 11, 'center');
+
+    function line(data, col, idx2, dash){
+      g.strokeStyle = css(col); g.lineWidth = 2;
+      g.setLineDash(dash ? [5,4] : []);
+      g.beginPath();
+      for(i=0;i<step;i++){
+        var xx2 = gx + gw*i/(n-1);
+        var yy2 = gy + gh - gh*(data[i][idx2] - 0.2)/0.8;
+        if(yy2 < gy) yy2 = gy;
+        if(yy2 > gy + gh) yy2 = gy + gh;
+        if(i === 0) g.moveTo(xx2, yy2); else g.lineTo(xx2, yy2);
+      }
+      g.stroke(); g.setLineDash([]);
+    }
+    line(A, '--rose', 1, false);
+    line(A, '--rose', 2, true);
+    line(B, '--teal', 1, false);
+    line(B, '--teal', 2, true);
+
+    /* вертикаль поточного кроку */
+    var cx = gx + gw*(step-1)/(n-1);
+    g.strokeStyle = css('--soft'); g.lineWidth = 1; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(cx, gy); g.lineTo(cx, gy+gh); g.stroke(); g.setLineDash([]);
+
+    /* легенда праворуч, короткими рядками — у канві текст не переноситься */
+    var lx = gx + gw + 34, ly = gy + 10;
+    var leg = [['--rose', false, 'без аугм., навчальна'],
+               ['--rose', true,  'без аугм., перевірочна'],
+               ['--teal', false, 'з аугм., навчальна'],
+               ['--teal', true,  'з аугм., перевірочна']];
+    for(k=0;k<4;k++){
+      g.strokeStyle = css(leg[k][0]); g.lineWidth = 2;
+      g.setLineDash(leg[k][1] ? [5,4] : []);
+      g.beginPath(); g.moveTo(lx, ly + k*26); g.lineTo(lx + 26, ly + k*26); g.stroke();
+      g.setLineDash([]);
+      capt(g, leg[k][2], lx + 34, ly + k*26 + 4, css('--soft'), 10.5);
+    }
+
+    var a = A[step-1], b = B[step-1];
+    var gapA = a[1] - a[2], gapB = b[1] - b[2];
+    I('gapStepV').textContent = a[0];
+    I('gapNo').textContent = gapA.toFixed(3);
+    I('gapYes').textContent = gapB.toFixed(3);
+    I('gapTe').textContent = a[2].toFixed(3) + ' проти ' + b[2].toFixed(3);
+
+    if(step <= 2)
+      verd('gapVd','t-mid','ЩЕ РАНО СУДИТИ',
+        'На кроці ' + a[0] + ' обидві мережі щойно почали вчитись: розриви ' + gapA.toFixed(3) +
+        ' і ' + gapB.toFixed(3) + '. Різниця між підходами тут ще не проявилась.');
+    else if(gapA > gapB + 0.03)
+      verd('gapVd','t-ok','РОЗРИВ БЕЗ АУГМЕНТАЦІЇ БІЛЬШИЙ',
+        'На кроці ' + a[0] + ' мережа без аугментації відірвалась від перевірочної вибірки на ' +
+        gapA.toFixed(3) + '. ' + (gapB < 0
+          ? 'У мережі з аугментацією розриву немає взагалі: на перевірочній вона навіть трохи ' +
+            'краща, ніж на навчальній (' + gapB.toFixed(3) + ').'
+          : 'З аугментацією розрив лише ' + gapB.toFixed(3) + '.') +
+        ' Перша вчить картинки, друга — фігури.');
+    else
+      verd('gapVd','t-mid','РОЗРИВИ ПОКИ ЗІСТАВНІ',
+        'На кроці ' + a[0] + ' розрив без аугментації ' + gapA.toFixed(3) + ', з нею ' +
+        gapB.toFixed(3) + '. Дожени повзунок до кінця — саме там різниця стає очевидною.');
+  }
+  on('gapStep','input', function(){ step = +I('gapStep').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 6 · скільки даних, стільки й користі ═════ */
+(function(){
+  var cv = I('cSize'); if(!cv) return;
+  var idx = 0, N = M.sizes;
+
+  function draw(){
+    var g = dpr(cv), n = N[idx];
+    var no = M.bySize[String(n)][0], yes = M.bySize[String(n)][1], gain = yes - no;
+    var k;
+
+    /* два стовпчики точності */
+    var bx = 60, by = 66, bw = 300, bh = 34, lo = 0.6, hi = 1.0;
+    capt(g, 'точність на перевірочній вибірці, ' + n + ' навчальних', bx, by - 26, css('--ink'), 12.5);
+    var rows = [{l:'без аугментації', v:no, c:'--rose'}, {l:'з аугментацією', v:yes, c:'--teal'}];
+    for(k=0;k<2;k++){
+      var yy = by + k*54;
+      capt(g, rows[k].l, bx, yy - 7);
+      g.fillStyle = css('--paper'); g.fillRect(bx, yy, bw, bh);
+      g.fillStyle = css(rows[k].c); g.fillRect(bx, yy, bw*(rows[k].v-lo)/(hi-lo), bh);
+      frame(g, bx, yy, bw, bh, css('--hair'));
+      capt(g, rows[k].v.toFixed(3), bx + bw + 12, yy + 23, css('--ink'), 15);
+    }
+
+    /* виграш по трьох розмірах: підписи розмірів окремим рядком під усім,
+       інакше відʼємний стовпчик наїжджає на власний підпис (грабля №12) */
+    var cx = bx + bw + 150, cw = 320, ch = 170, cy = 62;
+    capt(g, 'виграш від аугментації', cx, cy - 26, css('--ink'), 12.5);
+    var maxG = 0;
+    for(k=0;k<N.length;k++){
+      var gg = M.bySize[String(N[k])][1] - M.bySize[String(N[k])][0];
+      if(Math.abs(gg) > maxG) maxG = Math.abs(gg);
+    }
+    if(maxG < 0.02) maxG = 0.02;
+    var zero = cy + ch*0.45;
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(cx, zero); g.lineTo(cx + cw, zero); g.stroke();
+    for(k=0;k<N.length;k++){
+      var gv = M.bySize[String(N[k])][1] - M.bySize[String(N[k])][0];
+      var h = (gv/maxG)*(ch*0.40);
+      var xx = cx + 40 + k*(cw/N.length);
+      g.fillStyle = k === idx ? css('--rose') : css('--teal');
+      g.fillRect(xx, h >= 0 ? zero - h : zero, 50, Math.abs(h));
+      capt(g, (gv >= 0 ? '+' : '') + gv.toFixed(3), xx + 25,
+           h >= 0 ? zero - h - 8 : zero + Math.abs(h) + 16,
+           k === idx ? css('--rose') : css('--soft'), 11.5, 'center');
+      capt(g, String(N[k]), xx + 25, cy + ch + 6, k === idx ? css('--rose') : css('--soft'), 11.5, 'center');
+    }
+    capt(g, 'навчальних зображень', cx + cw/2, cy + ch + 26, css('--soft'), 11, 'center');
+
+    I('sizeNV').textContent = n;
+    I('sizeNo').textContent = no.toFixed(3);
+    I('sizeYes').textContent = yes.toFixed(3);
+    I('sizeGain').textContent = (gain >= 0 ? '+' : '') + gain.toFixed(3);
+
+    var g0 = M.bySize[String(N[0])][1] - M.bySize[String(N[0])][0];
+    if(idx === 0)
+      verd('sizeVd','t-ok','НАЙБІЛЬША КОРИСТЬ',
+        'На ' + n + ' зображеннях аугментація дає ' + (gain>=0?'+':'') + gain.toFixed(3) +
+        '. Даних тут настільки мало, що кожне твердження «це те саме» коштує дорого.');
+    else if(gain < 0)
+      verd('sizeVd','t-no','ВИГРАШ ПЕРЕТВОРИВСЯ НА ПРОГРАШ',
+        'На ' + n + ' зображеннях аугментація вже не допомагає, а заважає: ' + gain.toFixed(3) +
+        ' проти ' + (g0>=0?'+':'') + g0.toFixed(3) + ' на ' + N[0] + '. Різних фігур і так ' +
+        'достатньо, а перетворення роблять задачу важчою — при однаковому бюджеті кроків ' +
+        'мережа встигає менше.');
+    else if(gain < g0 - 0.005)
+      verd('sizeVd','t-mid','ВИГРАШ ПРОСІВ',
+        'На ' + n + ' зображеннях лишилось ' + (gain>=0?'+':'') + gain.toFixed(3) + ' проти ' +
+        (g0>=0?'+':'') + g0.toFixed(3) + ' на ' + N[0] + '. Мережа й так бачить достатньо різних ' +
+        'фігур, тож нагадувати їй про зсув майже нема потреби.');
+    else
+      verd('sizeVd','t-no','ВИГРАШ НЕ ПРОСІВ',
+        'На ' + n + ' зображеннях виграш ' + (gain>=0?'+':'') + gain.toFixed(3) + ' — не менший, ' +
+        'ніж на ' + N[0] + ' (' + (g0>=0?'+':'') + g0.toFixed(3) + '). Так теж буває: якщо ' +
+        'аугментація описує варіацію, якої в даних мало навіть у великій вибірці, вона лишається ' +
+        'корисною.');
+  }
+  on('sizeN','input', function(){ idx = +I('sizeN').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 7 · що стається, коли аугментувати перевірку ═════ */
+(function(){
+  var cv = I('cEval'); if(!cv) return;
+  var mode = 0;
+
+  function stats(arr){
+    var mn = arr[0], mx = arr[0], s = 0, k;
+    for(k=0;k<arr.length;k++){ if(arr[k]<mn) mn=arr[k]; if(arr[k]>mx) mx=arr[k]; s+=arr[k]; }
+    return {min:mn, max:mx, mean:s/arr.length};
+  }
+
+  /* межі осі рахуємо один раз по всіх числах обох режимів — інакше при
+     перемиканні міняється масштаб і хмару неможливо порівняти з точкою */
+  var ALL = [M.clean.A, M.clean.B].concat(M.noisy.A, M.noisy.B);
+  var LO = Math.floor((Math.min.apply(null, ALL) - 0.02)*50)/50;
+  var HI = Math.ceil((Math.max.apply(null, ALL) + 0.02)*50)/50;
+  if(LO < 0) LO = 0; if(HI > 1) HI = 1;
+
+  function draw(){
+    var g = dpr(cv);
+    var lo = LO, hi = HI;
+    var ax = 90, aw = 700, k;
+    function X(v){ return ax + aw*(v-lo)/(hi-lo); }
+
+    /* вісь */
+    for(k=0;k<=8;k++){
+      var v = lo + (hi-lo)*k/8;
+      g.strokeStyle = css('--hair'); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(X(v), 60); g.lineTo(X(v), 250); g.stroke();
+      capt(g, v.toFixed(3), X(v), 272, css('--soft'), 10, 'center');
+    }
+    capt(g, 'точність на перевірочній вибірці', ax, 40, css('--ink'), 12.5);
+
+    var rows = [{l:'модель А · 1200 прикладів, без аугментації', c:'--teal', clean:M.clean.A, runs:M.noisy.A, y:105},
+                {l:'модель Б · 360 прикладів, з аугментацією',    c:'--rose', clean:M.clean.B, runs:M.noisy.B, y:195}];
+    var txtA, txtB;
+    for(k=0;k<2;k++){
+      var r = rows[k];
+      capt(g, r.l, ax, r.y - 30, css('--soft'), 11);
+      if(mode === 0){
+        g.fillStyle = css(r.c);
+        g.beginPath(); g.arc(X(r.clean), r.y, 8, 0, 6.2832); g.fill();
+        capt(g, r.clean.toFixed(3), X(r.clean), r.y - 18, css(r.c), 13, 'center');
+      } else {
+        var st = stats(r.runs), j;
+        g.fillStyle = css(r.c) + '33';
+        g.fillRect(X(st.min) - 2, r.y - 20, X(st.max) - X(st.min) + 4, 40);
+        frame(g, X(st.min) - 2, r.y - 20, X(st.max) - X(st.min) + 4, 40, css(r.c));
+        for(j=0;j<r.runs.length;j++){
+          g.fillStyle = css(r.c);
+          g.beginPath(); g.arc(X(r.runs[j]), r.y, 5, 0, 6.2832); g.fill();
+        }
+        /* порожнє кільце — те саме число на чистій вибірці, для порівняння */
+        g.strokeStyle = css(r.c); g.lineWidth = 1.5;
+        g.beginPath(); g.arc(X(r.clean), r.y, 7, 0, 6.2832); g.stroke();
+        capt(g, 'на чистій ' + r.clean.toFixed(3), X(r.clean) - 34, r.y - 26, css('--soft'), 10.5);
+        /* підпис діапазону — під смугою, інакше він наїжджає на кільце «на чистій» */
+        capt(g, st.min.toFixed(3) + ' … ' + st.max.toFixed(3), X(st.min), r.y + 34, css(r.c), 12.5);
+      }
+    }
+
+    if(mode === 0){
+      txtA = M.clean.A.toFixed(3); txtB = M.clean.B.toFixed(3);
+      I('evalA').textContent = txtA;
+      I('evalB').textContent = txtB;
+      var d = Math.abs(M.clean.A - M.clean.B);
+      I('evalCmp').textContent = 'різниця ' + d.toFixed(3) + ', розкиду немає';
+      verd('evalVd','t-ok','ЧИСЛО Є ЧИСЛОМ',
+        'Кожна модель дає одну точність, і другий запуск дасть ту саму. Різниця між ними — ' +
+        d.toFixed(3) + ': моделі практично рівні, і це теж достовірний висновок, бо обидва ' +
+        'числа повторювані. Тепер перемкни спосіб перевірки.');
+    } else {
+      var sa = stats(M.noisy.A), sb = stats(M.noisy.B), j2, winsA = 0;
+      for(j2=0;j2<M.noisy.A.length;j2++) if(M.noisy.A[j2] > M.noisy.B[j2]) winsA++;
+      I('evalA').textContent = sa.min.toFixed(3) + '…' + sa.max.toFixed(3);
+      I('evalB').textContent = sb.min.toFixed(3) + '…' + sb.max.toFixed(3);
+      var spread = Math.max(sa.max - sa.min, sb.max - sb.min);
+      var cleanDiff = M.clean.A - M.clean.B;      /* + якщо А краща */
+      var augDiff = sa.mean - sb.mean;
+      I('evalCmp').textContent = 'розкид ' + spread.toFixed(3) + ', різниця ' + augDiff.toFixed(3) +
+        ' проти ' + cleanDiff.toFixed(3);
+      var flipped = (cleanDiff > 0) !== (augDiff > 0);
+      if(flipped || Math.abs(augDiff) > Math.abs(cleanDiff) + 0.01)
+        verd('evalVd','t-no','ПОРІВНЯННЯ ЗЛАМАНЕ',
+          'Кожне число плаває: розкид від самого лише зерна — ' + spread.toFixed(3) +
+          '. Але гірше інше. На чистій вибірці кращою була модель ' + (cleanDiff > 0 ? 'А' : 'Б') +
+          ' (різниця ' + Math.abs(cleanDiff).toFixed(3) + '), на аугментованій — модель ' +
+          (augDiff > 0 ? 'А' : 'Б') + ', і то в ' + (augDiff > 0 ? winsA : (8 - winsA)) +
+          ' прогонах із 8, з відривом ' + Math.abs(augDiff).toFixed(3) + '. ' +
+          'Аугментована перевірка не шумить нейтрально — вона підіграє тій моделі, яка ' +
+          'звикла саме до цих перетворень. Ти більше не порівнюєш моделі.');
+      else
+        verd('evalVd','t-mid','ЧИСЛО ПЛАВАЄ',
+          'Порядок моделей не змінився, але кожне окреме вимірювання інше: розкид ' +
+          spread.toFixed(3) + ' від самого лише зерна. Публікувати таке число як «точність ' +
+          'моделі» не можна — воно залежить не тільки від моделі.');
+    }
+  }
+  segment('evalSeg', function(i){ mode = i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+})();
+</script>
+</body>
+</html>

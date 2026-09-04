@@ -8,13 +8,12 @@
 
 | Курс | Теми | Потрібно знати | Глосарій |
 |---|---|---|---|
-| [Python](courses/01-python/index.html) | 35 із 35 | нічого | [91 термін](courses/01-python/glossary.html) |
-| [Машинне навчання](courses/02-ai-ml/index.html) | 40 із 40 | Python | [136 термінів](courses/02-ai-ml/glossary.html) |
-| [Комп'ютерний зір](courses/03-computer-vision/index.html) | 2 із 40 | машинне навчання | [110 термінів](courses/03-computer-vision/glossary.html) |
+| [Python](courses/01-python/index.html) | 40 із 40 | нічого | [130 термінів](courses/01-python/glossary.html) |
+| [Машинне навчання](courses/02-ai-ml/index.html) | 40 із 40 | Python | [154 терміни](courses/02-ai-ml/glossary.html) |
+| [Компʼютерний зір](courses/03-computer-vision/index.html) | 40 із 40 | машинне навчання | [172 терміни](courses/03-computer-vision/glossary.html) |
 | [Обробка природної мови](courses/04-nlp/index.html) | 0 із 40 | машинне навчання | [109 термінів](courses/04-nlp/glossary.html) |
 
-Два перші курси готові повністю. Спеціалізації в роботі — теми з'являються поступово,
-глосарії вже складені.
+Три курси готові повністю. Обробка природної мови в роботі — глосарій уже складений.
 
 ## Із чого складається тема
 

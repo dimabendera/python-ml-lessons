@@ -1,0 +1,1598 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>U-Net: скіп-зʼєднання й порогова глибина</title>
+<meta name="description" content="U-Net повертає роздільність третім способом: стиснути, а деталі взяти з ранніх шарів. Головний замір теми — порогова глибина: та сама мережа зі скіпами й без на чотирьох глибинах стискання, по три зерна. Розрив росте вдвічі з кожним рівнем: 0.0191, 0.0523, 0.1117, 0.2535; на смузі межі він утричі більший — 0.0579, 0.1576, 0.3215, 0.5511. Скіпи ще й стабілізують навчання: розкид 0.0005-0.0025 проти 0.0112-0.0294, до 55 разів. Спосіб зшивання майже не важить: конкатенація виграє в додавання 0.0012 при розкиді 0.001, тоді як сам скіп коштує 0.1117. Найдрібніший скіп важить у 55 разів більше за найглибший. Кільце зі стінкою 2 px: IoU 0.8656 зі скіпами проти 0.3439 без. Симетрія декодера не потрібна: мінус 24.7 % ваг за −0.0018 mIoU при розкиді 0.0023.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* грабля №3: під uppercase латинська N і грецькі літери псуються.
+   Правило .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw{text-transform:none}
+
+/* сітка з двох канв поруч у деяких фігурах */
+.twin{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+@media(max-width:620px){.twin{grid-template-columns:1fr}}
+/* перемикачі рівнів у фігурі «прибрати скіп» */
+.seg.three button{flex:1 1 30%}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 6 · Тема 30</p>
+    <h1>U-Net: скіпи й порогова глибина</h1>
+    <p class="stand">Мережа стискає картинку, щоб зрозуміти, що на ній, — і разом із
+      розумінням губить точні межі. U-Net повертає межі з ранніх шарів. Але скіпи
+      потрібні не завжди: поки стискання невелике, губити просто нема чого.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Що лишилось після теми 29</a></li>
+        <li><a href="#s2">Ідея U-Net</a></li>
+        <li><a href="#s3">Чому це працює</a></li>
+        <li><a href="#s4">Порогова глибина</a></li>
+        <li><a href="#s5">Скіпи стабілізують навчання</a></li>
+        <li><a href="#s6">Конкатенація проти додавання</a></li>
+        <li><a href="#s7">Які саме скіпи важать</a></li>
+        <li><a href="#s8">Що несе скіп</a></li>
+        <li><a href="#s9">Межа вирішує все</a></li>
+        <li><a href="#s10">Дрібні структури</a></li>
+        <li><a href="#s11">Деталі оригіналу</a></li>
+        <li><a href="#s12">Де U-Net сьогодні</a></li>
+        <li><a href="#s13">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../29-semantic-segmentation/lecture.html">← 29. Семантична сегментація: FCN і DeepLab</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../31-instance-segmentation/lecture.html">31. Instance segmentation →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Сегментація мусить відповісти за кожен піксель. Але щоб зрозуміти, що
+на картинці зображено, мережа <b>стискає</b> її: пулінг за пулінгом, доки від
+полотна 64 × 64 не лишиться карта 8 × 8. У цій карті багато знання про предмет і
+майже нічого про його край — один її піксель відповідає квадрату 8 × 8 вхідних.
+<a href="../29-semantic-segmentation/lecture.html">Тема 29</a> показала два способи
+жити з цим: не стискати взагалі (атрозні згортки) або розтягувати назад
+(<code>ConvTranspose2d</code>). Є третій, і він виявився найживучішим: стиснути,
+а деталі взяти з <b>ранніх шарів</b>, доки їх ще не викинули. Це U-Net. А головне
+питання теми — не «чи допомагають скіпи», а <b>з якої глибини вони починають
+вирішувати</b>, бо поки стискання невелике, губити просто нема чого.</p>
+
+<h2 id="s1"><span class="num">01 / Залишок</span>Що лишилось після теми 29</h2>
+
+<p>Зберемо, з чим ми прийшли. Постановку й метрики дала попередня тема, і ми беремо
+їх готовими, не переказуючи.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>що вже є</th><th>звідки й що це означає</th></tr>
+  <tr><td>постановка</td><td>тема 29: кожному пікселю — клас; вихід мережі має розмір входу</td></tr>
+  <tr><td>метрики</td><td>тема 29: <code>mIoU</code> й <code>Dice</code>, звʼязані як <code>Dice = 2·IoU/(1+IoU)</code>; на поганих масках Dice майже вдвічі оптимістичніший</td></tr>
+  <tr><td>дисбаланс</td><td>тема 29: фон зʼїдає близько 90 % полотна, і модель, що фарбує все фоном, дає стільки ж правильних пікселів при <code>mIoU</code> рівно нуль</td></tr>
+  <tr><td>білінійне збільшення</td><td>тема 29: дешево, але нічого не додає — розмиває те, що є</td></tr>
+  <tr><td><code>ConvTranspose2d</code></td><td>тема 29: навчений спосіб розтягнути карту; вміє більше за білінійне, але вигадує деталі з нічого</td></tr>
+  <tr><td>атрозні згортки й ASPP</td><td>тема 29: поле зору росте без стискання, ціна — памʼять і час, бо карта лишається великою</td></tr>
+</table></div>
+
+<p>Обидва підходи теми 29 мають ту саму ваду, тільки з різних боків. Атрозна згортка
+не втрачає роздільність — але за це доводиться тягнути велику карту крізь усю
+мережу, а це памʼять і час. Збільшення повертає розмір — але не повертає
+<b>інформацію</b>: те, що витерли пулінгом, у карті 8 × 8 просто відсутнє, і
+жодне розтягування його не воскресить.</p>
+
+<p>Ось третя думка, і вона до смішного проста. Інформація нікуди не поділась —
+вона лежить у <b>ранніх шарах</b> тієї самої мережі. Карта після першого
+згорткового блоку має повну роздільність 64 × 64. Її просто ніхто не питав.
+Треба взяти її і подати декодерові прямо, в обхід усього стискання.</p>
+
+<h2 id="s2"><span class="num">02 / Ідея</span>Ідея U-Net</h2>
+
+<p>U-Net (2015) — мережа у формі букви U. Ліва половина, <b>енкодер</b>, іде вниз:
+згортковий блок, пулінг, згортковий блок, пулінг. З кожним кроком карта вдвічі
+менша, а каналів удвічі більше. Права половина, <b>декодер</b>, іде вгору
+дзеркально: розтягнути карту вдвічі, обробити, розтягнути ще раз.</p>
+
+<p>Уся новизна — у горизонтальних перемичках. На кожному рівні декодер отримує
+<b>дві</b> карти: ту, що прийшла знизу, з глибших шарів, і ту, що прийшла збоку,
+прямо з енкодера того самого рівня. Ця бічна перемичка й зветься
+<b>скіп-зʼєднанням</b> (skip connection), або скіпом.</p>
+
+<div class="note"><b>Назва не про пропуск шарів.</b> Англійське <code>skip</code>
+тут означає, що сигнал <b>оминає</b> середину мережі, а не що якийсь шар не
+працює. Усі шари працюють; просто в декодера зʼявляється друге джерело.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Будова U-Net: що саме йде скіпом</p>
+  <p class="fig-sub">Мережа глибини 3 на нашому полотні 64 × 64, базова ширина 6 каналів.
+    Натисни рівень, щоб побачити розмір його карти, кількість каналів і скільки
+    чисел іде перемичкою в декодер.</p>
+  <div class="panel">
+    <div><canvas id="cSchema" width="940" height="360" aria-label="Схема U-Net: чотири рівні енкодера ліворуч, три рівні декодера праворуч, горизонтальні скіп-зʼєднання між ними"></canvas></div>
+    <div>
+      <span class="cap">рівень</span>
+      <div class="seg" id="segSchema">
+        <button type="button" data-i="0" aria-pressed="true">0</button>
+        <button type="button" data-i="1" aria-pressed="false">1</button>
+        <button type="button" data-i="2" aria-pressed="false">2</button>
+        <button type="button" data-i="3" aria-pressed="false">дно</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>карта</b><i id="sc1">—</i></div>
+        <div class="cellv"><b>каналів</b><i id="sc2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>чисел у карті</b><i id="sc3" class="sm">—</i></div>
+        <div class="cellv"><b>іде скіпом</b><i id="sc4" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="scVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Розміри й кількості каналів — справжні, з нашої мережі.</b>
+    Зверни увагу на найдрібніший рівень: він несе найбільше чисел, бо карта там
+    найбільша. Саме тому скіп з нього і найдорожчий, і найкорисніший.</figcaption>
+</figure>
+
+<p>Формально одне зшивання виглядає так. Позначмо <code>u</code> — карту, розтягнуту
+знизу, а <code>s</code> — карту зі скіпа того самого рівня. Обидві мають однаковий
+розмір по висоті й ширині, але свою кількість каналів:</p>
+
+<div class="eq">вхід блоку декодера = cat( u , s ) уздовж осі каналів</div>
+
+<p><code>cat</code> — це конкатенація, тобто «поставити поруч». Якщо в <code>u</code>
+було 24 канали і в <code>s</code> теж 24, то на вході блоку їх стане 48. Жодне
+число не змінилось: вони просто лежать в одному стосі, і наступна згортка сама
+вирішує, кому яку вагу дати.</p>
+
+<h2 id="s3"><span class="num">03 / Чому</span>Чому це працює</h2>
+
+<p>Щоб зрозуміти, чому перемичка дає так багато, треба побачити, що саме несуть
+карти на різних глибинах. Вони різні по двох осях одразу.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th></th><th>рання карта (рівень 0)</th><th>глибока карта (дно)</th></tr>
+  <tr><td>роздільність</td><td>висока: 64 × 64, піксель у піксель</td><td>низька: 8 × 8, один піксель на квадрат 8 × 8</td></tr>
+  <tr><td>семантика</td><td>бідна: краї, плями, перепади яскравості</td><td>багата: «тут предмет, а не пляма шуму»</td></tr>
+  <tr><td>поле зору</td><td>вузьке: кілька пікселів</td><td>широке: пів картинки</td></tr>
+</table></div>
+
+<p>Ані верхня карта, ані нижня самі по собі не дають того, що потрібно сегментації.
+Верхня знає, <b>де</b> край, але не знає, <b>чий</b> він. Нижня знає, чий предмет,
+але не знає, де саме проходить його межа. Скіп зшиває обидві — і декодер дістає
+відповідь на обидва питання одночасно.</p>
+
+<p>Тепер поміряймо, скільки саме губиться при стисканні. Замір не потребує жодного
+навчання: візьмімо <b>еталонну</b> маску, стиснімо її в 2, 4, 8 і 16 разів (у кожній
+клітинці лишаємо клас, який займає в ній найбільшу площу), розтягнімо назад і
+порахуймо <code>mIoU</code> проти оригіналу. Це <b>стеля</b>: краще за неї не
+зробить навіть ідеальний декодер, який нічого не плутає, — бо решти інформації в
+карті просто немає.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>рівень</th><th>стиснення</th><th>карта</th><th>mIoU</th><th>mIoU на межі</th><th>точність межі</th></tr>
+  <tr><td>0</td><td>1 ×</td><td>64×64</td><td>1.0000</td><td>1.0000</td><td>1.0000</td></tr>
+  <tr><td>1</td><td>2 ×</td><td>32×32</td><td>0.9324</td><td>0.8052</td><td>0.8969</td></tr>
+  <tr><td>2</td><td>4 ×</td><td>16×16</td><td>0.8753</td><td>0.6547</td><td>0.7996</td></tr>
+  <tr class="hot"><td>3</td><td>8 ×</td><td>8×8</td><td>0.7760</td><td>0.4928</td><td>0.6747</td></tr>
+  <tr><td>4</td><td>16 ×</td><td>4×4</td><td>0.6132</td><td>0.3801</td><td>0.5920</td></tr>
+</table></div>
+
+<p>Читається це так. Стиснути маску вдвічі майже безпечно: стеля <b>0.9324</b>, і
+хороша мережа підбереться до неї й без сторонньої допомоги. Стиснути ввосьмеро —
+уже боляче: стеля падає до <b>0.7760</b>, а на смузі межі до <b>0.4928</b>. При
+стисканні в шістнадцять разів від предмета лишається пляма з кількох клітинок:
+<b>0.6132</b> і <b>0.3801</b>.</p>
+
+<div class="note"><b>Два класи, а не чотири.</b> У цій темі мережа фарбує
+<b>предмет проти фону</b>, а не «коло / квадрат / трикутник». Причина проста: ми
+міряємо, скільки від межі лишається після стискання, і не хочемо, щоб у цей
+розрив домішувалась плутанина між колом і квадратом — вона до роздільності
+стосунку не має. Розрізняти форми вчила
+<a href="../29-semantic-segmentation/lecture.html">тема 29</a>, і її числа з
+нашими напряму не порівнюються: там <code>mIoU</code> усереднювався по чотирьох
+класах, у нас по двох.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Що саме зникає при стисканні</p>
+  <p class="fig-sub">Ліворуч — еталонна маска сцени. Праворуч — та сама маска,
+    відновлена <b>лише</b> з карти вибраного рівня. Мережі тут немає взагалі:
+    це чиста арифметика роздільності.</p>
+  <div class="panel">
+    <div><canvas id="cLoss" width="940" height="330" aria-label="Ліворуч еталонна маска сцени, праворуч та сама маска, огрублена до роздільності обраного рівня"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="lvl4">рівень стискання <output id="lsOut">3</output></label>
+        <input type="range" id="lvl4" min="0" max="4" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>карта</b><i id="ls1">—</i></div>
+        <div class="cellv"><b>стеля mIoU</b><i id="ls2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>стеля на смузі межі</b><i id="ls3">—</i></div>
+      </div>
+      <div class="verdict" id="lsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Число під картинками рахується тут же, у браузері, для цієї однієї
+    сцени; праворуч у табло — стеля по всіх 96 перевірних сценах із зошита.</b>
+    Дивись не на площу, а на кути й на тонкі місця: саме вони зникають першими.</figcaption>
+</figure>
+
+<p>Ця таблиця вже підказує головне. Якщо стискання невелике, стеля висока — і скіп
+дає мало, бо декодерові й так є з чого відновити маску. Якщо стискання сильне,
+стеля низька — і без скіпа декодер приречений. Отже, десь між цими двома
+режимами має бути <b>поріг</b>. Знайдімо його.</p>
+
+<h2 id="s4"><span class="num">04 / Поріг</span>Порогова глибина</h2>
+
+<p>Тепер головний замір теми. Одна й та сама мережа, чотири глибини стискання —
+від одного рівня (стискання вдвічі) до чотирьох (у шістнадцять разів), — у двох
+режимах: зі скіпами й без. Кожна точка навчена <b>тричі</b>, з трьох різних
+початкових наближень, і в таблиці стоїть середнє з розкидом.</p>
+
+<div class="note"><b>Навіщо три зерна.</b> Одне навчання — це одна випадкова
+траєкторія. Дві мережі можуть відрізнятись на 0.05 просто тому, що одній пощастило
+з початковими вагами. Правило курсу жорстке: <b>різниця, менша за розкид по
+зернах, різницею не є</b>. Тому в кожній таблиці далі поруч із числом стоїть
+розкид, а не просто число.</div>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>глибина</th><th>параметрів</th><th>mIoU зі скіпами</th><th>mIoU без скіпів</th><th>розрив</th><th>розкид</th></tr>
+  <tr><td>1 рівень (2×)</td><td>3 746</td><td>0.9969 ±0.003</td><td>0.9778 ±0.011</td><td>+0.0191</td><td>0.0112</td></tr>
+  <tr><td>2 рівні (4×)</td><td>16 790</td><td>0.9988 ±0.001</td><td>0.9466 ±0.029</td><td>+0.0523</td><td>0.0294</td></tr>
+  <tr class="hot"><td>3 рівні (8×)</td><td>68 510</td><td>0.9986 ±0.001</td><td>0.8869 ±0.013</td><td><b>+0.1117</b></td><td>0.0125</td></tr>
+  <tr class="hot"><td>4 рівні (16×)</td><td>274 478</td><td>0.9983 ±0.001</td><td>0.7448 ±0.013</td><td><b>+0.2535</b></td><td>0.0129</td></tr>
+</table></div>
+
+<p>Перше, що видно: мережа <b>зі скіпами</b> дає майже одне й те саме на будь-якій
+глибині — від 0.9969 до 0.9988. Тобто глибина сама по собі задачі не псує. Псує її
+глибина <b>без скіпів</b>: 0.9778, потім 0.9466, потім 0.8869, потім 0.7448. Чим
+сильніше стискання, тим більше втрачено — і тим гірший результат.</p>
+
+<p>Друге: розрив росте не абияк, а приблизно вдвічі з кожним рівнем: 0.0191,
+0.0523, 0.1117, 0.2535. Кожен зайвий пулінг подвоює ціну відсутнього скіпа.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Порогова глибина: де скіпи починають вирішувати</p>
+  <p class="fig-sub">Дві криві — та сама мережа зі скіпами й без. Вуса — розкид по
+    трьох зернах. Повзунок обирає глибину; табло порівнює розрив із розкидом.</p>
+  <div class="panel">
+    <div><canvas id="cDepth" width="940" height="380" aria-label="Графік: mIoU залежно від глибини стискання для мережі зі скіпами й без, з вусами розкиду по трьох зернах"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="depth2">рівнів стискання <output id="dpOut">3</output></label>
+        <input type="range" id="depth2" min="1" max="4" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зі скіпами</b><i id="dp1" class="sm">—</i></div>
+        <div class="cellv"><b>без скіпів</b><i id="dp2" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розрив</b><i id="dp3">—</i></div>
+        <div class="cellv"><b>розкид</b><i id="dp4">—</i></div>
+      </div>
+      <div class="verdict" id="dpVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Усі вісім точок — із зошита, по три навчання кожна.</b> Верхня
+    крива майже горизонтальна: зі скіпами глибина нічого не коштує. Нижня падає
+    тим швидше, чим більше рівнів стискання.</figcaption>
+</figure>
+
+<p>А тепер — власне порогова глибина. Формальний критерій у нас один: <b>розрив
+більший за розкид</b>. За ним поріг дорівнює <b>одному рівню</b>: уже при
+стисканні вдвічі розрив 0.0191 перевищує розкид 0.0112. Тобто на наших сценах
+скіпи вирішують від самого початку.</p>
+
+<div class="note warn"><b>Але ось що важливіше за саме число.</b> Поріг — це
+властивість не тільки даних, а й <b>точності заміру</b>. Той самий замір із
+розкидом 0.060 замість наших 0.011 показав би на першому й другому рівні
+«різниці немає» — бо 0.0191 потонуло б у шумі. Ми побачили різницю не тому, що в
+нас інші дані, а тому, що навчання стало передбачуваним: зерна розходяться на
+0.001 замість 0.06. <b>Перш ніж казати «різниці немає», подивись на свій
+розкид.</b></div>
+
+<p>Практичний поріг — інша річ, і він теж вимірюваний. Якщо питати «з якої глибини
+без скіпів мережа втрачає більше за десяту частину якості», відповідь — <b>три
+рівні</b>: там розрив уперше перевищує 0.1. До того скіпи корисні, але без них
+можна жити; починаючи з трьох рівнів — уже ні.</p>
+
+<p>Порівняй ці числа зі стелею роздільності з розділу 3, і картина складеться
+остаточно. При одному рівні стеля 0.9324, а мережа без скіпів дає 0.9778 —
+<b>вище за стелю</b>. Протиріччя тут немає: стеля рахувалась для тупого
+«взяти переважний клас у клітинці», а навчений декодер розумніший — він знає, що
+предмети опуклі й гладкі, і домальовує край правдоподібно. Але при чотирьох
+рівнях стеля 0.6132, а мережа дає 0.7448 — запас над стелею майже той самий,
+близько 0.13. Тобто декодер завжди витискає з карти приблизно однакову надбавку,
+і весь провал — це впала стеля, а не поганий декодер.</p>
+
+<h2 id="s5"><span class="num">05 / Розкид</span>Скіпи стабілізують навчання</h2>
+
+<p>У тій самій таблиці ховається другий результат, який легко проґавити. Подивись
+не на середні, а на <b>розкиди</b>.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>глибина</th><th>розкид зі скіпами</th><th>розкид без скіпів</th><th>у скільки разів більший</th></tr>
+  <tr><td>1 рівень</td><td>0.0025</td><td>0.0112</td><td>4.4 ×</td></tr>
+  <tr class="hot"><td>2 рівні</td><td>0.0005</td><td>0.0294</td><td><b>55.2 ×</b></td></tr>
+  <tr><td>3 рівні</td><td>0.0013</td><td>0.0125</td><td>9.6 ×</td></tr>
+  <tr><td>4 рівні</td><td>0.0013</td><td>0.0129</td><td>9.6 ×</td></tr>
+</table></div>
+
+<p>Мережа зі скіпами дає практично одне й те саме з будь-якого початкового
+наближення: розкид від 0.0005 до 0.0025, тобто третій знак після коми. Без скіпів
+розкид у 4-55 разів більший.</p>
+
+<p>Причина та сама, що й у залишкових звʼязків
+<a href="../14-resnet/lecture.html">теми 14</a>, тільки з іншого боку. Скіп дає
+градієнту <b>короткий шлях</b> від виходу до ранніх шарів: щоб виправити край
+предмета, сигналу помилки не треба протискатись крізь усе дно мережі. Без скіпа
+цей шлях один і довгий, і від того, як лягли початкові ваги, залежить, чи мережа
+взагалі знайде хороше рішення.</p>
+
+<p>Практичний висновок: скіпи економлять не лише якість, а й <b>ваш час</b>. З
+ними досить одного навчання, щоб оцінити ідею. Без них одне навчання нічого не
+каже — треба три, і навіть тоді доведеться писати «±0.03».</p>
+
+<h2 id="s6"><span class="num">06 / Зшивання</span>Конкатенація проти додавання</h2>
+
+<p><a href="../14-resnet/lecture.html">Тема 14</a> уже давала нам скіп — але інший.
+Залишковий блок ResNet рахує <code>x + F(x)</code>: вхід блоку <b>додається</b> до
+його виходу поелементно. U-Net вхід і вихід <b>зшиває</b>. Різниця здається
+дрібною, тож розберімо, у чому вона насправді.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · додавання</span>
+    <p>Обидві карти мають бути однакового розміру <b>й однакової кількості каналів</b>.
+      Результат — карта тієї самої форми, у якій на кожній позиції кожного каналу
+      стоїть сума двох чисел.</p>
+    <div class="eq">вихід[c, y, x] = знизу[c, y, x] + скіп[c, y, x]</div>
+    <p>Скільки каналів було, стільки й лишилось. Але два джерела тепер злиті: із
+      суми 0.7 не дізнатись, чи це 0.5 + 0.2, чи 0.2 + 0.5.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · конкатенація</span>
+    <p>Карти складають у один стос уздовж осі каналів. Кількість каналів
+      додається; жодне число не змінюється.</p>
+    <div class="eq">вихід[c, y, x] = знизу[c, y, x],           якщо c &lt; 24
+вихід[c, y, x] = скіп[c − 24, y, x],      якщо c ≥ 24</div>
+    <p>Наступна згортка бачить обидва джерела окремо й може дати їм різні ваги —
+      наприклад, узяти форму зі скіпа, а клас із того, що знизу.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · ціна</span>
+    <p>Блок декодера після конкатенації має вдвічі більше вхідних каналів, отже
+      вдвічі більше ваг у першій згортці. У нашій мережі глибини 3 це
+      <b>68 510</b> параметрів проти <b>61 706</b> — на 11.0 % більше.</p>
+  </div>
+</div>
+
+<p>Що з цього виходить на практиці? Ми навчили обидва варіанти в однакових умовах,
+по три зерна.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>спосіб</th><th>параметрів</th><th>mIoU</th><th>mIoU на межі</th><th>час навчання</th></tr>
+  <tr><td>конкатенація</td><td>68 510</td><td>0.9986 ±0.001</td><td>0.9956</td><td>10.7 с</td></tr>
+  <tr><td>додавання</td><td>61 706</td><td>0.9973 ±0.001</td><td>0.9918</td><td>9.8 с</td></tr>
+  <tr class="hot"><td>без скіпа</td><td>61 706</td><td>0.8869 ±0.013</td><td>0.6742</td><td>9.2 с</td></tr>
+</table></div>
+
+<p>Результат несподіваний і вартий того, щоб його назвати прямо: <b>спосіб зшивання
+майже не важить</b>. Конкатенація виграє 0.0012 при розкиді 0.001 — тобто рівно
+стільки, скільки шум. На смузі межі перевага трохи виразніша, 0.0038, але й вона
+мала. А от <b>сам факт скіпа</b> коштує 0.1117 — у сто разів більше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Зшити, додати чи не давати нічого</p>
+  <p class="fig-sub">Три способи зʼєднати карту знизу з картою скіпа. Схема показує,
+    що відбувається з каналами; табло — що з цього виходить у числах.</p>
+  <div class="panel">
+    <div><canvas id="cMerge" width="940" height="272" aria-label="Схема: канали карти знизу й карти скіпа або складаються в один стос, або додаються поелементно, або скіпа немає зовсім"></canvas></div>
+    <div>
+      <span class="cap">спосіб</span>
+      <div class="seg three" id="segMerge">
+        <button type="button" data-i="0" aria-pressed="true">cat</button>
+        <button type="button" data-i="1" aria-pressed="false">+</button>
+        <button type="button" data-i="2" aria-pressed="false">нічого</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>mIoU</b><i id="mg1" class="sm">—</i></div>
+        <div class="cellv"><b>на межі</b><i id="mg2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>параметрів</b><i id="mg3" class="sm">—</i></div>
+        <div class="cellv"><b>час</b><i id="mg4" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="mgVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Перші два положення дають майже однакові числа, третє провалюється.</b>
+    Це і є висновок заміру: важливо, щоб рання карта дійшла до декодера, а як саме
+    її туди вкласти — питання смаку й бюджету.</figcaption>
+</figure>
+
+<p>Чому ж усі пишуть U-Net саме через конкатенацію? Три причини, і жодна з них не
+про якість на іграшкових даних. По-перше, додавання <b>вимагає</b> однакової
+кількості каналів; в U-Net енкодер і декодер можуть мати різну ширину, і тоді
+доводиться вставляти згортку 1 × 1 лише заради узгодження. По-друге, конкатенація
+нічого не втрачає за побудовою — вона не може бути гіршою, бо додавання є її
+окремим випадком (згортка може навчитись просто скласти). По-третє, на справжніх
+задачах із десятками каналів і складнішими сценами запас потужності зазвичай
+окупається. Але на своїх даних це варто <b>перевірити</b>, а не припустити: якщо
+різниці немає, додавання економить 11 % ваг.</p>
+
+<h2 id="s7"><span class="num">07 / Який</span>Які саме скіпи важать</h2>
+
+<p>У мережі глибини 3 скіпів три: з рівня 0 (карта 64 × 64), з рівня 1 (32 × 32) і
+з рівня 2 (16 × 16). Прибираймо їх по одному й дивімось, чого бракує найбільше.</p>
+
+<p>Здорова інтуїція каже: найважливіший — <b>найдрібніший</b>, той, що з рівня 0.
+Він єдиний несе край предмета в повному розмірі, піксель у піксель. Але інтуїція —
+не доказ, тож поміряймо.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>що прибрали</th><th>mIoU</th><th>mIoU на межі</th><th>втрата</th></tr>
+  <tr><td>нічого</td><td>0.9986 ±0.001</td><td>0.9956 ±0.004</td><td>—</td></tr>
+  <tr class="hot"><td>скіп рівня 0 (64×64)</td><td>0.9597 ±0.033</td><td>0.8781 ±0.101</td><td><b>−0.0388</b></td></tr>
+  <tr><td>скіп рівня 2 (16×16)</td><td>0.9979 ±0.001</td><td>0.9935 ±0.004</td><td>−0.0007</td></tr>
+  <tr><td>усі три</td><td>0.8869 ±0.013</td><td>0.6742 ±0.026</td><td>−0.1117</td></tr>
+</table></div>
+
+<p>Інтуїція підтвердилась, і з великим запасом. Прибрати найглибший скіп коштує
+<b>0.0007</b> — це менше за розкид, тобто його там могло б і не бути. Прибрати
+найдрібніший коштує <b>0.0388</b>, у пʼятдесят разів більше, а на смузі межі —
+<b>0.1175</b> проти 0.0021.</p>
+
+<p>Пояснення просте, і воно вже було в таблиці стелі. Скіп із рівня 2 несе карту
+16 × 16 — а декодер і так приходить на цей рівень із карти 8 × 8, тобто різниця в
+роздільності всього вдвічі. Скіп із рівня 0 несе 64 × 64 проти 8 × 8 знизу — різниця
+у вісім разів. Чим вища роздільність скіпа, тим більше в ньому того, чого немає
+ніде більше.</p>
+
+<div class="note"><b>Але «майже нічого» — не «нічого».</b> Зверни увагу на розкид:
+без найдрібнішого скіпа він підскочив із 0.001 до 0.033, а на межі до 0.101. Тобто
+мережа не просто стала трохи гіршою — вона стала <b>непередбачуваною</b>. Це той
+самий ефект, що в розділі 5, і він зʼявляється раніше за помітне падіння середнього.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Прибрати один скіп</p>
+  <p class="fig-sub">Схема показує, який скіп перерізано; стовпчики — що з цього
+    виходить. Кожен стовпчик — три навчання.</p>
+  <div class="panel">
+    <div><canvas id="cAbl" width="940" height="300" aria-label="Схема трьох скіпів U-Net із перекресленим вимкненим скіпом і стовпчики mIoU для чотирьох конфігурацій"></canvas></div>
+    <div>
+      <span class="cap">конфігурація</span>
+      <div class="seg wrap" id="segAbl">
+        <button type="button" data-i="0" aria-pressed="true">усі три</button>
+        <button type="button" data-i="1" aria-pressed="false">без рівня 0</button>
+        <button type="button" data-i="2" aria-pressed="false">без рівня 2</button>
+        <button type="button" data-i="3" aria-pressed="false">жодного</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>mIoU</b><i id="ab1" class="sm">—</i></div>
+        <div class="cellv"><b>на межі</b><i id="ab2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>зміна від повного набору</b><i id="ab3">—</i></div>
+      </div>
+      <div class="verdict" id="abVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Практичний висновок для економії:</b> якщо памʼяті бракує,
+    ріж скіпи знизу, а не згори. Найглибший коштує майже нічого, найдрібніший —
+    майже все.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Вміст</span>Що несе скіп</h2>
+
+<p>Досі ми міряли, що буває, коли скіпа <b>немає</b>. Тепер подивімось усередину
+навченої мережі й порівняймо дві карти, які зустрічаються в кожному блоці декодера:
+ту, що прийшла збоку скіпом, і ту, що прийшла знизу після
+<code>ConvTranspose2d</code>. Мережа для цього розбору дала <code>mIoU</code>
+<b>0.9995</b>, тобто вона повністю навчена, і дивимось ми на робочі активації.</p>
+
+<p>Чотири числа на кожну карту. <b>Частка ненульових</b> — скільки клітинок узагалі
+щось кажуть після ReLU. <b>Дисперсія</b> — наскільки карта контрастна.
+<b>Кореляція з межею</b> — наскільки середня карта активацій збігається з
+еталонною смугою межі; від −1 до +1. <b>Висока частота</b> — яка частка сигналу
+зникає після згладжування 3 × 3; це міра дрібних деталей.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>карта</th><th>розмір</th><th>ненульових</th><th>дисперсія</th><th>кореляція з межею</th><th>висока частота</th></tr>
+  <tr class="hot"><td>скіп, рівень 0</td><td>64×64</td><td>0.592</td><td>0.191</td><td><b>+0.351</b></td><td>0.194</td></tr>
+  <tr><td>скіп, рівень 1</td><td>32×32</td><td>0.352</td><td>0.322</td><td>+0.433</td><td>0.146</td></tr>
+  <tr><td>скіп, рівень 2</td><td>16×16</td><td>0.367</td><td>0.375</td><td>+0.506</td><td>0.191</td></tr>
+  <tr><td>знизу, на рівень 2</td><td>16×16</td><td>0.502</td><td>0.213</td><td>+0.143</td><td>1.028</td></tr>
+  <tr><td>знизу, на рівень 1</td><td>32×32</td><td>0.505</td><td>0.166</td><td>+0.296</td><td>0.853</td></tr>
+  <tr class="hot"><td>знизу, на рівень 0</td><td>64×64</td><td>0.482</td><td>0.092</td><td><b>−0.066</b></td><td>0.964</td></tr>
+</table></div>
+
+<p>Порівняй два виділені рядки — це саме та пара карт, яку зшиває останній блок
+декодера. Скіп із рівня 0 має кореляцію з межею <b>+0.351</b>: він спалахує там,
+де в масці кордон. Карта, що прийшла знизу на той самий рівень, має
+<b>−0.066</b> — тобто про положення межі вона не знає нічого. Дисперсія в неї теж
+удвічі менша (0.092 проти 0.191): після дворазового розтягування карта стала
+гладкою й невиразною.</p>
+
+<div class="note warn"><b>Пастка: висока частота ще не означає деталі.</b> У
+карти, що прийшла знизу, показник високої частоти <b>0.964</b> — упʼятеро вищий,
+ніж у скіпа. Здавалося б, у ній більше дрібних деталей. Насправді це слід
+<code>ConvTranspose2d</code>: розтягування з кроком 2 і ядром 2 залишає
+характерний шаховий візерунок, який <a href="../29-semantic-segmentation/lecture.html">тема
+29</a> показувала окремо. Візерунок дрібний, але з межею предмета не повʼязаний —
+кореляція це й ловить. Одного числа для висновку замало; дивись на два.</div>
+
+<p>І ще одна закономірність у стовпці кореляції: у скіпів вона <b>росте</b> з
+глибиною (0.351 → 0.433 → 0.506). Це не суперечить розділу 7. Глибша карта
+корелює з межею сильніше, бо в неї грубіша сітка: широка смуга в 16 × 16 накриває
+край упевненіше, ніж тонка лінія в 64 × 64. Але накриває вона його
+<b>приблизно</b> — з точністю до чотирьох пікселів. Для середнього <code>mIoU</code>
+цього досить, для точної межі — ні. Тому найкорисніший скіп усе одно найдрібніший.</p>
+
+<h2 id="s9"><span class="num">09 / Межа</span>Межа — там, де все вирішується</h2>
+
+<p>Усі числа вище ми наводили парами: <code>mIoU</code> по всіх пікселях і
+<code>mIoU</code> на смузі межі. Час пояснити, чому друге число завжди більше
+за перше й навіщо його взагалі рахувати.</p>
+
+<p>Смуга межі — це пікселі, в околі яких зустрічаються різні класи. Ми рахуємо її
+самі, у три рядки: беремо максимум і мінімум номера класу у квадратному околі
+5 × 5 і залишаємо ті пікселі, де вони різні.</p>
+
+<div class="eq left">mx = max_pool2d(маска, 5, крок 1, доповнення 2)
+mn = −max_pool2d(−маска, 5, крок 1, доповнення 2)
+смуга = (mx ≠ mn)</div>
+
+<p>Мінімум околу тут дістається тим самим пулінгом: мінімум набору чисел дорівнює
+мінус максимуму їхніх протилежних значень. Така смуга накриває <b>12.05 %</b>
+полотна — приблизно восьму частину.</p>
+
+<p>Решта — вісім девʼятих — це нутрощі предметів і чистий фон. Там не помиляється
+ніхто: навіть груба мережа без скіпів упевнено каже «це фон» посеред порожнього
+кута й «це предмет» посеред кола. Ці пікселі й <b>розчиняють</b> помилку: коли
+середнє береться по всьому полотну, вісім девʼятих легких пікселів тягнуть його
+вгору.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>глибина</th><th>розрив за загальним mIoU</th><th>розрив на смузі межі</th><th>у скільки разів більший</th></tr>
+  <tr><td>1 рівень</td><td>+0.0191</td><td>+0.0579</td><td>3.04 ×</td></tr>
+  <tr><td>2 рівні</td><td>+0.0523</td><td>+0.1576</td><td>3.02 ×</td></tr>
+  <tr><td>3 рівні</td><td>+0.1117</td><td>+0.3215</td><td>2.88 ×</td></tr>
+  <tr class="hot"><td>4 рівні</td><td>+0.2535</td><td>+0.5511</td><td>2.17 ×</td></tr>
+</table></div>
+
+<p>На смузі межі розрив стабільно втричі більший. Це не інша задача й не інша
+модель — це ті самі мережі, поміряні на тих самих сценах, просто без розчинення.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Та сама пара мереж, три різні метрики</p>
+  <p class="fig-sub">Перемикач міняє <b>лише метрику</b>. Моделі й дані ті самі:
+    зліва направо — чотири глибини стискання.</p>
+  <div class="panel">
+    <div><canvas id="cBand" width="940" height="360" aria-label="Стовпчики mIoU для мережі зі скіпами й без на чотирьох глибинах, з перемикачем метрики"></canvas></div>
+    <div>
+      <span class="cap">метрика</span>
+      <div class="seg wrap" id="segBand">
+        <button type="button" data-i="0" aria-pressed="true">mIoU усюди</button>
+        <button type="button" data-i="1" aria-pressed="false">mIoU на межі</button>
+        <button type="button" data-i="2" aria-pressed="false">точність межі</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найб. розрив, усюди</b><i id="bd1" class="sm">—</i></div>
+        <div class="cellv"><b>найб. розрив, межа</b><i id="bd2" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>у скільки разів більший</b><i id="bd3">—</i></div>
+      </div>
+      <div class="verdict" id="bdVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Моделі й дані не міняються — міняється лише те, чим ми їх міряємо.</b>
+    Той самий провал мережі без скіпів виглядає помірним у загальному mIoU і
+    катастрофічним на смузі межі.</figcaption>
+</figure>
+
+<p>Практичний висновок ширший за цю тему. Коли метрика усереднюється по великій
+однорідній масі, вона <b>вимірює масу, а не задачу</b>. Якщо тебе цікавить край —
+міряй край. Смуга межі коштує три рядки коду, а рятує від висновку «різниці
+майже немає» там, де різниця втричі більша.</p>
+
+<h2 id="s10"><span class="num">10 / Тонке</span>Дрібні структури</h2>
+
+<p>U-Net народилась не в задачі «знайти кота на фото». Вона народилась у
+біомедичних знімках, де корисні структури <b>тонкі</b>: мембрана клітини, стінка
+судини, контур зрізу. Для таких структур усе, про що ми говорили, множиться на
+десять — бо в них немає нутрощів, вони самі суцільна межа.</p>
+
+<p>Наш аналог такої структури — <b>кільце</b>: коло з вирізаною серединою.
+Замінимо ним трикутник і зробимо стінку завтовшки 1, 2 або 3 пікселі. Кільця всіх
+трьох товщин лежать в одному наборі, тож одна навчена мережа міряється відразу на
+всіх трьох.</p>
+
+<p>Спершу подивись, скільки місця вони займають. Кільця всіх товщин разом — це
+<b>1.30 %</b> пікселів; окремо стінка в 1 піксель — <b>0.30 %</b>. Для порівняння,
+суцільні фігури займали 10.07 % полотна — тобто корисного сигналу тут майже
+увосьмеро менше, а фону навколо стільки ж.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>товщина стінки</th><th>частка пікселів</th><th>IoU зі скіпами</th><th>IoU без скіпів</th><th>розрив</th></tr>
+  <tr class="hot"><td>1 піксель</td><td>0.30 %</td><td>0.7052 ±0.002</td><td>0.1775 ±0.009</td><td><b>+0.5277</b></td></tr>
+  <tr><td>2 пікселі</td><td>0.47 %</td><td>0.8656 ±0.001</td><td>0.3439 ±0.024</td><td>+0.5217</td></tr>
+  <tr><td>3 пікселі</td><td>0.54 %</td><td>0.8385 ±0.001</td><td>0.4599 ±0.022</td><td>+0.3786</td></tr>
+</table></div>
+
+<p>Порівняй ці розриви з розділом 4. На суцільних фігурах тієї самої глибини розрив
+був <b>0.1117</b>. На кільці зі стінкою в 2 пікселі він <b>0.5217</b> — майже
+впʼятеро більший. Мережа без скіпів на найтоншому кільці дає <b>0.1775</b>: вона
+його практично не бачить.</p>
+
+<p>Арифметика цього провалу проста, і її можна порахувати на пальцях. Мережа
+глибини 3 стискає полотно у вісім разів: одна клітинка карти дна відповідає
+квадрату 8 × 8 вхідних пікселів, тобто 64 пікселям. Скільки з них належить стінці
+завтовшки 2 пікселі? Смуга завширшки 2 через квадрат 8 × 8 — це близько 16
+пікселів, чверть площі. Клітинка, у якій чверть — предмет і три чверті — фон,
+після взяття переважного класу стає <b>фоном</b>. Кільце зникає ще до того, як
+декодер узагалі почав працювати.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Кільце: товщина стінки вирішує</p>
+  <p class="fig-sub">Повзунок міняє товщину стінки. Ліворуч — як це виглядає на
+    полотні 64 × 64, праворуч — IoU кільця цієї товщини у двох мереж глибини 3.</p>
+  <div class="panel">
+    <div><canvas id="cRing" width="940" height="340" aria-label="Кільце заданої товщини на полотні 64 на 64 і два стовпчики IoU: зі скіпами й без"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="wall7">товщина стінки, px <output id="rgOut">2</output></label>
+        <input type="range" id="wall7" min="1" max="3" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зі скіпами</b><i id="rg1">—</i></div>
+        <div class="cellv"><b>без скіпів</b><i id="rg2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>розрив</b><i id="rg3">—</i></div>
+      </div>
+      <div class="verdict" id="rgVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Зверни увагу на ліву колонку табло:</b> навіть зі скіпами кільце
+    в 1 піксель дається гірше (0.7052), ніж у 2 (0.8656). Одному пікселю ніде
+    помилитись: зсув передбачення на один крок обнуляє перетин.</figcaption>
+</figure>
+
+<p>Тепер про втрату. <a href="../29-semantic-segmentation/lecture.html">Тема 29</a>
+міряла втрати на суцільних фігурах; на тонкій структурі картина інша, бо
+крос-ентропія дивиться на кожен піксель окремо й легко змиряється з тим, щоб
+загубити 0.3 % полотна. <code>Dice</code> так не вміє: він рахує перекриття
+цілої фігури, тож утрата тонкої структури бʼє по ньому одразу.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>глибина</th><th>втрата</th><th>IoU предмета</th><th>стінка 1 px</th><th>стінка 3 px</th></tr>
+  <tr><td>2 рівні</td><td>крос-ентропія</td><td>0.9929 ±0.004</td><td>0.6536</td><td>0.8326</td></tr>
+  <tr><td>2 рівні</td><td>+ Dice</td><td>0.9973 ±0.002</td><td>0.6887</td><td>0.8375</td></tr>
+  <tr><td>3 рівні</td><td>крос-ентропія</td><td>0.9973 ±0.001</td><td>0.6891</td><td>0.8365</td></tr>
+  <tr class="hot"><td>3 рівні</td><td>+ Dice</td><td>0.9993 ±0.000</td><td><b>0.7052</b></td><td>0.8385</td></tr>
+</table></div>
+
+<p>Ефект є, але скромний, і його варто назвати чесно. Додавання <code>Dice</code>
+дає <b>+0.0351</b> на найтоншій стінці при глибині 2 і <b>+0.0161</b> при глибині
+3. На товстій стінці (3 пікселі) виграш падає до 0.005-0.002, тобто зникає в
+розкиді. Тобто <code>Dice</code> допомагає рівно там, де структура найтонша, — і
+тим менше, чим вона товща. Це логічно: чим більше в предмета нутрощів, тим менше
+крос-ентропія має шансів його проґавити.</p>
+
+<p>І окремо помітно, що глибина 3 краща за глибину 2 на кільці (0.7052 проти
+0.6887 на найтоншій стінці). Це вже не про скіпи: глибша мережа має ширше поле
+зору й краще розуміє, що перед нею кільце, а не дві дуги. Тобто стискання —
+не тільки шкода. Воно потрібне; шкода лише в тому, щоб <b>не повернути</b> втрачене.</p>
+
+<h2 id="s11"><span class="num">11 / Оригінал</span>Деталі оригіналу</h2>
+
+<p>Стаття 2015 року описувала мережу з двома особливостями, які майже ніхто вже не
+повторює. Перевірмо обидві — раптом їх викинули даремно.</p>
+
+<h3>Симетрія енкодера й декодера</h3>
+
+<p>В оригіналі декодер дзеркальний енкодеру: скільки каналів на спуску, стільки й
+на підйомі. Це виглядає красиво, але коштує: більша частина ваг мережі сидить саме
+в декодері, бо його блоки отримують подвоєні входи після конкатенації. Зробімо
+декодер удвічі тоншим.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>декодер</th><th>параметрів</th><th>mIoU</th><th>mIoU на межі</th><th>час</th></tr>
+  <tr><td>симетричний</td><td>68 510</td><td>0.9986 ±0.001</td><td>0.9956 ±0.004</td><td>10.7 с</td></tr>
+  <tr class="hot"><td>удвічі тонший</td><td>51 578</td><td>0.9968 ±0.002</td><td>0.9901 ±0.007</td><td>8.8 с</td></tr>
+</table></div>
+
+<p>Параметрів менше на <b>24.7 %</b>, а <code>mIoU</code> змінився на
+<b>−0.0018</b> при розкиді <b>0.0023</b>. Різниця, менша за розкид, різницею не є:
+<b>симетрія не обовʼязкова</b>. Це не дрібниця — на справжніх задачах чверть ваг
+означає чверть памʼяті й помітно швидший прохід. Сучасні реалізації U-Net так і
+роблять: тонкий декодер, товстий енкодер.</p>
+
+<h3>Дзеркальне доповнення на краях</h3>
+
+<p>Друга особливість тонша. Оригінальна U-Net працює <b>без</b> доповнення взагалі:
+кожна згортка 3 × 3 зʼїдає по пікселю з кожного боку, карта меншає, і вихідна
+маска виходить меншою за вхід (у статті — 388 × 388 із 572 × 572). Щоб дістати
+маску аж до краю зображення, автори доповнювали вхід <b>дзеркально</b>: відбивали
+смугу пікселів назовні, як у дзеркалі.</p>
+
+<p>Сучасні реалізації беруть <code>padding='same'</code> із нулями — простіше й
+маска одразу потрібного розміру. Але нуль на краю означає «тут чорне», а це
+неправда: там просто нічого не видно. Порівняймо, поглянувши окремо на смугу
+завширшки 3 пікселі вздовж краю зображення — вона накриває <b>17.87 %</b> полотна.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>доповнення</th><th>mIoU</th><th>mIoU на межі</th><th>точність на краю зображення</th></tr>
+  <tr><td>нулі (<code>same</code>)</td><td>0.9986 ±0.001</td><td>0.9956</td><td>0.9999 ±0.0001</td></tr>
+  <tr><td>дзеркальне</td><td>0.9990 ±0.001</td><td>0.9968</td><td>0.9996 ±0.0001</td></tr>
+</table></div>
+
+<div class="note warn"><b>Чесно: цей замір нічого не довів, і ось чому.</b>
+Обидва числа на краю — 0.9999 і 0.9996 — це фактично одиниця. Причина в наших
+даних: генератор ставить центри фігур так, щоб фігура цілком уміщалась у полотно,
+тож <b>предмети до краю не доходять</b>, і на всій смузі краю правильна відповідь
+майже завжди «фон». Мережа вгадує її з будь-яким доповненням. Замір без предметів
+на краю не має влади розрізнити два способи доповнення — це не результат «різниці
+немає», а результат «ми не мали чим міряти».</div>
+
+<p>Щоб зробити цей замір чесно, потрібні дані, де предмети <b>зрізані краєм</b> —
+такі й бувають на справжніх знімках, коли клітина не вміщається в кадр. Це
+хороше завдання: зміни генератор так, щоб фігури виходили за межі полотна, і
+переміряй. Ми навмисно лишаємо це відкритим, а не робимо вигляд, що відповідь
+отримано.</p>
+
+<p>Що ж лишилось від оригіналу в сучасних U-Net? Форма U, скіпи через
+конкатенацію й ідея навчання на шматках зображення — усе це на місці, і наш зошит
+теж навчається на випадкових шматках 32 × 32, а міряється на цілих сценах 64 × 64.
+Пішли: відсутність доповнення (незручно), сувора симетрія (дорого) і зважена
+втрата з розділенням дотичних клітин — задачу «два предмети поруч» тепер розвʼязують інакше, і про це тема 31.</p>
+
+<h2 id="s12"><span class="num">12 / Далі</span>Де U-Net сьогодні</h2>
+
+<p>Стаття про U-Net вийшла 2015 року й описувала сегментацію клітин на знімках
+електронного мікроскопа. Архітектура пережила свою задачу з великим запасом, і
+сьогодні її зустрічають далеко за межами сегментації. Коротко, без розгортання —
+кожен із цих напрямів заслуговує на власну тему.</p>
+
+<ul>
+  <li><b>Медичні знімки</b> — рідна ділянка. Судини, пухлини, зрізи томографа:
+    структури тонкі, розмітки мало, і скіпи там дають найбільше.</li>
+  <li><b>Дифузійні моделі.</b> Мережа, яка на кожному кроці прибирає трохи шуму із
+    зображення, майже завжди має форму U: вхід і вихід однакового розміру,
+    посередині стискання, збоку скіпи. Про це — тема 39 у блоці 8.</li>
+  <li><b>Реставрація й прибирання шуму.</b> Вхід — зіпсоване зображення, вихід —
+    чисте того самого розміру. Задача формою збігається із сегментацією, тільки
+    замість класів на виході яскравості.</li>
+  <li><b>Суперроздільність.</b> Те саме, але вихід більший за вхід; скіпи
+    переносять дрібні деталі, які не можна вигадати з нуля.</li>
+  <li><b>Голови сегментації в детекторах.</b> Тема 31 покаже, що маска окремого
+    предмета теж рахується маленькою мережею такої самої форми.</li>
+</ul>
+
+<p>Спільне в усіх випадках одне: <b>вихід має розмір входу, і в ньому важливі
+дрібні деталі</b>. Щойно задача виглядає так — форма U напрошується сама.</p>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Що з цього забрати</h2>
+
+<p>Коротко, по пунктах.</p>
+
+<ol class="steps">
+  <li><b>Скіп — це третій спосіб повернути роздільність.</b> Не «не стискати» і не
+    «розтягнути назад», а «взяти деталі там, де вони ще цілі».</li>
+  <li><b>Скіпи потрібні тоді, коли є що втрачати.</b> Порогова глибина —
+    вимірювана величина, і на своїх даних її треба міряти, а не вгадувати.</li>
+  <li><b>Скіпи зшивають, а не додають.</b> Конкатенація лишає обидва сигнали
+    окремими; додавання з теми 14 їх змішує.</li>
+  <li><b>Середня метрика приховує ефект.</b> Міряй окремо на смузі межі — там
+    живе вся різниця.</li>
+  <li><b>Скіпи роблять навчання передбачуванішим.</b> Це окремий виграш, який
+    видно тільки при кількох зернах.</li>
+</ol>
+
+<p>І тепер про те, чого ми <b>не</b> вміємо. Наша мережа фарбує кожен піксель
+класом. Постав поруч два кола, які торкаються, — і на виході буде одна суцільна
+пляма класу «коло». Пікселі всі до одного правильні, <code>mIoU</code> чудовий,
+а на питання «скільки тут кіл?» відповіді немає. Семантична сегментація за
+означенням не рахує предмети: вона не має поняття «окремий екземпляр».</p>
+
+<p>Детектор із блоку 5 це вміє — він видає рамку на кожен предмет, — але рамка не
+каже, які саме пікселі предметові належать. Виходить, у нас є дві половини
+відповіді, і жодна з них не повна. <a href="../31-instance-segmentation/lecture.html">Тема
+31</a> зшиває їх докупи: маска <b>для кожного предмета окремо</b>.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../29-semantic-segmentation/lecture.html"><span class="dir">попередня</span><span class="ttl">29. Семантична сегментація: FCN і DeepLab</span></a>
+    <a class="next" href="../31-instance-segmentation/lecture.html"><span class="dir">наступна</span><span class="ttl">31. Instance segmentation</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+/* «1 рівень», «2 рівні», «5 рівнів» — без цього підпис осі виглядає неписьменно */
+function lvlWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' рівень';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' рівні';
+  return n+' рівнів';
+}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+
+/* ═══════ числа теми — усі надруковані зошитом practice.ipynb ═══════ */
+var D = {
+  skip:{miou:[0.9969,0.9988,0.9986,0.9983], sd:[0.0025,0.0005,0.0013,0.0013],
+        band:[0.9904,0.9964,0.9956,0.9949], bsd:[0.0080,0.0020,0.0040,0.0040],
+        accb:[0.9953,0.9982,0.9979,0.9975]},
+  plain:{miou:[0.9778,0.9466,0.8869,0.7448], sd:[0.0112,0.0294,0.0125,0.0129],
+        band:[0.9325,0.8388,0.6742,0.4438], bsd:[0.0340,0.0890,0.0260,0.0260],
+        accb:[0.9652,0.9103,0.8069,0.6202]},
+  params:{skip:[3746,16790,68510,274478], plain:[3422,15170,61706,246938]},
+  gap:[0.0191,0.0523,0.1117,0.2535], gapBand:[0.0579,0.1576,0.3215,0.5511],
+  ceil:{miou:[1.0000,0.9324,0.8753,0.7760,0.6132],
+        band:[1.0000,0.8052,0.6547,0.4928,0.3801]},
+  merge:[
+    {tag:'cat', name:'конкатенація', miou:0.9986, sd:0.0013, band:0.9956, params:68510, time:10.7},
+    {tag:'+',   name:'додавання',    miou:0.9973, sd:0.0010, band:0.9918, params:61706, time:9.8},
+    {tag:'нічого', name:'без скіпа', miou:0.8869, sd:0.0125, band:0.6742, params:61706, time:9.2}
+  ],
+  abl:[
+    {tag:'усі', name:'усі три скіпи', on:[1,1,1], miou:0.9986, sd:0.0013, band:0.9956, loss:0, lossBand:0,
+     note:'Повний набір скіпів — база для порівняння.'},
+    {tag:'без 0', name:'без найдрібнішого', on:[0,1,1], miou:0.9597, sd:0.0330, band:0.8781, loss:0.0388, lossBand:0.1175,
+     note:'Це єдиний скіп, що несе край у повному розмірі 64×64. Розкид підскочив із 0.001 до 0.033: мережа стала ще й непередбачуваною.'},
+    {tag:'без 2', name:'без найглибшого', on:[1,1,0], miou:0.9979, sd:0.0010, band:0.9935, loss:0.0007, lossBand:0.0021,
+     note:'Він несе карту 16×16 — лише вдвічі детальнішу за ту, що приходить знизу. Втрата менша за розкид, тобто його там могло б і не бути.'},
+    {tag:'нема', name:'жодного скіпа', on:[0,0,0], miou:0.8869, sd:0.0125, band:0.6742, loss:0.1117, lossBand:0.3215,
+     note:'Декодер лишився сам на сам із картою 8×8, у якій межі вже немає.'}
+  ],
+  mergeGap:0.0012, mergeGapBand:0.0038,
+  ring:{skip:[0.7052,0.8656,0.8385], plain:[0.1775,0.3439,0.4599],
+        share:[0.30,0.47,0.54]}
+};
+
+/* ─────────── допоміжне: осі й сітка ─────────── */
+function axes(g,x0,y0,w,h,ymin,ymax,ylab,ticks){
+  var i,k,y;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  for(i=0;i<=ticks;i++){
+    k=ymin+(ymax-ymin)*i/ticks; y=y0+h-h*(k-ymin)/(ymax-ymin);
+    g.beginPath(); g.moveTo(x0,y); g.lineTo(x0+w,y); g.stroke();
+    capt(g,f2(k),x0-8,y+4,css('--soft'),10,false,'right');
+  }
+  capt(g,ylab,x0-8,y0-14,css('--soft'),10,false,'left');
+}
+
+/* ═══════════════ 1 · схема U-Net ═══════════════ */
+var lvl1=0;
+function drawSchema(){
+  var cv=I('cSchema'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var res=[64,32,16,8], ch=[6,12,24,48];
+  var xL=150, xR=W-150-190, bw=190, bh=44, top=52, gap=78;
+  var i, y;
+  var rose=css('--rose'), teal=css('--teal'), ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+
+  capt(g,'ЕНКОДЕР — стискаємо',xL,26,soft,11,true);
+  capt(g,'ДЕКОДЕР — розтягуємо назад',xR,26,soft,11,true);
+
+  for(i=0;i<4;i++){
+    y=top+i*gap;
+    var sel=(lvl1===i);
+    /* енкодер */
+    g.fillStyle=sel?css('--rose-w'):css('--paper');
+    g.strokeStyle=sel?rose:hair; g.lineWidth=sel?2:1;
+    g.beginPath(); g.rect(xL,y,bw,bh); g.fill(); g.stroke();
+    capt(g,i<3?('рівень '+i):'дно',xL+12,y+17,sel?rose:soft,10,sel);
+    capt(g,res[i]+'×'+res[i]+' · '+ch[i]+' кан.',xL+12,y+34,sel?rose:ink,12,sel);
+    if(i<3){
+      /* декодер */
+      g.fillStyle=sel?css('--teal-w'):css('--paper');
+      g.strokeStyle=sel?teal:hair; g.lineWidth=sel?2:1;
+      g.beginPath(); g.rect(xR,y,bw,bh); g.fill(); g.stroke();
+      capt(g,'рівень '+i,xR+12,y+17,sel?teal:soft,10,sel);
+      capt(g,res[i]+'×'+res[i]+' · '+ch[i]+' кан.',xR+12,y+34,sel?teal:ink,12,sel);
+      /* скіп */
+      g.strokeStyle=sel?rose:hair; g.lineWidth=sel?2.5:1.5;
+      g.setLineDash(sel?[]:[4,4]);
+      g.beginPath(); g.moveTo(xL+bw+6,y+bh/2); g.lineTo(xR-6,y+bh/2); g.stroke();
+      g.setLineDash([]);
+      /* стрілка */
+      g.fillStyle=sel?rose:hair;
+      g.beginPath(); g.moveTo(xR-6,y+bh/2); g.lineTo(xR-16,y+bh/2-5); g.lineTo(xR-16,y+bh/2+5); g.fill();
+      capt(g,'скіп: '+gr(res[i]*res[i]*ch[i])+' чисел',(xL+bw+xR)/2,y+bh/2-10,sel?rose:soft,11,sel,'center');
+    }
+    /* вертикальні стрілки стискання/розтягу */
+    if(i<3){
+      g.strokeStyle=hair; g.lineWidth=1.5;
+      g.beginPath(); g.moveTo(xL+bw/2,y+bh); g.lineTo(xL+bw/2,y+gap); g.stroke();
+      capt(g,'пулінг ↓2',xL+bw/2+8,y+bh+20,soft,10);
+      g.beginPath(); g.moveTo(xR+bw/2,y+gap); g.lineTo(xR+bw/2,y+bh); g.stroke();
+      capt(g,'ConvT ↑2',xR+bw/2+8,y+bh+20,soft,10);
+    }
+  }
+  /* дно вниз-праворуч */
+  y=top+3*gap;
+  g.strokeStyle=hair; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(xL+bw+6,y+bh/2); g.lineTo(xR+bw/2,y+bh/2); g.lineTo(xR+bw/2,y-gap+bh); g.stroke();
+
+  var pix=res[lvl1]*res[lvl1]*ch[lvl1];
+  I('sc1').textContent=res[lvl1]+'×'+res[lvl1];
+  I('sc2').textContent=ch[lvl1];
+  I('sc3').textContent=gr(pix);
+  if(lvl1===3){
+    I('sc4').textContent='немає';
+    verd('scVd','t-mid','ДНО','Найглибша карта: 8×8, 48 каналів. Тут найбільше знання про те, <b>що</b> на сцені, і найменше про те, <b>де</b> саме — один її піксель відповідає квадрату 8×8 входу.');
+  }else{
+    I('sc4').textContent=gr(pix)+' → cat';
+    verd('scVd', lvl1===0?'t-ok':'t-mid', 'РІВЕНЬ '+lvl1,
+      'Карта '+res[lvl1]+'×'+res[lvl1]+' іде скіпом напряму в декодер і <b>зшивається</b> з тим, що прийшло знизу: каналів стає '+ch[lvl1]+' + '+ch[lvl1]+' = '+(2*ch[lvl1])+'. '+
+      (lvl1===0?'Це найдрібніший рівень — межа предмета тут ще в повному розмірі.':'Роздільність уже впала в '+Math.pow(2,lvl1)+' рази.'));
+  }
+}
+
+/* ═══════════════ 2 · порогова глибина ═══════════════ */
+var dep2=3;
+function drawDepth(){
+  var cv=I('cDepth'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var x0=70,y0=40,w=W-140,h=H-100, i,x,y;
+  axes(g,x0,y0,w,h,0,1,'mIoU на перевірці',5);
+  function px(i){return x0+w*(i+0.5)/4;}
+  function py(v){return y0+h-h*v;}
+  var rose=css('--rose'), teal=css('--teal');
+  var sets=[{d:D.skip,c:teal,n:'зі скіпами'},{d:D.plain,c:rose,n:'без скіпів'}];
+  var s,k;
+  for(s=0;s<2;s++){
+    var S=sets[s];
+    g.strokeStyle=S.c; g.lineWidth=2; g.beginPath();
+    for(i=0;i<4;i++){ x=px(i); y=py(S.d.miou[i]); if(i===0) g.moveTo(x,y); else g.lineTo(x,y); }
+    g.stroke();
+    for(i=0;i<4;i++){
+      x=px(i);
+      /* вуса розкиду */
+      g.strokeStyle=S.c; g.lineWidth=1.5;
+      g.beginPath(); g.moveTo(x,py(S.d.miou[i]-S.d.sd[i])); g.lineTo(x,py(S.d.miou[i]+S.d.sd[i])); g.stroke();
+      g.beginPath(); g.moveTo(x-5,py(S.d.miou[i]-S.d.sd[i])); g.lineTo(x+5,py(S.d.miou[i]-S.d.sd[i])); g.stroke();
+      g.beginPath(); g.moveTo(x-5,py(S.d.miou[i]+S.d.sd[i])); g.lineTo(x+5,py(S.d.miou[i]+S.d.sd[i])); g.stroke();
+      g.fillStyle=S.c; g.beginPath(); g.arc(x,py(S.d.miou[i]),(i===dep2-1)?6:4,0,6.284); g.fill();
+    }
+  }
+  /* підсвітка обраної глибини */
+  x=px(dep2-1);
+  g.strokeStyle=css('--amber'); g.lineWidth=1; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(x,y0); g.lineTo(x,y0+h); g.stroke(); g.setLineDash([]);
+  for(i=0;i<4;i++) capt(g,lvlWord(i+1),px(i),y0+h+20,css('--soft'),11,i===dep2-1,'center');
+  capt(g,'● зі скіпами',x0,y0+h+44,teal,11,true);
+  capt(g,'● без скіпів',x0+130,y0+h+44,rose,11,true);
+  capt(g,'глибина стискання',x0+w,y0+h+44,css('--soft'),11,false,'right');
+
+  var i0=dep2-1;
+  var gap=D.gap[i0];
+  var spread=Math.max(D.skip.sd[i0],D.plain.sd[i0]);
+  I('dp1').textContent=f4(D.skip.miou[i0])+' ±'+f3(D.skip.sd[i0]);
+  I('dp2').textContent=f4(D.plain.miou[i0])+' ±'+f3(D.plain.sd[i0]);
+  I('dp3').textContent=sgn(gap);
+  I('dp4').textContent=f3(spread);
+  I('dpOut').textContent=dep2;
+  var ratio=gap/spread;
+  if(ratio>3) verd('dpVd','t-no','СКІПИ ВИРІШУЮТЬ','Розрив '+f4(gap)+' перевищує розкид по зернах ('+f3(spread)+') у '+f2(ratio)+' раза. Стискання в '+Math.pow(2,dep2)+' разів забирає стільки, що без скіпів декодер цього вже не відновлює.');
+  else if(ratio>1) verd('dpVd','t-mid','РІЗНИЦЯ Є, АЛЕ МАЛА','Розрив '+f4(gap)+' більший за розкид ('+f3(spread)+') лише в '+f2(ratio)+' раза. Скіпи допомагають, але без них тут ще можна жити: стискання в '+Math.pow(2,dep2)+' рази губить небагато.');
+  else verd('dpVd','t-ok','РІЗНИЦІ НЕ ВИЯВЛЕНО','Розрив '+f4(gap)+' менший за розкид по зернах ('+f3(spread)+'). Різниця, менша за розкид, різницею не є.');
+}
+
+/* ═══════════════ 3 · межа проти нутрощів ═══════════════ */
+var met3=0;
+function drawBand(){
+  var cv=I('cBand'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var keys=['miou','band','accb'], names=['mIoU по всіх пікселях','mIoU на смузі межі','точність на смузі межі'];
+  var k=keys[met3];
+  var x0=70,y0=46,w=W-140,h=H-110, i;
+  axes(g,x0,y0,w,h,0,1,names[met3],5);
+  var gw=w/4, bw=Math.min(52,gw*0.28);
+  var teal=css('--teal'), rose=css('--rose');
+  for(i=0;i<4;i++){
+    var cx=x0+gw*(i+0.5);
+    var a=D.skip[k][i], b=D.plain[k][i];
+    g.fillStyle=teal; g.fillRect(cx-bw-4,y0+h-h*a,bw,h*a);
+    g.fillStyle=rose; g.fillRect(cx+4,y0+h-h*b,bw,h*b);
+    capt(g,f3(a),cx-bw/2-4,y0+h-h*a-6,teal,11,true,'center');
+    capt(g,f3(b),cx+bw/2+4,y0+h-h*b-6,rose,11,true,'center');
+    capt(g,lvlWord(i+1),cx,y0+h+20,css('--soft'),11,false,'center');
+    capt(g,'розрив '+sgn(met3===0?D.gap[i]:(met3===1?D.gapBand[i]:(D.skip.accb[i]-D.plain.accb[i]))),cx,y0+h+38,css('--ink'),11,true,'center');
+  }
+  capt(g,'■ зі скіпами',x0+w-230,y0-18,teal,11,true);
+  capt(g,'■ без скіпів',x0+w-110,y0-18,rose,11,true);
+
+  var gAll=D.gap, gBand=D.gapBand;
+  var worst=0; for(i=1;i<4;i++) if(gBand[i]>gBand[worst]) worst=i;
+  I('bd1').textContent=f4(gAll[worst]);
+  I('bd2').textContent=f4(gBand[worst]);
+  I('bd3').textContent=f2(gBand[worst]/gAll[worst])+' ×';
+  if(met3===0) verd('bdVd','t-mid','СЕРЕДНЄ ЗГЛАДЖУЄ','Загальний mIoU рахується по всіх пікселях, а майже всі пікселі предмета лежать глибоко всередині — там обидві мережі праві. Найбільший розрив тут '+f4(gAll[worst])+'.');
+  else if(met3===1) verd('bdVd','t-no','МЕЖА ПОКАЗУЄ БІЛЬШЕ','Та сама пара мереж на смузі межі: найбільший розрив '+f4(gBand[worst])+' проти '+f4(gAll[worst])+' у загальному mIoU, тобто в '+f2(gBand[worst]/gAll[worst])+' раза більший. Різниця жила саме там.');
+  else verd('bdVd','t-no','НАВІТЬ ПО ПІКСЕЛЯХ','Проста частка правильних пікселів — але тільки на смузі межі. Вона теж провалюється без скіпів, хоча на всьому полотні обидві мережі дали б схожі числа.');
+}
+
+/* ═══════════════ 4 · що втрачається при стисканні ═══════════════ */
+var lvl4=3;
+var SCENE=(function(){
+  var a=new Int8Array(64*64), x,y;
+  function put(cx,cy,r,cls,kind){
+    for(y=0;y<64;y++) for(x=0;x<64;x++){
+      var ok=false;
+      if(kind===0) ok=(x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r;
+      else if(kind===1) ok=Math.abs(x-cx)<=r && Math.abs(y-cy)<=r;
+      else ok=(y-cy+r>=0)&&(y-cy<=r)&&(Math.abs(x-cx)<=(y-cy+r)/2);
+      if(ok) a[y*64+x]=cls;
+    }
+  }
+  put(17,18,8,1,0); put(46,20,7,1,1); put(30,46,9,1,2);
+  return a;
+})();
+function reduceScene(k){
+  if(k===1) return SCENE.slice(0);
+  var out=new Int8Array(64*64), bx,by,x,y,c,best,bestn,cnt;
+  for(by=0;by<64;by+=k) for(bx=0;bx<64;bx+=k){
+    cnt=[0,0,0,0];
+    for(y=by;y<by+k;y++) for(x=bx;x<bx+k;x++) cnt[SCENE[y*64+x]]++;
+    best=0; bestn=-1;
+    for(c=0;c<4;c++) if(cnt[c]>bestn){bestn=cnt[c]; best=c;}
+    for(y=by;y<by+k;y++) for(x=bx;x<bx+k;x++) out[y*64+x]=best;
+  }
+  return out;
+}
+function iouScene(a,b){
+  var c,inter,uni,vals=[],i;
+  for(c=0;c<2;c++){
+    inter=0; uni=0;
+    for(i=0;i<64*64;i++){ if(a[i]===c&&b[i]===c) inter++; if(a[i]===c||b[i]===c) uni++; }
+    if(uni>0) vals.push(inter/uni);
+  }
+  var s=0; for(i=0;i<vals.length;i++) s+=vals[i];
+  return s/vals.length;
+}
+function paintMask(g,arr,x0,y0,px){
+  var cols=[css('--paper'),css('--teal'),css('--amber'),css('--rose')];
+  var x,y;
+  for(y=0;y<64;y++) for(x=0;x<64;x++){
+    g.fillStyle=cols[arr[y*64+x]];
+    g.fillRect(x0+x*px,y0+y*px,px,px);
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(x0-0.5,y0-0.5,64*px+1,64*px+1);
+}
+function drawLoss(){
+  var cv=I('cLoss'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var k=Math.pow(2,lvl4);
+  var red=reduceScene(k);
+  var px=4, x1=60, x2=W-60-64*px, y=52;
+  paintMask(g,SCENE,x1,y,px);
+  paintMask(g,red,x2,y,px);
+  capt(g,'еталонна маска 64×64',x1,y-14,css('--soft'),12,true);
+  capt(g,'відновлена лише з рівня '+lvl4+' ('+(64/k)+'×'+(64/k)+')',x2,y-14,css('--rose'),12,true);
+  var mid=(x1+64*px+x2)/2;
+  capt(g,'стиснення',mid,y+120,css('--soft'),11,false,'center');
+  capt(g,k+' ×',mid,y+142,css('--ink'),18,true,'center');
+  var v=iouScene(SCENE,red);
+  capt(g,'mIoU цієї сцени',mid,y+180,css('--soft'),11,false,'center');
+  capt(g,f4(v),mid,y+200,css('--rose'),16,true,'center');
+
+  I('ls1').textContent=(64/k)+'×'+(64/k);
+  I('ls2').textContent=f4(D.ceil.miou[lvl4]);
+  I('ls3').textContent=f4(D.ceil.band[lvl4]);
+  I('lsOut').textContent=lvl4;
+  if(lvl4===0) verd('lsVd','t-ok','ВТРАТ НЕМАЄ','Рівень 0 — повна роздільність. Саме звідси йде найдрібніший скіп.');
+  else if(D.ceil.miou[lvl4]>0.85) verd('lsVd','t-ok','ВТРАТИ МАЛІ','З карти '+(64/k)+'×'+(64/k)+' ідеальний декодер відновив би mIoU '+f4(D.ceil.miou[lvl4])+'. Це стеля — і вона ще висока, тож без скіпів обійтися можна.');
+  else if(D.ceil.miou[lvl4]>0.70) verd('lsVd','t-mid','ВТРАТИ ПОМІТНІ','Стеля впала до '+f4(D.ceil.miou[lvl4])+', а на смузі межі — до '+f4(D.ceil.band[lvl4])+'. Кути й тонкі місця вже не відновлюються.');
+  else verd('lsVd','t-no','ВТРАЧЕНО БАГАТО','Стеля '+f4(D.ceil.miou[lvl4])+', на межі '+f4(D.ceil.band[lvl4])+'. У сцені ліворуч не вціліла жодна клітинка: предмет радіусом 6-10 пікселів просто не переважає у квадраті 16 × 16, тож усе стало фоном.');
+}
+
+/* ═══════════════ 5 · зшити, додати чи нічого ═══════════════ */
+var mrg5=0;
+function f1s(v){return (Math.round(v*10)/10).toFixed(1);}
+function drawMerge(){
+  var cv=I('cMerge'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var teal=css('--teal'), rose=css('--rose'), soft=css('--soft'), ink=css('--ink'), amber=css('--amber');
+  var cw=24, chh=50, y=74, x0=70;
+  function stack(x,yy,n,color,label){
+    var i;
+    for(i=0;i<n;i++){
+      g.fillStyle=(i%2)?color:css('--paper');
+      g.globalAlpha=0.8; g.fillRect(x+i*cw*0.55,yy,cw,chh); g.globalAlpha=1;
+      g.strokeStyle=color; g.lineWidth=1; g.strokeRect(x+i*cw*0.55,yy,cw,chh);
+    }
+    capt(g,label,x,yy-9,color,11,true);
+    return x+(n-1)*cw*0.55+cw;
+  }
+  var e1=stack(x0,y,6,teal,'знизу: 24 канали');
+  var e2=(mrg5===2)?0:stack(x0,y+108,6,rose,'скіп: 24 канали');
+  if(mrg5===2) capt(g,'скіпа немає',x0,y+108+chh/2,soft,12,true);
+  var xm=W/2+70;
+  var titles=['cat( ) — канали складаються в один стос',
+              '+ — канали додаються поелементно',
+              'декодер бере тільки те, що знизу'];
+  capt(g,titles[mrg5],x0,32,ink,13,true);
+  if(mrg5===0){
+    stack(xm,y+54,12,amber,'разом: 48 каналів');
+    capt(g,'кожен канал лишається собою;',xm,y+150,soft,11);
+    capt(g,'наступна згортка дає їм різні ваги',xm,y+166,soft,11);
+  }else if(mrg5===1){
+    stack(xm,y+54,6,amber,'разом: 24 канали');
+    capt(g,'два сигнали злились в одне число;',xm,y+150,soft,11);
+    capt(g,'розділити їх уже нічим',xm,y+166,soft,11);
+  }else{
+    stack(xm,y+54,6,amber,'разом: 24 канали');
+    capt(g,'рання карта нікуди не пішла —',xm,y+150,soft,11);
+    capt(g,'декодер її просто не бачить',xm,y+166,soft,11);
+  }
+  g.strokeStyle=soft; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(e1+12,y+chh/2); g.lineTo(xm-14,y+80); g.stroke();
+  if(mrg5!==2){
+    g.beginPath(); g.moveTo(e2+12,y+108+chh/2); g.lineTo(xm-14,y+80); g.stroke();
+  }
+
+  var m=D.merge[mrg5];
+  I('mg1').textContent=f4(m.miou)+' ±'+f3(m.sd);
+  I('mg2').textContent=f4(m.band);
+  I('mg3').textContent=gr(m.params);
+  I('mg4').textContent=f1s(m.time)+' с';
+  var dm=D.mergeGap;
+  var spread=Math.max(D.merge[0].sd,D.merge[1].sd);
+  if(mrg5===0) verd('mgVd','t-ok','КОНКАТЕНАЦІЯ',
+      'Так робить U-Net. Параметрів на '+f1s(100*(D.merge[0].params/D.merge[1].params-1))+
+      ' % більше, ніж при додаванні, а виграє вона '+f4(dm)+' — рівно на рівні розкиду '+f3(spread)+'.');
+  else if(mrg5===1) verd('mgVd','t-ok','ДОДАВАННЯ',
+      'Так робить залишковий блок ResNet (тема 14). Це менше на '+gr(D.merge[0].params-D.merge[1].params)+
+      ' параметрів і швидше на '+f1s(D.merge[0].time-D.merge[1].time)+' с на навчанні, а програш — '+
+      f4(dm)+' при розкиді '+f3(spread)+', тобто в межах шуму.');
+  else verd('mgVd','t-no','БЕЗ СКІПА',
+      'А ось це коштує по-справжньому: '+f4(D.gap[2])+' mIoU і '+f4(D.gapBand[2])+
+      ' на межі — майже в сто разів більше за різницю між першими двома способами.');
+}
+
+/* ═══════════════ 6 · прибрати скіп ═══════════════ */
+var abl6=0;
+function drawAbl(){
+  var cv=I('cAbl'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cfg=D.abl[abl6];
+  var res=[64,32,16], xL=70, xR=380, bw=150, bh=36, top=58, gap=62, i, y;
+  var rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), soft=css('--soft'),
+      ink=css('--ink'), paper=css('--paper');
+  capt(g,'енкодер',xL,36,soft,11,true);
+  capt(g,'декодер',xR,36,soft,11,true);
+  for(i=0;i<3;i++){
+    y=top+i*gap;
+    g.fillStyle=paper; g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.rect(xL,y,bw,bh); g.fill(); g.stroke();
+    capt(g,'рівень '+i+' · '+res[i]+'×'+res[i],xL+10,y+23,ink,11);
+    g.fillStyle=paper; g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.rect(xR,y,bw,bh); g.fill(); g.stroke();
+    capt(g,'рівень '+i+' · '+res[i]+'×'+res[i],xR+10,y+23,ink,11);
+    var alive=cfg.on[i];
+    g.strokeStyle=alive?teal:hair; g.lineWidth=alive?2.5:1.2;
+    g.setLineDash(alive?[]:[4,4]);
+    g.beginPath(); g.moveTo(xL+bw+6,y+bh/2); g.lineTo(xR-6,y+bh/2); g.stroke();
+    g.setLineDash([]);
+    if(!alive){
+      var mx=(xL+bw+xR)/2;
+      g.strokeStyle=rose; g.lineWidth=2.5;
+      g.beginPath(); g.moveTo(mx-9,y+bh/2-9); g.lineTo(mx+9,y+bh/2+9); g.stroke();
+      g.beginPath(); g.moveTo(mx+9,y+bh/2-9); g.lineTo(mx-9,y+bh/2+9); g.stroke();
+    }
+  }
+  /* стовпчики: шкала врізана, інакше різниці не видно зовсім */
+  var bx=620, bw2=50, hmax=170, byy=64, k, lo=0.85;
+  capt(g,'mIoU, шкала від 0.85',bx,byy-26,soft,11,true);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(bx-12,byy+hmax+0.5); g.lineTo(bx+4*(bw2+16),byy+hmax+0.5); g.stroke();
+  for(k=0;k<D.abl.length;k++){
+    var v=D.abl[k].miou, hh=hmax*(v-lo)/(1-lo);
+    var x=bx+k*(bw2+16);
+    g.fillStyle=(k===abl6)?rose:hair;
+    g.fillRect(x,byy+hmax-hh,bw2,hh);
+    capt(g,f3(v),x+bw2/2,byy+hmax-hh-7,(k===abl6)?rose:soft,11,k===abl6,'center');
+    capt(g,D.abl[k].tag,x+bw2/2,byy+hmax+16,(k===abl6)?ink:soft,10,k===abl6,'center');
+  }
+  I('ab1').textContent=f4(cfg.miou)+' ±'+f3(cfg.sd);
+  I('ab2').textContent=f4(cfg.band);
+  I('ab3').textContent=sgn(-cfg.loss);
+  var loss=cfg.loss;
+  if(abl6===0) verd('abVd','t-ok','УСІ ТРИ','Повний набір скіпів — база для порівняння: mIoU '+f4(cfg.miou)+', на межі '+f4(cfg.band)+'.');
+  else verd('abVd', loss>0.05?'t-no':(loss>0.005?'t-mid':'t-ok'), cfg.name.toUpperCase(),
+      'Втрата від повного набору: '+f4(loss)+' mIoU, на межі '+f4(cfg.lossBand)+'. '+cfg.note);
+}
+
+/* ═══════════════ 7 · кільце ═══════════════ */
+var wall7=2;
+function drawRing(){
+  var cv=I('cRing'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var arr=new Int8Array(64*64), x,y,d2,r=13,inner=Math.max(1,r-wall7);
+  for(y=0;y<64;y++) for(x=0;x<64;x++){
+    d2=(x-32)*(x-32)+(y-32)*(y-32);
+    if(d2<=r*r && d2>inner*inner) arr[y*64+x]=3;
+  }
+  var px=4;
+  paintMask(g,arr,60,52,px);
+  capt(g,'кільце зі стінкою '+wall7+' px',60,38,css('--rose'),12,true);
+  var cnt=0,i; for(i=0;i<64*64;i++) if(arr[i]) cnt++;
+  capt(g,'пікселів у стінці: '+cnt,60,52+64*px+22,css('--soft'),11);
+
+  var a=D.ring.skip[wall7-1], b=D.ring.plain[wall7-1];
+  var bx=420, bw=90, hmax=190, byy=62;
+  capt(g,'IoU кільця цієї товщини',bx,byy-16,css('--soft'),11,true);
+  var teal=css('--teal'), rose=css('--rose');
+  g.fillStyle=teal; g.fillRect(bx,byy+hmax-hmax*a,bw,hmax*a);
+  capt(g,f4(a),bx+bw/2,byy+hmax-hmax*a-8,teal,13,true,'center');
+  capt(g,'зі скіпами',bx+bw/2,byy+hmax+18,teal,11,true,'center');
+  g.fillStyle=rose; g.fillRect(bx+bw+40,byy+hmax-hmax*b,bw,hmax*b);
+  capt(g,f4(b),bx+bw+40+bw/2,byy+hmax-hmax*b-8,rose,13,true,'center');
+  capt(g,'без скіпів',bx+bw+40+bw/2,byy+hmax+18,rose,11,true,'center');
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(bx-10,byy+hmax+0.5); g.lineTo(bx+2*bw+50,byy+hmax+0.5); g.stroke();
+
+  I('rg1').textContent=f4(a);
+  I('rg2').textContent=f4(b);
+  I('rg3').textContent=sgn(a-b);
+  I('rgOut').textContent=wall7;
+  var gapv=a-b;
+  var cellShare=wall7*12.5;
+  if(gapv>0.3) verd('rgVd','t-no','БЕЗ СКІПІВ КІЛЬЦЕ ЗНИКАЄ','Стінка завтовшки '+wall7+' px займає в клітинці 8 × 8 близько '+f1s(cellShare)+' % площі — переважним класом лишається фон, і після стискання від кільця не лишається нічого. Розрив '+f4(gapv)+'.');
+  else if(gapv>0.1) verd('rgVd','t-mid','РОЗРИВ ВЕЛИКИЙ','Стінка '+wall7+' px ще вгадується з грубої карти, але неточно: розрив '+f4(gapv)+'.');
+  else verd('rgVd','t-ok','ТОВСТА СТІНКА ПРОБАЧАЄ','При товщині '+wall7+' px структура переживає стискання: розрив усього '+f4(gapv)+'.');
+}
+
+/* ═══════════════ звʼязування ═══════════════ */
+segment('segSchema', function(i){ lvl1=i; drawSchema(); });
+on('depth2','input', function(){ dep2=+I('depth2').value; drawDepth(); });
+segment('segBand', function(i){ met3=i; drawBand(); });
+on('lvl4','input', function(){ lvl4=+I('lvl4').value; drawLoss(); });
+segment('segMerge', function(i){ mrg5=i; drawMerge(); });
+segment('segAbl', function(i){ abl6=i; drawAbl(); });
+on('wall7','input', function(){ wall7=+I('wall7').value; drawRing(); });
+
+function drawAll(){ drawSchema(); drawDepth(); drawBand(); drawLoss(); drawMerge(); drawAbl(); drawRing(); }
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+})();
+</script>
+
+</body>
+</html>

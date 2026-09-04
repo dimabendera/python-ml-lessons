@@ -1,0 +1,1880 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlexNet і VGG: де насправді сидять ваги перших глибоких мереж</title>
+<meta name="description" content="AlexNet і VGG по шарах, порахованих локально через torchvision з weights=None. Що саме сталося на ImageNet 2012, чому перше ядро було 11 на 11 з кроком 4, звідки взялися дві гілки і куди вони зникли, чому VGG зробила всі ядра 3 на 3. Головне число: 123 642 856 із 138 мільйонів параметрів VGG16 сидять у трьох повнозвʼязних шарах голови. Памʼять, час проходу, рецептивне поле — усе заміряно.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+/* рядок голови мережі — підсвічуємо, бо саме він і є відкриттям теми */
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* блок коду мережі в тексті: моноширинний, зі збереженням відступів */
+pre.arch{font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.6;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 18px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow)}
+pre.arch b{color:var(--rose); font-weight:700}
+pre.arch i{color:var(--soft); font-style:normal}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 3 · Тема 13</p>
+    <h1>AlexNet і VGG</h1>
+    <p class="stand">Дві мережі, з яких почалась сучасна історія зору. Їх памʼятають як
+      «перші глибокі». Але якщо порахувати, де в них лежать ваги, виявиться, що глибина
+      тут майже ні до чого.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Що сталося у 2012</a></li>
+        <li><a href="#s2">AlexNet по шарах</a></li>
+        <li><a href="#s3">Ядро 11×11 з кроком 4</a></li>
+        <li><a href="#s4">Дві гілки — не ідея, а вимушеність</a></li>
+        <li><a href="#s5">VGG: одна ідея замість набору рішень</a></li>
+        <li><a href="#s6">Два 3×3 замість одного 5×5</a></li>
+        <li><a href="#s7">Де сидять ваги</a></li>
+        <li><a href="#s8">Скільки це коштує насправді</a></li>
+        <li><a href="#s9">Що з цього померло</a></li>
+        <li><a href="#s10">Що з цього лишилось</a></li>
+        <li><a href="#s11">Підсумок</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../12-transfer-learning/lecture.html">← 12. Перенос навчання</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../14-resnet/lecture.html">14. ResNet і скіп-зʼєднання →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Сім тем поспіль ми будували маленькі мережі. Наша <a
+href="../09-cnn-complete/lecture.html">ShapeNet із теми 09</a> має три блоки, 24 774
+параметри й уміщається на одному аркуші — її можна порахувати рукою, і ми це робили.
+<a href="../12-transfer-learning/lecture.html">Тема 12</a> закінчилася обіцянкою:
+справжні архітектури вирішують ті самі задачі зовсім іншими засобами. Час подивитись,
+як саме.</p>
+
+<p>Починається все з 2012 року й двох мереж — <strong>AlexNet</strong> і
+<strong>VGG</strong>. Про них у кожному підручнику написано те саме: вони довели, що
+глибина працює. Це правда, але не вся. У цій темі ми розберемо обидві по шарах через
+<code>torchvision</code>, порахуємо кожну вагу — і дійдемо до числа, яке в підручниках
+згадують рідко.</p>
+
+<div class="note"><b>Головне число теми, наперед.</b> У VGG16 сто тридцять вісім
+мільйонів параметрів. Із них <strong>123 642 856 — майже 124 мільйони — сидять у трьох
+повнозвʼязних шарах голови</strong>. Мережа, відома як приклад глибокої
+<em>згорткової</em> архітектури, на 89,4 % складається зі звичайних повнозвʼязних ваг.
+Звідки це береться і що з цим зробили далі — і є сюжет теми.</div>
+
+<div class="note warn"><b>Мережа не потрібна.</b> Виклик
+<code>torchvision.models.vgg16(weights=None)</code> будує архітектуру
+<strong>локально</strong>: створює всі шари, розставляє форми, ініціалізує ваги
+випадковими числами — і нічого не завантажує. Тому кожне число цієї теми ти можеш
+відтворити на машині без інтернету. Ваги ImageNet ми не тягнемо жодного разу; там, де
+потрібна точність навчених мереж, ми цитуємо її з літератури й прямо про це кажемо.</div>
+
+<h2 id="s1"><span class="num">01 / 2012</span>Що сталося у 2012</h2>
+
+<p>Щоб зрозуміти, чому один рік розвернув цілу галузь, треба спершу зрозуміти задачу.</p>
+
+<p><strong>ImageNet</strong> — набір фотографій, зібраний до 2009 року. На щорічному
+змаганні ILSVRC використовували його частину: <strong>тисяча класів</strong> і
+<strong>близько 1,2 мільйона</strong> навчальних зображень, ще 50 тисяч на перевірку.
+Класи дрібні й неприємні: не «собака», а сто двадцять окремих порід; не «гриб», а
+десятки видів. Людина на цій задачі помиляється приблизно в 5 % випадків — і це не
+фігура мови, а заміряне число, отримане на людях, які спеціально тренувалися.</p>
+
+<p>Міряли <strong>top-5 помилку</strong>. Модель називає пʼять найімовірніших класів;
+якщо правильної відповіді немає в цій пʼятірці — помилка. Пʼять, а не один, саме
+через дрібність класів: відрізнити ескімоського шпіца від маламута важко й людині.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>рік</th><th>переможець</th><th>top-5 помилка</th></tr></thead>
+  <tbody>
+    <tr><td>2010</td><td>класичні ознаки</td><td>28.2 %</td></tr>
+    <tr><td>2011</td><td>класичні ознаки</td><td>25.8 %</td></tr>
+    <tr class="hot"><td>2012</td><td>AlexNet</td><td>15.3 %</td></tr>
+    <tr><td>2012</td><td>друге місце, класичні ознаки</td><td>26.2 %</td></tr>
+    <tr><td>2014</td><td>VGG (друге місце) / GoogLeNet</td><td>7.3 % / 6.7 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Придивись до рядків 2012 року. Річний прогрес до того був два-три відсоткові пункти.
+AlexNet виграла <strong>з відривом майже в одинадцять пунктів</strong> від другого
+місця — і друге місце при цьому не осоромилось, воно було на рівні минулорічного
+переможця. Розрив був такий, що заперечувати його не вийшло.</p>
+
+<p>Що саме перемогло? Тут починається міфологія, тому назвемо речі по черзі — і чесно
+скажемо, що з цього було новим.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Складник</th><th>Що це дало</th><th>Чи було новим</th></tr></thead>
+  <tbody>
+    <tr><td>Дані</td><td>1,2 мільйона розмічених фотографій замість тисяч</td><td><strong>Ні.</strong> ImageNet зібрали за три роки до того. Просто ніхто не мав чим його переварити</td></tr>
+    <tr><td>Відеокарти</td><td>Дві GTX 580 по 3 ГБ, навчання за 5-6 днів замість місяців</td><td><strong>Ні</strong> як ідея, <strong>так</strong> як реалізація: автори написали власні згорткові ядра під GPU</td></tr>
+    <tr><td><code>ReLU</code></td><td>Навчання в кілька разів швидше за сигмоїду</td><td><strong>Ні.</strong> Функція відома давно, але саме тут стала стандартом</td></tr>
+    <tr><td>Дропаут</td><td>Мережа на 61 мільйон ваг перестала просто запамʼятовувати</td><td><strong>Майже.</strong> Описаний того самого 2012 року</td></tr>
+    <tr><td>Аугментація</td><td>Випадкові вирізи 224×224 з кадру 256×256 і віддзеркалення — у 2048 разів більше прикладів</td><td><strong>Ні.</strong> Але саме тут без неї нічого б не вийшло</td></tr>
+  </tbody>
+</table></div>
+
+<p>Отже, майже нічого нового. Це важливо сказати прямо: <strong>AlexNet виграла не
+винаходом, а поєднанням і масштабом</strong>. Усі складники лежали на столі — бракувало
+людини, яка зібрала б їх разом і мала терпіння шість днів чекати.</p>
+
+<p>Дві речі з цієї таблиці ти вже вмієш робити руками. <a
+href="../10-augmentation/lecture.html">Аугментацію</a> ми розбирали в темі 10 — і навіть
+число 2048 там пояснене: 32 × 32 положення вирізу, помножені на два віддзеркалення.
+Дропаут і <code>ReLU</code> — у <a href="../11-training-cnn/lecture.html">темі 11</a>.
+Нового в цій темі не прийоми, а <strong>масштаб</strong>, у якому вони вперше спрацювали.</p>
+
+<h2 id="s2"><span class="num">02 / Розбір</span>AlexNet по шарах</h2>
+
+<p>Найкращий спосіб зрозуміти архітектуру — порахувати її. Ми вже вміємо це робити: у <a
+href="../09-cnn-complete/lecture.html">темі 09</a> ми вели наскрізний рахунок форм і
+параметрів для нашої ShapeNet. Зараз те саме, тільки на мережі в дві з половиною тисячі
+разів більшій.</p>
+
+<p>Один рядок будує архітектуру, не завантажуючи нічого:</p>
+
+<pre class="arch">from torchvision import models
+model = models.alexnet(<b>weights=None</b>)   <i># лише будова, ваги випадкові</i></pre>
+
+<p>Вхід — кольорове зображення 224×224, тобто тензор форми 3×224×224. Далі:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>шар</th><th>ядро / крок</th><th>вихід</th><th>параметрів</th><th>частка</th></tr></thead>
+  <tbody>
+    <tr><td>вхід</td><td>—</td><td>3×224×224</td><td>0</td><td>—</td></tr>
+    <tr><td>conv1</td><td>11×11, крок 4, поле 2</td><td>64×55×55</td><td>23 296</td><td>0.04 %</td></tr>
+    <tr><td>maxpool</td><td>3×3, крок 2</td><td>64×27×27</td><td>0</td><td>—</td></tr>
+    <tr><td>conv2</td><td>5×5, крок 1, поле 2</td><td>192×27×27</td><td>307 392</td><td>0.50 %</td></tr>
+    <tr><td>maxpool</td><td>3×3, крок 2</td><td>192×13×13</td><td>0</td><td>—</td></tr>
+    <tr><td>conv3</td><td>3×3, крок 1, поле 1</td><td>384×13×13</td><td>663 936</td><td>1.09 %</td></tr>
+    <tr><td>conv4</td><td>3×3, крок 1, поле 1</td><td>256×13×13</td><td>884 992</td><td>1.45 %</td></tr>
+    <tr><td>conv5</td><td>3×3, крок 1, поле 1</td><td>256×13×13</td><td>590 080</td><td>0.97 %</td></tr>
+    <tr><td>maxpool</td><td>3×3, крок 2</td><td>256×6×6</td><td>0</td><td>—</td></tr>
+    <tr><td>Flatten</td><td>—</td><td>9 216</td><td>0</td><td>—</td></tr>
+    <tr class="hot"><td>Linear 1</td><td>9216 → 4096</td><td>4 096</td><td>37 752 832</td><td><b>61.79 %</b></td></tr>
+    <tr class="hot"><td>Linear 2</td><td>4096 → 4096</td><td>4 096</td><td>16 781 312</td><td>27.46 %</td></tr>
+    <tr class="hot"><td>Linear 3</td><td>4096 → 1000</td><td>1 000</td><td>4 097 000</td><td>6.71 %</td></tr>
+    <tr class="sumrow"><td>усього</td><td>—</td><td>—</td><td>61 100 840</td><td>100 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Прочитаймо цю таблицю двічі — згори вниз і знизу вгору, бо вона говорить дві різні
+речі.</p>
+
+<p><strong>Згори вниз</strong> це звичайна згорткова мережа, побудована за правилом із
+теми 09: сторона карти падає (224 → 55 → 27 → 13 → 6), кількість каналів росте
+(3 → 64 → 192 → 384 → 256). Правило подвоєння тут витримане нестрого — 384 і 256 не
+подвоєння, — але напрямок той самий.</p>
+
+<p><strong>Знизу вгору</strong> це щось інше. Пʼять згорток разом важать 2 469 696
+параметрів — <strong>4,0 % мережі</strong>. Решта 96 % лежить у трьох повнозвʼязних
+шарах, які взагалі не дивляться на зображення: вони працюють із рядком у 9 216 чисел,
+що лишився після згорток.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · AlexNet по шарах</p>
+  <p class="fig-sub">Веди повзунок по шарах. Ліворуч — форма даних до й після шару, праворуч — скільки ваг цей шар додає до мережі.</p>
+  <div class="panel">
+    <div><canvas id="cLay" width="940" height="360" aria-label="Схема шарів AlexNet: обрана коробка підсвічена, поруч форма входу й виходу та стовпчик частки параметрів"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="layIdx">шар <output id="layOut">conv1</output></label>
+        <input type="range" id="layIdx" min="0" max="11" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вхід</b><i class="sm" id="layIn">—</i></div>
+        <div class="cellv"><b>вихід</b><i class="sm" id="layOutS">—</i></div>
+        <div class="cellv"><b>параметрів</b><i id="layP">—</i></div>
+        <div class="cellv"><b>частка ваг</b><i id="layF">—</i></div>
+      </div>
+      <div class="verdict" id="layVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Ширина коробки — сторона карти, висота — кількість каналів</b>, обидві в
+    логарифмічній шкалі, інакше 224 і 6 не вміщаються поруч. Стовпчик праворуч від
+    коробки — частка шару в 61 100 840 вагах мережі. Три останні шари намальовані як
+    смуги: у них немає ані сторони, ані каналів, лише довжина рядка.</figcaption>
+</figure>
+
+<div class="note warn"><b>Чесно про версію.</b> У <code>torchvision</code> лежить не та
+AlexNet, що виграла у 2012-му, а її пізніша однокарткова переробка. Відмінності
+невеликі, але вони є: у першій згортці 64 канали замість 96, у другій 192 замість 256,
+і немає поділу на дві гілки. Оригінал важив 60 965 224 параметри, версія
+<code>torchvision</code> — 61 100 840. Різниця в 0,2 %, тож усі висновки теми лишаються
+чинними, але число «61,1 мільйона» — саме про цю версію. Про дві гілки й куди вони
+зникли — розділ 4.</div>
+
+<h2 id="s3"><span class="num">03 / Груба оптика</span>Ядро 11×11 з кроком 4</h2>
+
+<p>Перший шар AlexNet виглядає дивно для того, хто вчився на сучасних мережах: ядро
+11×11 з кроком 4. Це грубо у двох сенсах одразу, і обидва варто порахувати.</p>
+
+<p>Спершу <strong>рецептивне поле</strong> — скільки пікселів вхідного зображення бачить
+один нейрон карти. Формулу ми вивели в <a href="../09-cnn-complete/lecture.html#s8">темі
+09</a>; тут вона дає просту відповідь: після одного шару з ядром 11×11 поле дорівнює 11.
+Одинадцять на одинадцять пікселів — квадратик приблизно на двадцяту частину сторони кадру.</p>
+
+<p>Тепер <strong>крок 4</strong>. Ядро зсувається не на піксель, а на чотири, тому карта
+на виході має сторону 55 замість 224. Це означає, що з шістнадцяти можливих положень
+вікна мережа рахує тільки одне: <strong>пʼятнадцять із шістнадцяти положень просто не
+обчислюються</strong>. Не «усереднюються», як у пулінгу, а зникають.</p>
+
+<p>Порівняймо це з тим, що робить сучасна мережа. Щоб дійти до рецептивного поля 11
+ядрами 3×3, потрібно пʼять шарів: кожен додає до поля 2, і 1 + 2·5 = 11. Ось два
+варіанти поруч, обидва на вході 3×224×224:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>варіант</th><th>рецептивне поле</th><th>параметрів</th><th>множень</th><th>карта на виході</th></tr></thead>
+  <tbody>
+    <tr><td>одна 11×11, крок 4</td><td>11</td><td>23 296</td><td>70 276 800</td><td>64×55×55</td></tr>
+    <tr><td>пʼять 3×3, крок 1</td><td>11</td><td>149 504</td><td>7 485 456 384</td><td>64×224×224</td></tr>
+  </tbody>
+</table></div>
+
+<p>Ось і відповідь на питання «чому так робили». Стос 3×3 коштує в
+<strong>6,4 раза</strong> більше ваг і — головне — у <strong>сто шість разів</strong>
+більше множень. Сто шість разів на двох відеокартах 2012 року означало не «повільніше»,
+а «неможливо». Ядро 11×11 з кроком 4 — це не естетичний вибір, а найдешевший спосіб
+одразу зменшити картинку вчетверо й далі працювати з маленькими картами.</p>
+
+<p>Чому ж так більше не роблять? Три причини, і жодна з них не про красу.</p>
+
+<ol>
+  <li><strong>Між шарами стоїть нелінійність, усередині ядра — ні.</strong> Пʼять шарів
+    3×3 дають пʼять <code>ReLU</code>; одне ядро 11×11 — одну. Мережа з пʼятьма
+    нелінійностями здатна на складнішу відповідь при тому самому полі огляду. Цей самий
+    аргумент ми вже бачили в <a href="../07-conv-layer/lecture.html">темі 07</a>.</li>
+  <li><strong>Крок 4 викидає інформацію назавжди.</strong> Пулінг хоча б дивиться на всі
+    позиції й обирає максимум; крок їх не обчислює. Те, що не порахували, назад не
+    повернеш.</li>
+  <li><strong>Заліза стало більше.</strong> Обмеження, що породило це рішення, зникло —
+    а рішення лишилось у підручниках як «архітектурний прийом». Це трапляється частіше,
+    ніж хочеться.</li>
+</ol>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Одне грубе ядро проти стосу дрібних</p>
+  <p class="fig-sub">Додавай шари 3×3 і дивись, коли їхнє рецептивне поле дожене одне ядро 11×11. Ціна показана поруч.</p>
+  <div class="panel">
+    <div><canvas id="cRf" width="940" height="420" aria-label="Два квадрати рецептивного поля на однаковому фрагменті зображення: зліва одне ядро одинадцять на одинадцять, справа поле стосу ядер три на три"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="rfN">шарів 3×3 <output id="rfNo">1</output></label>
+        <input type="range" id="rfN" min="1" max="8" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>поле стосу</b><i id="rfR">—</i></div>
+        <div class="cellv"><b>поле 11×11</b><i>11 × 11</i></div>
+        <div class="cellv"><b>ваг у стосі</b><i id="rfP">—</i></div>
+        <div class="cellv"><b>ваг проти 11×11</b><i id="rfK">—</i></div>
+      </div>
+      <div class="verdict" id="rfVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Рецептивне поле стосу росте на 2 за шар</b>: 3, 5, 7, 9, 11. Ваги
+    рахуємо для каналів 3→64 у першому шарі й 64→64 у решті — так, як це робить
+    сучасна мережа. Множення рахуємо на вході 224×224 без зменшення, тобто в
+    найчесніших умовах для обох варіантів.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Дві гілки</span>Дві гілки — не ідея, а вимушеність</h2>
+
+<p>На кожній схемі оригінальної AlexNet мережа намальована двома паралельними рядами
+коробок. Це виглядає як задум: мовляв, автори придумали розділити ознаки на дві групи,
+щоб гілки вивчали різне. Насправді причина була інша, і автори її не приховували.</p>
+
+<p><strong>Мережа не влізала у відеокарту.</strong> GTX 580 мала 3 гігабайти памʼяті.
+Модель на 61 мільйон параметрів у форматі float32 займає 233 мегабайти самих лише ваг,
+а під час навчання потрібно ще стільки ж під градієнти, стільки ж під моменти
+оптимізатора й окремо — під активації всього батча. Три гігабайти скінчились раніше,
+ніж навчання почалось.</p>
+
+<p>Вихід був механічний: розрізати мережу навпіл і покласти половини на дві картки.
+Кожна гілка бачила свою половину каналів, і лише в кількох місцях гілки обмінювались
+даними. У сучасних термінах це <strong>групована згортка</strong> (grouped convolution)
+з двома групами.</p>
+
+<p>Порахуймо, що вона дає. Друга згортка оригіналу — 96 вхідних каналів, 256 вихідних,
+ядро 5×5. Формула параметрів згортки з <a href="../07-conv-layer/lecture.html">теми
+07</a>:</p>
+
+<div class="eq">параметрів = c<span class="sub">вх</span> × c<span class="sub">вих</span> × k × k + c<span class="sub">вих</span></div>
+
+<p>Тут <span class="raw">c<sub>вх</sub></span> — скільки каналів приходить,
+<span class="raw">c<sub>вих</sub></span> — скільки виходить, <span class="raw">k</span> —
+сторона ядра, а останній доданок — по одному зсуву на кожен вихідний канал. Групи
+ділять вхідні канали на <span class="raw">g</span> частин, і кожна вихідна карта
+підключена лише до своєї частини:</p>
+
+<div class="eq left">без груп:      96 × 256 × 25 + 256 = 614 656
+з groups=2: 96/2 × 256 × 25 + 256 = 307 456</div>
+
+<p>Рівно вдвічі менше — і це очікувано: кожне зʼєднання «канал з каналом» через групу
+або є, або немає, і половини немає. Те саме сталося з четвертою та пʼятою згортками. По
+всій мережі дві гілки зекономили 1 413 120 параметрів: 60 965 224 замість 62 378 344.</p>
+
+<p>Тепер найважливіше речення розділу. <strong>Групована згортка зʼявилась не тому, що
+хтось вирішив, ніби так краще, а тому, що інакше мережа не запускалась.</strong> Ані в
+статті, ані пізніше автори не стверджували, що поділ на гілки покращує ознаки; вони
+відзначили лише курйоз — одна гілка навчилася переважно кольорових фільтрів, друга
+переважно чорно-білих.</p>
+
+<p>Історія на цьому не скінчилась, і в цьому вся сіль. Через кілька років ідею
+переосмислили як самостійний прийом: якщо груп не дві, а стільки ж, скільки каналів, —
+виходить <strong>роздільна за глибиною згортка</strong>, на якій тримаються всі економні
+архітектури. Про них — <a href="../15-efficient-architectures/lecture.html">тема 15</a>.
+Але порядок подій варто памʼятати саме такий: спершу обхідний маневр, і лише потім
+теорія, що пояснює, чому маневр був вдалий.</p>
+
+<div class="note"><b>Перевір сам.</b> У версії <code>torchvision</code> гілок уже немає:
+<code>model.features[3].groups</code> поверне <code>1</code> для всіх пʼяти згорток.
+Обмеження зникло разом із відеокартою, під яку його вигадали, — і мережу склеїли назад
+в одну. У зошиті ти надрукуєш цей список і побачиш пʼять одиниць.</div>
+
+<h2 id="s5"><span class="num">05 / Однорідність</span>VGG: одна ідея замість набору рішень</h2>
+
+<p>Через два роки після AlexNet вийшла VGG — і зробила протилежне за духом. AlexNet була
+набором рішень: тут ядро 11×11, там 5×5, далі 3×3, крок то 4, то 1, пулінг 3×3 із кроком
+2, місцями групи. Кожне рішення мало свою причину, і жодне не випливало з іншого.</p>
+
+<p>VGG прибрала всі рішення, крім одного. Правила три, і вони вміщаються в рядок:</p>
+
+<ul>
+  <li>усі згортки — <strong>3×3, крок 1, доповнення 1</strong>, тобто сторона карти після
+    згортки не міняється;</li>
+  <li>усі пулінги — <strong>max 2×2 із кроком 2</strong>, тобто сторона рівно вдвічі менша;</li>
+  <li>після кожного пулінгу кількість каналів <strong>подвоюється</strong>, поки не
+    впреться у 512.</li>
+</ul>
+
+<p>Після цього від архітектури лишається одне: скільки згорток стоїть у кожному з пʼяти
+блоків. VGG16 описується так:</p>
+
+<div class="eq left">64, 64, <b>M</b>, 128, 128, <b>M</b>, 256, 256, 256, <b>M</b>, 512, 512, 512, <b>M</b>, 512, 512, 512, <b>M</b></div>
+
+<p>Число — згортка 3×3 з такою кількістю вихідних каналів, <span class="raw">M</span> —
+пулінг. Тринадцять згорток плюс три повнозвʼязні шари голови дають шістнадцять шарів із
+вагами, звідки й назва. Сторона карти йде рівно степенями двійки:
+224 → 112 → 56 → 28 → 14 → 7.</p>
+
+<p>Здається, що це просто акуратність. Але однорідність виявилась цінною сама собою, і
+причин чотири.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Чим корисна однорідність</th><th>Чому</th></tr></thead>
+  <tbody>
+    <tr><td>Архітектуру можна описати числом</td><td>«VGG16» і «VGG19» — та сама мережа з іншою кількістю повторів. Порівнювати глибину стало можливо, бо решта не міняється</td></tr>
+    <tr><td>Немає що підбирати</td><td>У AlexNet сім архітектурних чисел, і кожне треба чимось виправдати. У VGG — одне на блок</td></tr>
+    <tr><td>Її легко різати</td><td>Беручи VGG як <code>backbone</code> для детекції чи сегментації, ти обрізаєш її по будь-якому пулінгу й точно знаєш форму карти</td></tr>
+    <tr><td>Вона добре переноситься</td><td>Саме однорідність зробила VGG стандартним джерелом ваг на роки — про перенос ми говорили в <a href="../12-transfer-learning/lecture.html">темі 12</a></td></tr>
+  </tbody>
+</table></div>
+
+<p>А тепер поміряймо, що дає сама глибина. Чотири варіанти VGG відрізняються лише
+кількістю згорток у блоках — і більше нічим.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Однорідність VGG</p>
+  <p class="fig-sub">Перемикай глибину. Схема мережі й числа міняються — стеж, наскільки саме.</p>
+  <div class="panel">
+    <div><canvas id="cVgg" width="940" height="350" aria-label="Пʼять блоків VGG у вигляді стосів коробок, праворуч голова з трьох повнозвʼязних шарів"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">глибина</span>
+        <div class="seg" id="vggSeg">
+          <button type="button" data-i="0" aria-pressed="false">VGG11</button>
+          <button type="button" data-i="1" aria-pressed="false">VGG13</button>
+          <button type="button" data-i="2" aria-pressed="true">VGG16</button>
+          <button type="button" data-i="3" aria-pressed="false">VGG19</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>згорток</b><i id="vgN">—</i></div>
+        <div class="cellv"><b>ваг у згортках</b><i class="sm" id="vgC">—</i></div>
+        <div class="cellv"><b>ваг у голові</b><i class="sm" id="vgH">—</i></div>
+        <div class="cellv"><b>усього</b><i class="sm" id="vgT">—</i></div>
+      </div>
+      <div class="verdict" id="vgVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Голова не змінюється ніколи</b> — 123 642 856 ваг у всіх чотирьох
+    варіантах, бо вона залежить лише від форми карти перед нею, а форма однакова: 512×7×7.
+    Числа взяті з <code>torchvision</code>, побудованого з <code>weights=None</code>.</figcaption>
+</figure>
+
+<p>Ось що показує цей інтерактив, і це перше попередження про головний сюжет теми.
+Від VGG11 до VGG19 <strong>кількість згорток росте вдвічі</strong> — з восьми до
+шістнадцяти, — а згорткова частина важчає з 9,2 до 20,0 мільйона. Але вся мережа при
+цьому росте зі 132,9 до 143,7 мільйона, тобто <strong>лише на 8,1 %</strong>.</p>
+
+<p>Подвоїти глибину мережі й додати вісім відсотків ваги — це можливо тільки в одному
+випадку: якщо основна вага лежить не там, де глибина. Куди саме вона лежить, ми
+порахуємо в розділі 7.</p>
+
+<h2 id="s6"><span class="num">06 / Ядра</span>Два 3×3 замість одного 5×5</h2>
+
+<p>Лишилось питання, чому саме 3×3, а не 5×5 чи 7×7. Відповідь ти вже знаєш: <a
+href="../07-conv-layer/lecture.html">тема 07</a> вивела її на одному шарі, а <a
+href="../09-cnn-complete/lecture.html#s10">тема 09</a> повторила на прикладі VGG. Стисло:
+дві згортки 3×3 поспіль дають те саме рецептивне поле 5, що одна 5×5, але коштують
+дешевше й дають зайву нелінійність між собою.</p>
+
+<p>Переказувати це вдруге не будемо. Натомість подивимось, скільки та сама арифметика
+дає на масштабі цілої мережі — там вона перетворюється на число іншого порядку.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>канали</th><th>одна 5×5</th><th>дві 3×3</th><th>дешевше на</th></tr></thead>
+  <tbody>
+    <tr><td>64 → 64</td><td>102 464</td><td>73 856</td><td>27.9 %</td></tr>
+    <tr><td>128 → 128</td><td>409 728</td><td>295 168</td><td>28.0 %</td></tr>
+    <tr><td>256 → 256</td><td>1 638 656</td><td>1 180 160</td><td>28.0 %</td></tr>
+    <tr><td>512 → 512</td><td>6 554 112</td><td>4 719 616</td><td>28.0 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Двадцять вісім відсотків на кожному масштабі — і це не збіг. Відношення дорівнює
+18/25 плюс дрібка від зсувів; при зростанні кількості каналів зсуви тонуть, і лишається
+рівно 0,72.</p>
+
+<p>Тепер інше питання, яке в темах 07 і 09 не ставилось: <strong>скільки коштувало б
+побудувати VGG16 на ядрах 5×5</strong> — з тим самим планом каналів і тією самою
+кількістю шарів?</p>
+
+<div class="eq left">згорткова частина VGG16, ядра 3×3:  14 714 688
+та сама структура, ядра 5×5:        40 866 624
+різниця:                          + 26 151 936  (у 2,78 раза)</div>
+
+<p>Множник 2,78 — це просто 25/9, відношення площ ядер. Але подивись на абсолютне число:
+вибір 3×3 замість 5×5 зекономив 26 мільйонів параметрів, тобто <strong>майже вдвічі
+більше, ніж важить уся згорткова частина VGG16</strong>. Одне рішення про розмір ядра
+дало більше, ніж коштує все, що мережа бачить у зображенні.</p>
+
+<div class="note"><b>Дві різні відповіді на схожі питання.</b> Не сплутай два числа цього
+розділу. <strong>28 %</strong> — це «замінімо пару 3×3 однією 5×5, зберігши рецептивне
+поле»; тут шарів стає менше, а поле те саме. <strong>2,78 раза</strong> — це «лишімо ту
+саму кількість шарів, але з більшими ядрами»; тут поле виросло б удвічі. Перше питання
+про ціну однакового результату, друге — про ціну однакової будови.</div>
+
+<p>І ще одна деталь, яку легко проґавити. Однорідні ядра 3×3 зробили VGG передбачуваною
+не лише на папері: усі бібліотеки згорток оптимізовані саме під 3×3, і мережа з одного
+типу ядра рахується швидше за строкату при тій самій кількості множень. Це не задум
+авторів, а наслідок, який зʼявився пізніше.</p>
+
+<h2 id="s7"><span class="num">07 / Ваги</span>Де сидять ваги</h2>
+
+<p>Це головний розділ теми. Усе, що ми рахували досі, вело сюди.</p>
+
+<p>У <a href="../09-cnn-complete/lecture.html#s5">темі 09</a> ти вже робив цей рахунок на
+нашій маленькій мережі й отримав неприємне число: 18 496 із 24 774 параметрів
+ShapeNet — <strong>74,7 %</strong> — лежать в одному-єдиному шарі, першому
+<code>Linear</code> після <code>Flatten</code>. Тоді це виглядало як особливість
+навчального прикладу. Зараз ми побачимо те саме на мережах у тисячі разів більших.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>мережа</th><th>параметрів</th><th>у згортках</th><th>у лінійних</th><th>згорткових шарів</th></tr></thead>
+  <tbody>
+    <tr><td>AlexNet</td><td>61 100 840</td><td>4.0 %</td><td><b>96.0 %</b></td><td>5</td></tr>
+    <tr class="hot"><td>VGG16</td><td>138 357 544</td><td>10.6 %</td><td><b>89.4 %</b></td><td>13</td></tr>
+    <tr><td>ResNet18</td><td>11 689 512</td><td><b>95.5 %</b></td><td>4.4 %</td><td>20</td></tr>
+  </tbody>
+</table></div>
+
+<p>Прочитай третій рядок ще раз. ResNet18 має <strong>більше згорткових шарів</strong>,
+ніж VGG16, — двадцять проти тринадцяти, — і при цьому важить у дванадцять разів менше.
+Тобто справа не в глибині. Справа в голові.</p>
+
+<h3>Звідки береться 25 088</h3>
+
+<p>Розберімо по кроках, як зʼявляється найдорожчий шар VGG16.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · що лишається після згорток</span>
+    <p>Вхід 224×224 проходить пʼять пулінгів, кожен ділить сторону навпіл:
+      224 → 112 → 56 → 28 → 14 → 7. Каналів на цей момент 512.</p>
+    <div class="eq">карта перед головою = 512 × 7 × 7</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · Flatten перетворює карту на рядок</span>
+    <p><code>Flatten</code> виписує всі числа карти в один довгий рядок — спершу перший
+      канал рядок за рядком, потім другий, і так усі 512.</p>
+    <div class="eq">512 × 7 × 7 = <b>25 088</b> чисел</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · повнозвʼязний шар зʼєднує кожне з кожним</span>
+    <p>Автори обрали ширину наступного шару 4096. Повнозвʼязний шар має окрему вагу на
+      кожну пару «вхідне число — вихідне число», плюс по одному зсуву на вихід.</p>
+    <div class="eq">25 088 × 4 096 + 4 096 = <b>102 764 544</b></div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · порівняння</span>
+    <p>Уся згорткова частина VGG16 — тринадцять шарів, які власне й дивляться на
+      зображення, — важить 14 714 688. Один цей шар важчий за неї у сім разів.</p>
+  </div>
+</div>
+
+<p>У AlexNet усе те саме, тільки числа менші: карта перед головою 256×6×6, отже
+256 × 6 × 6 = 9 216 чисел, а 9 216 × 4 096 + 4 096 = 37 752 832 — <strong>61,8 %</strong>
+усієї мережі в одному шарі.</p>
+
+<p>Чому саме перший <code>Linear</code> такий дорогий, а не другий чи третій? Бо в нього
+найширший вхід. Другий шар зʼєднує 4096 із 4096 і коштує 16 781 312 — теж багато, але
+вшестеро менше. Третій зʼєднує 4096 із тисячею класів: 4 097 000. Ціна повнозвʼязного
+шару — це добуток двох ширин, і найбільша ширина в мережі — саме та, що приходить із
+розпластаної карти.</p>
+
+<div class="note warn"><b>Звідки взялося 4096.</b> Ні звідки. Це кругле число, обране
+авторами AlexNet, і VGG успадкувала його без змін, разом із двома шарами по 4096
+поспіль. Другий такий шар коштує 16,8 мільйона ваг і не робить нічого, крім змішування
+тих самих 4096 чисел ще раз. Ніхто не довів, що він потрібен, — його просто перестали
+ставити пізніше. Гарний привід не сприймати числа з чужих архітектур як істину.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Де сидять ваги</p>
+  <p class="fig-sub">Кожен стовпчик — один шар із вагами. Три останні (голова) підсвічені. Перемикай мережу.</p>
+  <div class="panel">
+    <div><canvas id="cWhr" width="940" height="360" aria-label="Стовпчикова діаграма частки параметрів по шарах, три останні стовпчики підсвічені як голова мережі"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">мережа</span>
+        <div class="seg" id="whrSeg">
+          <button type="button" data-i="0" aria-pressed="true">AlexNet</button>
+          <button type="button" data-i="1" aria-pressed="false">VGG16</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>усього ваг</b><i class="sm" id="whrT">—</i></div>
+        <div class="cellv"><b>частка в голові</b><i id="whrH">—</i></div>
+        <div class="cellv"><b>найтовщий шар</b><i class="sm" id="whrM">—</i></div>
+        <div class="cellv"><b>його частка</b><i id="whrMf">—</i></div>
+      </div>
+      <div class="verdict" id="whrVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Висота стовпчика — частка шару в усіх вагах мережі.</b> Згорткові шари
+    ліворуч майже не видно не через похибку малюнка: у AlexNet найтовща згортка тримає
+    1,45 % ваг, а перший шар голови — 61,8 %. Числа надруковані зошитом теми.</figcaption>
+</figure>
+
+<h3>Що станеться, якщо змінити розмір входу</h3>
+
+<p>Ціна голови має неприємну властивість: вона залежить від розміру вхідного зображення
+<strong>квадратично</strong>. Сторона карти перед <code>Flatten</code> пропорційна
+стороні входу, а число елементів — її квадрату.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Ціна голови</p>
+  <p class="fig-sub">Міняй розмір вхідного зображення VGG16 і дивись, що робиться з першим шаром голови. Пунктир — скільки коштувала б та сама голова на глобальному усередненні.</p>
+  <div class="panel">
+    <div><canvas id="cHead" width="940" height="350" aria-label="Крива зростання кількості ваг першого повнозвʼязного шару від розміру входу, поруч постійна пряма для голови з глобальним усередненням"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="hdS">сторона входу <output id="hdSo">224</output></label>
+        <input type="range" id="hdS" min="128" max="448" step="32" value="224">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>карта перед Flatten</b><i class="sm" id="hdMap">—</i></div>
+        <div class="cellv"><b>довжина рядка</b><i class="sm" id="hdFlat">—</i></div>
+        <div class="cellv"><b>ваг у першому Linear</b><i class="sm" id="hdP">—</i></div>
+        <div class="cellv"><b>проти GAP-голови</b><i id="hdK">—</i></div>
+      </div>
+      <div class="verdict" id="hdVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Голова з глобальним усередненням не залежить від розміру входу взагалі.</b>
+    Вона бере середнє по кожному з 512 каналів і подає 512 чисел у <code>Linear</code> на
+    тисячу класів: 512 × 1000 + 1000 = 513 000 ваг за будь-якої сторони. Саме тому мережу
+    з <code>Flatten</code> не можна годувати кадром іншого розміру, а мережу з
+    усередненням — можна.</figcaption>
+</figure>
+
+<p>Цей інтерактив показує в чистому вигляді те, чого <a
+href="../09-cnn-complete/lecture.html#s7">тема 09</a> досягла на маленькій мережі. Голова
+на <code>Flatten</code> прибита цвяхами до одного розміру входу — і платить за нього
+квадратично. Голова на глобальному усередненні (його ми вводили в <a
+href="../08-pooling/lecture.html">темі 08</a>) коштує 513 000 ваг завжди.</p>
+
+<p>Порахуймо різницю в лоба. Якби VGG16 мала GAP-голову замість трьох повнозвʼязних
+шарів, то важила б 14 714 688 + 513 000 = <strong>15 227 688</strong> параметрів —
+у 9,1 раза менше за справжні 138 мільйонів. При тій самій згортковій частині. При тій
+самій глибині. Просто без голови.</p>
+
+<h2 id="s8"><span class="num">08 / Ціна</span>Скільки це коштує насправді</h2>
+
+<p>Параметри — абстракція. Переведімо їх у те, що відчуває машина: мегабайти й
+мілісекунди. Усі числа нижче заміряні на цій машині, і зошит теми друкує кожне з них.</p>
+
+<h3>Памʼять на ваги</h3>
+
+<p>Один параметр у форматі <code>float32</code> — чотири байти. Множимо:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>мережа</th><th>параметрів</th><th>ваги, МБ</th></tr></thead>
+  <tbody>
+    <tr><td>ShapeNet (тема 09)</td><td>24 774</td><td>0.09</td></tr>
+    <tr><td>AlexNet</td><td>61 100 840</td><td>233.1</td></tr>
+    <tr class="hot"><td>VGG16</td><td>138 357 544</td><td>527.8</td></tr>
+    <tr><td>ResNet18</td><td>11 689 512</td><td>44.6</td></tr>
+  </tbody>
+</table></div>
+
+<p>Пів гігабайта. Саме тому файл ваг VGG16 качається помітно довше за все інше, і саме
+тому її не кладуть у телефон.</p>
+
+<h3>Памʼять на активації</h3>
+
+<p><strong>Активації</strong> — це числа, які мережа тримає в памʼяті під час проходу:
+всі проміжні карти ознак. Порахуймо їх для одного зображення 224×224:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>мережа</th><th>чисел, батч 1</th><th>активації, МБ</th><th>найбільший шар</th></tr></thead>
+  <tbody>
+    <tr><td>AlexNet</td><td>582 504</td><td>2.22</td><td>conv1 — 0.74 МБ</td></tr>
+    <tr><td>VGG16</td><td>15 087 080</td><td>57.55</td><td>conv1_1 — 12.25 МБ</td></tr>
+  </tbody>
+</table></div>
+
+<p>І ось повторення того самого відкриття, що в темі 09: <strong>максимум ваг і максимум
+памʼяті стоять у різних кінцях мережі</strong>. У VGG16 найважчий шар за вагами — перший
+<code>Linear</code> (392 МБ), а найважчий за активаціями — найперша згортка, у якій ваг
+усього 1 792 штуки, зате карта 64×224×224 займає 12,25 МБ. Один шар важить у
+двісті тисяч разів більше за другий і водночас у пʼятдесят разів менше.</p>
+
+<p>Це не курйоз, а робоче правило. Хочеш зменшити файл моделі — дивись на голову. Не
+влазить батч у памʼять — дивись на перші згортки.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Памʼять проти параметрів</p>
+  <p class="fig-sub">Угорі — ваги по шарах, унизу — активації того самого шару. Повзунок міняє розмір батча: ваги від нього не залежать, активації залежать прямо.</p>
+  <div class="panel">
+    <div><canvas id="cMem" width="940" height="380" aria-label="Два ряди стовпчиків по шарах мережі: угору ростуть ваги, вниз активації"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">мережа</span>
+        <div class="seg" id="memSeg">
+          <button type="button" data-i="0" aria-pressed="false">AlexNet</button>
+          <button type="button" data-i="1" aria-pressed="true">VGG16</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="memB">розмір батча <output id="memBo">1</output></label>
+        <input type="range" id="memB" min="0" max="8" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ваги, МБ</b><i id="memW">—</i></div>
+        <div class="cellv"><b>активації, МБ</b><i id="memA">—</i></div>
+        <div class="cellv"><b>що більше</b><i class="sm" id="memWho">—</i></div>
+        <div class="cellv"><b>перетин на батчі</b><i id="memX">—</i></div>
+      </div>
+      <div class="verdict" id="memVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Стовпчики вгору — мегабайти ваг, униз — мегабайти активацій</b> для
+    поточного батча; шкала спільна й логарифмічна, інакше 0,01 МБ і 400 МБ не вміщаються
+    на одному малюнку. Активації рахуємо як суму виходів усіх згорток, пулінгів і
+    лінійних шарів у <code>float32</code>.</figcaption>
+</figure>
+
+<h3>Час одного проходу</h3>
+
+<p>Останній замір — скільки триває прямий прохід для одного зображення на процесорі, в
+один потік. Числа тут <strong>плаватимуть</strong>: вони залежать від того, чим зайнята
+машина, і в мене від прогону до прогону відрізнялись у два-три рази. Тому дивись не на
+самі числа, а на порядок величини й на співвідношення.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>мережа</th><th>вхід</th><th>час, мс</th><th>у скільки разів</th></tr></thead>
+  <tbody>
+    <tr><td>ShapeNet (тема 09)</td><td>1×28×28</td><td>≈ 0.26</td><td>1×</td></tr>
+    <tr><td>AlexNet</td><td>3×224×224</td><td>≈ 40</td><td>≈ 150×</td></tr>
+    <tr class="hot"><td>VGG16</td><td>3×224×224</td><td>≈ 480</td><td>≈ 1 800×</td></tr>
+    <tr><td>ResNet18</td><td>3×224×224</td><td>≈ 75</td><td>≈ 290×</td></tr>
+  </tbody>
+</table></div>
+
+<p>Тут ховається несподіванка, яку варто назвати. VGG16 важить лише вдвічі більше за
+AlexNet за параметрами, а рахується <strong>у дванадцять разів довше</strong>. Причина
+проста, щойно згадаєш розділ 3: час іде не на ваги, а на множення. AlexNet у першому ж
+шарі стискає картинку вчетверо кроком 4 і далі працює з картами 27×27 і 13×13. VGG16
+чесно проганяє дві згортки по повній стороні 224×224, і тільки потім починає зменшувати.</p>
+
+<p>Тобто <strong>параметри й обчислення — це різні ресурси</strong>. Голова VGG16
+тримає 89 % ваг і майже не витрачає часу: помножити рядок на матрицю — одна операція на
+вагу. Згортки тримають 11 % ваг і зʼїдають майже весь час, бо кожна вага
+використовується стільки разів, скільки позицій має карта.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · За що ми платимо</p>
+  <p class="fig-sub">Чотири мережі, пʼять мірок. Перемикай мірку — і дивись, як міняється переможець.</p>
+  <div class="panel">
+    <div><canvas id="cPay" width="940" height="340" aria-label="Горизонтальні стовпчики чотирьох мереж за обраною мірою"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">мірка</span>
+        <div class="seg wrap" id="paySeg">
+          <button type="button" data-i="0" aria-pressed="true">параметри</button>
+          <button type="button" data-i="1" aria-pressed="false">ваги, МБ</button>
+          <button type="button" data-i="2" aria-pressed="false">час проходу</button>
+          <button type="button" data-i="3" aria-pressed="false">точність</button>
+          <button type="button" data-i="4" aria-pressed="false">точність на млн ваг</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найменше</b><i class="sm" id="payBest">—</i></div>
+        <div class="cellv"><b>найбільше</b><i class="sm" id="payWorst">—</i></div>
+      </div>
+      <div class="verdict" id="payVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Точність — top-1 на ImageNet, цитована з опису ваг</b>
+    <code>torchvision</code>, а не заміряна нами: щоб її поміряти, потрібні самі ваги й
+    увесь перевірочний набір. Наша ShapeNet вирішує іншу задачу на шести класах, тож
+    у мірках точності її немає. Час і памʼять — наші власні заміри.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Померло</span>Що з цього померло</h2>
+
+<p>Три речі з AlexNet не пережили наступних пʼяти років. Про кожну варто знати, бо вони
+досі трапляються в старих схемах і старому коді.</p>
+
+<h3>Локальна нормалізація відгуку</h3>
+
+<p><strong>Локальна нормалізація відгуку</strong> (local response normalization, LRN) —
+шар, який ділив відгук кожного каналу на щось на кшталт середньої сили сусідніх каналів
+у тій самій точці. Ідея бралася з біології: сильно збуджений нейрон пригнічує сусідів,
+тож серед каналів виграє найяскравіший.</p>
+
+<p>Автори AlexNet повідомили, що LRN дала їм приблизно 1,4 пункту top-1 точності. Через
+два роки автори VGG перевірили це на своїй мережі й написали прямо: покращення немає, а
+памʼять і час LRN їсть. Після цього шар зник. Сьогодні у файлі
+<code>torchvision/models/alexnet.py</code> його немає взагалі — те, що ти будуєш через
+<code>alexnet(weights=None)</code>, іде без LRN.</p>
+
+<p>Замінила його <a href="../11-training-cnn/lecture.html">батч-нормалізація</a> з теми
+11, і заміна вийшла нерівна: батчнорм нормує по батчу для кожного каналу окремо, дає
+стійке навчання й дозволяє більшу швидкість навчання. LRN не робила нічого з цього — вона
+лише перерозподіляла відгуки в одній точці.</p>
+
+<h3>Великі ядра</h3>
+
+<p>11×11 і 5×5 із розділу 3. Причина смерті порахована там же: те саме рецептивне поле
+дешевше набирається стосом 3×3, а нелінійностей при цьому більше. Великі ядра
+повернулись через десять років у зовсім іншому контексті — у мережах, що імітують
+трансформери, — але це вже інша історія й інші причини.</p>
+
+<h3>Дві гілки</h3>
+
+<p>Померли разом із трьома гігабайтами відеопамʼяті. У <code>torchvision</code> усі
+згортки AlexNet мають <code>groups=1</code>. Але сама групована згортка не померла, а
+перевідкрилась як спосіб економити обчислення — <a
+href="../15-efficient-architectures/lecture.html">тема 15</a>.</p>
+
+<div class="note"><b>Спільна риса всіх трьох.</b> Кожна з цих ідей була відповіддю на
+обмеження свого часу: LRN — на відсутність нормалізації, великі ядра — на брак
+обчислень, гілки — на брак памʼяті. Обмеження зникли, ідеї лишились у схемах. Це корисна
+звичка: побачивши в чужій архітектурі дивне рішення, спитай не «навіщо це», а «що було
+неможливим, коли це писали».</div>
+
+<h2 id="s10"><span class="num">10 / Лишилось</span>Що з цього лишилось</h2>
+
+<p>А тепер зворотний список — те, що з 2012 року не змінилось узагалі.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Що лишилось</th><th>Де ти це вже бачив</th></tr></thead>
+  <tbody>
+    <tr><td><code>ReLU</code> як стандартна нелінійність</td><td>Тема 11. Варіанти зʼявилися (GELU, SiLU), але базова ідея «відрізати відʼємне» стоїть скрізь</td></tr>
+    <tr><td>Дропаут</td><td>Тема 11. Із згорткових шарів пішов, у головах і трансформерах лишився</td></tr>
+    <tr><td><a href="../10-augmentation/lecture.html">Аугментація</a></td><td>Тема 10. Випадковий виріз і віддзеркалення — досі перші дві аугментації в будь-якому рецепті</td></tr>
+    <tr><td>«Глибше — краще»</td><td>Саме це довела VGG. Із застереженням, яке зʼясується вже в наступній темі</td></tr>
+    <tr><td>Ознаки треба вчити, а не придумувати</td><td><a href="../05-classic-features/lecture.html">Тема 05</a></td></tr>
+  </tbody>
+</table></div>
+
+<p>Останній рядок — найважливіший, і на ньому варто зупинитись.</p>
+
+<p>У <a href="../05-classic-features/lecture.html">темі 05</a> ми розбирали класичні
+ознаки: SIFT, HOG, кутові точки Гарріса. Кожну з них придумала людина, яка сіла й
+подумала, що саме треба виміряти на зображенні, щоб предмети розрізнялись. Це були
+розумні, добре обґрунтовані конструкції — і саме вони посідали друге місце на ImageNet
+2012 з помилкою 26,2 %.</p>
+
+<p>AlexNet не придумала жодної ознаки. Вона взяла 61 мільйон випадкових чисел і
+дозволила даним налаштувати їх так, як тим зручно. Результат — 15,3 %. І це, а не
+глибина й не відеокарти, і є справжній зміст 2012 року: <strong>перевірка на тому, що
+ознаки, знайдені даними, бʼють ознаки, придумані людиною</strong>, — і перевірку
+придумані ознаки програли з розгромним рахунком.</p>
+
+<p>Ми вже бачили відлуння цього в самій бібліотеці. OpenCV 5 викинула
+<code>HOGDescriptor</code> і каскади Хаара цілком, а натомість додала навчені детектори
+ознак. Те, що у 2012 році було результатом змагання, за десять років стало рішенням про
+склад бібліотеки.</p>
+
+<h2 id="s11"><span class="num">11 / Підсумок</span>Підсумок</h2>
+
+<p>Що ми порахували в цій темі:</p>
+
+<ul>
+  <li><strong>AlexNet, 2012.</strong> Пʼять згорток, три повнозвʼязні шари,
+    61 100 840 параметрів. Виграла ImageNet із 15,3 % проти 26,2 % у другого місця.
+    У згортках — 4 % ваг.</li>
+  <li><strong>VGG16, 2014.</strong> Тринадцять згорток 3×3, три повнозвʼязні шари,
+    138 357 544 параметри. Однорідна настільки, що описується рядком чисел. У згортках —
+    10,6 % ваг.</li>
+  <li><strong>Голова коштує все.</strong> 123 642 856 із 138 мільйонів VGG16 лежать у
+    трьох повнозвʼязних шарах, і 102 764 544 — в одному першому. Причина — 25 088 чисел,
+    що виходять із <code>Flatten</code>, помножені на обрані навмання 4096.</li>
+  <li><strong>Глибина майже нічого не важить.</strong> Від VGG11 до VGG19 подвоюється
+    кількість згорток, а мережа важчає на 8,1 %.</li>
+  <li><strong>Параметри й обчислення — різні ресурси.</strong> Голова тримає 89 % ваг і
+    майже не витрачає часу; згортки тримають 11 % і зʼїдають увесь час.</li>
+</ul>
+
+<p>Головний висновок теми звучить дивно для теми про перші глибокі мережі:
+<strong>наступним кроком галузі було не «ще глибше», а «прибрати голову»</strong>.
+Заміна трьох повнозвʼязних шарів на глобальне усереднення робить VGG16 у девʼять разів
+легшою, нічого не забираючи в згорток. Саме це й зробили далі — і саме тому ResNet18 із
+двадцятьма згортковими шарами важить менше за AlexNet із пʼятьма.</p>
+
+<h3>Що далі</h3>
+
+<p>VGG показала, що глибина працює: тринадцять шарів краще за вісім, шістнадцять краще
+за тринадцять. Природний наступний крок — піти ще глибше. Автори VGG зупинились на
+девʼятнадцяти шарах, і не тому, що не хотіли далі.</p>
+
+<p><strong>Глибше просто перестало працювати.</strong> Мережа з тридцяти шарів давала
+гіршу точність, ніж мережа з двадцяти, — і не лише на перевірці, а на самих навчальних
+даних. Тобто це було не перенавчання: мережа не могла вивчити те, що вже вміла коротша.
+Причина виявилась несподіваною, а ліки — одним рядком коду.</p>
+
+<p>Про це — <a href="../14-resnet/lecture.html">тема 14, ResNet і скіп-зʼєднання</a>. Далі
+йде <a href="../15-efficient-architectures/lecture.html">тема 15</a>, де ту саму задачу
+вирішують економією обчислень, і там знову спливе групована згортка з розділу 4 — уже як
+свідомий прийом, а не як обхідний маневр.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти побудуєш
+AlexNet і VGG16 через <code>weights=None</code>, надрукуєш таблицю параметрів по шарах
+для обох, порахуєш параметри одного шару руками й звіриш із
+<code>sum(p.numel())</code>, зміряєш памʼять на ваги й активації, зміряєш час прямого
+проходу трьох мереж і порахуєш рецептивне поле першого шару AlexNet проти стосу 3×3.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../12-transfer-learning/lecture.html"><span class="dir">попередня</span><span class="ttl">12. Перенос навчання</span></a>
+    <a class="next" href="../14-resnet/lecture.html"><span class="dir">наступна</span><span class="ttl">14. ResNet і скіп-зʼєднання</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* «1 раз», «3 рази», «12 разів» */
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+function крат(v){
+  if(Math.abs(v-Math.round(v))<1e-9) return v.toFixed(0)+' '+разів(Math.round(v));
+  return v.toFixed(1)+' раза';
+}
+/* родовий відмінок після «стос із»: «1 шару», «2 шарів», «5 шарів» */
+function шаруG(n){
+  return (n%10===1 && n%100!==11) ? 'шару' : 'шарів';
+}
+/* «1 нелінійність», «3 нелінійності», «6 нелінійностей» */
+function нелінійностей(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'нелінійність';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'нелінійності';
+  return 'нелінійностей';
+}
+/* «1 мільйон», «3 мільйони», «8 мільйонів» */
+function млн(v){
+  if(v>=1e6) return (v/1e6).toFixed(1)+' млн';
+  if(v>=1e3) return (v/1e3).toFixed(0)+' тис.';
+  return String(Math.round(v));
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 1 · AlexNet по шарах
+   Числа з torchvision.models.alexnet(weights=None), вхід 3×224×224
+   ═══════════════════════════════════════════════════════════════════ */
+var ALEX_TOTAL=61100840;
+var LAY=[
+ {n:'conv1', k:'11×11, крок 4',   ci:3,   si:224, co:64,  so:55, p:23296,    kind:'c'},
+ {n:'pool',  k:'max 3×3, крок 2', ci:64,  si:55,  co:64,  so:27, p:0,        kind:'p'},
+ {n:'conv2', k:'5×5, крок 1',     ci:64,  si:27,  co:192, so:27, p:307392,   kind:'c'},
+ {n:'pool',  k:'max 3×3, крок 2', ci:192, si:27,  co:192, so:13, p:0,        kind:'p'},
+ {n:'conv3', k:'3×3, крок 1',     ci:192, si:13,  co:384, so:13, p:663936,   kind:'c'},
+ {n:'conv4', k:'3×3, крок 1',     ci:384, si:13,  co:256, so:13, p:884992,   kind:'c'},
+ {n:'conv5', k:'3×3, крок 1',     ci:256, si:13,  co:256, so:13, p:590080,   kind:'c'},
+ {n:'pool',  k:'max 3×3, крок 2', ci:256, si:13,  co:256, so:6,  p:0,        kind:'p'},
+ {n:'Flatten',k:'розпластати',    ci:256, si:6,   len:9216, p:0,  kind:'f'},
+ {n:'fc1',   k:'Linear 9216→4096',lin:9216, len:4096, p:37752832, kind:'l'},
+ {n:'fc2',   k:'Linear 4096→4096',lin:4096, len:4096, p:16781312, kind:'l'},
+ {n:'fc3',   k:'Linear 4096→1000',lin:4096, len:1000, p:4097000,  kind:'l'}
+];
+function shapeIn(L){
+  if(L.kind==='l') return L.lin+' чисел';
+  return L.ci+'×'+L.si+'×'+L.si;
+}
+function shapeOut(L){
+  if(L.kind==='f'||L.kind==='l') return L.len+' чисел';
+  return L.co+'×'+L.so+'×'+L.so;
+}
+function drawLay(){
+  var cv=I('cLay'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var idx=+I('layIdx').value; if(!isFinite(idx)) idx=0;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+
+  /* ширини коробок */
+  var wds=[], n=LAY.length;
+  for(i=0;i<n;i++){
+    var L=LAY[i];
+    if(L.kind==='l'||L.kind==='f') wds.push(20);
+    else wds.push(14+22*Math.log(L.so)/Math.LN10);
+  }
+  var sum=0; for(i=0;i<n;i++) sum+=wds[i];
+  var pad=26, gap=(W-2*pad-sum)/(n-1);
+  var xs=[], x=pad;
+  for(i=0;i<n;i++){ xs.push(x); x+=wds[i]+gap; }
+
+  var base=196;                                  /* лінія «підлоги» схеми */
+  capt(g,'форма даних', pad, 26, soft, 11, true);
+  for(i=0;i<n;i++){
+    var L2=LAY[i], w=wds[i], h, y;
+    if(L2.kind==='l'||L2.kind==='f'){
+      h=26+34*Math.log(L2.len)/Math.LN10;         /* довжина рядка */
+    }else{
+      h=18+34*Math.log(L2.co)/Math.LN10;          /* кількість каналів */
+    }
+    if(h>150) h=150;
+    y=base-h;
+    var sel=(i===idx);
+    g.fillStyle = sel ? (L2.kind==='l'?css('--rose-w'):css('--teal-w')) : paper;
+    rr(g,xs[i],y,w,h,4); g.fill();
+    g.strokeStyle = sel ? (L2.kind==='l'?rose:teal) : hair;
+    g.lineWidth = sel?2:1; rr(g,xs[i]+0.5,y+0.5,w-1,h-1,4); g.stroke();
+    capt(g,L2.n, xs[i]+w/2, base+16, sel?ink:soft, sel?11:10, sel, 'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(pad,base+0.5); g.lineTo(W-pad,base+0.5); g.stroke();
+
+  /* нижній ряд: частка ваг */
+  var bTop=252, bH=88;
+  capt(g,'частка ваг у мережі', pad, bTop-10, soft, 11, true);
+  var maxSh=0; for(i=0;i<n;i++) if(LAY[i].p/ALEX_TOTAL>maxSh) maxSh=LAY[i].p/ALEX_TOTAL;
+  for(i=0;i<n;i++){
+    var sh=LAY[i].p/ALEX_TOTAL, hh=Math.max(sh/maxSh*bH,0);
+    if(hh<1.2 && LAY[i].p>0) hh=1.2;
+    g.fillStyle = (i===idx)? (LAY[i].kind==='l'?rose:teal) : (LAY[i].kind==='l'?css('--rose-w'):hair);
+    if(hh>0) g.fillRect(xs[i], bTop+bH-hh, wds[i], hh);
+    if(LAY[i].p===0) capt(g,'0', xs[i]+wds[i]/2, bTop+bH+13, i===idx?ink:soft, 9, false, 'center');
+    else if(sh>0.05||i===idx) capt(g,(100*sh).toFixed(1)+'%', xs[i]+wds[i]/2, bTop+bH-hh-5, i===idx?ink:soft, 9.5, i===idx, 'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(pad,bTop+bH+0.5); g.lineTo(W-pad,bTop+bH+0.5); g.stroke();
+
+  /* табло */
+  var L3=LAY[idx];
+  I('layOut').textContent=L3.n;
+  I('layIn').textContent=shapeIn(L3);
+  I('layOutS').textContent=shapeOut(L3);
+  I('layP').textContent=gr(L3.p);
+  I('layF').textContent=(100*L3.p/ALEX_TOTAL).toFixed(2)+' %';
+  var t,c,txt;
+  if(L3.kind==='p'){
+    t='t-ok'; c='ваг немає';
+    txt='Пулінг не має жодної ваги — він лише обирає максимум і зменшує сторону з '
+      +L3.si+' до '+L3.so+'. Безкоштовне зменшення карти, як у <a href="../08-pooling/lecture.html">темі 08</a>.';
+  }else if(L3.kind==='f'){
+    t='t-mid'; c='ваг немає, але…';
+    txt='<code>Flatten</code> теж безкоштовний: він просто виписує карту 256×6×6 у рядок '
+      +'із 9 216 чисел. Але саме за цей рядок далі заплатить наступний шар — 37,8 мільйона ваг.';
+  }else if(L3.kind==='c'){
+    t='t-ok'; c=(100*L3.p/ALEX_TOTAL).toFixed(2)+' % мережі';
+    txt='Згортка з ядром '+L3.k+'. '+gr(L3.p)+' ваг — це '+(100*L3.p/ALEX_TOTAL).toFixed(2)
+      +' % мережі. Усі пʼять згорток разом тримають лише 4,0 %.';
+  }else{
+    t='t-no'; c=(100*L3.p/ALEX_TOTAL).toFixed(1)+' % мережі';
+    txt='Повнозвʼязний шар: '+gr(L3.p)+' ваг в одному шарі. '
+      + (idx===9 ? 'Це найдорожчий шар AlexNet — сам по собі важчий за всі пʼять згорток у пʼятнадцять разів.'
+                 : 'Він не бачить зображення взагалі: працює з рядком чисел, що лишився після згорток.');
+  }
+  verd('layVd',t,c,txt);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 2 · Одне грубе ядро проти стосу дрібних
+   ═══════════════════════════════════════════════════════════════════ */
+function stackParams(n){ return n===0?0:1792+(n-1)*36928; }          /* 3→64, далі 64→64 */
+function stackMults(n){ return n===0?0:86704128+(n-1)*1849688064; }  /* на вході 224×224 */
+var BIG_P=23296, BIG_M=70276800;
+function drawRf(){
+  var cv=I('cRf'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var n=+I('rfN').value; if(!isFinite(n)) n=1;
+  var r=2*n+1;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+
+  var N=19, cell=14, gw=N*cell;
+  var y0=54;
+  var xs=[80, W-80-gw];
+  var titles=['одне ядро 11×11, крок 4','стос із '+n+' '+шаруG(n)+' 3×3, крок 1'];
+  var fields=[11, r];
+  var cols=[rose, teal];
+
+  var q;
+  for(q=0;q<2;q++){
+    var x0=xs[q], i, j;
+    capt(g,titles[q], x0, y0-16, ink, 12, true);
+    /* сітка пікселів */
+    for(i=0;i<N;i++) for(j=0;j<N;j++){
+      g.fillStyle=paper; g.fillRect(x0+j*cell, y0+i*cell, cell-1, cell-1);
+    }
+    /* квадрат рецептивного поля по центру */
+    var f=Math.min(fields[q],N);
+    var off=Math.floor((N-f)/2);
+    for(i=0;i<f;i++) for(j=0;j<f;j++){
+      g.fillStyle=(q===0)?css('--rose-w'):css('--teal-w');
+      g.fillRect(x0+(off+j)*cell, y0+(off+i)*cell, cell-1, cell-1);
+    }
+    g.strokeStyle=cols[q]; g.lineWidth=2;
+    g.strokeRect(x0+off*cell-1, y0+off*cell-1, f*cell, f*cell);
+    /* рамка сітки */
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.strokeRect(x0-0.5, y0-0.5, gw, gw);
+    /* підписи під сіткою */
+    var yb=y0+gw+20;
+    capt(g,'поле '+fields[q]+' × '+fields[q], x0, yb, cols[q], 12, true);
+    var pp=(q===0)?BIG_P:stackParams(n);
+    var mm=(q===0)?BIG_M:stackMults(n);
+    capt(g,'ваг: '+gr(pp), x0, yb+18, soft, 11);
+    capt(g,'множень: '+млн(mm), x0, yb+34, soft, 11);
+    if(fields[q]>N) capt(g,'(поле вже не вміщається в малюнок)', x0, yb+50, soft, 10);
+  }
+  capt(g,'кожна клітинка — один піксель вхідного зображення', W/2, H-14, soft, 11, false, 'center');
+
+  I('rfNo').textContent=n;
+  I('rfR').textContent=r+' × '+r;
+  I('rfP').textContent=gr(stackParams(n));
+  var kp=stackParams(n)/BIG_P;
+  I('rfK').textContent=kp.toFixed(1)+'×';
+  var km=stackMults(n)/BIG_M;
+  if(r<11){
+    verd('rfVd','t-no','поле ще менше',
+      'Стос із '+n+' '+шаруG(n)+' бачить квадрат '+r+'×'+r+' проти 11×11 в одного грубого ядра. '
+      +'Щоб зрівнятись, потрібні пʼять шарів: поле росте на 2 за шар.');
+  }else if(r===11){
+    verd('rfVd','t-mid','поле зрівнялось',
+      'Пʼять шарів 3×3 дають рівно те саме поле 11×11. Ціна: ваг у '+kp.toFixed(1)
+      +' раза більше ('+gr(stackParams(n))+' проти '+gr(BIG_P)+'), а множень — у '
+      +Math.round(km)+' '+разів(Math.round(km))+' більше. '
+      +'Саме тому у 2012 році обрали одне грубе ядро.');
+  }else{
+    verd('rfVd','t-ok','поле більше',
+      'Тепер стос бачить '+r+'×'+r+' проти 11×11 і має '+n+' '+нелінійностей(n)+' замість однієї. '
+      +'Але платить за це '+kp.toFixed(1)+'× ваг і '+Math.round(km)+'× множень — '
+      +'на залізі 2012 року така мережа просто не навчилась би.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 3 · Однорідність VGG
+   ═══════════════════════════════════════════════════════════════════ */
+var VGG=[
+ {n:'VGG11', rep:[1,1,2,2,2], conv:9220480,  tot:132863336},
+ {n:'VGG13', rep:[2,2,2,2,2], conv:9404992,  tot:133047848},
+ {n:'VGG16', rep:[2,2,3,3,3], conv:14714688, tot:138357544},
+ {n:'VGG19', rep:[2,2,4,4,4], conv:20024384, tot:143667240}
+];
+var VGG_HEAD=123642856, vggI=2;
+function drawVgg(){
+  var cv=I('cVgg'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i, j;
+  var V=VGG[vggI];
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+  var chan=[64,128,256,512,512], side=[224,112,56,28,14], outSide=[112,56,28,14,7];
+
+  var x=34, y0=54, bw=22, bh0=112, gapIn=5, gapBl=26;
+  capt(g,'згорткові блоки: кожна коробка — одна згортка 3×3', 34, 30, soft, 11, true);
+  for(i=0;i<5;i++){
+    var h=bh0*(0.45+0.55*Math.log(chan[i])/Math.log(512));
+    for(j=0;j<V.rep[i];j++){
+      g.fillStyle=css('--teal-w'); rr(g,x,y0+(bh0-h),bw,h,4); g.fill();
+      g.strokeStyle=teal; g.lineWidth=1.4; rr(g,x+0.5,y0+(bh0-h)+0.5,bw-1,h-1,4); g.stroke();
+      x+=bw+gapIn;
+    }
+    /* пулінг */
+    g.fillStyle=paper; rr(g,x,y0+bh0-26,15,26,3); g.fill();
+    g.strokeStyle=hair; rr(g,x+0.5,y0+bh0-26+0.5,14,25,3); g.stroke();
+    capt(g,'M', x+7.5, y0+bh0-9, soft, 9, true, 'center');
+    /* підпис блоку */
+    var bx0=x-(V.rep[i]*(bw+gapIn));
+    capt(g, chan[i]+' кан.', bx0+2, y0+bh0+18, ink, 10.5, true);
+    capt(g, side[i]+'→'+outSide[i], bx0+2, y0+bh0+32, soft, 9.5);
+    x+=15+gapBl;
+  }
+  /* голова */
+  var hx=x+8;
+  if(hx<W-150) hx=W-160;
+  capt(g,'голова', hx, y0-8, rose, 11, true);
+  var hn=['9…', '4096','1000'], hl=['25088→4096','4096→4096','4096→1000'];
+  for(i=0;i<3;i++){
+    g.fillStyle=css('--rose-w'); rr(g,hx,y0+i*30,140,24,4); g.fill();
+    g.strokeStyle=rose; g.lineWidth=1.2; rr(g,hx+0.5,y0+i*30+0.5,139,23,4); g.stroke();
+    capt(g,hl[i], hx+70, y0+i*30+16, ink, 10, false, 'center');
+  }
+  capt(g,'однакова в усіх', hx, y0+3*30+14, soft, 10);
+  capt(g,'чотирьох варіантах', hx, y0+3*30+28, soft, 10);
+
+  /* смуга «згортки проти голови» */
+  var by=252, bhh=30, bx=34, bwid=W-68;
+  var frac=V.conv/V.tot;
+  g.fillStyle=teal; rr(g,bx,by,bwid*frac,bhh,4); g.fill();
+  g.fillStyle=rose; rr(g,bx+bwid*frac,by,bwid*(1-frac),bhh,4); g.fill();
+  capt(g,'згортки '+(100*frac).toFixed(1)+' %', bx, by+bhh+18, teal, 11.5, true);
+  capt(g,'голова '+(100*(1-frac)).toFixed(1)+' %', bx+bwid, by+bhh+18, rose, 11.5, true, 'right');
+  capt(g,'розподіл '+gr(V.tot)+' ваг '+V.n, bx, by-9, soft, 11, true);
+
+  I('vgN').textContent=V.rep[0]+V.rep[1]+V.rep[2]+V.rep[3]+V.rep[4];
+  I('vgC').textContent=gr(V.conv);
+  I('vgH').textContent=gr(VGG_HEAD);
+  I('vgT').textContent=gr(V.tot);
+  var base=VGG[0];
+  var dConv=V.conv/base.conv, dTot=V.tot/base.tot;
+  if(vggI===0){
+    verd('vgVd','t-ok','точка відліку',
+      'Вісім згорток, 9,2 мільйона ваг у них — і 123,6 мільйона в голові. '
+      +'Перемикай глибину й стеж не за згортками, а за нижнім числом.');
+  }else{
+    verd('vgVd', dTot<1.1?'t-mid':'t-no', '+'+((dTot-1)*100).toFixed(1)+' % ваги',
+      V.n+' має '+(V.rep[0]+V.rep[1]+V.rep[2]+V.rep[3]+V.rep[4])+' згорток проти восьми у VGG11 — '
+      +'згорткова частина важча у '+dConv.toFixed(2)+' раза. А вся мережа — лише на '
+      +((dTot-1)*100).toFixed(1)+' %, бо голова не змінилась: ті самі '+gr(VGG_HEAD)+' ваг.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 4 · Де сидять ваги
+   ═══════════════════════════════════════════════════════════════════ */
+var WHR=[
+ {n:'AlexNet', tot:61100840, head:96.0,
+  L:[['conv1',23296],['conv2',307392],['conv3',663936],['conv4',884992],['conv5',590080],
+     ['fc1',37752832],['fc2',16781312],['fc3',4097000]]},
+ {n:'VGG16', tot:138357544, head:89.4,
+  L:[['1_1',1792],['1_2',36928],['2_1',73856],['2_2',147584],['3_1',295168],['3_2',590080],
+     ['3_3',590080],['4_1',1180160],['4_2',2359808],['4_3',2359808],['5_1',2359808],
+     ['5_2',2359808],['5_3',2359808],['fc1',102764544],['fc2',16781312],['fc3',4097000]]}
+];
+var whrI=0;
+function drawWhr(){
+  var cv=I('cWhr'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var M=WHR[whrI], n=M.L.length;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+
+  var padL=44, padR=26, top=52, botY=H-52;
+  var avail=W-padL-padR;
+  var bw=Math.min(46, avail/n*0.72), gap=(avail-bw*n)/(n-1);
+  var maxSh=0;
+  for(i=0;i<n;i++) if(M.L[i][1]/M.tot>maxSh) maxSh=M.L[i][1]/M.tot;
+  var hMax=botY-top;
+
+  capt(g,'частка шару в '+gr(M.tot)+' вагах '+M.n, padL, 28, ink, 12, true);
+
+  /* горизонтальні лінії сітки */
+  var lev=[0,0.25,0.5,0.75,1.0], k;
+  for(k=0;k<lev.length;k++){
+    var yy=botY-lev[k]*hMax;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(padL,yy+0.5); g.lineTo(W-padR,yy+0.5); g.stroke();
+    capt(g,(lev[k]*maxSh*100).toFixed(0)+'%', padL-6, yy+4, soft, 9.5, false, 'right');
+  }
+
+  for(i=0;i<n;i++){
+    var sh=M.L[i][1]/M.tot, hh=sh/maxSh*hMax;
+    if(hh<1.5) hh=1.5;
+    var isHead=(i>=n-3);
+    var x=padL+i*(bw+gap);
+    g.fillStyle=isHead?rose:teal;
+    rr(g,x,botY-hh,bw,hh,3); g.fill();
+    if(sh>0.02) capt(g,(100*sh).toFixed(1), x+bw/2, botY-hh-6, isHead?rose:teal, 10, true, 'center');
+    capt(g,M.L[i][0], x+bw/2, botY+15, isHead?ink:soft, 9.5, isHead, 'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(padL,botY+0.5); g.lineTo(W-padR,botY+0.5); g.stroke();
+  capt(g,'рожеві — голова', W-padR, 28, rose, 11, true, 'right');
+
+  var mx=0, mi=0;
+  for(i=0;i<n;i++) if(M.L[i][1]>mx){ mx=M.L[i][1]; mi=i; }
+  I('whrT').textContent=gr(M.tot);
+  I('whrH').textContent=M.head.toFixed(1)+' %';
+  I('whrM').textContent=M.L[mi][0]+' · '+млн(mx);
+  I('whrMf').textContent=(100*mx/M.tot).toFixed(1)+' %';
+  if(whrI===0){
+    verd('whrVd','t-no','96,0 % у голові',
+      'Пʼять згорток AlexNet разом — 2 469 696 ваг, тобто 4,0 % мережі. '
+      +'Один шар <code>fc1</code> тримає 61,8 %, і на графіку згорток майже не видно.');
+  }else{
+    verd('whrVd','t-no','89,4 % у голові',
+      'Тринадцять згорток VGG16 разом — 14 714 688 ваг, це 10,6 %. '
+      +'Один <code>fc1</code> тримає 74,3 %, тобто важить усемеро більше за всі згортки, '
+      +'узяті разом.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 5 · Ціна голови
+   ═══════════════════════════════════════════════════════════════════ */
+var GAP_HEAD=513000;
+function headP(S){ var side=S/32; return 512*side*side*4096+4096; }
+function drawHead(){
+  var cv=I('cHead'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var S=+I('hdS').value; if(!isFinite(S)) S=224;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+
+  var padL=74, padR=190, top=44, bot=H-46;
+  var Smin=128, Smax=448;
+  var pMax=headP(Smax);
+  function X(s){ return padL+(s-Smin)/(Smax-Smin)*(W-padL-padR); }
+  function Y(p){ return bot-p/pMax*(bot-top); }
+
+  /* осі */
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(padL,bot+0.5); g.lineTo(W-padR,bot+0.5); g.stroke();
+  g.beginPath(); g.moveTo(padL+0.5,top); g.lineTo(padL+0.5,bot); g.stroke();
+  var lv=[0,100e6,200e6,300e6,400e6];
+  for(i=0;i<lv.length;i++){
+    var yy=Y(lv[i]);
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(padL,yy+0.5); g.lineTo(W-padR,yy+0.5); g.stroke();
+    capt(g,(lv[i]/1e6).toFixed(0)+' млн', padL-8, yy+4, soft, 9.5, false, 'right');
+  }
+  for(i=Smin;i<=Smax;i+=64) capt(g, String(i), X(i), bot+16, soft, 9.5, false, 'center');
+  capt(g,'сторона вхідного зображення, пікселів', (padL+W-padR)/2, bot+34, soft, 10.5, false, 'center');
+  capt(g,'ваг у першому Linear після Flatten', padL, 28, ink, 12, true);
+
+  /* крива */
+  g.strokeStyle=rose; g.lineWidth=2.2; g.beginPath();
+  var first=true;
+  for(i=Smin;i<=Smax;i+=32){
+    var xx=X(i), yy2=Y(headP(i));
+    if(first){ g.moveTo(xx,yy2); first=false; } else g.lineTo(xx,yy2);
+  }
+  g.stroke();
+  for(i=Smin;i<=Smax;i+=32){
+    g.fillStyle=(i===S)?rose:css('--raise');
+    g.beginPath(); g.arc(X(i),Y(headP(i)),(i===S)?6:3.5,0,6.2832); g.fill();
+    g.strokeStyle=rose; g.lineWidth=1.5; g.stroke();
+  }
+  /* пряма GAP */
+  g.strokeStyle=teal; g.lineWidth=2; g.setLineDash([6,5]);
+  g.beginPath(); g.moveTo(padL,Y(GAP_HEAD)); g.lineTo(W-padR,Y(GAP_HEAD)); g.stroke();
+  g.setLineDash([]);
+  capt(g,'голова на GAP: 513 000 ваг завжди', padL+8, Y(GAP_HEAD)-8, teal, 10.5, true);
+
+  /* картка обраного значення */
+  var cx=W-padR+14, cy=top+6;
+  g.fillStyle=css('--paper'); rr(g,cx,cy,W-cx-20,120,8); g.fill();
+  g.strokeStyle=hair; rr(g,cx+0.5,cy+0.5,W-cx-21,119,8); g.stroke();
+  var side=S/32;
+  capt(g,'вхід '+S+'×'+S, cx+12, cy+22, ink, 12, true);
+  capt(g,'карта: 512×'+side+'×'+side, cx+12, cy+42, soft, 10.5);
+  capt(g,'рядок: '+gr(512*side*side), cx+12, cy+60, soft, 10.5);
+  capt(g,'ваг: '+млн(headP(S)), cx+12, cy+82, rose, 12, true);
+  capt(g,'= '+(headP(S)*4/1048576).toFixed(0)+' МБ float32', cx+12, cy+100, soft, 10.5);
+
+  I('hdSo').textContent=S;
+  I('hdMap').textContent='512×'+side+'×'+side;
+  I('hdFlat').textContent=gr(512*side*side);
+  I('hdP').textContent=gr(headP(S));
+  var k=headP(S)/GAP_HEAD;
+  I('hdK').textContent=Math.round(k)+'×';
+  if(S===224){
+    verd('hdVd','t-no','штатний розмір',
+      '224×224 — розмір, під який VGG16 і навчали. Уже тут один шар голови важить '
+      +gr(headP(S))+' ваг, у '+Math.round(k)+' '+разів(Math.round(k))+' більше за цілу GAP-голову.');
+  }else if(S<224){
+    verd('hdVd','t-mid','менший вхід',
+      'Зменшили сторону до '+S+' — і шар схуд до '+gr(headP(S))+' ваг. Але мережу з таким входом '
+      +'треба вчити заново: <code>Linear</code> прибитий до довжини рядка, '
+      +'і чужі ваги на нього не ляжуть.');
+  }else{
+    verd('hdVd','t-no','квадратичне зростання',
+      'Сторона більша за штатну в '+(S/224).toFixed(2)+' раза, а шар важчий у '
+      +(headP(S)/headP(224)).toFixed(2)+' раза — рівно квадрат. '
+      +'При '+S+'×'+S+' один цей шар важить '+млн(headP(S))+' ваг, '
+      +'більше за всю справжню VGG16. GAP-голова коштувала б ті самі 513 000.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 6 · Памʼять проти параметрів
+   ═══════════════════════════════════════════════════════════════════ */
+var MEM=[
+ {n:'AlexNet', wTot:61100840, aTot:582504,
+  L:[['conv1',23296,193600],['pool',0,46656],['conv2',307392,139968],['pool',0,32448],
+     ['conv3',663936,64896],['conv4',884992,43264],['conv5',590080,43264],['pool',0,9216],
+     ['fc1',37752832,4096],['fc2',16781312,4096],['fc3',4097000,1000]]},
+ {n:'VGG16', wTot:138357544, aTot:15087080,
+  L:[['1_1',1792,3211264],['1_2',36928,3211264],['P',0,802816],
+     ['2_1',73856,1605632],['2_2',147584,1605632],['P',0,401408],
+     ['3_1',295168,802816],['3_2',590080,802816],['3_3',590080,802816],['P',0,200704],
+     ['4_1',1180160,401408],['4_2',2359808,401408],['4_3',2359808,401408],['P',0,100352],
+     ['5_1',2359808,100352],['5_2',2359808,100352],['5_3',2359808,100352],['P',0,25088],
+     ['fc1',102764544,4096],['fc2',16781312,4096],['fc3',4097000,1000]]}
+];
+var BATCH=[1,2,4,8,16,32,64,128,256], memI=1;
+function mb(el){ return el*4/1048576; }
+function drawMem(){
+  var cv=I('cMem'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var M=MEM[memI], b=BATCH[+I('memB').value]||1, n=M.L.length;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+
+  var padL=52, padR=22, mid=180, half=118;
+  var avail=W-padL-padR;
+  var bw=Math.min(38, avail/n*0.74), gap=(avail-bw*n)/(n-1);
+  /* спільна логарифмічна шкала: 0.001 МБ … 4096 МБ */
+  function hgt(v){
+    if(v<=0) return 0;
+    var t=(Math.log(v)/Math.LN10+3)/6.62;
+    if(t<0.02) t=0.02; if(t>1) t=1;
+    return t*half;
+  }
+  capt(g,'ваги, МБ  ↑', padL, 24, rose, 11.5, true);
+  capt(g,'активації, МБ  ↓   батч '+b, padL, H-14, teal, 11.5, true);
+
+  /* лінії шкали */
+  var lv=[0.01,1,100], k;
+  for(k=0;k<lv.length;k++){
+    var hh=hgt(lv[k]);
+    g.strokeStyle=hair; g.lineWidth=1; g.setLineDash([3,4]);
+    g.beginPath(); g.moveTo(padL,mid-hh+0.5); g.lineTo(W-padR,mid-hh+0.5); g.stroke();
+    g.beginPath(); g.moveTo(padL,mid+hh+0.5); g.lineTo(W-padR,mid+hh+0.5); g.stroke();
+    g.setLineDash([]);
+    capt(g,String(lv[k]), padL-6, mid-hh+4, soft, 9, false, 'right');
+    capt(g,String(lv[k]), padL-6, mid+hh+4, soft, 9, false, 'right');
+  }
+
+  for(i=0;i<n;i++){
+    var x=padL+i*(bw+gap);
+    var wv=mb(M.L[i][1]), av=mb(M.L[i][2]*b);
+    var hw=hgt(wv), ha=hgt(av);
+    if(hw>0){ g.fillStyle=rose; rr(g,x,mid-hw,bw,hw,2); g.fill(); }
+    if(ha>0){ g.fillStyle=teal; rr(g,x,mid,bw,ha,2); g.fill(); }
+    capt(g,M.L[i][0], x+bw/2, 318, soft, 8.5, false, 'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(padL,mid+0.5); g.lineTo(W-padR,mid+0.5); g.stroke();
+
+  var wT=mb(M.wTot), aT=mb(M.aTot*b), cross=M.wTot/M.aTot;
+  I('memBo').textContent=b;
+  I('memW').textContent=wT.toFixed(1);
+  I('memA').textContent=aT.toFixed(1);
+  I('memWho').textContent=(aT>wT)?'активації':'ваги';
+  I('memX').textContent=cross.toFixed(0);
+  var txt='Найтовщий стовпчик угору — '+(memI===0?'fc1 (144 МБ)':'fc1 (392 МБ)')
+    +', найтовщий униз — '+(memI===0?'conv1':'conv1_1')+'. Максимуми в різних кінцях мережі.';
+  if(aT>wT){
+    verd('memVd','t-no','активації переважили',
+      'На батчі '+b+' активації важать '+aT.toFixed(0)+' МБ проти '+wT.toFixed(0)
+      +' МБ ваг. Перетин у '+M.n+' настає на батчі '+cross.toFixed(0)+'. '+txt);
+  }else{
+    verd('memVd','t-ok','ваги ще важчі',
+      'На батчі '+b+' ваги важать '+wT.toFixed(0)+' МБ проти '+aT.toFixed(1)
+      +' МБ активацій. Активації переважать на батчі '+cross.toFixed(0)+'. '+txt);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 7 · За що ми платимо
+   ═══════════════════════════════════════════════════════════════════ */
+var PAY_NET=['ShapeNet, тема 09','AlexNet','VGG16','ResNet18'];
+var PAY=[
+ {t:'параметрів',        u:'',      lower:true,  v:[24774,61100840,138357544,11689512], fmt:function(x){return gr(x);}},
+ {t:'ваги, МБ float32',  u:' МБ',   lower:true,  v:[0.09,233.1,527.8,44.6], fmt:function(x){return x.toFixed(x<1?2:1);}},
+ {t:'час прямого проходу, мс', u:' мс', lower:true, v:[0.26,37.3,480.4,73.9], fmt:function(x){return x.toFixed(2);}},
+ {t:'точність top-1 на ImageNet, %', u:' %', lower:false, v:[null,56.5,71.6,69.8], fmt:function(x){return x.toFixed(1);}},
+ {t:'точності на мільйон ваг', u:'', lower:false, v:[null,0.93,0.52,5.97], fmt:function(x){return x.toFixed(2);}}
+];
+var payI=0;
+function drawPay(){
+  var cv=I('cPay'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var P=PAY[payI];
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+
+  var padL=178, padR=150, top=58, rowH=54;
+  var avail=W-padL-padR;
+  capt(g,P.t, 34, 30, ink, 12.5, true);
+
+  var vals=[], mx=0;
+  for(i=0;i<4;i++){ vals.push(P.v[i]); if(P.v[i]!==null && P.v[i]>mx) mx=P.v[i]; }
+  var logScale=(payI<3);
+  var lo=Math.log(0.05)/Math.LN10, hi=Math.log(mx)/Math.LN10;
+  function len(v){
+    if(v===null) return 0;
+    if(!logScale) return v/mx*avail;
+    var t=(Math.log(v)/Math.LN10-lo)/(hi-lo);
+    if(t<0.012) t=0.012;
+    return t*avail;
+  }
+  /* декадна сітка: без неї логарифмічна шкала виглядає лінійною і бреше оком */
+  var bot=top+4*rowH-6;
+  if(logScale){
+    var e=Math.ceil(lo);
+    for(; e<=Math.floor(hi); e++){
+      var gx=padL+(e-lo)/(hi-lo)*avail;
+      g.strokeStyle=hair; g.lineWidth=1; g.setLineDash([3,4]);
+      g.beginPath(); g.moveTo(gx+0.5,top-6); g.lineTo(gx+0.5,bot); g.stroke();
+      g.setLineDash([]);
+      capt(g, e<0?Math.pow(10,e).toFixed(-e):млн(Math.pow(10,e)), gx, bot+16, soft, 9, false, 'center');
+    }
+  }
+  /* найкраща / найгірша серед наявних */
+  var best=-1, worst=-1;
+  for(i=0;i<4;i++){
+    if(vals[i]===null) continue;
+    if(best<0 || (P.lower? vals[i]<vals[best] : vals[i]>vals[best])) best=i;
+    if(worst<0 || (P.lower? vals[i]>vals[worst] : vals[i]<vals[worst])) worst=i;
+  }
+  for(i=0;i<4;i++){
+    var y=top+i*rowH;
+    capt(g,PAY_NET[i], padL-12, y+20, (i===best)?ink:soft, 11.5, i===best, 'right');
+    if(vals[i]===null){
+      g.fillStyle=hair; rr(g,padL,y+4,110,24,4); g.fill();
+      capt(g,'інша задача', padL+10, y+20, soft, 10.5);
+      continue;
+    }
+    var L=len(vals[i]);
+    g.fillStyle=(i===best)?teal:((i===worst)?rose:amber);
+    rr(g,padL,y+4,Math.max(L,3),24,4); g.fill();
+    capt(g,P.fmt(vals[i])+P.u, padL+Math.max(L,3)+9, y+21, ink, 11.5, i===best||i===worst);
+  }
+  capt(g, logScale?'шкала логарифмічна: між сусідніми пунктирами — десятикратна різниця'
+                  :'шкала лінійна', 34, H-14, soft, 10);
+
+  var lowI=-1, highI=-1;
+  for(i=0;i<4;i++){
+    if(vals[i]===null) continue;
+    if(lowI<0 || vals[i]<vals[lowI]) lowI=i;
+    if(highI<0 || vals[i]>vals[highI]) highI=i;
+  }
+  I('payBest').textContent = (lowI<0?'—':PAY_NET[lowI].split(',')[0]);
+  I('payWorst').textContent= (highI<0?'—':PAY_NET[highI].split(',')[0]);
+  var t,c,txt;
+  if(payI===0){
+    t='t-no'; c='VGG16 найважча';
+    txt='138 мільйонів проти 11,7 у ResNet18 — і ResNet при цьому глибша. '
+      +'Наша ShapeNet із теми 09 менша за VGG16 у 5 585 разів.';
+  }else if(payI===1){
+    t='t-no'; c='пів гігабайта';
+    txt='Ваги VGG16 у форматі float32 займають 527,8 МБ. ResNet18 — 44,6 МБ, '
+      +'тобто вміщається туди дванадцять разів.';
+  }else if(payI===2){
+    t='t-mid'; c='порядок величини';
+    txt='VGG16 рахується приблизно вдванадцятеро довше за AlexNet, хоча важить лише вдвічі більше. '
+      +'Час іде на множення, а не на ваги. Числа плавають від запуску до запуску — '
+      +'дивись на порядок, не на другий знак.';
+  }else if(payI===3){
+    t='t-ok'; c='VGG16 виграє';
+    txt='За точністю VGG16 попереду: 71,6 % проти 56,5 % у AlexNet. Два роки різниці — '
+      +'плюс пʼятнадцять пунктів. За це заплачено вдвічі більшою вагою й удванадцятеро довшим проходом.';
+  }else{
+    t='t-ok'; c='ранжування перевернулось';
+    txt='Ділимо точність на розмір — і VGG16 стає найгіршою з трьох: 0,52 проти 5,97 у ResNet18. '
+      +'Різниця в 11,5 раза, і вся вона в голові. Саме це й виправили далі.';
+  }
+  verd('payVd',t,c,txt);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Запуск
+   ═══════════════════════════════════════════════════════════════════ */
+function redrawAll(){
+  drawLay(); drawRf(); drawVgg(); drawWhr(); drawHead(); drawMem(); drawPay();
+}
+on('layIdx','input',drawLay);
+on('rfN','input',drawRf);
+segment('vggSeg', function(i){ vggI=i; drawVgg(); });
+segment('whrSeg', function(i){ whrI=i; drawWhr(); });
+on('hdS','input',drawHead);
+segment('memSeg', function(i){ memI=i; drawMem(); });
+on('memB','input',drawMem);
+segment('paySeg', function(i){ payI=i; drawPay(); });
+
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(redrawAll);
+redrawAll();
+})();
+</script>
+</body>
+</html>

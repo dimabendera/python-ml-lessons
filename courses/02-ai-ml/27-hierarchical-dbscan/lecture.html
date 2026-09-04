@@ -1,0 +1,1658 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ієрархічна кластеризація та DBSCAN</title>
+<meta name="description" content="DBSCAN та ієрархічна (агломеративна) кластеризація: щільність замість центрів, параметри eps і min_samples, три ролі точки, шум як окрема категорія, вибір eps за графіком k-ї відстані, вада однієї щільності на всіх, дерево злиттів і дендрограма з рухомим зрізом, чотири способи міряти відстань між групами та чесне порівняння трьох методів на трьох формах даних.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+/* довгі рядки коду в бічній панелі — на півкегля дрібніше, щоб не обрізались */
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+/* багато варіантів в одну лінію не влазять — пускаємо у два ряди */
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .numt, .numt td:first-child, .numt th:first-child, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* довгі імена (StandardScaler, silhouette_score, n_init) не мають
+   де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не має бути рожевою й моноширинною */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця ітерацій: усе моноширинне й вирівняне по цифрах */
+.numt{font-family:"JetBrains Mono",monospace; font-size:12.5px}
+.numt td, .numt th{padding:5px 9px; text-align:right; white-space:nowrap}
+.numt td:first-child, .numt th:first-child{text-align:left; color:var(--ink);
+  font-family:"JetBrains Mono",monospace; font-size:12.5px}
+.numt th{font-size:10px}
+.numt .grp{text-align:center; color:var(--rose); border-bottom:1px solid var(--hair)}
+.numt .pick{color:var(--teal); font-weight:700}
+.numt .sep{border-left:1px solid var(--hair)}
+.numt tr.tot td{color:var(--soft); border-bottom:0}
+
+/* підпис над перемикачем у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* десять кольорів кластерів: кожен визначений у всіх трьох станах теми,
+   інакше в режимі «системна тема» змінна не застосується */
+:root{
+  --k1:#c2185b; --k2:#0f766e; --k3:#c2620f; --k4:#5b3fa8; --k5:#1d6fbf;
+  --k6:#6f6a00; --k7:#a33a1f; --k8:#0e7a3d; --k9:#8a2f7b; --k10:#3f5566;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --k1:#f06292; --k2:#2dd4bf; --k3:#f5a524; --k4:#a78bfa; --k5:#60a5fa;
+    --k6:#cfca4a; --k7:#fb8a6a; --k8:#4ade80; --k9:#e879c7; --k10:#9fb3c8;
+  }
+}
+:root[data-theme="dark"]{
+  --k1:#f06292; --k2:#2dd4bf; --k3:#f5a524; --k4:#a78bfa; --k5:#60a5fa;
+  --k6:#cfca4a; --k7:#fb8a6a; --k8:#4ade80; --k9:#e879c7; --k10:#9fb3c8;
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Машинне навчання · Блок 6 · Тема 27</p>
+    <h1>Ієрархічна кластеризація та DBSCAN</h1>
+    <p class="stand">k-means питає, де стоять центри. Ці два методи питають інше:
+      де густо — і що з чим зливається раніше. Відповіді виходять зовсім не ті.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Дві відповіді на одну невдачу</a></li>
+        <li><a href="#s2">Кластер — це там, де густо</a></li>
+        <li><a href="#s3">Як розростається кластер</a></li>
+        <li><a href="#s4">Два повзунки, дві катастрофи</a></li>
+        <li><a href="#s5">Звідки брати eps</a></li>
+        <li><a href="#s6">Шум — це відповідь</a></li>
+        <li><a href="#s7">Одна щільність на всіх</a></li>
+        <li><a href="#s8">Дерево замість розбиття</a></li>
+        <li><a href="#s9">Чим міряти відстань між групами</a></li>
+        <li><a href="#s10">Скільки це коштує</a></li>
+        <li><a href="#s11">Три форми, три методи</a></li>
+        <li><a href="#s12">Що обирати й що далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../26-kmeans/lecture.html">← 26. Кластеризація k-means</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../28-anomaly-detection/lecture.html">28. Пошук аномалій →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Попередня тема закінчилась трьома картинками, на яких відповідь була
+очевидно неправильною. Дві довгі смуги, які <a href="../26-kmeans/lecture.html">k-means</a>
+розрізав упоперек, — 58&nbsp;% точок на своїх місцях. Коло всередині кільця — 60&nbsp;%.
+Щільна купка поруч із розсіяною хмарою — 89&nbsp;%. Людське око бачить правильну відповідь
+за півсекунди, а метод її не бачить узагалі.</p>
+
+<p>Причина не в налаштуваннях. Вона в самій будові k-means: кожна точка йде до найближчого
+центра, тому межа між кластерами — завжди пряма, а кластер — завжди приблизно кругла
+грудка. Плюс друга незручність: кількість груп <em>k</em> доводиться назвати наперед,
+до того як ти щось про дані дізнався.</p>
+
+<h2 id="s1"><span class="num">01 / Дві відповіді</span>Дві відповіді на одну невдачу</h2>
+
+<p>Обидві проблеми мають розвʼязок, і розвʼязки ці зовсім різні.</p>
+
+<p><strong>DBSCAN</strong> викидає з опису поняття центра. Замість «де середина групи» він
+питає «де точки стоять густо» — і нарощує кластер від сусіда до сусіда, куди б той не
+тягнувся. Смуга, кільце, підкова: якщо ланцюжок сусідів веде туди, кластер піде туди.
+Заразом він уміє те, чого k-means не вміє принципово, — сказати про окрему точку
+<em>«це не кластер, це шум»</em>.</p>
+
+<p><strong>Ієрархічна кластеризація</strong> відповідає на другу проблему. Вона не видає
+одне розбиття. Вона будує <strong>дерево</strong>: спочатку кожен обʼєкт сам по собі,
+далі найближча пара зливається, далі наступна — аж поки все не стане однією групою.
+Кількість груп обираєш ти, але <em>після</em> побудови, дивлячись на дерево, а не наосліп
+до неї.</p>
+
+<p>Працюємо на тих самих даних, що й у минулій темі. Наскрізний приклад — дошка оголошень
+про вживані телефони з <a href="../08-pandas-eda/lecture.html">теми 08</a>: 1 100
+оголошень із відомою ціною, дві ознаки — логарифм ціни й рік випуску, обидві приведені до
+<a href="../09-preprocessing/lecture.html">z-оцінок</a>. Плюс три синтетичні набори, на
+яких k-means провалився: витягнуті смуги, вкладені кільця, різна щільність. Ті самі точки,
+що й у темі 26, — щоб порівняння було чесним.</p>
+
+<div class="note warn"><b>Масштаб і тут обовʼязковий.</b> DBSCAN міряє відстані радіусом,
+ієрархічна — відстанями між групами. Обидва методи мовчки віддадуть усю владу тій
+колонці, у якої випадково найбільші числа. Правило з
+<a href="../26-kmeans/lecture.html#s7">розділу 7 попередньої теми</a> діє без винятків.</div>
+
+<h2 id="s2"><span class="num">02 / Щільність</span>Кластер — це там, де густо</h2>
+
+<p>Уся ідея DBSCAN (density-based spatial clustering of applications with noise —
+кластеризація за щільністю з урахуванням шуму) тримається на одному спостереженні:
+<strong>усередині кластера точки стоять близько одна до одної, а між кластерами —
+порожньо</strong>. Не «кругло», не «навколо центра» — просто густо.</p>
+
+<p>Щоб перетворити це на алгоритм, потрібні два числа, і задаєш їх ти.</p>
+
+<ul>
+  <li><code>eps</code> (радіус околу) — наскільки близько має стояти точка, щоб вважатись
+    сусідкою. Це відстань у тих самих одиницях, у яких лежать ознаки: у нас — у
+    z-оцінках.</li>
+  <li><code>min_samples</code> (мінімум сусідів) — скільки точок має бути в цьому радіусі,
+    щоб місце вважалось густим.</li>
+</ul>
+
+<div class="note"><b>Перші граблі, і вони тихі.</b> У <code>scikit-learn</code>
+<code>min_samples</code> рахує <strong>разом із самою точкою</strong>. Тобто
+<code>min_samples=3</code> означає «сама точка плюс щонайменше двоє сусідів», а не троє
+сусідів. Помилка на одиницю тут не викине винятку — вона просто змістить межу
+щільності.</div>
+
+<p>Далі кожна точка отримує одну з трьох ролей, і ці три слова — весь словник методу.</p>
+
+<div class="scroll-x">
+  <table class="plain">
+    <thead><tr><th>роль</th><th>умова</th><th>що це означає</th></tr></thead>
+    <tbody>
+      <tr><td>Ядерна (core)</td><td>у радіусі <code>eps</code> навколо неї — щонайменше <code>min_samples</code> точок</td><td>вона стоїть у густому місці й має право нарощувати кластер далі</td></tr>
+      <tr><td>Гранична (border)</td><td>сусідів замало, але вона сама лежить у радіусі якоїсь ядерної</td><td>вона в кластері, але з неї кластер далі не росте — це край</td></tr>
+      <tr><td>Шум (noise)</td><td>ні те, ні те</td><td>жодного кластера; алгоритм чесно каже «ця точка ні з ким»</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Візьмімо ті самі десять оголошень, на яких у минулій темі крутились ітерації k-means, і
+роздамо їм ролі. Радіус <code>eps = 1.2</code> (нагадаю: одиниця тут — одне стандартне
+відхилення), <code>min_samples = 3</code>.</p>
+
+<figure>
+  <p class="fig-head">Схема 1 · Три ролі точки</p>
+  <p class="fig-sub">Десять оголошень із розділу 3 попередньої теми. Навколо кожної точки —
+    коло радіуса 1.2; підраховуємо, скільки точок у нього потрапило разом із нею самою.</p>
+  <div><canvas id="cvRoles" width="700" height="330" aria-label="Схема ролей точки в DBSCAN: десять оголошень на площині ціна-рік, навколо кожного намальовано коло радіуса 1.2; шість точок угорі праворуч утворюють один кластер із ядерних точок, три точки ліворуч унизу утворюють другий кластер з однією ядерною і двома граничними, одна точка внизу посередині лишається шумом"></canvas></div>
+  <div class="scroll-x">
+  <table class="numt">
+    <thead><tr><th>оголошення</th><th>z (ціна, рік)</th><th>точок у радіусі 1.2</th><th>роль</th><th>кластер</th></tr></thead>
+    <tbody>
+      <tr><td>A1</td><td>−0.5, 1.1</td><td>3</td><td class="pick">ядерна</td><td>1</td></tr>
+      <tr><td>A2</td><td>−1.0, −1.1</td><td>2</td><td>гранична</td><td>2</td></tr>
+      <tr><td>A3</td><td>−2.5, −1.5</td><td>2</td><td>гранична</td><td>2</td></tr>
+      <tr><td>A4</td><td>0.1, 1.5</td><td>4</td><td class="pick">ядерна</td><td>1</td></tr>
+      <tr><td>A5</td><td>0.6, 1.5</td><td>6</td><td class="pick">ядерна</td><td>1</td></tr>
+      <tr><td>A6</td><td>1.1, 0.7</td><td>4</td><td class="pick">ядерна</td><td>1</td></tr>
+      <tr><td>A7</td><td>1.0, 1.5</td><td>5</td><td class="pick">ядерна</td><td>1</td></tr>
+      <tr><td>A8</td><td>1.7, 1.5</td><td>4</td><td class="pick">ядерна</td><td>1</td></tr>
+      <tr><td>A9</td><td>0.4, −1.5</td><td>1</td><td>—</td><td>шум</td></tr>
+      <tr><td>A10</td><td>−2.0, −0.6</td><td>3</td><td class="pick">ядерна</td><td>2</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption><b>Сім ядерних, дві граничні, один шум.</b> A2 і A3 самі по собі стоять
+    рідко — у їхніх колах лише по дві точки. Але обидві потрапили в коло ядерної A10
+    (відстані 1.12 і 1.03), тому їх приймають у другий кластер як край. У A9 в радіусі
+    немає взагалі нікого: найближче до нього A2 на відстані 1.46. Це той самий
+    <code>Gamma X Ultra</code> 2017 року, у якого в темі 26 силует був 0.205 — k-means
+    мусив кудись його віднести, а DBSCAN просто каже «ні з ким».</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Алгоритм</span>Як розростається кластер</h2>
+
+<p>Ролі роздано — далі алгоритм майже тривіальний. Він обходить точки одну за одною:</p>
+
+<div class="eq left">1. беремо чергову ще не розглянуту точку
+2. якщо вона не ядерна — поки що позначаємо як шум і йдемо далі
+3. якщо ядерна — відкриваємо новий кластер і кладемо в чергу її сусідів
+4. дістаємо точку з черги, приписуємо до цього кластера;
+   якщо вона теж ядерна — дописуємо в чергу і її сусідів
+5. черга спорожніла — кластер закінчився, повертаємось до кроку 1</div>
+
+<p>Прокрутімо це на наших десяти. Перша точка — A1, вона ядерна, відкриваємо кластер 1 і
+кладемо в чергу її сусідів A4 і A5. A4 ядерна — дописуємо її сусідів A1, A5, A7. A5
+ядерна — дописує A6, A7, A8. Черга крутиться, поки не вичерпається, і кластер 1 виходить
+такий: <strong>A1, A4, A5, A6, A7, A8</strong>. Далі беремо A2 — не ядерна, позначаємо
+шумом <em>тимчасово</em>. A3 — те саме. A9 — теж не ядерна. Аж ось A10: ядерна,
+відкриваємо кластер 2, у чергу йдуть A2 і A3 — обидві не ядерні, тому нікого далі не
+тягнуть, і кластер 2 = <strong>A10, A2, A3</strong>. A9 так і лишається шумом.</p>
+
+<p>Зверни увагу на два наслідки, які видно вже на десяти точках.</p>
+
+<p><strong>Перший: кластер може мати будь-яку форму.</strong> Він росте ланцюжком, від
+сусіда до сусіда, і жодного «центра» ніхто не рахує. Довга змія завтовшки в два кроки —
+законний кластер DBSCAN і неможливий кластер k-means.</p>
+
+<p><strong>Другий, дрібніший і неприємний: гранична точка може дістатись різним
+кластерам.</strong> Якби A2 лежала в колах двох різних ядерних точок із різних кластерів,
+її забрав би той, до кого черга дійшла першою, — тобто результат залежав би від порядку
+рядків у таблиці. Ядерних точок це не стосується: вони розподіляються однозначно. На
+практиці граничних точок мало, але якщо два запуски на перетасованих даних дали трохи
+різні мітки — причина зазвичай саме тут.</p>
+
+<h2 id="s4"><span class="num">04 / Параметри</span>Два повзунки, дві катастрофи</h2>
+
+<p>Тепер найважливіше про DBSCAN: <strong>усе тримається на двох числах</strong>. Кількість
+кластерів він і справді не питає — але <code>eps</code> і <code>min_samples</code> задають
+її неявно, і крайні значення дають дві протилежні катастрофи.</p>
+
+<p>Візьмімо ті самі дві витягнуті смуги, які завалили k-means, і додамо до них
+пʼятнадцять розкиданих поодиноких оголошень — щоб було на що подивитись у графі «шум».
+Разом 145 точок: 130 у двох смугах і 15 самих по собі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · eps і min_samples</p>
+  <p class="fig-sub">Тягни обидва повзунки. Заповнені кружечки — ядерні точки, порожні —
+    граничні, сірі хрестики — шум. Колір = кластер.</p>
+  <div class="panel">
+    <div><canvas id="cvEps" width="700" height="360" aria-label="Діаграма розсіювання зі 145 точок: дві витягнуті смуги і пʼятнадцять розкиданих одинаків. Кольори показують кластери, знайдені DBSCAN при поточних значеннях радіуса і мінімальної кількості сусідів, сірі хрестики — точки, оголошені шумом"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="eps27"><span>радіус <span class="raw">eps</span></span><output id="eps27v">0.45</output></label>
+        <input type="range" id="eps27" min="0.10" max="1.30" step="0.05" value="0.45">
+      </div>
+      <div class="ctl">
+        <label for="ms27"><span><span class="raw">min_samples</span></span><output id="ms27v">5</output></label>
+        <input type="range" id="ms27" min="2" max="12" step="1" value="5">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кластерів</b><i id="epK">—</i></div>
+        <div class="cellv"><b>шум</b><i id="epN">—</i></div>
+        <div class="cellv"><b>ядерних</b><i id="epC">—</i></div>
+        <div class="cellv"><b>частка шуму</b><i id="epP">—</i></div>
+      </div>
+      <div class="verdict" id="epV"></div>
+    </div>
+  </div>
+  <figcaption><b>Що шукати.</b> При <code>eps = 0.45</code> і <code>min_samples = 5</code>
+    DBSCAN знаходить рівно дві смуги й оголошує шумом рівно ті 15 точок, які ми туди й
+    підкинули. Зменш радіус до 0.15 при <code>min_samples = 10</code> — і густих місць не
+    лишиться взагалі: <b>усі 145 точок стануть шумом</b>. Збільш до 1.30 — і смуги
+    зіллються в один суцільний кластер. Між цими краями є вузька смужка правильних
+    відповідей, і ширина цієї смужки — головна практична проблема методу.</figcaption>
+</figure>
+
+<p>Обидва параметри тягнуть в один бік, але по-різному. <code>eps</code> вирішує, які
+точки взагалі бачать одна одну; <code>min_samples</code> — наскільки густо має бути, щоб
+місце вважалось кластером. Більший <code>min_samples</code> при тому самому радіусі
+означає більше шуму й менше кластерів.</p>
+
+<p>Типова порада для <code>min_samples</code>: бери <strong>щонайменше подвоєну кількість
+ознак</strong>. У нас ознак дві, отже 4–5 — і саме тому в усіх прикладах цієї теми стоїть
+пʼятірка. Порада груба, але вона хоч якось привʼязує число до даних.</p>
+
+<h2 id="s5"><span class="num">05 / Вибір eps</span>Звідки брати eps</h2>
+
+<p>З <code>eps</code> складніше, бо це відстань, і «правильної» відстані ніхто не знає.
+Стандартний прийом такий:</p>
+
+<div class="eq left">1. для кожної точки знайти відстань до її k-го найближчого сусіда
+   (k беруть рівним min_samples − 1)
+2. відсортувати всі ці відстані за зростанням
+3. намалювати криву й шукати на ній «коліно» — місце,
+   де вона з пологої різко йде вгору</div>
+
+<p>Сенс простий. Поки крива йде полого, ми рухаємось по точках, які сидять у густих
+місцях: до четвертого сусіда їм рукою подати. Коли крива задирається вгору — почались точки,
+у яких сусідів поблизу немає. Висота коліна і є та відстань, яка ще вважається
+«близько».</p>
+
+<figure>
+  <p class="fig-head">Схема 2 · Відстань до четвертого сусіда, відсортована</p>
+  <p class="fig-sub">Ліворуч — наші 145 точок зі смугами. Праворуч — 1 100 справжніх оголошень із дошки.</p>
+  <div><canvas id="cvKdist" width="700" height="300" aria-label="Два графіки поруч: по горизонталі точки, впорядковані за відстанню до четвертого найближчого сусіда, по вертикалі відстань до четвертого сусіда. Ліворуч крива має різкий злам біля значення 0.5, праворуч на реальних даних злам розмитий і крива піднімається поступово"></canvas></div>
+  <figcaption><b>Ліворуч коліно є, праворуч його немає.</b> На синтетичних смугах крива
+    тримається нижче 0.5 для 129 точок і різко злітає на останніх шістнадцяти — це наші
+    підкинуті одинаки плюс кілька крайніх точок смуг. Беремо <code>eps</code> з
+    коліна — 0.45–0.50 — і отримуємо ідеальний розподіл. На дошці оголошень крива
+    піднімається плавно: у половини оголошень четвертий сусід ближче ніж за 0.04, у
+    95&nbsp;% — ближче ніж за 0.23, а далі відстань росте без жодного зламу. Це <b>такий самий нечіткий критерій, як лікоть у
+    k-means</b>: він окреслює розумний діапазон і не називає числа.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Шум</span>Шум — це відповідь</h2>
+
+<p>Тепер про властивість, якої немає в жодного методу з попередньої теми. DBSCAN
+<strong>не зобовʼязаний віднести кожну точку до кластера</strong>. У
+<code>scikit-learn</code> такі точки дістають мітку <code>−1</code>.</p>
+
+<p>Звучить як вада — «алгоритм не впорався». Насправді це чесність. Коли k-means приписує
+дике оголошення до найближчого сегмента, він не додає знання, а ховає його: у групі
+«дешеві старі» тепер сидить телефон за 130 грн, який не схожий узагалі ні на що.</p>
+
+<p>Подивись, що з цього виходить на справжніх даних. Запускаємо DBSCAN на всіх 1 100
+оголошеннях дошки з <code>eps = 0.3</code> і <code>min_samples = 5</code>. Результат
+такий: <strong>12 кластерів і 26 оголошень у шумі</strong>. І ось найцікавіше число всієї
+теми: із цих 26 оголошень <strong>25 позначені в таблиці як шахрайські</strong>. Алгоритм
+цієї колонки не бачив.</p>
+
+<div class="scroll-x">
+  <table class="plain">
+    <thead><tr><th>що вважаємо підозрілим</th><th>точність</th><th>повнота</th><th>F1</th></tr></thead>
+    <tbody>
+      <tr><td>шум DBSCAN (26 оголошень)</td><td>0.962</td><td>0.180</td><td>0.303</td></tr>
+      <tr><td>найдешевший кластер k-means (<a href="../26-kmeans/lecture.html#s9">тема 26</a>)</td><td>0.206</td><td>0.525</td><td>0.296</td></tr>
+      <tr><td>випадковий тик, 355 оголошень</td><td>0.126</td><td>0.323</td><td>0.182</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Читається це так. Шум DBSCAN майже не помиляється: з 26 піднятих тривог хибна одна.
+Але й ловить він мало — 25 шахраїв зі 139, тобто 18&nbsp;%. Це ціни-приманки на кшталт
+130 і 190 грн і завищені 45 320 та 83 500 грн: те, що стоїть на самому краю. Звичайного
+шахрая з ціною «трохи нижче ринку» жодна щільність не виловить, бо він лежить у гущі.</p>
+
+<div class="note"><b>Це і є місток до передостанньої теми блоку.</b> Задача «знайди
+дивне, не маючи жодного прикладу дивного» зветься <em>пошуком аномалій</em>, і шум DBSCAN —
+її найпростіший інструмент. Там будуть методи, які роблять це прицільно й уміють
+ранжувати підозрілість, а не лише ставити мітку <code>−1</code>.</div>
+
+<div class="note warn"><b>А тепер чесно про ті 12 кластерів.</b> Це не 12 сегментів ринку.
+Рік випуску — ціле число, і в z-оцінках сусідні роки стоять на відстані 0.43. Поки
+<code>eps</code> менший за 0.43, вертикальних звʼязків між роками просто немає, і дошка
+розпадається на горизонтальні смуги «всі оголошення 2019-го», «всі оголошення 2020-го».
+Варто підняти <code>eps</code> до 0.5 — і 1 089 оголошень зливаються в один суцільний
+кластер. Ніякої проміжної відповіді на цих даних немає: або смуги за роками, або одна
+хмара. Це не поламаний DBSCAN — це чесна відповідь про дошку: <strong>щільнісно
+відокремлених груп на ній немає</strong>.</div>
+
+<h2 id="s7"><span class="num">07 / Вада</span>Одна щільність на всіх</h2>
+
+<p>Головна вада DBSCAN схована в тому самому місці, що й перевага: <code>eps</code> у
+нього <strong>один на весь простір</strong>. Метод припускає, що всі справжні кластери
+мають приблизно однакову густину. Коли це не так, вибирати доводиться між двома
+поразками.  Обидва способи виразно кращі за жеребкування, але жоден не наближається до того, що дає розмітка: далі в курсі, коли дійдемо до моделей із учителем, та сама задача розвʼязується вчетверо точніше.</p>
+
+<p>Це рівно той третій випадок із минулої теми — щільна купка й розсіяна хмара поруч, де
+k-means дав 89&nbsp;%. З параметрами, які ідеально спрацювали на смугах і кільцях
+(<code>eps = 0.6</code>, <code>min_samples = 5</code>), DBSCAN дає на ньому
+<strong>70&nbsp;%</strong>: щільну купку знаходить бездоганно, а розсіяну хмару рве на
+уламки й 30 її точок зі 150 оголошує шумом.</p>
+
+<p>Можна підібрати <code>eps</code> під розсіяну хмару — 0.85. Тоді кластерів рівно два,
+шуму лише 9 точок, а на своїх місцях <strong>88&nbsp;%</strong>. Це найкраще, що DBSCAN
+взагалі може видати на цих даних, — і воно все одно трохи гірше за k-means. Причому
+дійти до цього числа можна, тільки підглядаючи у правильну відповідь, якої в реальній
+задачі немає.</p>
+
+<div class="note"><b>Розширення, яке це лагодить.</b> <strong>HDBSCAN</strong>
+(hierarchical DBSCAN) не бере <code>eps</code> взагалі. Він проганяє DBSCAN подумки
+одразу для всіх радіусів, будує з цього дерево — так, те саме дерево, що й у другій
+половині цієї теми, — і залишає ті кластери, які тримаються найдовше. Через це він
+здатен знаходити групи різної щільності однією моделлю. Чарівної палички з нього
+теж не виходить — на невеликих вибірках він помиляється не менше, і перевіряти його
+доводиться так само руками. Ціна — складніша реалізація й окремий
+пакет (<code>hdbscan</code>, а у свіжих версіях <code>scikit-learn</code> —
+<code>HDBSCAN</code>). Ідею варто знати; коли <code>eps</code> ніяк не підбирається, це
+перше, що слід спробувати.</div>
+
+<h2 id="s8"><span class="num">08 / Дерево</span>Дерево замість розбиття</h2>
+
+<p>Другий метод теми починається з іншого питання. Не «де густо», а
+<em>«що з чим схоже найбільше»</em>.</p>
+
+<div class="note"><b>Уся ідея.</b> Спочатку кожне оголошення — окремий кластер, їх рівно
+стільки, скільки рядків. Знаходимо дві найближчі групи й зливаємо їх в одну. Знову
+знаходимо найближчі та зливаємо. І так n − 1 разів, поки все не стане однією групою.
+Записуємо, <em>хто з ким</em> і <em>на якій відстані</em> злився, — це і є результат.</div>
+
+<p>Такий напрямок — від окремих точок догори — зветься <strong>агломеративним</strong>
+(agglomerative, від «нагромаджувати»). Буває й зворотний, дивізивний: почати з однієї
+групи й ділити її. На практиці майже завжди беруть агломеративний, бо він простіший і
+передбачуваний.</p>
+
+<p>Результат — не набір міток, а <strong>дендрограма</strong> (dendrogram, «деревна
+діаграма»). Читається вона так:</p>
+
+<ul>
+  <li>кожен листок унизу — одне оголошення;</li>
+  <li>кожна перемичка — злиття двох груп;</li>
+  <li><strong>висота перемички — відстань між групами в момент злиття</strong>. Низька
+    перемичка означає «злилися схожі», висока — «злилися вимушено, бо більше нікого не
+    лишилось».</li>
+</ul>
+
+<p>А тепер найкорисніше. Проведи горизонтальну лінію на будь-якій висоті — і кожна
+вертикаль, яку вона перетне, стане окремою групою. Одне дерево, і скільки завгодно
+розбиттів. <strong>Кількість груп обирається після побудови</strong>, і обирається
+очима.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Дендрограма з рухомим зрізом</p>
+  <p class="fig-sub">Двадцять вісім оголошень із дошки, злиття за середньою відстанню.
+    Тягни повзунок — і дивись, скільки груп дає зріз і як вони лягають на площину.</p>
+  <div class="panel">
+    <div><canvas id="cvDen" width="700" height="360" aria-label="Ліворуч дендрограма двадцяти восьми оголошень: листки внизу, перемички вгорі, горизонтальна пунктирна лінія зрізу. Праворуч ті самі оголошення на площині ціна-рік, пофарбовані за групами, які дає поточний зріз"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="cut27"><span>висота зрізу</span><output id="cut27v">1.30</output></label>
+        <input type="range" id="cut27" min="0.02" max="3.00" step="0.02" value="1.30">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>груп</b><i id="dnK">—</i></div>
+        <div class="cellv"><b>найбільша</b><i id="dnMax">—</i></div>
+        <div class="cellv"><b>одинаків</b><i id="dnOne">—</i></div>
+        <div class="cellv"><b>наст. злиття</b><i id="dnNext">—</i></div>
+      </div>
+      <div class="verdict" id="dnV"></div>
+    </div>
+  </div>
+  <figcaption><b>Осі.</b> На дендрограмі знизу — 28 оголошень, по вертикалі — відстань
+    злиття в z-оцінках. На правій картинці — ті самі оголошення: по горизонталі ціна
+    (логарифмічна шкала), по вертикалі рік випуску. Найвище злиття тут на висоті
+    <b>2.81</b> — остання, вимушена перемичка: воно зʼєднує девʼять свіжих оголошень
+    2023–2024 років з усіма іншими девʼятнадцятьма. Опустись до 1.30 — і дерево дає пʼять
+    груп: свіжі діляться на дешевші й дорогі, старі — на три цінові смуги. Довга вертикаль
+    без перемичок означає групу, яка довго ні з ким не зливалась, тобто добре
+    відокремлену.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Linkage</span>Чим міряти відстань між групами</h2>
+
+<p>В описі методу є одне слово, повз яке легко проскочити: «знаходимо дві
+<strong>найближчі групи</strong>». А що таке відстань між <em>групами</em>? Між двома
+точками вона очевидна. Між купкою з семи точок і купкою з дванадцяти — ні.</p>
+
+<p>Відповідей чотири, вони звуться <strong>звʼязком</strong> (linkage), і вибір між ними
+міняє результат сильніше, ніж будь-що інше в методі.</p>
+
+<div class="scroll-x">
+  <table class="plain">
+    <thead><tr><th>звʼязок</th><th>відстань між групами — це…</th><th>що з цього виходить</th></tr></thead>
+    <tbody>
+      <tr><td>Одиночний (single)</td><td>відстань між двома <b>найближчими</b> точками груп</td><td>групи ростуть ланцюжками; знаходить змії й кільця, але злипається через один випадковий місток</td></tr>
+      <tr><td>Повний (complete)</td><td>відстань між двома <b>найдальшими</b> точками</td><td>групи виходять компактні, приблизно кулясті; довгу смугу розріже</td></tr>
+      <tr><td>Середній (average)</td><td>середнє з усіх попарних відстаней між групами</td><td>компроміс між першими двома, найчастіше — розумна поведінка за замовчуванням</td></tr>
+      <tr><td>Ворда (ward)</td><td>наскільки зросте сума квадратів відстаней усередині груп, якщо їх злити</td><td>мінімізує рівно те, що й <a href="../26-kmeans/lecture.html#s4">інерція k-means</a>; кулясті групи схожого розміру</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Найважливіший із цих чотирьох рядків — перший, і зветься це <strong>ланцюжковим
+ефектом</strong>. Одиночному звʼязку досить, щоб дві групи зʼєднала одна ланцюжкова
+доріжка з точок: далі він проковтне обидві. Це рівно те, що робить кластер DBSCAN
+довільної форми, — і рівно те, через що одиночний звʼязок розсипається на реальних даних.
+Ось наша дошка, ієрархічна кластеризація, три групи:</p>
+
+<div class="eq left">одиночний  1 094 · 5 · 1     ← один велетень і дві порошинки
+середній   1 089 · 8 · 3     ← те саме
+повний       656 · 433 · 11
+Ворда        439 · 360 · 301  ← єдине розбиття, з яким можна працювати</div>
+
+<p>А тепер те саме на синтетиці, де правильна відповідь відома, — і виявиться, що
+переможець міняється місцями з невдахою.</p>
+
+<figure>
+  <p class="fig-head">Схема 3 · Чотири звʼязки, два набори даних</p>
+  <p class="fig-sub">Угорі — дві витягнуті смуги, унизу — щільна купка й розсіяна хмара. Обидва рази ріжемо дерево на дві групи.</p>
+  <div><canvas id="cvLink" width="700" height="480" aria-label="Вісім діаграм розсіювання у два ряди по чотири. Верхній ряд: дві витягнуті смуги, розбиті на дві групи одиночним, повним, середнім звʼязком і звʼязком Ворда. Нижній ряд: щільна купка і розсіяна хмара, розбиті тими самими чотирма способами. Під кожною діаграмою — частка точок на своїх місцях"></canvas></div>
+  <figcaption><b>Дзеркальний результат.</b> На смугах одиночний звʼязок дає ідеальні
+    65 і 65 точок — рівно дві смуги, 100&nbsp;%. Решта три ріжуть картинку впоперек,
+    як k-means. На різній щільності все навпаки: одиночний і середній відкушують від
+    хмари лише по дві точки, повний — шість, і всі троє лишають велетня на 144–148,
+    тобто не дають нічого (64.7&nbsp;%, 67.3&nbsp;%, 64.7&nbsp;%), а Ворд знаходить
+    обидві групи майже точно — 96&nbsp;%.
+    <b>Один і той самий звʼязок виграє в одному наборі й програє в іншому</b>, і
+    вибирати доводиться до того, як побачиш відповідь.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Ціна</span>Скільки це коштує</h2>
+
+<p>За зручність «одразу вся ієрархія» доводиться платити, і платня росте квадратично.
+Щоб знайти найближчу пару, треба знати всі попарні відстані — а їх для n обʼєктів
+приблизно n²/2.</p>
+
+<div class="eq left">1 000 оголошень      500 тисяч відстаней      4 МБ памʼяті
+10 000 оголошень      50 мільйонів            400 МБ
+100 000 оголошень      5 мільярдів             40 ГБ  ← кінець</div>
+
+<p>Тобто ієрархічна кластеризація — <strong>метод для тисяч рядків, не для мільйонів</strong>.
+На сотнях тисяч вона просто не запуститься на звичайній машині. У DBSCAN та сама
+квадратична біда в наївній реалізації, але її лагодить просторовий індекс:
+<code>scikit-learn</code> шукає сусідів у радіусі через KD-дерево й на низьких
+розмірностях працює приблизно за n·log n. Тому DBSCAN на мільйоні рядків — реально, а
+дендрограма на мільйоні — ні.</p>
+
+<p>І ще одна практична дрібниця, яку варто знати наперед. Ієрархічна кластеризація
+<strong>не вміє приписати новий обʼєкт до вже готових груп</strong>: щоб додати один
+рядок, треба перебудувати дерево. У k-means для цього досить порівняти відстані до
+центрів. DBSCAN теж не має такого механізму — у <code>scikit-learn</code> у нього немає
+навіть методу <code>predict</code>.</p>
+
+<h2 id="s11"><span class="num">11 / Разом</span>Три форми, три методи</h2>
+
+<p>Час скласти все докупи. Ось три набори даних, на яких провалився k-means, і три методи
+на кожному з них. Девʼять станів — перебери всі й подивись, хто де виграє.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Девʼять відповідей</p>
+  <p class="fig-sub">Перемикай форму й метод. Числа під картинкою пораховані на тих самих
+    точках, що й у попередній темі.</p>
+  <div class="panel">
+    <div><canvas id="cv33" width="700" height="340" aria-label="Діаграма розсіювання обраного набору даних — витягнуті смуги, вкладені кільця або різна щільність — пофарбована за розбиттям, яке дав обраний метод: k-means, DBSCAN або ієрархічна кластеризація"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">форма даних</span>
+        <div class="seg wrap" id="segShape">
+          <button type="button" data-i="0" aria-pressed="true">витягнуті</button>
+          <button type="button" data-i="1" aria-pressed="false">кільця</button>
+          <button type="button" data-i="2" aria-pressed="false">різна щільність</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">метод</span>
+        <div class="seg wrap" id="segMeth">
+          <button type="button" data-i="0" aria-pressed="true">k-means</button>
+          <button type="button" data-i="1" aria-pressed="false">DBSCAN</button>
+          <button type="button" data-i="2" aria-pressed="false">ієрархічна</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>на своїх місцях</b><i id="tqA">—</i></div>
+        <div class="cellv"><b>кластерів</b><i id="tqK">—</i></div>
+        <div class="cellv"><b>шум</b><i id="tqN">—</i></div>
+        <div class="cellv"><b>розміри</b><i class="sm" id="tqS">—</i></div>
+      </div>
+      <div class="verdict" id="tqV"></div>
+    </div>
+  </div>
+  <figcaption><b>Умови однакові для всіх.</b> k-means — при k = 2, з найкращого з кількох
+    стартів. DBSCAN — з <code>eps = 0.6</code> і <code>min_samples = 5</code>: одні
+    параметри на всі три набори, як і було б у житті, поки не почнеш підбирати.
+    Ієрархічна — звʼязок Ворда (він стоїть за замовчуванням у
+    <code>AgglomerativeClustering</code>), дерево розрізане на дві групи. У вердикті
+    для порівняння названо, що дав би на цьому ж наборі одиночний звʼязок.</figcaption>
+</figure>
+
+<p>Підсумок у трьох рядках, і жоден із них не про перемогу:</p>
+
+<ul>
+  <li><strong>Витягнуті смуги й кільця.</strong> DBSCAN — 100&nbsp;% і 100&nbsp;%,
+    одиночний звʼязок — те саме. k-means і Ворд — 56–66&nbsp;%, тобто нічого. Форма
+    довільна вимагає методу, який дивиться на сусідів, а не на центри.</li>
+  <li><strong>Різна щільність.</strong> Ворд 96&nbsp;%, k-means 89&nbsp;%, DBSCAN
+    70&nbsp;%, одиночний звʼязок 65&nbsp;%. Порядок перевернувся повністю: те, що
+    вигравало щойно, тепер програє найгірше.</li>
+  <li><strong>Жодна конфігурація не виграє скрізь.</strong> Ані одна пара
+    (<code>eps</code>, <code>min_samples</code>), ані один звʼязок. Це не недогляд
+    авторів методів — це властивість задачі, у якій немає правильної відповіді.</li>
+</ul>
+
+<h2 id="s12"><span class="num">12 / Вибір</span>Що обирати й що далі</h2>
+
+<p>Ось три методи в одній таблиці — не «який кращий», а що кожен припускає й на чому
+ламається.</p>
+
+<div class="scroll-x">
+  <table class="plain">
+    <thead><tr><th></th><th>k-means</th><th>DBSCAN</th><th>Ієрархічна</th></tr></thead>
+    <tbody>
+      <tr><td>Що припускає про дані</td><td>кулясті групи схожого розміру</td><td>однакова щільність усередині всіх груп</td><td>нічого — усе вирішує обраний звʼязок</td></tr>
+      <tr><td>Що треба задати</td><td><code>k</code></td><td><code>eps</code>, <code>min_samples</code></td><td>звʼязок; кількість груп — після побудови</td></tr>
+      <tr><td>Форми кластерів</td><td>лише опуклі, межі прямі</td><td>будь-які</td><td>одиночний — будь-які, Ворда — кулясті</td></tr>
+      <tr><td>Що робить із дивними точками</td><td>приписує до найближчого центра</td><td>окрема мітка «шум»</td><td>лишає крихітними групами на великій висоті</td></tr>
+      <tr><td>Скільки рядків витримує</td><td>мільйони</td><td>мільйони (з індексом)</td><td>десятки тисяч</td></tr>
+      <tr><td>Новий обʼєкт без перерахунку</td><td>так</td><td>ні</td><td>ні</td></tr>
+      <tr><td>Головна пастка</td><td>випадковий старт, потреба знати <code>k</code></td><td>підбір <code>eps</code>, різна щільність</td><td>вибір звʼязку міняє все</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Практичний порядок дій, який працює в більшості випадків: <strong>почни з
+ієрархічної</strong> на підвибірці в кілька тисяч рядків, подивись на дендрограму — вона
+покаже, скільки груп узагалі варто шукати. Далі, якщо групи схожі на грудки, візьми
+k-means на всіх даних із цим k. Якщо на дендрограмі видно щось витягнуте або якщо
+цікавлять саме дивні обʼєкти — бери DBSCAN і підбирай <code>eps</code> за коліном.</p>
+
+<p>Лишилось одне питання, яке ми весь час обходили: усі картинки цієї теми
+двовимірні, бо намалювати можна лише два виміри. А оголошення описується сімома числами,
+клієнт банку — сотнею. Дивитись на кластери в семи вимірах ніхто не вміє — і саме тому
+наступна тема про
+<a href="../11-pca/lecture.html">метод головних компонент</a>: як стиснути багато ознак у
+дві так, щоб на них можна було подивитись і побачити те, що справді є в даних. А після
+неї — пошук аномалій, куди веде мітка <code>−1</code> із цієї теми.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ми напишемо
+DBSCAN із нуля й звіримо мітки з бібліотечним; проженемо всі три методи на трьох формах і
+складемо таблицю з ARI; підберемо <code>eps</code> за графіком k-ї відстані; порівняємо
+чотири звʼязки на одних даних; побудуємо дендрограму через
+<code>scipy.cluster.hierarchy</code>; і наприкінці прикладемо всі три методи до справжньої
+дошки оголошень і чесно звіримо результат із колонкою <code>шахрайське</code>.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../26-kmeans/lecture.html"><span class="dir">попередня</span><span class="ttl">26. Кластеризація k-means</span></a>
+    <a class="next" href="../28-anomaly-detection/lecture.html"><span class="dir">наступна</span><span class="ttl">28. Пошук аномалій</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function ah(a){var v=Math.round(Math.max(0,Math.min(1,a))*255).toString(16);
+  return v.length<2?'0'+v:v;}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(el,tag,cap,txt){
+  el.innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function plur(n,one,few,many){
+  var a=n%100, b=n%10;
+  if(a>10&&a<20) return many;
+  if(b===1) return one;
+  if(b>=2&&b<=4) return few;
+  return many;
+}
+function seg(id,fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed',String(all[k]===b));
+    fn(+b.dataset.i);
+  });
+}
+function fmt(v,n){return (Math.round(v*Math.pow(10,n))/Math.pow(10,n)).toFixed(n);}
+function kcol(i){ return css('--k'+((i%10)+1)); }
+
+var PRICE=[3090,2810,82000,83500,1850,31280,1960,3210,76000,18800,88000,1180,2250,7360,290,91000,3540,3860,15520,4890,95000,4460,2090,2800,2170,2460,4520,4770,10510,1290,2050,1610,2260,3470,1310,2670,2790,7610,4230,1360,17360,8320,6760,1180,15600,1110,4490,2540,3020,2820,2030,8690,2000,1140,4460,700,10150,4720,1800,830,3300,1080,1610,3230,690,6500,1090,940,3050,4180,3720,2620,3260,8250,3260,5480,1710,2270,1380,4000,2290,4250,2310,5220,7200,6430,8930,2950,4380,4420,940,32670,13670,3620,4620,9410,2990,2540,4650,2020,2770,6530,1040,16040,7430,7550,1530,5910,2910,13130,1180,3420,370,3070,2930,3920,1520,6380,3480,30220,6690,1310,4130,12830,10980,2530,3830,6660,33050,1270,6990,2160,21770,1780,4340,750,7480,9460,1130,1860,2230,2260,1140,13690,2560,7900,2650,8830,2680,2640,4510,14440,5600,7000,1940,24670,6770,4000,11980,1330,2550,9790,4960,7960,6220,7040,2340,3760,3660,4450,2370,530,9120,2160,6350,660,2330,6530,1370,1200,7010,13410,2250,3620,10400,9210,7330,13050,590,5310,4710,730,5710,18940,12080,1630,10400,2390,9040,3430,1190,12450,6630,4060,5940,4290,34120,5860,23710,4430,2340,4350,1070,5090,3410,27560,4120,6480,3940,1210,9280,1000,3950,10210,6290,1150,2420,2860,7120,4240,5150,7680,12810,19580,5110,1840,3160,8770,2770,1300,3520,3260,1240,24210,1930,7910,1310,1590,1320,3340,3340,3610,3950,2580,18460,1450,3910,10960,38570,9420,1360,1050,1570,1600,3580,2860,4400,3700,5470,4400,12980,1750,30790,2290,13230,10190,11730,8170,2060,1360,52620,4090,1870,7070,2990,1790,5620,2460,3610,1270,5170,3060,2560,1750,3930,10490,880,3770,9480,3550,2340,1450,13370,8020,5750,2460,770,16880,2020,9330,3350,1720,2120,2420,4590,7680,950,2650,8760,8710,4620,15370,10210,3240,5010,4260,2450,1110,15160,17490,2010,4610,16190,10670,3730,5060,9920,1970,1510,850,2460,4380,5170,14190,2230,22780,9700,1330,740,4050,1490,11350,4560,2320,3220,3290,11020,7610,4860,9780,5150,8570,1030,10860,5970,1430,11160,6740,1080,7320,15750,2980,5030,7250,15350,1340,10730,16570,1920,6580,3150,5840,1940,4940,190,14650,290,1460,1000,7590,900,18040,11310,3450,1290,4900,3650,13670,1010,25080,4540,6620,31210,12440,2690,5820,1550,1490,4470,11010,2550,12310,8740,2750,13790,580,3440,1650,30410,4620,5260,420,8080,3770,1150,1170,1140,14670,6210,9250,4510,2240,2970,16620,3030,3250,4730,4320,7050,3820,3230,2070,8500,3700,810,2040,4410,10980,7950,5220,360,1750,7740,1330,1860,1480,420,2390,4110,3280,6630,6280,7200,4600,4140,9820,6340,2990,4710,15040,17310,3880,7430,4250,19670,2930,820,1020,7060,2460,820,2620,2680,3250,11110,6710,8580,6970,880,7020,2280,1480,10150,4570,3900,9580,1080,5310,13000,1510,1110,11050,3930,8530,27060,10490,18070,7140,2580,1780,2810,1910,4800,4730,1700,6890,1420,4200,1270,6340,4460,5530,3310,3320,20540,1630,14260,8730,1540,1330,4880,6740,5800,6790,15450,15010,5150,2390,8090,9550,2150,5160,2960,3820,3090,17990,7010,1810,5360,2470,13610,4020,8960,2830,3840,6680,4770,7650,5860,7830,10670,15390,7320,19980,4790,9480,1900,28580,3200,3050,5420,6340,16050,2160,6920,9380,3100,4710,2970,8030,4330,5770,4160,4470,3010,4150,11390,12340,550,1580,990,2280,13700,2810,6580,5190,3250,8190,1930,2340,2730,18660,3460,7500,4140,3190,3960,4530,10690,1460,45320,2030,11660,1840,4580,330,2160,2610,860,4010,7090,9110,14920,1580,1230,1990,3250,6330,9490,5530,5890,2190,990,1700,2010,3570,1840,1340,3040,1800,1400,4940,3290,1480,8990,2990,1170,8430,2790,3820,620,1110,1410,6080,3970,3830,7650,4210,1340,3290,19960,14920,7310,23350,6040,1510,2250,3190,4770,5780,4660,2000,3410,1560,5900,4330,2670,7720,560,7670,770,1820,1870,4030,1590,3280,10530,2350,1340,1530,11720,3120,6570,2850,2760,13590,3890,1870,1750,6630,1040,4590,33210,2870,3240,4090,870,3890,2630,3840,2150,2930,3950,5550,11370,4370,11290,2240,200,5350,1740,1490,8240,2330,23390,7080,31420,2970,2980,8190,800,2940,2900,1250,3720,1100,1200,2280,960,5330,14260,2240,730,2900,13990,1460,5230,10270,1350,1380,7810,2960,5820,4020,2630,9660,2770,2440,3330,5310,24460,2990,3860,1580,22160,3050,8660,2810,4110,8080,4000,20280,22230,5610,2320,1260,2920,1280,12450,3700,1320,27960,880,2140,4680,8340,1220,1630,5410,3900,15060,10860,1250,4600,9850,9870,12470,9440,12500,390,3810,4460,1260,4530,5170,20100,8250,7790,8620,1430,6690,33550,2210,730,2360,1560,6140,11260,1930,15390,1230,3920,17300,1550,5850,1960,5880,4940,2370,3200,6120,4850,3330,1600,6390,6260,9430,30720,8910,8640,23990,2210,1190,2600,820,5910,10160,9770,2070,4070,1110,9350,4190,11270,4480,1570,1050,870,59840,840,12990,3250,4210,890,3080,2630,5530,5400,5030,5410,2470,3230,2110,3480,16500,8960,4140,31550,1760,5340,12570,2660,1130,3310,3220,12420,1240,2810,130,10430,1020,1040,9690,2490,2030,4280,2950,8050,2540,19000,16790,10210,4930,5240,3700,1740,14710,3990,9750,9830,1150,8010,1380,3230,7220,2650,2750,20760,1700,3440,6660,2020,10480,3620,9080,5760,3790,1800,2860,5840,3210,1850,6050,830,1770,8870,9920,16880,3180,2490,7080,10780,2490,2890,14090,2540,1210,1400,8040,2260,5850,5640,4960,3640,5070,1400,4370,3960,1270,7260,12240,680,12110,920,2550,1560,5330,7600,13710,7320,6490,13550,11380,3900,2810,2290,28060,2140,850,5110,4560,6360,4970,32620,6440,2300,4340,3800,6990,4710,12850,4790,6280,8760,3730,900,1390,6890,2270,2580,5190,4290,740,12210,5100,2020,2040,5860,4200,1590,12650,2450,8200,5460,1290,4000,4020,3840,8100,11170,4370,1600,12920,5980,19480,3100,2600,19680,1190,4530,2870,2730,3080,6510,8110,13810,2520,1020,10120,5830,1200,2720,2170,3260,19510,820,8190,4210,6440,1380,3460,6030,29000,3120,10270,1820,10140,4020,430,3630,710,2690,1530,1920,3790,890,2510,13740,3490,3490,5620,8090,41520,1590,18410,3250,8010,8780,6770,2370,1540,1020,18220,950,1950,6870,2880,13400,2750,12060,1080,1930,7380,12590,3850,620,1100,10310,1390,8290];
+var PY="04043604070234203260024136214123455620014765616706373021431250170310341015612221022274316707506003436606541730130237047671724327736364315211706604425333653775622374332524227203402145736166642467714057057630774704075740025161313304677772640251363141076661747742003643145754737213107616255600744335415503641037471314121047131637104576752313201427375015247302667020067154076463701722614217105615461746275176243477173563336321300504653176400216127613576701402701114272556146645471200313347326043121151361657157616043404327034373705411550470337235066555733566522356577524356240533442131250517540076121322417561561626361312315465103316450133621221132351612221352627146072355047343764623605043333334646701166675071135264573442111505763060551511727612576317227203735266643561504427701456613251211114333565551713517175067331111332161746524022074371365300165361137410140642044610617057307147506142307124544463667616252461263056717322553071043402464347621612142567031752443303266663376025446155721436630273505257403035210766027411271757626121101030070001465406053725347533521301366236152755670766135570274122424";
+var MEANLN=8.312593926399199, SDLN=0.9445505828845872;
+var MEANY=2020.469090909091, SDY=2.306896595174221;
+var FA_P=[-1.668,-0.227,0.062,0.837,0.541,1.061,-2.143,-0.328,-1.71,-0.01,2.194,2.178,-2.235,-0.187,-1.726,-0.138,2.041,2.172,0.446,1.234,-0.486,0.328,0.021,0.736,0.808,1.446,-0.856,0.061,-1.801,-0.028,1.556,1.657,0.736,1.332,0.058,0.86,1.44,1.729,0.269,0.969,2.284,1.978,-1.472,0.203,0.237,0.833,0.068,0.865,-0.472,0.47,0.389,0.933,-1.125,0.434,1.36,1.577,1.829,1.728,-1.812,-0.169,-0.137,0.884,-1.067,0.363,-2.047,-0.215,1.665,1.736,-0.249,0.6,-1.627,-0.02,0.978,1.397,-1.317,0.052,1.85,1.829,-1.411,-0.021,-2.301,-0.393,-1.409,0.023,-0.952,0.435,-0.124,0.887,2.013,1.851,0.868,1.592,-0.688,0.627,-2.085,-0.515,-1.59,0.002,2.444,2.22,-0.171,0.763,0.752,1.336,-2.22,-0.312,-2.288,-0.312,1.75,1.797,0.457,1.092,-0.967,0.327,-0.931,0.411,-1.97,-0.17,-1.717,0.084,-2.366,-0.486,1.606,1.683,-0.13,0.698,-1.907,-0.227,1.293,1.486,-1.657,-1.796,1.735,0.209,-0.479,-1.149,-2.025,-1.76,0.435,-0.48,-0.218,-1.1,-0.21,-1.001,1.561,0.146,-1.786,-2.016,0.486,-0.512,-0.344,-1.059,0.141,-0.724,-0.026,-0.722,-1.74,-1.784,0.117,-0.935,1.66,0.274,-1.541,-1.749,-2.307,-2.193,-2.045,-2.065,-0.163,-1.13,2.424,0.346,-2.362,-2.078,2.316,0.463,0.047,-0.711,-1.425,-1.993,-0.354,-1.099,-1.383,-1.822,0.901,-0.234,0.195,-0.561,-1.095,-1.391,-0.854,-1.58,1.662,0.115,1.273,-0.054,-0.292,-1.102,-0.43,-0.809,1.28,-0.529,2.244,0.296,-1.95,-1.979,-1.424,-1.648,-0.563,-1.193,0.033,-0.792,-1.915,-1.923,-2.182,-1.889,-1.325,-1.599,-0.634,-1.213,1.079,-0.525,0.639,-0.498,-2.283,-1.978,-2.136,-2.01,-0.502,-1.002,1.858,0.317,2.194,0.402,-0.775,-1.448,1.922,0.176,2.166,0.269,-0.424,-1.262,1.23,-0.249,-0.608,-1.155,-1.676,-1.73,0.359,-0.568,-1.93,-2.002,0.719,-0.227,1.473,0.075,2.037,0.185,-0.332,-0.974];
+var FA_C=[-1.25,-0.823,1.138,0.796];
+var FB_P=[0.306,-0.252,-0.211,-0.591,-0.401,-0.209,-0.193,-0.423,-0.366,0.322,-0.221,0.332,-0.526,-0.27,-0.531,0.058,-0.114,-0.433,0.442,-0.188,0.226,-0.323,-0.362,0.309,-0.394,0.406,0.34,-0.169,-0.37,0.289,0.158,-0.485,0.479,0.316,-0.567,0.18,-0.466,-0.048,0.162,-0.418,0.382,-0.37,0.272,0.389,-0.354,-0.321,-0.396,-0.417,0.359,0.504,0.26,-0.449,-0.459,-0.16,0.524,-0.129,0.143,0.339,-0.493,-0.078,-0.19,0.381,-0.417,-0.521,-0.428,-0.346,-0.508,-0.04,-0.22,0.434,-0.324,-0.008,-0.382,0.395,0.475,-0.389,-0.436,0.107,-0.541,0.085,-0.03,0.55,-0.009,0.392,0.542,-0.162,-0.233,0.547,0.349,-0.38,2.047,0.068,1.887,0.708,1.365,-1.537,-1.228,-1.371,-0.264,-1.896,1.945,-0.53,0.381,1.869,1.635,-0.899,0.087,1.877,-1.895,-0.226,-0.832,-1.799,0.555,-1.815,0.024,2.023,-2.147,0.312,1.904,0.561,-0.502,2.068,2.014,-0.242,1.562,-1.06,-1.718,-0.974,0.432,-1.852,1.697,-1.197,-0.927,1.641,2.116,-0.261,-1.951,0.654,0.974,1.511,-2.041,-0.39,-1.793,-1.196,-0.675,-1.798,-1.0,-1.845,1.759,0.469,-1.3,-1.553,1.616,-0.867,-0.986,-1.796,1.799,-0.282,-1.732,-0.125,0.753,-1.895,1.418,1.72,1.537,-1.184,-1.919,0.81,1.437,-1.407,-0.847,1.776,-1.464,-1.451,1.234,-1.778,-0.451,-1.821,-1.5,-1.407,2.0,-0.373,1.581,0.976,1.733,1.292,-2.081,-0.699,1.828,-0.535,-0.845,-2.003,-0.734,1.866,1.546,1.242,-2.038,0.686,-2.007,0.25,-1.992,0.402,-1.575,-1.466,-0.304,2.107,1.527,-1.426,-0.444,1.806,1.441,1.148,-1.231,1.717,1.754,-0.75,1.086,1.697,-0.328,1.864,1.774,-0.882,-1.082,1.528,1.194,-1.803,1.821,0.534,1.519,-1.282,0.158,1.975,0.896,1.922,-0.091,-1.856,1.992,-0.132,1.915,-0.501,0.03,-2.053,1.757,-1.05,1.947,-0.159,-1.914,-0.659,1.207,1.548,1.197,-1.661,-1.579,1.211,-0.742,1.786,-1.997,-0.011,1.988,0.443];
+var FB_C=[-0.731,0.063,1.312,-0.297];
+var FC_P=[-1.672,-0.043,-1.668,0.136,-1.937,0.343,-1.773,-0.186,-1.58,-0.061,-1.748,-0.378,-1.902,-0.234,-2.14,-0.475,-1.361,-0.035,-1.838,0.28,-1.928,0.131,-2.237,0.052,-2.001,0.128,-1.852,-0.344,-2.361,-0.252,-1.714,0.108,-1.797,-0.503,-2.57,-0.154,-1.981,-0.149,-1.81,-0.041,-2.195,-0.219,-1.863,0.019,-1.917,0.568,-1.965,0.031,-2.148,-0.089,-1.768,0.142,-1.939,0.099,-1.886,-0.47,-2.719,0.578,-1.692,-0.014,-2.335,-0.319,-1.561,-0.697,-1.981,0.217,-1.864,0.189,-1.933,0.598,-2.157,-0.341,-1.831,0.357,-1.914,0.262,-2.033,-0.296,-1.55,0.392,-1.517,-0.11,-2.189,-0.292,-1.956,0.146,-1.773,-0.359,-1.851,0.004,-1.877,-0.006,-1.95,0.148,-1.868,0.056,-2.073,0.099,-1.93,-0.529,-1.779,-0.066,-1.668,-0.041,-1.924,0.053,-1.903,-0.112,-2.348,0.461,-2.295,-0.085,-1.737,0.095,-1.758,0.192,-1.584,0.074,-1.173,-0.253,-1.843,-0.09,-2.036,0.072,-1.535,-0.178,-2.078,0.181,-1.764,0.489,-1.643,0.057,-1.982,0.054,-1.944,-0.341,-1.898,-0.044,-1.958,-0.107,-1.477,0.174,-1.666,-0.152,-2.156,-0.071,-1.839,-0.086,-1.947,0.24,-1.825,-0.246,-2.007,-0.164,-1.855,-0.292,-1.945,0.173,-1.893,-0.228,-2.054,0.031,-1.779,0.209,-1.936,-0.329,-1.544,0.074,-1.798,0.076,-2.159,-0.08,-1.836,0.258,-1.885,-0.78,-1.96,0.088,-1.577,0.178,-1.277,0.356,-1.563,0.236,-2.246,0.212,-1.75,-0.132,-1.753,0.105,0.409,-0.21,0.752,0.392,0.478,0.926,-2.06,-0.479,-1.664,-0.821,2.079,0.037,1.012,0.117,3.868,-1.881,2.709,-2.571,0.405,0.278,-0.248,0.349,2.439,-2.029,1.068,-0.64,-2.099,-0.318,-0.156,2.276,-0.288,2.889,0.293,3.295,2.117,0.772,2.57,1.534,3.586,2.946,0.611,-2.125,-3.342,-0.658,2.492,0.643,1.396,-0.595,0.112,-0.482,1.861,-3.0,2.439,-2.479,0.931,-1.079,0.572,-1.781,-0.765,-0.397,-0.65,4.174,0.484,-1.125,0.256,-1.832,-2.987,-0.446,1.716,-2.568,1.197,-2.069,1.127,0.598,2.013,0.727,-0.01,1.483,0.425,0.581,2.384,-0.531,-0.998,1.029,-0.714,-1.529,-0.689,1.418,0.908,-3.838,2.434,3.505,4.245,-0.981,1.316,0.849,2.703,0.043,-0.677,1.266,2.229,-2.279,0.558,0.439,1.177,0.873,2.534,0.902,0.986,-2.313];
+var FC_C=[-1.763,0.111,1.605,-0.519];
+var TOY=[[-0.5,1.1],[-1.0,-1.1],[-2.5,-1.5],[0.1,1.5],[0.6,1.5],[1.1,0.7],[1.0,1.5],[1.7,1.5],[0.4,-1.5],[-2.0,-0.6]];
+var NOISE15=[2.008, 1.166, -2.273, 2.668, -0.724, 2.405, 0.306, -2.255, 1.559, -1.549, -0.186, -2.363, -1.936, 1.088, 1.371, 2.625, -0.975, -0.6, -1.529, 1.017, -0.352, 1.896, 1.022, -1.845, -1.681, -2.56, 1.607, 0.99, 0.754, 0.389];
+var DENIDX=[30, 37, 93, 155, 269, 279, 296, 337, 362, 445, 458, 497, 507, 549, 589, 599, 701, 811, 824, 867, 887, 896, 898, 917, 941, 946, 1022, 1024];
+
+/* ═══════ алгоритми теми: чесні реалізації, без імітації ═══════ */
+
+/* DBSCAN. Повертає мітки (−1 = шум), ролі (2 ядерна, 1 гранична, 0 шум),
+   кількість кластерів і списки сусідів. */
+function dbscan(P, eps, minPts){
+  var n=P.length, i, j, lab=new Int32Array(n), nb=[], e2=eps*eps, dx, dy, list;
+  for(i=0;i<n;i++) lab[i]=-2;                 /* −2 = ще не розглянута */
+  for(i=0;i<n;i++){
+    list=[];
+    for(j=0;j<n;j++){
+      dx=P[i][0]-P[j][0]; dy=P[i][1]-P[j][1];
+      if(dx*dx+dy*dy<=e2) list.push(j);       /* сама точка теж рахується */
+    }
+    nb.push(list);
+  }
+  var c=-1, q, k, p, s;
+  for(i=0;i<n;i++){
+    if(lab[i]!==-2) continue;
+    if(nb[i].length<minPts){ lab[i]=-1; continue; }   /* не ядерна — поки шум */
+    c++; lab[i]=c; q=nb[i].slice();
+    for(k=0;k<q.length;k++){
+      p=q[k];
+      if(lab[p]===-1) lab[p]=c;                       /* гранична: забираємо з шуму */
+      if(lab[p]!==-2) continue;
+      lab[p]=c;
+      if(nb[p].length>=minPts)
+        for(s=0;s<nb[p].length;s++)
+          if(lab[nb[p][s]]===-2||lab[nb[p][s]]===-1) q.push(nb[p][s]);
+    }
+  }
+  var roles=new Int8Array(n);
+  for(i=0;i<n;i++) roles[i]=(nb[i].length>=minPts)?2:(lab[i]>=0?1:0);
+  return {lab:lab, roles:roles, k:c+1, nb:nb};
+}
+
+/* Агломеративна кластеризація, формула Ленса-Вільямса.
+   Ворд працює з квадратами відстаней, решта звʼязків — зі звичайними.
+   Повертає список злиттів [лівий, правий, висота, розмір] — як у scipy. */
+function agglo(P, method){
+  var n=P.length, i, j, k, D=[], sz=new Float64Array(n), alive=new Uint8Array(n),
+      id=new Int32Array(n), merges=[], ward=(method==='ward'), dx, dy, d2;
+  for(i=0;i<n;i++){ D.push(new Float64Array(n)); sz[i]=1; alive[i]=1; id[i]=i; }
+  for(i=0;i<n;i++) for(j=0;j<n;j++){
+    dx=P[i][0]-P[j][0]; dy=P[i][1]-P[j][1]; d2=dx*dx+dy*dy;
+    D[i][j]=ward?d2:Math.sqrt(d2);
+  }
+  var next=n, m, bi, bj, bd, ni, nj, nk, v;
+  for(m=0;m<n-1;m++){
+    bi=-1; bj=-1; bd=Infinity;
+    for(i=0;i<n;i++){ if(!alive[i]) continue;
+      for(j=i+1;j<n;j++){ if(!alive[j]) continue;
+        if(D[i][j]<bd){ bd=D[i][j]; bi=i; bj=j; } } }
+    ni=sz[bi]; nj=sz[bj];
+    merges.push([id[bi], id[bj], ward?Math.sqrt(bd):bd, ni+nj]);
+    for(k=0;k<n;k++){
+      if(!alive[k]||k===bi||k===bj) continue;
+      nk=sz[k];
+      if(method==='single') v=Math.min(D[bi][k],D[bj][k]);
+      else if(method==='complete') v=Math.max(D[bi][k],D[bj][k]);
+      else if(method==='average') v=(ni*D[bi][k]+nj*D[bj][k])/(ni+nj);
+      else v=((ni+nk)*D[bi][k]+(nj+nk)*D[bj][k]-nk*bd)/(ni+nj+nk);
+      D[bi][k]=v; D[k][bi]=v;
+    }
+    sz[bi]=ni+nj; alive[bj]=0; id[bi]=next; next++;
+  }
+  return merges;
+}
+
+/* Розріз дерева: або на k груп, або на заданій висоті. */
+function cutTree(merges, n, opt){
+  var parent=new Int32Array(2*n-1), i, stop;
+  for(i=0;i<2*n-1;i++) parent[i]=-1;
+  if(opt.k!==undefined) stop=n-opt.k;
+  else { stop=0; while(stop<merges.length&&merges[stop][2]<=opt.h) stop++; }
+  for(i=0;i<stop;i++){ parent[merges[i][0]]=n+i; parent[merges[i][1]]=n+i; }
+  var lab=new Int32Array(n), map={}, c=0, r;
+  for(i=0;i<n;i++){
+    r=i; while(parent[r]>=0) r=parent[r];
+    if(map[r]===undefined) map[r]=c++;
+    lab[i]=map[r];
+  }
+  return {lab:lab, k:c};
+}
+
+/* Частка точок «на своїх місцях»: кластери зіставляємо з істинними групами
+   один-до-одного, шум і зайві кластери — помилка. Істинних груп завжди дві. */
+function matchAcc(y, lab){
+  var n=y.length, i, keys={}, list=[], M={}, l;
+  for(i=0;i<n;i++) if(lab[i]>=0) keys[lab[i]]=1;
+  for(l in keys) list.push(+l);
+  for(i=0;i<list.length;i++) M[list[i]]=[0,0];
+  for(i=0;i<n;i++) if(lab[i]>=0) M[lab[i]][y[i]]++;
+  var best=0, a, b;
+  for(a=0;a<list.length;a++){
+    best=Math.max(best, M[list[a]][0], M[list[a]][1]);
+    for(b=0;b<list.length;b++){
+      if(a===b) continue;
+      best=Math.max(best, M[list[a]][0]+M[list[b]][1]);
+    }
+  }
+  return best/n;
+}
+function sizesOf(lab,k){
+  var n=[], i;
+  for(i=0;i<k;i++) n.push(0);
+  for(i=0;i<lab.length;i++) if(lab[i]>=0) n[lab[i]]++;
+  return n;
+}
+function countNoise(lab){
+  var s=0,i; for(i=0;i<lab.length;i++) if(lab[i]<0) s++;
+  return s;
+}
+/* Відстань до k-го найближчого сусіда, відсортована за зростанням.
+   Тримаємо лише k найменших відстаней — інакше на 1 100 точках
+   довелось би сортувати тисячу масивів по тисячі чисел. */
+function kdistSorted(P,k){
+  var n=P.length, out=[], i, j, dx, dy, d, best=new Float64Array(k), m, t;
+  for(i=0;i<n;i++){
+    for(m=0;m<k;m++) best[m]=Infinity;
+    for(j=0;j<n;j++){
+      if(j===i) continue;
+      dx=P[i][0]-P[j][0]; dy=P[i][1]-P[j][1]; d=dx*dx+dy*dy;
+      if(d>=best[k-1]) continue;
+      m=k-1;
+      while(m>0&&best[m-1]>d){ best[m]=best[m-1]; m--; }
+      best[m]=d;
+    }
+    out.push(Math.sqrt(best[k-1]));
+  }
+  out.sort(function(a,b){return a-b;});
+  return out;
+}
+
+/* ═══════ дані ═══════ */
+var N=PY.length;
+var PX=new Float64Array(N), PYv=new Float64Array(N), i27;
+for(i27=0;i27<N;i27++){
+  PX[i27]=(Math.log(PRICE[i27])-MEANLN)/SDLN;
+  PYv[i27]=(2017+(+PY.charAt(i27))-MEANY)/SDY;
+}
+function priceOf(z){ return Math.exp(MEANLN+z*SDLN); }
+function yearOf(z){ return MEANY+z*SDY; }
+function money(v){
+  if(v>=1000) return (Math.round(v/10)*10).toLocaleString('uk-UA').replace(/ /g,' ');
+  return String(Math.round(v));
+}
+function pairs(flat){
+  var out=[], i;
+  for(i=0;i<flat.length;i+=2) out.push([flat[i],flat[i+1]]);
+  return out;
+}
+/* три форми з попередньої теми: точки, істинні групи, центри k-means */
+var SHAPES=[
+  {P:pairs(FA_P), n0:65, C:pairs(FA_C), ttl:'витягнуті смуги', R:2.9},
+  {P:pairs(FB_P), n0:45, C:pairs(FB_C), ttl:'вкладені кільця', R:2.6},
+  {P:pairs(FC_P), n0:95, C:pairs(FC_C), ttl:'різна щільність', R:4.6}
+];
+var s27;
+for(s27=0;s27<3;s27++){
+  SHAPES[s27].y=[];
+  for(i27=0;i27<SHAPES[s27].P.length;i27++)
+    SHAPES[s27].y.push(i27<SHAPES[s27].n0?0:1);
+}
+/* набір для повзунків: ті самі дві смуги плюс 15 розкиданих одинаків */
+var SLID=pairs(FA_P).concat(pairs(NOISE15));
+/* 28 оголошень для дендрограми */
+var DEN=[];
+for(i27=0;i27<DENIDX.length;i27++) DEN.push([PX[DENIDX[i27]], PYv[DENIDX[i27]]]);
+
+/* однаковий масштаб по обох осях — інакше кола околу стануть еліпсами */
+function fit(cx,cy,w,h,xlo,xhi,ylo,yhi){
+  var s=Math.min(w/(xhi-xlo), h/(yhi-ylo));
+  var ox=cx+(w-s*(xhi-xlo))/2, oy=cy+(h-s*(yhi-ylo))/2;
+  return {
+    s:s,
+    X:function(v){ return ox+s*(v-xlo); },
+    Y:function(v){ return oy+s*(yhi-v); }
+  };
+}
+function box(g,x,y,w,h){
+  g.fillStyle=css('--paper'); g.fillRect(x,y,w,h);
+  g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(x,y,w,h);
+}
+/* точка за роллю: ядерна — залита, гранична — порожня, шум — сірий хрестик */
+function markPoint(g,x,y,role,col,rad){
+  if(role===0){
+    g.strokeStyle=css('--soft')+ah(0.85); g.lineWidth=1.3;
+    g.beginPath();
+    g.moveTo(x-rad,y-rad); g.lineTo(x+rad,y+rad);
+    g.moveTo(x+rad,y-rad); g.lineTo(x-rad,y+rad);
+    g.stroke();
+  } else if(role===1){
+    g.fillStyle=css('--raise'); g.beginPath(); g.arc(x,y,rad,0,6.284); g.fill();
+    g.strokeStyle=col; g.lineWidth=1.6; g.stroke();
+  } else {
+    g.fillStyle=col+ah(0.8); g.beginPath(); g.arc(x,y,rad,0,6.284); g.fill();
+  }
+}
+
+/* ══════════ Схема 1 · три ролі точки ══════════ */
+function drawRoles(){
+  var cv=I('cvRoles'); if(!cv) return;
+  var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair');
+  var EPS=1.2, MS=3, r=dbscan(TOY,EPS,MS), i, j;
+  var x0=40, y0=20, w=400, h=290, m=fit(x0,y0,w,h,-3.9,3.1,-2.9,2.9);
+  box(g,x0,y0,w,h);
+  g.save(); g.beginPath(); g.rect(x0,y0,w,h); g.clip();
+  /* кола околу */
+  g.setLineDash([3,3]); g.lineWidth=1;
+  for(i=0;i<TOY.length;i++){
+    g.strokeStyle=(r.lab[i]<0?soft:kcol(r.lab[i]))+ah(0.35);
+    g.beginPath(); g.arc(m.X(TOY[i][0]),m.Y(TOY[i][1]),EPS*m.s,0,6.284); g.stroke();
+  }
+  g.setLineDash([]);
+  /* звʼязки між сусідами */
+  for(i=0;i<TOY.length;i++) for(j=i+1;j<TOY.length;j++){
+    if(r.nb[i].indexOf(j)<0) continue;
+    g.strokeStyle=(r.lab[i]<0?soft:kcol(r.lab[i]))+ah(0.5); g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(m.X(TOY[i][0]),m.Y(TOY[i][1]));
+    g.lineTo(m.X(TOY[j][0]),m.Y(TOY[j][1])); g.stroke();
+  }
+  /* самі точки */
+  for(i=0;i<TOY.length;i++){
+    markPoint(g,m.X(TOY[i][0]),m.Y(TOY[i][1]),r.roles[i],
+              r.lab[i]<0?soft:kcol(r.lab[i]),6);
+    g.fillStyle=ink; g.font='700 10px "JetBrains Mono",monospace'; g.textAlign='center';
+    g.fillText('A'+(i+1), m.X(TOY[i][0]), m.Y(TOY[i][1])-11);
+  }
+  g.restore();
+  /* підписи осей */
+  g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace'; g.textAlign='center';
+  g.fillText('ціна →', x0+w/2, y0+h+16);
+  g.save(); g.translate(x0-12,y0+h/2); g.rotate(-Math.PI/2);
+  g.fillText('рік →',0,0); g.restore();
+
+  /* панель праворуч */
+  var lx=464, ly=40, k, n=[0,0,0];
+  for(i=0;i<TOY.length;i++) n[r.roles[i]]++;
+  g.textAlign='left'; g.fillStyle=ink; g.font='700 12px "JetBrains Mono",monospace';
+  g.fillText('eps = 1.2', lx, ly-18);
+  g.fillText('min_samples = 3', lx, ly-2);
+  var rows=[
+    {role:2, t:'ядерна', n:n[2], d:'сусідів вистачає'},
+    {role:1, t:'гранична', n:n[1], d:'край чужого кола'},
+    {role:0, t:'шум', n:n[0], d:'ні з ким'}
+  ];
+  for(k=0;k<3;k++){
+    var yy=ly+30+k*46;
+    markPoint(g,lx+7,yy-4,rows[k].role,kcol(0),6);
+    g.fillStyle=ink; g.font='700 11.5px "JetBrains Mono",monospace';
+    g.fillText(rows[k].t+' — '+rows[k].n, lx+22, yy);
+    g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace';
+    g.fillText(rows[k].d, lx+22, yy+15);
+  }
+  var sz=sizesOf(r.lab,r.k);
+  g.fillStyle=soft; g.font='700 10px "JetBrains Mono",monospace';
+  g.fillText('ЩО ВИЙШЛО', lx, ly+180);
+  for(k=0;k<r.k;k++){
+    g.fillStyle=kcol(k); g.beginPath(); g.arc(lx+5,ly+199+k*19,5,0,6.284); g.fill();
+    g.fillStyle=ink; g.font='11px "JetBrains Mono",monospace';
+    g.fillText('кластер '+(k+1)+' — '+sz[k]+' шт.', lx+16, ly+203+k*19);
+  }
+}
+
+/* ══════════ Інтерактив 1 · eps і min_samples ══════════ */
+function drawEps(){
+  var cv=I('cvEps'); if(!cv) return;
+  var eps=+I('eps27').value, ms=+I('ms27').value;
+  if(!isFinite(eps)) eps=0.45;
+  if(!isFinite(ms)) ms=5;
+  var g=dpr(cv), soft=css('--soft'), ink=css('--ink');
+  var r=dbscan(SLID,eps,ms), i, nz=countNoise(r.lab), core=0;
+  for(i=0;i<SLID.length;i++) if(r.roles[i]===2) core++;
+  var x0=30, y0=14, w=350, h=332, m=fit(x0,y0,w,h,-2.9,2.9,-2.9,2.9);
+  box(g,x0,y0,w,h);
+  g.save(); g.beginPath(); g.rect(x0,y0,w,h); g.clip();
+  for(i=0;i<SLID.length;i++)
+    markPoint(g,m.X(SLID[i][0]),m.Y(SLID[i][1]),r.roles[i],
+              r.lab[i]<0?soft:kcol(r.lab[i]),3.4);
+  g.restore();
+  /* кружечок радіуса eps як мірка — обрізаємо рамкою, інакше при великому
+     радіусі він вилазить за межі картинки (грабля №7) */
+  g.save(); g.beginPath(); g.rect(x0,y0,w,h); g.clip();
+  g.strokeStyle=css('--ink')+ah(0.45); g.setLineDash([3,3]); g.lineWidth=1.2;
+  g.beginPath(); g.arc(x0+24,y0+h-24,eps*m.s,0,6.284); g.stroke(); g.setLineDash([]);
+  g.restore();
+  g.fillStyle=soft; g.font='9.5px "JetBrains Mono",monospace'; g.textAlign='center';
+  g.fillText('eps', x0+24, y0+h-6);
+
+  var lx=404, k, sz=sizesOf(r.lab,r.k), ord=[], yy;
+  for(k=0;k<r.k;k++) ord.push(k);
+  ord.sort(function(a,b){return sz[b]-sz[a];});
+  g.textAlign='left'; g.fillStyle=soft; g.font='700 10px "JetBrains Mono",monospace';
+  g.fillText('ЗНАЙДЕНІ ГРУПИ', lx, 34);
+  if(r.k===0){
+    g.fillStyle=ink; g.font='11.5px "JetBrains Mono",monospace';
+    g.fillText('жодної', lx, 54);
+  }
+  for(k=0;k<Math.min(ord.length,7);k++){
+    yy=54+k*20;
+    g.fillStyle=kcol(ord[k]); g.beginPath(); g.arc(lx+5,yy-4,5,0,6.284); g.fill();
+    g.fillStyle=ink; g.font='11px "JetBrains Mono",monospace';
+    g.fillText(sz[ord[k]]+' '+plur(sz[ord[k]],'точка','точки','точок'), lx+16, yy);
+  }
+  if(ord.length>7){
+    g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace';
+    g.fillText('і ще '+(ord.length-7)+' дрібних', lx, 54+7*20);
+  }
+  yy=54+Math.min(ord.length,7)*20+(ord.length>7?20:0)+16;
+  g.strokeStyle=css('--soft')+ah(0.85); g.lineWidth=1.3;
+  g.beginPath(); g.moveTo(lx+1,yy-8); g.lineTo(lx+9,yy); g.moveTo(lx+9,yy-8); g.lineTo(lx+1,yy); g.stroke();
+  g.fillStyle=ink; g.font='11px "JetBrains Mono",monospace';
+  g.fillText(nz+' у шумі', lx+16, yy);
+
+  I('eps27v').textContent=fmt(eps,2);
+  I('ms27v').textContent=ms;
+  I('epK').textContent=r.k;
+  I('epN').textContent=nz;
+  I('epC').textContent=core;
+  I('epP').textContent=fmt(100*nz/SLID.length,1)+' %';
+
+  /* чи знайдено рівно дві смуги */
+  var exact=false;
+  if(r.k===2){
+    exact=true;
+    for(i=1;i<65;i++) if(r.lab[i]!==r.lab[0]) exact=false;
+    for(i=66;i<130;i++) if(r.lab[i]!==r.lab[65]) exact=false;
+    if(r.lab[0]<0||r.lab[65]<0||r.lab[0]===r.lab[65]) exact=false;
+  }
+  var tag,cap,txt, pc=fmt(100*nz/SLID.length,1);
+  if(r.k===0){
+    tag='t-no'; cap='УСЕ ШУМ';
+    txt='Жодної ядерної точки: у радіусі '+fmt(eps,2)+' ніде не набирається '+ms+
+        ' точок. Усі <b>145</b> оголошень дістали мітку «шум», кластерів нуль. Це перша з двох катастроф.';
+  } else if(r.k===1){
+    tag='t-no'; cap='ОДИН КЛАСТЕР';
+    txt='Радіус '+fmt(eps,2)+' завеликий: обидві смуги зʼєднались через проміжок і злились в один кластер із '+
+        sizesOf(r.lab,1)[0]+' точок, у шумі лишилось '+nz+'. Це друга катастрофа — розбиття без поділу.';
+  } else if(exact&&nz===15){
+    tag='t-ok'; cap='ТОЧНО В ЦІЛЬ';
+    txt='Дві смуги знайдено повністю — по 65 точок у кожній, — а шумом стали рівно ті <b>15</b> одинаків, '+
+        'яких ми підкинули ('+pc+'&nbsp;% точок). k-means на цих самих даних дає 58.5&nbsp;% і не бачить смуг зовсім.';
+  } else if(exact){
+    tag='t-mid'; cap='СМУГИ ЗНАЙДЕНО';
+    txt='Обидві смуги цілі, але в шумі '+nz+' '+plur(nz,'точка','точки','точок')+' ('+pc+
+        '&nbsp;%) замість 15: '+(nz<15
+          ? 'радіус завеликий, і '+(15-nz)+' '+plur(15-nz,'одинак прилип','одинаки прилипли','одинаків прилипло')+' до смуг'
+          : 'разом з одинаками в шум пішли й '+(nz-15)+' '+plur(nz-15,'крайня точка смуги','крайні точки смуг','крайніх точок смуг'))+'.';
+  } else if(r.k===2){
+    tag='t-mid'; cap='ДВІ ГРУПИ, АЛЕ НЕ СМУГИ';
+    txt='Кластерів два, у шумі '+nz+' ('+pc+'&nbsp;%), але це не дві смуги: '+
+        'принаймні одна з них розірвана або злита з сусідньою.';
+  } else {
+    tag='t-no'; cap='РОЗСИПАЛОСЬ';
+    var mx1=Math.max.apply(null,sizesOf(r.lab,r.k));
+    txt='Радіус '+fmt(eps,2)+' замалий для такої щільності: смуги порвались на <b>'+r.k+
+        '</b> '+plur(r.k,'шматок','шматки','шматків')+', а в шумі вже '+nz+' '+
+        plur(nz,'точка','точки','точок')+' ('+pc+'&nbsp;%). Найбільша група — '+mx1+' '+
+        plur(mx1,'точка','точки','точок')+'.';
+  }
+  verd(I('epV'),tag,cap,txt);
+}
+
+/* ══════════ Схема 2 · графік k-ї відстані ══════════ */
+var KD_CACHE=null;
+function drawKdist(){
+  var cv=I('cvKdist'); if(!cv) return;
+  if(!KD_CACHE){
+    var BP=[], i;
+    for(i=0;i<N;i++) BP.push([PX[i],PYv[i]]);
+    KD_CACHE={a:kdistSorted(SLID,4), b:kdistSorted(BP,4)};
+  }
+  var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var panels=[
+    {d:KD_CACHE.a, x:52, ttl:'145 ТОЧОК ІЗ ДВОХ СМУГ', sub:'коліно на висоті 0.5',
+     hi:2.2, knee:0.5, col:rose},
+    {d:KD_CACHE.b, x:398, ttl:'1 100 ОГОЛОШЕНЬ ДОШКИ', sub:'зламу немає',
+     hi:1.8, knee:null, col:teal}
+  ];
+  var w=252, h=196, y0=48, p, t;
+  for(p=0;p<2;p++){
+    var st=panels[p], x0=st.x, n=st.d.length;
+    g.textAlign='left'; g.fillStyle=ink; g.font='700 11px "JetBrains Mono",monospace';
+    g.fillText(st.ttl, x0, y0-26);
+    g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace';
+    g.fillText(st.sub, x0, y0-12);
+    box(g,x0,y0,w,h);
+    function PXp(i){ return x0+w*i/(n-1); }
+    function PYp(v){ return y0+h*(1-Math.min(v,st.hi)/st.hi); }
+    /* сітка */
+    g.strokeStyle=hair; g.lineWidth=1;
+    for(t=0.5;t<st.hi;t+=0.5){
+      g.beginPath(); g.moveTo(x0,PYp(t)); g.lineTo(x0+w,PYp(t)); g.stroke();
+      g.fillStyle=soft; g.font='9.5px "JetBrains Mono",monospace'; g.textAlign='right';
+      g.fillText(fmt(t,1), x0-4, PYp(t)+3.5);
+    }
+    g.strokeStyle=st.col; g.lineWidth=2; g.beginPath();
+    for(t=0;t<n;t++){
+      if(t===0) g.moveTo(PXp(t),PYp(st.d[t])); else g.lineTo(PXp(t),PYp(st.d[t]));
+    }
+    g.stroke();
+    if(st.knee!==null){
+      var above=0;
+      for(t=0;t<n;t++) if(st.d[t]>st.knee) above++;
+      g.setLineDash([4,3]); g.strokeStyle=ink; g.lineWidth=1.2;
+      g.beginPath(); g.moveTo(x0,PYp(st.knee)); g.lineTo(x0+w,PYp(st.knee)); g.stroke();
+      g.setLineDash([]);
+      g.fillStyle=ink; g.font='700 10px "JetBrains Mono",monospace'; g.textAlign='left';
+      g.fillText('eps = 0.5', x0+6, PYp(st.knee)-6);
+      g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+      g.fillText('вище коліна: '+above+' точок', x0, y0+h+30);
+    } else {
+      var med=st.d[Math.floor(n/2)], q95=st.d[Math.floor(n*0.95)];
+      g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace'; g.textAlign='left';
+      g.fillText('медіана '+fmt(med,2)+' · 95 % нижче '+fmt(q95,2), x0, y0+h+30);
+    }
+    g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace'; g.textAlign='center';
+    g.fillText('точки, впорядковані за відстанню', x0+w/2, y0+h+15);
+  }
+  g.save(); g.translate(20,y0+h/2); g.rotate(-Math.PI/2);
+  g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace'; g.textAlign='center';
+  g.fillText('відстань до 4-го сусіда',0,0); g.restore();
+}
+
+/* ══════════ Інтерактив 2 · дендрограма зі зрізом ══════════ */
+var DEN_M=null, DEN_LEAVES=null, DEN_ORDER=null;
+function denPrepare(){
+  if(DEN_M) return;
+  DEN_M=agglo(DEN,'average');
+  var n=DEN.length, i, m;
+  DEN_LEAVES=[];
+  for(i=0;i<n;i++) DEN_LEAVES.push([i]);
+  for(m=0;m<DEN_M.length;m++)
+    DEN_LEAVES.push(DEN_LEAVES[DEN_M[m][0]].concat(DEN_LEAVES[DEN_M[m][1]]));
+  DEN_ORDER={};
+  var order=DEN_LEAVES[DEN_LEAVES.length-1];
+  for(i=0;i<order.length;i++) DEN_ORDER[order[i]]=i;
+}
+function drawDen(){
+  var cv=I('cvDen'); if(!cv) return;
+  denPrepare();
+  var cut=+I('cut27').value; if(!isFinite(cut)) cut=1.3;
+  var n=DEN.length, res=cutTree(DEN_M,n,{h:cut}), lab=res.lab, i, m;
+  var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair');
+  var x0=44, y0=24, w=352, h=252, HI=3.25;
+  function LX(pos){ return x0+w*(pos+0.5)/n; }
+  function LY(v){ return y0+h*(1-v/HI); }
+  box(g,x0,y0,w,h);
+  /* шкала висот */
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(i=1;i<=3;i++){
+    g.beginPath(); g.moveTo(x0,LY(i)); g.lineTo(x0+w,LY(i)); g.stroke();
+    g.fillStyle=soft; g.font='9.5px "JetBrains Mono",monospace'; g.textAlign='right';
+    g.fillText(String(i), x0-4, LY(i)+3.5);
+  }
+  /* координати вузлів */
+  var nx=new Float64Array(2*n-1), nh=new Float64Array(2*n-1);
+  for(i=0;i<n;i++){ nx[i]=LX(DEN_ORDER[i]); nh[i]=0; }
+  for(m=0;m<DEN_M.length;m++){
+    var a=DEN_M[m][0], b=DEN_M[m][1];
+    nx[n+m]=(nx[a]+nx[b])/2; nh[n+m]=DEN_M[m][2];
+  }
+  g.save(); g.beginPath(); g.rect(x0,y0-4,w,h+4); g.clip();
+  for(m=0;m<DEN_M.length;m++){
+    var A=DEN_M[m][0], B=DEN_M[m][1], hh=DEN_M[m][2];
+    var below=(hh<=cut);
+    g.strokeStyle=below?kcol(lab[DEN_LEAVES[n+m][0]]):(soft+ah(0.75));
+    g.lineWidth=below?2:1.2;
+    g.beginPath();
+    g.moveTo(nx[A],LY(nh[A])); g.lineTo(nx[A],LY(hh));
+    g.lineTo(nx[B],LY(hh)); g.lineTo(nx[B],LY(nh[B]));
+    g.stroke();
+  }
+  /* листки */
+  for(i=0;i<n;i++){
+    g.fillStyle=kcol(lab[i]);
+    g.beginPath(); g.arc(nx[i],LY(0),2.6,0,6.284); g.fill();
+  }
+  g.restore();
+  /* лінія зрізу */
+  g.setLineDash([5,4]); g.strokeStyle=css('--ink'); g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x0,LY(cut)); g.lineTo(x0+w,LY(cut)); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle=css('--ink'); g.font='700 10px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillText('зріз '+fmt(cut,2)+' → '+res.k+' '+plur(res.k,'група','групи','груп'), x0+4, LY(cut)-6);
+  g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace'; g.textAlign='center';
+  g.fillText('28 оголошень', x0+w/2, y0+h+16);
+  g.save(); g.translate(x0-26,y0+h/2); g.rotate(-Math.PI/2);
+  g.fillText('відстань злиття',0,0); g.restore();
+
+  /* та сама вибірка на площині */
+  var sx=470, sy=24, sw=210, sh=252;
+  var lo=1e9, hi=-1e9, ylo=1e9, yhi=-1e9;
+  for(i=0;i<n;i++){
+    lo=Math.min(lo,DEN[i][0]); hi=Math.max(hi,DEN[i][0]);
+    ylo=Math.min(ylo,DEN[i][1]); yhi=Math.max(yhi,DEN[i][1]);
+  }
+  lo-=0.3; hi+=0.3; ylo-=0.3; yhi+=0.3;
+  box(g,sx,sy,sw,sh);
+  for(i=0;i<n;i++){
+    var px=sx+sw*(DEN[i][0]-lo)/(hi-lo), py=sy+sh*(1-(DEN[i][1]-ylo)/(yhi-ylo));
+    g.fillStyle=kcol(lab[i])+ah(0.85);
+    g.beginPath(); g.arc(px,py,4.5,0,6.284); g.fill();
+  }
+  g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace'; g.textAlign='center';
+  g.fillText('ціна → (лог.)', sx+sw/2, sy+sh+16);
+  g.save(); g.translate(sx-12,sy+sh/2); g.rotate(-Math.PI/2);
+  g.fillText('рік →',0,0); g.restore();
+
+  /* табло */
+  var sz=sizesOf(lab,res.k), mx=0, ones=0, nextH=null;
+  for(i=0;i<res.k;i++){ mx=Math.max(mx,sz[i]); if(sz[i]===1) ones++; }
+  for(m=0;m<DEN_M.length;m++) if(DEN_M[m][2]>cut){ nextH=DEN_M[m][2]; break; }
+  I('cut27v').textContent=fmt(cut,2);
+  I('dnK').textContent=res.k;
+  I('dnMax').textContent=mx;
+  I('dnOne').textContent=ones;
+  I('dnNext').textContent=nextH===null?'—':fmt(nextH,3);
+  var tag,cap,txt;
+  var спільне='Зріз на висоті '+fmt(cut,2)+' дає <b>'+res.k+'</b> '+
+    plur(res.k,'групу','групи','груп')+', найбільша — '+mx+' '+
+    plur(mx,'оголошення','оголошення','оголошень')+'. ';
+  if(res.k===1){
+    tag='t-no'; cap='ЗАВИСОКО';
+    txt=спільне+'Вище за останнє злиття (2.81) дерево вже одне ціле — це та сама відповідь, що й «не кластеризувати».';
+  } else if(res.k>=10){
+    tag='t-no'; cap='ЗАНИЗЬКО';
+    txt=спільне+'Дерево ще майже не зібралось: '+ones+' '+
+        plur(ones,'оголошення лишилось','оголошення лишились','оголошень лишились')+
+        ' саме по собі. Щоб груп стало менше, підніми зріз — наступне злиття на висоті '+
+        fmt(nextH,3)+'.';
+  } else if(ones*2>=res.k){
+    tag='t-mid'; cap='БАГАТО ОДИНАКІВ';
+    txt=спільне+'З них '+ones+' — поодинокі оголошення на власній гілці: дорогі викиди '+
+        'зливаються з рештою в останню чергу. Наступне злиття буде на висоті '+fmt(nextH,3)+'.';
+  } else {
+    tag='t-ok'; cap='РОБОЧИЙ ЗРІЗ';
+    txt=спільне+'Одинаків '+ones+', тобто кожна група щось означає. Наступне злиття станеться '+
+        'на висоті '+(nextH===null?'—':fmt(nextH,3))+
+        ' — саме там кількість груп зменшиться ще на одну.';
+  }
+  verd(I('dnV'),tag,cap,txt);
+}
+
+/* ══════════ Схема 3 · чотири звʼязки ══════════ */
+var LINK_CACHE={};
+function linkOf(si,method){
+  var key=si+'/'+method;
+  if(!LINK_CACHE[key]){
+    var P=SHAPES[si].P, mg=agglo(P,method), c=cutTree(mg,P.length,{k:2});
+    LINK_CACHE[key]={lab:c.lab, acc:matchAcc(SHAPES[si].y,c.lab),
+                     sz:sizesOf(c.lab,2)};
+  }
+  return LINK_CACHE[key];
+}
+function drawLink(){
+  var cv=I('cvLink'); if(!cv) return;
+  var g=dpr(cv), soft=css('--soft'), ink=css('--ink');
+  var meths=[['single','одиночний'],['complete','повний'],['average','середній'],['ward','Ворда']];
+  var rows=[{si:0, ttl:'ДВІ ВИТЯГНУТІ СМУГИ'},{si:2, ttl:'РІЗНА ЩІЛЬНІСТЬ'}];
+  var w=148, h=148, rw, cwi, i;
+  for(rw=0;rw<2;rw++){
+    var si=rows[rw].si, S=SHAPES[si], y0=56+rw*234;
+    g.textAlign='left'; g.fillStyle=ink; g.font='700 11px "JetBrains Mono",monospace';
+    g.fillText(rows[rw].ttl, 34, y0-28);
+    for(cwi=0;cwi<4;cwi++){
+      var x0=34+cwi*166, res=linkOf(si,meths[cwi][0]);
+      g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace'; g.textAlign='left';
+      g.fillText('звʼязок ' + meths[cwi][1], x0, y0-10);
+      box(g,x0,y0,w,h);
+      var m=fit(x0,y0,w,h,-S.R,S.R,-S.R,S.R);
+      g.save(); g.beginPath(); g.rect(x0,y0,w,h); g.clip();
+      for(i=0;i<S.P.length;i++){
+        g.fillStyle=kcol(res.lab[i])+ah(0.8);
+        g.beginPath(); g.arc(m.X(S.P[i][0]),m.Y(S.P[i][1]),2.2,0,6.284); g.fill();
+      }
+      g.restore();
+      var ok=(res.acc>=0.9);
+      g.fillStyle=ok?css('--teal'):css('--rose');
+      g.font='700 12px "JetBrains Mono",monospace';
+      g.fillText(fmt(res.acc*100,1)+' %', x0, y0+h+18);
+      g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+      g.fillText('групи '+res.sz[0]+' і '+res.sz[1], x0, y0+h+32);
+    }
+  }
+}
+
+/* ══════════ Інтерактив 3 · три форми, три методи ══════════ */
+var tqShape=0, tqMeth=0, TQ_CACHE={};
+function tqResult(si,mi){
+  var key=si+'/'+mi;
+  if(TQ_CACHE[key]) return TQ_CACHE[key];
+  var S=SHAPES[si], P=S.P, n=P.length, lab=new Int32Array(n), i, c, best, bd, dx, dy, dd, out;
+  if(mi===0){
+    for(i=0;i<n;i++){
+      best=0; bd=1e18;
+      for(c=0;c<S.C.length;c++){
+        dx=P[i][0]-S.C[c][0]; dy=P[i][1]-S.C[c][1]; dd=dx*dx+dy*dy;
+        if(dd<bd){ bd=dd; best=c; }
+      }
+      lab[i]=best;
+    }
+    out={lab:lab, k:2, noise:0};
+  } else if(mi===1){
+    var r=dbscan(P,0.6,5);
+    out={lab:r.lab, k:r.k, noise:countNoise(r.lab), roles:r.roles};
+  } else {
+    var res=linkOf(si,'ward');
+    out={lab:res.lab, k:2, noise:0};
+  }
+  out.acc=matchAcc(S.y,out.lab);
+  out.sz=sizesOf(out.lab,out.k);
+  TQ_CACHE[key]=out;
+  return out;
+}
+function draw33(){
+  var cv=I('cv33'); if(!cv) return;
+  var S=SHAPES[tqShape], res=tqResult(tqShape,tqMeth), i;
+  var g=dpr(cv), soft=css('--soft'), ink=css('--ink');
+  var x0=36, y0=16, w=308, h=308, m=fit(x0,y0,w,h,-S.R,S.R,-S.R,S.R);
+  box(g,x0,y0,w,h);
+  g.save(); g.beginPath(); g.rect(x0,y0,w,h); g.clip();
+  for(i=0;i<S.P.length;i++){
+    var role=res.roles?res.roles[i]:2;
+    markPoint(g,m.X(S.P[i][0]),m.Y(S.P[i][1]),role,
+              res.lab[i]<0?soft:kcol(res.lab[i]),3.2);
+  }
+  if(tqMeth===0)
+    for(i=0;i<S.C.length;i++){
+      var cx=m.X(S.C[i][0]), cy=m.Y(S.C[i][1]);
+      g.beginPath();
+      g.moveTo(cx,cy-7); g.lineTo(cx+7,cy); g.lineTo(cx,cy+7); g.lineTo(cx-7,cy);
+      g.closePath();
+      g.fillStyle=kcol(i); g.fill();
+      g.strokeStyle=css('--raise'); g.lineWidth=1.6; g.stroke();
+    }
+  g.restore();
+
+  /* стовпчики: усі три методи на цій формі */
+  var lx=384, names=['k-means','DBSCAN','ієрархічна (Ворда)'], k, BW=196;
+  g.textAlign='left'; g.fillStyle=soft; g.font='700 10px "JetBrains Mono",monospace';
+  g.fillText('НА СВОЇХ МІСЦЯХ · '+S.ttl.toUpperCase(), lx, 30);
+  for(k=0;k<3;k++){
+    var rr2=tqResult(tqShape,k), yy=54+k*54, len=BW*rr2.acc;
+    g.fillStyle=(k===tqMeth)?ink:soft;
+    g.font=(k===tqMeth?'700 ':'')+'11px "JetBrains Mono",monospace';
+    g.fillText(names[k], lx, yy);
+    g.fillStyle=css('--hair'); rr(g,lx,yy+8,BW,10,5); g.fill();
+    g.fillStyle=(rr2.acc>=0.9?css('--teal'):css('--rose'))+ah(k===tqMeth?0.95:0.35);
+    rr(g,lx,yy+8,Math.max(len,4),10,5); g.fill();
+    g.fillStyle=(k===tqMeth)?ink:soft;
+    g.font=(k===tqMeth?'700 ':'')+'10.5px "JetBrains Mono",monospace';
+    g.fillText(fmt(rr2.acc*100,1)+' %', lx+BW+6, yy+17);
+  }
+  var single=linkOf(tqShape,'single');
+  g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  g.fillText('одиночний звʼязок: '+fmt(single.acc*100,1)+' %', lx, 54+3*54-4);
+
+  I('tqA').textContent=fmt(res.acc*100,1)+' %';
+  I('tqK').textContent=res.k;
+  I('tqN').textContent=res.noise;
+  I('tqS').textContent=res.sz.slice(0,4).join(' · ')+(res.sz.length>4?' …':'');
+
+  var tag = res.acc>=0.9?'t-ok':(res.acc>=0.75?'t-mid':'t-no'), cap, txt;
+  var A=fmt(res.acc*100,1), SG=fmt(single.acc*100,1);
+  if(tqMeth===0){
+    cap = res.acc>=0.9?'МАЙЖЕ ВЛУЧИВ':'ПРЯМА МЕЖА ПІДВЕЛА';
+    txt = tqShape===2
+      ? '<b>'+A+'&nbsp;%</b>. Обидві групи справді кулясті, тому пряма межа майже підходить — але вона пройшла '+
+        'надто далеко праворуч, і 16 точок розсіяної хмари відійшли до щільної купки.'
+      : '<b>'+A+'&nbsp;%</b>. Кожна точка йде до найближчого центра, тому межа між кластерами — пряма. '+
+        'Для '+(tqShape===0?'двох паралельних смуг':'кола всередині кільця')+' прямої межі, яка була б правильною, не існує.';
+  } else if(tqMeth===1){
+    cap = res.acc>=0.9?'ФОРМА НЕ ВАЖИТЬ':'ЩІЛЬНІСТЬ НЕ ТА';
+    txt = res.acc>=0.9
+      ? '<b>'+A+'&nbsp;%</b> при <b>'+res.k+'</b> кластерах і '+res.noise+' шумових точках. '+
+        'Кластер росте ланцюжком сусідів, тому форма не має значення взагалі — і це рівно те, чого k-means не вміє.'
+      : '<b>'+A+'&nbsp;%</b>: '+res.k+' кластери замість двох і <b>'+res.noise+'</b> точок у шумі. '+
+        'Радіус 0.6 добрий для щільної купки й замалий для розсіяної хмари — вона рветься на уламки. '+
+        'Найкраще, що DBSCAN видає на цих даних, — 88.0&nbsp;% при eps = 0.85, і це все одно гірше за k-means.';
+  } else {
+    cap = res.acc>=0.9?'ВОРД ВЛУЧИВ':'ВОРД РІЖЕ ЯК k-MEANS';
+    txt = res.acc>=0.9
+      ? '<b>'+A+'&nbsp;%</b> — найкращий результат на цьому наборі. Ворд зливає групи так, щоб сума квадратів '+
+        'усередині росла найповільніше, і саме це тут правильно. А одиночний звʼязок на цих самих даних дає '+SG+'&nbsp;%.'
+      : '<b>'+A+'&nbsp;%</b>. Ворд мінімізує ту саму суму квадратів, що й k-means, тому й помиляється так само. '+
+        'Поміняй звʼязок на одиночний — і на цих даних вийде <b>'+SG+'&nbsp;%</b>: вибір звʼязку важить більше за вибір методу.';
+  }
+  verd(I('tqV'),tag,cap,txt);
+}
+
+/* ══════════ звʼязування ══════════ */
+function redrawAll(){ drawRoles(); drawEps(); drawKdist(); drawDen(); drawLink(); draw33(); }
+on('eps27','input',drawEps);
+on('ms27','input',drawEps);
+on('cut27','input',drawDen);
+seg('segShape', function(i){ tqShape=i; draw33(); });
+seg('segMeth', function(i){ tqMeth=i; draw33(); });
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq27=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq27.addEventListener) mq27.addEventListener('change', redrawAll);
+}
+redrawAll();
+})();
+</script>
+</body>
+</html>

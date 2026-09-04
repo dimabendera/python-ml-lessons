@@ -1,0 +1,1414 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Модель у продакшені · Дрейф, моніторинг і відкат</title>
+<meta name="description" content="Що відбувається з моделлю після запуску: чим бойовий режим відрізняється від зошита; статичне й динамічне навчання проти статичного й динамічного висновку; training/serving skew на ознаці; три види дрейфу — даних, концепції, міток; що моніторити й чому метрика якості приходить останньою; перенавчання за розкладом і за тригером; версійність моделі, даних і коду; тіньовий запуск, канарка й A/B; план відкату; що ламається в конвеєрі насправді.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+/* довгі рядки коду в бічній панелі — на півкегля дрібніше, щоб не обрізались */
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+/* багато варіантів в одну лінію не влазять — пускаємо у два ряди */
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* довгі імена (price_deviation, LABEL_LAG) не мають де перенестись
+   і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* таблиці цієї теми словесні: перша колонка не має бути рожевою й моноширинною */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* підпис над перемикачем у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Машинне навчання · Блок 7 · Тема 31</p>
+    <h1>Модель у продакшені</h1>
+    <p class="stand">Число на тесті — це обіцянка, а не властивість. Далі модель
+      виходить до людей, світ починає змінюватись під нею, і головним питанням стає
+      не «наскільки вона точна», а «коли ти помітиш, що вже ні».</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Навчання закінчилось</a></li>
+        <li><a href="#s2">Пакетно чи на запит</a></li>
+        <li><a href="#s3">Training/serving skew</a></li>
+        <li><a href="#s4">Три різні дрейфи</a></li>
+        <li><a href="#s5">Коли ти дізнаєшся</a></li>
+        <li><a href="#s6">Що моніторити</a></li>
+        <li><a href="#s7">Скільки живе модель</a></li>
+        <li><a href="#s8">Версія всього</a></li>
+        <li><a href="#s9">Як випускати нову</a></li>
+        <li><a href="#s10">План відкату</a></li>
+        <li><a href="#s11">Що ламається насправді</a></li>
+        <li><a href="#s12">Що далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../30-end-to-end-project/lecture.html">← 30. Наскрізний проєкт</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../32-perceptron/lecture.html">32. Нейрон і перцептрон →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У <a href="../30-end-to-end-project/lecture.html">попередній темі</a> ми
+довели детектор шахрайських оголошень до кінця: постановка, чесний поділ, базова лінія,
+ітерації, один-єдиний замір на тесті й обґрунтоване рішення запускати. Остання її фраза
+була про те, що модель у продакшні деградує. Ця тема — про те, як саме, як швидко і що
+з цим робити.</p>
+
+<p>Дошка та сама: оголошення про вживані телефони, модель відповідає на питання, чи є
+оголошення шахрайським у мить публікації. Тільки тепер вона працює в бою. На день
+запуску ми поміряли її на 500 відкладених оголошеннях і отримали <b>F1 = 0.843</b>
+(precision 0.854, recall 0.833). Це число ми записали у звіт. Далі буде видно, скільки
+воно проживе.</p>
+
+<div class="note"><b>Кінець першої половини курсу.</b> Ця тема закриває блок «Підсумок» і
+всю табличну частину. Далі починаються нейронні мережі — але жодне правило звідси там
+не скасовується, воно просто стає дорожчим.</div>
+
+<h2 id="s1"><span class="num">01 / Перехід</span>Навчання закінчилось — робота почалась</h2>
+
+<p>Модель у зошиті й модель у бою — це два різні інженерні обʼєкти, які випадково мають
+однакові ваги. У зошиті в тебе є таблиця: усі рядки одразу, усі колонки заповнені, усі
+правильні відповіді відомі, а часу порахувати — скільки завгодно. У бою немає жодної
+з цих чотирьох речей.</p>
+
+<p><strong>Дані приходять по одному.</strong> Не таблиця на тисячу рядків, а одне
+оголошення, яке щойно натиснули «Опублікувати». Усе, що ти рахував «по колонці» —
+медіану, середнє, квантилі для масштабування — у цю мить порахувати ні з чого. Значить,
+воно має бути вже пораховане й покладене поруч із моделлю. Ця думка проста, і саме на
+ній ламається більшість перших запусків.</p>
+
+<p><strong>Відповідь потрібна швидко.</strong> Людина натиснула кнопку й дивиться на
+екран. Якщо модель думає секунду, це вже помітно; якщо три — оголошення публікують без
+перевірки, бо ніхто не тримає користувача в очікуванні. Тобто в бою в тебе зʼявляється
+бюджет часу, якого в зошиті не існувало взагалі.</p>
+
+<p><strong>Ніхто не скаже, чи вона вгадала.</strong> Оце найважче. У зошиті колонка з
+правильними відповідями лежала поруч. У бою правильна відповідь на питання «чи це був
+шахрай» приходить тоді, коли покупець втратив передоплату й написав скаргу, — тобто
+через тижні. А для більшості оголошень не приходить ніколи: вони просто зникають із
+дошки, і ніхто не знає, чим вони були.</p>
+
+<p><strong>І світ не стоїть.</strong> Таблиця в зошиті — фотографія одного дня, продакшн —
+відео. Ціни падають, зʼявляються нові моделі телефонів, а шахраї змінюють поведінку саме
+тому, що їх почали ловити.</p>
+
+<figure>
+  <p class="fig-head">Схема 1 · Життєвий цикл моделі</p>
+  <p class="fig-sub">Тема 30 доводить до четвертого блоку й зупиняється. Усе, що після нього, — це кільце, яке крутиться, поки система жива.</p>
+  <div><canvas id="cvLife" width="700" height="330" aria-label="Схема життєвого циклу моделі: дані, навчання, оцінка на тесті, запуск, моніторинг, перенавчання і повернення до даних"></canvas></div>
+  <figcaption><b>Кільце, а не пряма.</b> Проєкт із теми 30 — це перші три блоки й один
+    перехід. Права й нижня частина схеми повторюються щомісяця весь час, поки модель
+    комусь потрібна, і саме вони становлять більшу частину вартості системи.</figcaption>
+</figure>
+
+<p>У <a href="../29-model-comparison/lecture.html#s8">темі 29</a> ми міряли моделі не лише
+якістю, а й вартістю підтримки. Тепер видно, звідки та вартість береться: модель, яка
+щомісяця вимагає перенавчання, розбору скарг і звірки довідників, коштує стільки,
+скільки коштує людина, яка це робить, — і платять цю ціну щомісяця.</p>
+
+<h2 id="s2"><span class="num">02 / Режими</span>Пакетно чи на запит</h2>
+
+<p>Перше архітектурне рішення після запуску — <strong>коли рахувати</strong>. Тут є дві
+незалежні осі, і їх постійно плутають в одну.</p>
+
+<p><strong>Вісь перша: коли навчається модель.</strong> Статичне навчання — навчили один
+раз, поклали файл із вагами в сервіс, він там і живе. Динамічне — модель перенавчається
+за розкладом чи за подією, і в бою щоразу опиняється нова.</p>
+
+<p><strong>Вісь друга: коли рахується відповідь.</strong> Статичний висновок (його ще
+звуть пакетним, batch) — раз на добу проганяємо всі активні оголошення й складаємо
+відповіді в таблицю; сервіс потім просто дістає готове. Динамічний висновок (онлайновий)
+— відповідь рахується в мить запиту.</p>
+
+<p>Дві осі дають чотири комбінації, і в кожної своя ціна. Покрути перемикачі й подивись,
+що змінюється для нашої дошки.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Чотири способи запустити ту саму модель</p>
+  <p class="fig-sub">Перемикай обидві осі. Змінюються не слова, а чотири числа: затримка відповіді, свіжість прогнозу, вік моделі й те, що зламається першим.</p>
+  <div class="panel">
+    <div><canvas id="cvGrid" width="700" height="360" aria-label="Сітка два на два: рядки — статичне і динамічне навчання, стовпці — статичний і динамічний висновок. Обрана клітинка підсвічена"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">навчання</span>
+        <div class="seg" id="segTrain31">
+          <button type="button" data-i="0" aria-pressed="true">статичне</button>
+          <button type="button" data-i="1" aria-pressed="false">динамічне</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">висновок</span>
+        <div class="seg" id="segInfer31">
+          <button type="button" data-i="0" aria-pressed="true">статичний</button>
+          <button type="button" data-i="1" aria-pressed="false">динамічний</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>затримка відповіді</b><i id="gL">0 мс</i></div>
+        <div class="cellv"><b>свіжість прогнозу</b><i id="gF" class="sm">до 24 год</i></div>
+        <div class="cellv"><b>вік моделі</b><i id="gA" class="sm">росте без межі</i></div>
+        <div class="cellv"><b>вартість на місяць</b><i id="gC" class="sm">1 прогін/добу</i></div>
+      </div>
+      <div class="verdict" id="gV"></div>
+    </div>
+  </div>
+  <figcaption><b>Затримка й свіжість — це не одне й те саме.</b> Пакетний висновок
+    відповідає миттєво, бо відповідь уже лежить у таблиці, — але вона вчорашня, і на
+    щойно опубліковане оголошення її просто немає. Онлайновий рахує довше нуля, зате
+    відповідає саме про те оголошення, яке зараз перед ним.</figcaption>
+</figure>
+
+<p>Практичне правило просте. Починай із <strong>лівої верхньої клітинки</strong> —
+статичне навчання, пакетний висновок: її найдешевше налагодити й найлегше переробити,
+бо пачку можна порахувати ще раз. Праворуч рухайся, лише коли затримка справді заважає
+задачі, а вниз — лише коли вже вмієш міряти якість у бою. Динамічне навчання без
+моніторингу — це автомат, який щоночі викочує модель, якої ніхто не бачив.</p>
+
+<h2 id="s3"><span class="num">03 / Skew</span>Training/serving skew</h2>
+
+<p>А тепер головна пастка теми, і вона трапляється <em>до</em> будь-якого дрейфу — у
+перший же день роботи.</p>
+
+<p><strong>Training/serving skew</strong> (розбіжність між навчанням і бойовим
+застосуванням) — це коли одна й та сама ознака рахується двома різними способами: одним
+у зошиті, іншим у сервісі. Модель при цьому в бою бачить не ті числа, на яких її
+навчали, — і робить не ті висновки.</p>
+
+<p>Це той самий механізм, що й <a href="../09-preprocessing/lecture.html#s7">витік через
+передобробку</a> з теми 09, де медіана для заповнення пропусків рахувалась по всій
+таблиці. Різниця лише в тому, де це виявляється: витік підробляє <em>число у звіті</em>,
+а skew підробляє <em>роботу системи</em>. Перше коштує ніяковості на презентації,
+друге — грошей.</p>
+
+<p>Наша ознака — <code>price_deviation</code>, модуль логарифма відношення ціни до
+типової для цієї моделі й року. Типову ціну дає довідник: медіана всередині групи
+«модель + рік». І ось де починається різниця.</p>
+
+<p>У зошиті ти сидиш із таблицею за дванадцять місяців і міряєш якість помісячно.
+Довідник ти щоразу будуєш із того самого місяця, який зараз оцінюєш, — він у тебе під
+рукою, і це виглядає природним. У бою в мить публікації оголошення сервіс має рівно
+один довідник: той, що поїхав разом із моделлю в день запуску. Оголошень цього місяця
+ще просто не існує.</p>
+
+<p>Ось одне оголошення з десятого місяця: <code>Beta 12</code>, 2021 рік, ціна 2 790 грн,
+чесне.</p>
+
+<div class="eq left">як рахували в зошиті : типова 3 325 грн → відхилення 0.175
+як доступно в бою    : типова 4 990 грн → відхилення 0.581</div>
+
+<p>Одне оголошення, одна формула, один рядок коду — і число відрізняється втричі. Для
+моделі 0.175 означає «звичайна ціна», а 0.581 — «підозріло дешево». Той самий чесний
+продавець у зошиті проходить, а в бою потрапляє в чергу до модератора.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Та сама ознака, пораховані двома способами</p>
+  <p class="fig-sub">Перемкни спосіб. Угорі — медіанне відхилення по місяцях, унизу — F1. Числа праворуч — за весь рік, усі 18 000 оголошень.</p>
+  <div class="panel">
+    <div><canvas id="cvSkew" width="700" height="400" aria-label="Дві панелі по дванадцяти місяцях: медіанне відхилення ціни від типової та F1, для обраного способу рахувати довідник типових цін"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">довідник типових цін</span>
+        <div class="seg" id="segSkew31">
+          <button type="button" data-i="0" aria-pressed="true">як у зошиті</button>
+          <button type="button" data-i="1" aria-pressed="false">як у бою</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>F1 за рік</b><i id="kF">0.725</i></div>
+        <div class="cellv"><b>розрив</b><i id="kD">—</i></div>
+        <div class="cellv"><b>відхилення, міс. 12</b><i id="kM">0.171</i></div>
+        <div class="cellv"><b>типова Beta 12 ʼ21</b><i id="kP" class="sm">3 325 ₴</i></div>
+      </div>
+      <div class="verdict" id="kV"></div>
+    </div>
+  </div>
+  <figcaption><b>Перші місяці обидва способи дають майже те саме</b> — і саме тому skew
+    так довго не помічають. Розходитись вони починають тоді, коли ринок відʼїхав від дня
+    запуску: у зошиті довідник їде разом із ринком, у бою — стоїть.</figcaption>
+</figure>
+
+<p>За рік зошит обіцяє F1 <b>0.725</b>, а система дає <b>0.614</b>. Розрив
+<b>0.111</b> — і це не помилка вимірювання й не невдача моделі, а різниця між двома
+способами порахувати одне число.</p>
+
+<p>Найцікавіше — третій варіант. Довідник можна будувати з <em>минулого</em> місяця:
+ці оголошення в бою вже існують, правильні відповіді для них не потрібні, тож заборони
+немає жодної. Так система дає <b>0.730</b>. Тобто зошит не брехав про досяжну якість —
+він брехав про ту конкретну систему, яку ми запустили.</p>
+
+<div class="note warn"><b>Єдиний надійний запобіжник — один шматок коду.</b> Ознаку має
+рахувати одна функція, і зошит із сервісом мають викликати саме її. Щойно та сама формула
+живе у двох місцях, вони починають розходитись — не сьогодні, то через три місяці, коли
+хтось поправить одну з них і забуде про другу. Домовленості «ми пильнуватимемо» тут не
+працюють: skew не видно ні в тестах, ні в метриці, ні в код-ревʼю.</div>
+
+<h2 id="s4"><span class="num">04 / Дрейф</span>Три різні дрейфи</h2>
+
+<p>Слово «дрейф» у розмовах означає щонайменше три різні речі, і від того, яка саме
+трапилась, залежить, що робити. Розберемо їх на нашій дошці.</p>
+
+<p><strong>Дрейф даних</strong> (data drift) — поїхав розподіл ознак, а звʼязок із
+відповіддю лишився. Телефони дешевшають: за рік медіанна ціна на дошці впала з 3 980
+до 2 250 грн, тобто на 43 %. Правило «ціна набагато нижча за типову — підозріло» при
+цьому не змінилось ні на йоту. Зламався не звʼязок, а <em>довідник</em>, яким ми
+рахуємо «типову».</p>
+
+<p><strong>Дрейф концепції</strong> (concept drift) — розподіл ознак може лишитись тим
+самим, але змінилось те, що ознака означає. Шахраї, яких почали ловити за дешевою
+приманкою, переходять на ціну біля типової: телефон коштує рівно скільки треба, а грошей
+покупець усе одно не побачить. Ознака та сама, значення те саме, відповідь інша. Цей
+дрейф найгірший, бо жоден нагляд за даними не зобовʼязаний його побачити.</p>
+
+<p><strong>Дрейф міток</strong> (label drift) — змінилась частка самих відповідей.
+Наприклад, шахраїв стало вдвічі більше через свято чи через дірку в реєстрації. Це
+найпростіший випадок: він видно одним числом, щойно зʼявляються мітки.</p>
+
+<figure>
+  <p class="fig-head">Схема 2 · Три дрейфи й що саме в них рухається</p>
+  <p class="fig-sub">Однакове слово, три різні поломки. Ліворуч рухається розподіл, посередині — межа рішення, праворуч — частка класів.</p>
+  <div><canvas id="cvDrift" width="700" height="300" aria-label="Три панелі: дрейф даних із зміщеним розподілом, дрейф концепції зі зміщеною межею рішення, дрейф міток зі зміненою часткою класів"></canvas></div>
+  <figcaption><b>У нашій симуляції сталися перші два.</b> Частка шахрайських оголошень
+    трималась між 15.3 % і 17.6 % цілий рік — дрейфу міток не було зовсім. Модель усе
+    одно розсипалась, і саме тому «частка позначених не змінилась» ніколи не є доказом,
+    що все гаразд.</figcaption>
+</figure>
+
+<p>Практична різниця в реакції. Дрейф даних лікується оновленням довідників і
+перерахунком ознак — часто без жодного перенавчання. Дрейф концепції лікується тільки
+свіжою розміткою: нову схему шахрайства модель не вигадає, її треба показати. Дрейф
+міток вимагає передусім перевірити, чи це не поламане джерело даних, — різкий стрибок
+частки класу набагато частіше означає баг, ніж подію в реальному світі.</p>
+
+<h2 id="s5"><span class="num">05 / Затримка</span>Коли ти дізнаєшся</h2>
+
+<p>Тепер зберемо все разом. Ми взяли модель дня запуску, заморозили її разом із
+довідником — так, як це реально роблять — і прогнали через дванадцять місяців дошки, на
+якій ринок дешевшає, а шахраї з пʼятого місяця починають міняти схему.</p>
+
+<p>Проблема в тому, що метрику якості в бою не видно. Щоб порахувати F1, потрібні
+правильні відповіді, а вони приходять тоді, коли шахрая викрили. Візьмімо затримку
+<strong>два місяці</strong> — це оптимістично. Отже, у сьомому місяці ти тримаєш у руках
+якість пʼятого.</p>
+
+<p>А от розподіл ознак доступний одразу: щоб подивитись, як виглядає
+<code>price_deviation</code> у сьогоднішніх оголошеннях, мітки не потрібні взагалі.
+Найпоширеніша міра такого зсуву — <strong>PSI</strong> (population stability index,
+індекс стабільності популяції). Робить вона просту річ.</p>
+
+<p>Візьми стару вибірку — ту, на якій навчались, — і поділи її на десять кошиків так,
+щоб у кожен потрапило рівно 10 % значень. Тепер розкидай по тих самих кошиках нові
+значення. Якщо нічого не змінилось, у кожному знову буде близько 10 %. Якщо розподіл
+поїхав, десь стане густо, десь порожньо. PSI підсумовує цю різницю по всіх кошиках:</p>
+
+<div class="eq">PSI = Σ (n<span class="sub">i</span> − s<span class="sub">i</span>) × ln( n<span class="sub">i</span> ÷ s<span class="sub">i</span> )</div>
+
+<p>Розберемо кожен знак. <b>Σ</b> (грецька «сигма») означає «склади все, що написано
+далі, по всіх десяти кошиках». <b>s<span class="sub">i</span></b> — частка
+<em>старих</em> значень у кошику номер <b>i</b>; за побудовою вона дорівнює 0.1.
+<b>n<span class="sub">i</span></b> — частка <em>нових</em>. Різниця
+<b>n − s</b> каже, наскільки кошик змінився; <b>ln</b> — натуральний логарифм, він
+відповідає на питання «у скільки разів», а не «на скільки»: ln(1) = 0,
+ln(1.2) ≈ 0.18, ln(0.8) ≈ −0.22.</p>
+
+<p>Порахуймо руками на двох кошиках замість десяти. Було порівну: 50 % і 50 %. Стало
+60 % і 40 %.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · перший кошик</span>
+    <p>Частка виросла з 0.50 до 0.60. Різниця +0.10, відношення 0.60 ÷ 0.50 = 1.2.</p>
+    <div class="eq">0.10 × ln(1.2) = 0.10 × 0.182 = 0.0182</div>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · другий кошик</span>
+    <p>Частка впала з 0.50 до 0.40. Різниця −0.10, відношення 0.40 ÷ 0.50 = 0.8.
+      Логарифм числа, меншого за одиницю, відʼємний — і мінус на мінус дає плюс.</p>
+    <div class="eq">(−0.10) × ln(0.8) = (−0.10) × (−0.223) = 0.0223</div>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · складаємо</span>
+    <p>PSI = 0.0182 + 0.0223 = <b>0.041</b>. Обидва доданки додатні — так і має бути:
+      PSI не буває відʼємним, бо будь-яка зміна є зміною.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4 · для порівняння</span>
+    <p>Якщо замість 60/40 стало 80/20, той самий рахунок дає
+      0.30 × ln(1.6) + (−0.30) × ln(0.4) = 0.141 + 0.275 = <b>0.416</b>. Упʼятеро
+      більший зсув дає вдесятеро більше число.</p>
+  </div>
+</div>
+
+<p>Усталені пороги: <b>0.1</b> — варто подивитись, <b>0.25</b> — зсув значний. Вони не
+закон природи, а звичка галузі; для конкретної системи їх підбирають на історії. Поруч
+часто рахують <b>KS</b> — статистику Колмогорова — Смирнова: максимальний розрив між
+двома накопиченими частками. Простими словами: стань у найгіршій точці шкали й спитай,
+яка частка старих значень лежить лівіше й яка частка нових. Найбільша різниця цих двох
+чисел і є KS; вона завжди між 0 і 1.</p>
+
+<p>А тепер — центральна картинка теми. Веди повзунок від першого місяця до
+дванадцятого.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Розрив між «зіпсувалась» і «дізнався»</p>
+  <p class="fig-sub">Угорі — розподіл ознаки: сірий контур це день запуску, заливка це поточний місяць. Нижче — правда про якість і те, що ти реально бачиш. Внизу — PSI, який мітки не потребує.</p>
+  <div class="panel">
+    <div><canvas id="cvTime" width="700" height="470" aria-label="Три панелі: гістограма відхилення ціни, крива F1 із затримкою міток, стовпчики PSI по місяцях"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="mon31"><span>місяців від запуску</span><output id="mon31v">1</output></label>
+        <input type="range" id="mon31" min="1" max="12" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>PSI</b><i id="dP">0.019</i></div>
+        <div class="cellv"><b>KS</b><i id="dK">0.037</i></div>
+        <div class="cellv"><b>F1 насправді</b><i id="dT">0.885</i></div>
+        <div class="cellv"><b>F1 на екрані</b><i id="dS">—</i></div>
+      </div>
+      <div class="verdict" id="dV"></div>
+    </div>
+  </div>
+  <figcaption><b>Числа з <code>practice.ipynb</code>.</b> 1 500 оголошень на місяць,
+    18 000 за рік. Мітки приходять із затримкою два місяці, тому в місяці <b>m</b> ти
+    бачиш якість місяця <b>m−2</b>. Пунктир на панелі F1 — домовлена межа 0.80, на
+    панелі PSI — пороги 0.10 і 0.25.</figcaption>
+</figure>
+
+<p>Ось що показує цей повзунок, якщо провести його цілком.</p>
+
+<p>Модель фактично зіпсувалась у <strong>пʼятому</strong> місяці: F1 упав до 0.777,
+нижче домовлених 0.80. У той самий пʼятий місяць PSI вперше перетнув 0.1 — і це видно
+було <em>того ж дня</em>, без жодної мітки. А метрика якості за пʼятий місяць доїхала
+до тебе аж у <strong>сьомому</strong>. Два місяці детектор працював гірше, ніж обіцяв, а
+у звіті світилось зелене: у пʼятому місяці на екрані стояв F1 за третій — 0.879.</p>
+
+<p>Цей розрив і є суттю теми. Не «модель погана» і не «дрейф існує», а те, що
+<strong>між поломкою і її виявленням лежить рівно стільки часу, скільки їде розмітка</strong>.
+Скоротити його можна двома способами: швидше отримувати мітки (кнопка «поскаржитись»
+на оголошенні дає розмітку за години, а не за місяці) або дивитись на те, що видно
+без міток.</p>
+
+<h2 id="s6"><span class="num">06 / Нагляд</span>Що моніторити</h2>
+
+<p>Найпоширеніша помилка — моніторити тільки якість. Її, як ми щойно бачили, часто не
+видно місяцями. Робочий набір сигналів вибудовується за іншим принципом: <strong>від
+того, що приходить швидко, до того, що приходить пізно</strong>. Метрика якості —
+остання в цьому списку, а не перша.</p>
+
+<figure>
+  <p class="fig-head">Таблиця 1 · Що міряти, як часто й що робити при відхиленні</p>
+  <p class="fig-sub">Порядок рядків — це порядок, у якому сигнали доходять до тебе. Верхні приходять за хвилини, нижні — за місяці.</p>
+  <div class="scroll-x">
+  <table class="plain">
+    <thead><tr><th>що міряємо</th><th>як часто</th><th>межа</th><th>що робити при відхиленні</th></tr></thead>
+    <tbody>
+      <tr><td>Помилки сервісу</td><td>щохвилини</td><td>понад 0.1 % запитів</td><td>будити чергового: це не модель, це сервіс</td></tr>
+      <tr><td>Затримка відповіді</td><td>щохвилини</td><td>понад 100 мс у 95 % запитів</td><td>шукати повільний крок конвеєра, не міняти модель</td></tr>
+      <tr><td>Пропуски й типи в колонках</td><td>щогодини</td><td>+5 пунктів до звичного</td><td>перевірити джерело: майже завжди зламався постачальник даних</td></tr>
+      <tr><td>Частка позначених</td><td>щодня</td><td>±20 % від стартових 16 %</td><td>шукати причину; у нас за рік стало 33 % — удвічі</td></tr>
+      <tr><td>Розподіли ознак (PSI, KS)</td><td>щотижня</td><td>PSI 0.10 — дивитись, 0.25 — тривога</td><td>звірити довідники, порівняти з попереднім тижнем</td></tr>
+      <tr><td>Скарги від людей</td><td>щодня</td><td>зростання два тижні поспіль</td><td>читати самі скарги: це найдешевша нова розмітка</td></tr>
+      <tr><td>Метрика якості на свіжій розмітці</td><td>щомісяця, із затримкою</td><td>F1 нижче 0.80</td><td>перенавчати або відкочувати — але це вже реакція, а не сигнал</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption><b>Останній рядок приходить останнім.</b> Коли він спрацював, поломці вже
+    стільки місяців, скільки їде розмітка. Усі рядки вище — це спроба дізнатись раніше,
+    і жоден із них не дає впевненості; вони дають привід піти й подивитись.</figcaption>
+</figure>
+
+<p>Дві поради з практики. По-перше, <strong>записуй те, з чим модель насправді
+працювала</strong>: не лише відповідь, а й значення ознак у мить прогнозу. Без цього
+skew із розділу 3 неможливо ні знайти, ні довести. По-друге, <strong>сигнал без порога —
+це не моніторинг</strong>: графік, на який ніхто не дивиться, дає лише відчуття
+контролю.</p>
+
+<h2 id="s7"><span class="num">07 / Термін</span>Скільки живе модель</h2>
+
+<p>Чесна відповідь: залежно від того, як швидко змінюється предметна область, і дізнатись
+це можна тільки заміром. Прогноз погоди старіє за години, розпізнавання рукописних цифр —
+за роки. Наш детектор шахрайства зістарився за пʼять місяців, бо в нього є противник,
+який навмисне змінює поведінку.</p>
+
+<p>Перенавчати можна двома способами, і вибір між ними — це вибір, хто ухвалює рішення.</p>
+
+<p><strong>За розкладом.</strong> Щомісяця, щотижня, щоночі — байдуже коли, головне
+завжди. Плюс у передбачуваності: команда знає, коли це станеться, і встигає підготуватись.
+Мінус у тому, що розклад не знає про світ: він перенавчить модель тоді, коли нічого не
+змінилось, і не перенавчить у тиждень, коли зламалось усе.</p>
+
+<p><strong>За тригером.</strong> Перенавчаємо, коли спрацював сигнал: PSI перейшов 0.25,
+частка тривог виїхала за коридор, якість на свіжій розмітці впала. Плюс — реакція на
+подію, а не на календар. Мінус — тригер треба налаштувати, і хибне спрацювання коштує
+викату нової моделі, якої ніхто не просив.</p>
+
+<p>У практиці ми перенавчали щомісяця на трьох останніх <em>розмічених</em> місяцях.
+Результат такий:</p>
+
+<div class="eq left">середній F1 за місяці 5-12
+  запустили й забули      0.517
+  перенавчаємо щомісяця   0.647</div>
+
+<p>Перенавчання працює: різниця між «детектор гальмує» і «детектор здався». Але подивись
+уважно на друге число. 0.647 — це теж далеко не 0.843 із дня запуску, і до дванадцятого
+місяця навіть свіжа модель дає близько 0.5. Причина не в алгоритмі: модель, навчена на
+місяцях 8-10, ловить шахраїв, які працювали <em>у місяцях 8-10</em>, а в дванадцятому
+схема вже інша. Поки мітки їдуть два місяці, модель приречена бігти позаду на два
+місяці.</p>
+
+<div class="note"><b>Звідси несподіваний висновок про пріоритети.</b> Якщо якість
+обмежена затримкою розмітки, то наступну годину вигідніше вкласти не в модель, а в
+кнопку «поскаржитись» і в процес, який швидко перетворює скаргу на мітку. Це та сама
+думка, що і в <a href="../30-end-to-end-project/lecture.html#s6">темі 30</a>, де одна
+ознака дала більше, ніж уся сітка гіперпараметрів: найбільший приріст майже ніколи не
+лежить там, де найцікавіше його шукати.</div>
+
+<h2 id="s8"><span class="num">08 / Версії</span>Версія всього</h2>
+
+<p>Питання, яке рано чи пізно ставлять усім: <em>«Учора система пропустила ось це
+оголошення. Чому?»</em> Відповісти на нього можна лише тоді, коли ти здатен відтворити
+вчорашній стан. А для цього версію мають мати три речі, а не одна.</p>
+
+<p><strong>Модель.</strong> Не «остання», а конкретний файл із конкретним номером, який
+лежить незмінним. Разом із ним — усе, що модель тягне за собою: довідник типових цін,
+список категорій, межі масштабування. Це один артефакт, а не файл із вагами плюс
+кілька змінних у чиємусь коді.</p>
+
+<p><strong>Дані.</strong> Не «таблиця оголошень», а зріз, на якому ця модель навчалась:
+які рядки, за який період, із якою розміткою. Таблиця в базі змінюється щодня; без
+зафіксованого зрізу навчання не відтворити навіть за тиждень.</p>
+
+<p><strong>Код.</strong> Той самий комміт, що готував ознаки й навчав. Разом із версіями
+бібліотек: результат <code>OneHotEncoder</code> чи порядок колонок можуть відрізнятись
+між версіями, і модель, навчена на одній, тихо помиляється на іншій.</p>
+
+<p>Мінімальна форма, яка вже рятує: <strong>кожен прогноз у журналі має нести номер
+версії моделі</strong>. Одне поле — і питання «що змінилось між вівторком і середою»
+перетворюється з розслідування на запит.</p>
+
+<p>Інструментів для цього багато — трекери експериментів, реєстри моделей, планувальники
+конвеєрів, сховища ознак. Називати конкретні тут немає сенсу: вони змінюються швидше за
+курс. Принцип же не змінюється: <em>усе, що впливає на результат, має версію, а результат
+має посилання на неї</em>.</p>
+
+<h2 id="s9"><span class="num">09 / Викат</span>Як випускати нову</h2>
+
+<p>Нова модель краща за стару на крос-валідації. Це ще не привід міняти її в бою одним
+рухом: «краще на історії» і «краще на живих людях» — різні твердження, і друге
+перевіряють окремо.</p>
+
+<figure>
+  <p class="fig-head">Схема 3 · Чотири щаблі викату</p>
+  <p class="fig-sub">Стара модель лишається в бою, поки нова не довела своє. Червона стрілка знизу працює з будь-якого щабля.</p>
+  <div><canvas id="cvRoll" width="700" height="290" aria-label="Схема викату: тіньовий запуск, канарковий викат на пʼять відсотків, A/B на половину трафіку, повний викат, і стрілка відкату назад до старої моделі"></canvas></div>
+  <figcaption><b>Кожен щабель відповідає на своє питання.</b> Тінь — «чи вона взагалі
+    працює на живих даних»; канарка — «чи не ламає вона щось, чого ми не передбачили»;
+    A/B — «чи справді вона краща». Пропустити щабель можна, але тоді на його питання
+    відповідатимуть користувачі.</figcaption>
+</figure>
+
+<p><strong>Тіньовий запуск</strong> (shadow mode). Нова модель отримує ті самі запити,
+що й стара, рахує відповідь і записує її в журнал — але рішення ухвалює стара. Ризику
+для людей нуль. Що це дає: ти бачиш реальну затримку, реальні збої на реальних даних і
+відсоток розбіжностей із чинною моделлю. Якщо нова модель позначає втричі більше
+оголошень, ти дізнаєшся про це до того, як черга модератора вибухне, а не після.</p>
+
+<p><strong>Канарковий викат</strong> (canary). Нова модель ухвалює рішення, але для
+маленької частки — скажімо, 5 % оголошень. Мета не поміряти якість (на 5 % за день її й
+не поміряєш), а спіймати грубу поломку на малій крові.</p>
+
+<p><strong>A/B.</strong> Дві моделі працюють паралельно на порівнянних частках трафіку, і
+ми міряємо не тільки метрику моделі, а й те, що важить для дошки: скільки скарг, скільки
+часу витратили модератори. У статистику тут не занурюємось; достатньо трьох правил.
+Ділити випадково й на рівні того, кого це стосується (у нас — оголошення). Дивитись
+результат один раз наприкінці домовленого періоду: щоденне підглядання рано чи пізно
+покаже «перемогу» на чистому шумі. Період — не коротший за тиждень, бо понеділок не
+схожий на суботу.</p>
+
+<h2 id="s10"><span class="num">10 / Відкат</span>План відкату</h2>
+
+<p>Найпрактичніша річ у всій темі, і вона вміщається в одне речення: <strong>план
+відкату має існувати до запуску, а не після поломки</strong>.</p>
+
+<p>Причина проста. У момент, коли щось зламалось, у тебе немає ні часу, ні спокою на те,
+щоб придумати процедуру: рішення ухвалюватимуться поспіхом і з неповними даними. Усе,
+що можна вирішити заздалегідь, має бути вирішене заздалегідь.</p>
+
+<p>Мінімальний план — чотири пункти, і кожен має бути записаний до викату:</p>
+
+<ul>
+  <li><strong>За якою умовою відкочуємо.</strong> Не «якщо стане погано», а число:
+    частка позначених вийшла за коридор, помилки сервісу понад 0.5 %, скарги за добу
+    зросли втричі.</li>
+  <li><strong>Куди відкочуємо.</strong> Конкретна версія моделі, яка лежить незмінна й
+    готова прийняти трафік. Разом із її довідником — інакше відкат поверне ваги, але
+    лишить нові ознаки, і вийде третя система, якої ніхто не бачив.</li>
+  <li><strong>Хто натискає.</strong> Одна людина з правом ухвалити це рішення без наради.
+    Якщо потрібна нарада, відкат займе день.</li>
+  <li><strong>Скільки це триває.</strong> Якщо відкат займає годину, умова спрацювання
+    має бути значно суворішою, ніж якщо він займає хвилину.</li>
+</ul>
+
+<p>І одна порада, яку зазвичай ігнорують: відкат треба <strong>спробувати</strong> до
+того, як він знадобиться. Процедура, записана в документі й ніколи не виконана, — це
+не процедура, а намір.</p>
+
+<h2 id="s11"><span class="num">11 / Реальність</span>Що ламається насправді</h2>
+
+<p>Уся ця тема була про модель. Тепер чесна поправка: <strong>у продакшні ламається
+переважно не модель, а конвеєр навколо неї</strong>. Сама модель якраз стабільна — та
+сама матриця ваг щодня дає ті самі числа. Псується те, що подає їй дані.</p>
+
+<p>Типовий список, і в ньому немає нічого про машинне навчання:</p>
+
+<ul>
+  <li>колонку <code>памʼять_гб</code> перейменували на <code>storage</code> — модель
+    отримала пропуск замість числа й тихо працює на медіані;</li>
+  <li>джерело почало віддавати ціну рядком «12 000 грн» замість числа — і вся ознака
+    перетворилась на пропуски;</li>
+  <li>відвалилась вивантажка довідника, і сервіс тиждень працює з місячної давності
+    типовими цінами;</li>
+  <li>зʼявилась нова модель телефона, якої немає в жодній категорії — і кодувальник
+    категорій ставить нулі в усі стовпці;</li>
+  <li>хтось поміняв часовий пояс, і «вік акаунта» став відʼємним у частини рядків;</li>
+  <li>оновили бібліотеку, порядок колонок після кодування змінився — модель перемножує
+    ваги не з тими ознаками.</li>
+</ul>
+
+<p>Спільне в усіх шести: <strong>жодна не викидає помилку</strong>. Сервіс відповідає,
+графіки малюються, метрика мовчить, бо міток немає. Саме тому в таблиці моніторингу
+перші три рядки — не про модель, а про дані: частка пропусків у колонці й типи значень
+ловлять таку поломку за години, тоді як якість покаже її за місяці.</p>
+
+<div class="note warn"><b>Практичний мінімум — перевірка схеми на вході.</b> Перед тим
+як віддати рядок моделі, перевір: усі очікувані колонки на місці, типи ті самі,
+значення в межах, які бачила навчальна вибірка. Якщо ні — краще відмовитись відповідати
+й записати це в журнал, ніж відповісти впевнено й неправильно. Мовчазна помилка коштує
+дорожче за гучну.</div>
+
+<h2 id="s12"><span class="num">12 / Далі</span>Що далі</h2>
+
+<p>На цьому перша половина курсу закінчується. Озирнись: ти почав із питання «що таке
+машинне навчання», пройшов сім моделей і десяток метрик, зібрав наскрізний проєкт — а
+закінчуєш темою, у якій найважливіше число не F1, а кількість місяців між поломкою й
+виявленням.</p>
+
+<p>Звідси варто забрати одну звичку. Число на тесті — це не властивість моделі, а
+<strong>обіцянка, дійсна доти, доки світ схожий на ту таблицю</strong>. Тому питання
+«яка в неї точність» неповне; повне звучить так: «яка в неї точність, як довго вона
+такою лишиться і як я дізнаюсь, що вже ні».</p>
+
+<p>Далі — <a href="../32-perceptron/lecture.html">нейронні мережі</a>. Вони починаються
+там, де таблиця закінчується: текст, звук, зображення. Усе, що ти щойно прочитав, там
+не скасовується, а дорожчає. Модель більша, навчання довше, відкат складніший, а ознаки
+модель робить собі сама — і це означає, що подивитись на них очима, як ми дивились на
+<code>price_deviation</code>, стане важче. Дисципліна з цієї теми там потрібніша, а не
+менш потрібна.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ця симуляція
+пройдена повністю: модель дня запуску, дванадцять місяців дрейфу, помісячна якість, PSI
+та KS без жодної мітки, training/serving skew на одному оголошенні й на всьому році, а
+наприкінці — щомісячне перенавчання проти «запустили й забули». Зошит запускається
+згори вниз і відтворює всі числа цієї лекції.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../30-end-to-end-project/lecture.html"><span class="dir">попередня</span><span class="ttl">30. Наскрізний проєкт</span></a>
+    <a class="next" href="../32-perceptron/lecture.html"><span class="dir">наступна</span><span class="ttl">32. Нейрон і перцептрон</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function ah(a){var v=Math.round(Math.max(0,Math.min(1,a))*255).toString(16);
+  return v.length<2?'0'+v:v;}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function arrow(g,x1,y1,x2,y2,col,wide){
+  g.strokeStyle=col; g.lineWidth=wide?2:1.3;
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke();
+  var a=Math.atan2(y2-y1,x2-x1), h=6;
+  g.beginPath(); g.moveTo(x2,y2);
+  g.lineTo(x2-h*Math.cos(a-0.42),y2-h*Math.sin(a-0.42));
+  g.lineTo(x2-h*Math.cos(a+0.42),y2-h*Math.sin(a+0.42));
+  g.closePath(); g.fillStyle=col; g.fill();
+}
+function verd(el,tag,cap,txt){
+  el.innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function plur(n,one,few,many){
+  var a=n%100, b=n%10;
+  if(a>10&&a<20) return many;
+  if(b===1) return one;
+  if(b>=2&&b<=4) return few;
+  return many;
+}
+function seg(id,fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed',String(all[k]===b));
+    fn(+b.dataset.i);
+  });
+}
+
+
+/* ─── числа симуляції: усе перенесено з practice.ipynb ───
+   JS не відтворить np.random.default_rng(42), тому лічильники з зошита
+   стоять тут масивами. Правлячи генерацію в зошиті, перевір ці числа. */
+
+var F1_TRUE = [0.885,0.894,0.879,0.867,0.777,0.700,0.608,0.528,0.463,0.432,0.297,0.334];
+var PSI     = [0.019,0.053,0.041,0.073,0.108,0.182,0.344,0.501,0.732,0.951,1.318,1.668];
+var KS      = [0.037,0.080,0.075,0.099,0.113,0.166,0.220,0.261,0.327,0.368,0.433,0.495];
+var F1_NOTE = [0.872,0.890,0.886,0.889,0.813,0.758,0.696,0.644,0.599,0.572,0.369,0.434];
+var DEV_PROD= [0.205,0.222,0.225,0.246,0.255,0.288,0.325,0.354,0.401,0.444,0.488,0.538];
+var DEV_NOTE= [0.194,0.210,0.192,0.192,0.198,0.186,0.182,0.181,0.178,0.181,0.174,0.171];
+var LAUNCH_F1 = 0.843, LAUNCH_DEV = 0.194, LAG = 2;
+var YEAR_NOTE = 0.725, YEAR_PROD = 0.614, YEAR_GAP = 0.111;
+
+/* розподіл price_deviation по десяти кошиках: день запуску й кожен місяць */
+var REF_HIST = [0.3053,0.2040,0.1566,0.1006,0.0582,0.0244,0.0323,0.0244,0.0474,0.0467];
+var HIST = [
+ [0.2723,0.2184,0.1659,0.1056,0.0704,0.0302,0.0194,0.0244,0.0395,0.0539],
+ [0.2315,0.2273,0.1619,0.1165,0.0597,0.0369,0.0362,0.0270,0.0561,0.0469],
+ [0.2347,0.2090,0.1833,0.0999,0.0670,0.0364,0.0392,0.0371,0.0464,0.0471],
+ [0.2143,0.2079,0.1632,0.1065,0.0816,0.0518,0.0461,0.0355,0.0390,0.0539],
+ [0.2079,0.2043,0.1439,0.1324,0.0878,0.0604,0.0554,0.0266,0.0309,0.0504],
+ [0.1753,0.1838,0.1576,0.1412,0.1072,0.0632,0.0639,0.0256,0.0277,0.0546],
+ [0.1438,0.1616,0.1530,0.1423,0.1082,0.0833,0.1011,0.0363,0.0214,0.0491],
+ [0.1236,0.1523,0.1300,0.1545,0.1063,0.0970,0.1358,0.0409,0.0201,0.0395],
+ [0.1047,0.1040,0.1471,0.1420,0.1370,0.1248,0.1392,0.0567,0.0136,0.0308],
+ [0.0771,0.1071,0.1157,0.1393,0.1336,0.1243,0.1829,0.0643,0.0243,0.0314],
+ [0.0516,0.0784,0.1032,0.1392,0.1491,0.1336,0.2163,0.0898,0.0240,0.0148],
+ [0.0329,0.0550,0.0843,0.1351,0.1458,0.1372,0.2309,0.1144,0.0472,0.0172]];
+
+function fmt3(x){ return x.toFixed(3); }
+
+/* ══════════ Схема 1 · життєвий цикл ══════════ */
+function drawLife(){
+  var cv=I('cvLife'); if(!cv) return;
+  var g=dpr(cv), ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      raise=css('--raise'), rose=css('--rose'), teal=css('--teal');
+  var bw=200, bh=64, y1=44, y2=196, xs=[24,250,476];
+  var top=[['1 · дані','таблиця оголошень',soft],
+           ['2 · навчання','конвеєр і добір',soft],
+           ['3 · оцінка на тесті','F1 = 0.843',teal]];
+  var bot=[['4 · запуск','модель у бою',rose],
+           ['5 · моніторинг','дані, тривоги, PSI',rose],
+           ['6 · перенавчання','на свіжій розмітці',rose]];
+  var k;
+  function box(x,y,t,s,col){
+    g.fillStyle=raise; rr(g,x,y,bw,bh,10); g.fill();
+    g.strokeStyle=col; g.lineWidth=1.6; g.stroke();
+    g.textAlign='center';
+    g.fillStyle=ink; g.font='700 12.5px "JetBrains Mono",monospace';
+    g.fillText(t, x+bw/2, y+27);
+    g.fillStyle=soft; g.font='11.5px "JetBrains Mono",monospace';
+    g.fillText(s, x+bw/2, y+46);
+  }
+  for(k=0;k<3;k++){ box(xs[k],y1,top[k][0],top[k][1],top[k][2]); }
+  /* нижній ряд читається справа наліво */
+  box(xs[2],y2,bot[0][0],bot[0][1],bot[0][2]);
+  box(xs[1],y2,bot[1][0],bot[1][1],bot[1][2]);
+  box(xs[0],y2,bot[2][0],bot[2][1],bot[2][2]);
+  for(k=0;k<2;k++){
+    arrow(g, xs[k]+bw+2, y1+bh/2, xs[k+1]-3, y1+bh/2, hair, true);
+    arrow(g, xs[k+1]-2, y2+bh/2, xs[k]+bw+3, y2+bh/2, hair, true);
+  }
+  arrow(g, xs[2]+bw/2, y1+bh+2, xs[2]+bw/2, y2-4, rose, true);
+  arrow(g, xs[0]+bw/2, y2-2, xs[0]+bw/2, y1+bh+4, teal, true);
+  g.textAlign='left';
+  g.fillStyle=teal; g.font='11px "JetBrains Mono",monospace';
+  g.fillText('щомісяця', xs[0]+bw/2+9, 156);
+  g.textAlign='center';
+  g.fillStyle=soft; g.font='11.5px "JetBrains Mono",monospace';
+  g.fillText('вище — тема 30   ·   нижче — тема 31', 350, 152);
+  g.fillStyle=rose; g.font='700 11.5px "JetBrains Mono",monospace';
+  g.fillText('кільце не має кінця: воно крутиться, поки система комусь потрібна', 350, 300);
+}
+
+/* ══════════ Інтерактив 1 · сітка 2×2 ══════════ */
+var gTrain=0, gInfer=0;
+var GRID=[
+ [ {t:['раз на добу — уся дошка','модель незмінна','найдешевше й найпростіше'],
+    lat:'0 мс', fresh:'до 24 год', age:'росте без межі', cost:'1 прогін/добу',
+    tag:'t-ok', cap:'ПОЧИНАЙ ЗВІДСИ',
+    v:'Відповідь готова заздалегідь, тому затримка 0 мс. Плата — свіжість до 24 годин: оголошення, опубліковане зранку, перевіриться аж уночі. Модель не оновлюється взагалі, і за рік наш детектор просів із 0.843 до 0.334.'},
+   {t:['відповідь на кожну публікацію','модель незмінна','треба тримати сервіс живим'],
+    lat:'≈25 мс', fresh:'мить публікації', age:'росте без межі', cost:'сервіс 24/7',
+    tag:'t-mid', cap:'ШВИДКО, АЛЕ СТАРО',
+    v:'Відповідь за 25 мілісекунд у мить публікації — приманка не встигне зібрати відгуки. Але модель та сама: її вік росте без межі, і дрейф із розділу 5 нікуди не дівається.'} ],
+ [ {t:['щоночі навчання, потім пачка','модель свіжа щоранку','дві нічні задачі поспіль'],
+    lat:'0 мс', fresh:'до 24 год', age:'до 1 доби', cost:'2 прогони/добу',
+    tag:'t-mid', cap:'СВІЖО, АЛЕ ВЧОРАШНЄ',
+    v:'Модель не старша за добу, прогнози рахуються пачкою, затримка все ще 0 мс. Дві нічні задачі в ланцюжку: якщо впаде перша, друга порахує вчорашньою моделлю й нікому про це не скаже.'},
+   {t:['щоночі навчання, відповідь на запит','усе найсвіжіше','найдорожче й найризикованіше'],
+    lat:'≈25 мс', fresh:'мить публікації', age:'до 1 доби', cost:'сервіс + навчання',
+    tag:'t-no', cap:'ДОРОГО Й РИЗИКОВАНО',
+    v:'Найсвіжіше з можливого: модель до доби, відповідь за 25 мілісекунд. І найнебезпечніше — щоночі в бій їде модель, якої жодна людина не бачила. Без набору сигналів із розділу 6 сюди не заходять.'} ]
+];
+function drawGrid(){
+  var cv=I('cvGrid'); if(!cv) return;
+  var g=dpr(cv), ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      raise=css('--raise'), rose=css('--rose'), paper=css('--paper');
+  var cw=280, ch=120, xs=[110,410], ys=[70,200], r, c, i;
+  g.textAlign='center';
+  g.fillStyle=soft; g.font='700 11px "JetBrains Mono",monospace';
+  g.fillText('ВИСНОВОК СТАТИЧНИЙ', xs[0]+cw/2, 52);
+  g.fillText('ВИСНОВОК ДИНАМІЧНИЙ', xs[1]+cw/2, 52);
+  g.textAlign='right';
+  g.fillText('НАВЧАННЯ', 98, ys[0]+52);
+  g.fillText('СТАТИЧНЕ', 98, ys[0]+70);
+  g.fillText('НАВЧАННЯ', 98, ys[1]+52);
+  g.fillText('ДИНАМІЧНЕ', 98, ys[1]+70);
+  for(r=0;r<2;r++) for(c=0;c<2;c++){
+    var on=(r===gTrain && c===gInfer), cell=GRID[r][c];
+    g.fillStyle = on ? rose+ah(0.12) : raise;
+    rr(g, xs[c], ys[r], cw, ch, 11); g.fill();
+    g.strokeStyle = on ? rose : hair; g.lineWidth = on ? 2 : 1.2; g.stroke();
+    g.textAlign='left';
+    for(i=0;i<3;i++){
+      g.fillStyle = (i===0) ? (on?rose:ink) : soft;
+      g.font = (i===0) ? '700 11.5px "JetBrains Mono",monospace'
+                       : '11px "JetBrains Mono",monospace';
+      g.fillText(cell.t[i], xs[c]+16, ys[r]+30+i*26);
+    }
+  }
+  g.textAlign='center';
+  g.fillStyle=soft; g.font='11px "JetBrains Mono",monospace';
+  g.fillText('починай із лівої верхньої: її найлегше переробити, якщо результат виявився дурним', 350, 344);
+}
+function syncGrid(){
+  var cell=GRID[gTrain][gInfer];
+  I('gL').textContent=cell.lat; I('gF').textContent=cell.fresh;
+  I('gA').textContent=cell.age; I('gC').textContent=cell.cost;
+  verd(I('gV'), cell.tag, cell.cap, cell.v);
+  drawGrid();
+}
+
+/* ══════════ Інтерактив 2 · training/serving skew ══════════ */
+var kMode=0;
+function drawSkew(){
+  var cv=I('cvSkew'); if(!cv) return;
+  var g=dpr(cv), ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var x0=80, x1=684, k, x;
+  var dev = kMode ? DEV_PROD : DEV_NOTE, f1 = kMode ? F1_TRUE : F1_NOTE,
+      other = kMode ? F1_NOTE : F1_TRUE, col = kMode ? rose : teal;
+  function px(m){ return x0 + (x1-x0)*(m)/11; }
+
+  /* панель А — медіанне відхилення */
+  var ay0=36, ay1=170, amax=0.6;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-12,ay1); g.lineTo(x1+4,ay1); g.stroke();
+  g.textAlign='left'; g.fillStyle=soft; g.font='700 11px "JetBrains Mono",monospace';
+  g.fillText('МЕДІАННЕ ВІДХИЛЕННЯ · пунктир — 0.194, як було в день запуску', x0-16, 26);
+  g.setLineDash([4,4]); g.strokeStyle=amber; g.lineWidth=1.2;
+  var yl = ay1-(ay1-ay0)*LAUNCH_DEV/amax;
+  g.beginPath(); g.moveTo(x0-12,yl); g.lineTo(x1+4,yl); g.stroke(); g.setLineDash([]);
+  for(k=0;k<12;k++){
+    x=px(k); var h=(ay1-ay0)*dev[k]/amax;
+    g.fillStyle=col+ah(0.75); rr(g, x-11, ay1-h, 22, h, 3); g.fill();
+  }
+  g.textAlign='right'; g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  g.fillText('0.6', x0-16, ay0+4); g.fillText('0', x0-16, ay1+4);
+
+  /* панель Б — F1 */
+  var by0=232, by1=356;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-12,by1); g.lineTo(x1+4,by1); g.stroke();
+  g.textAlign='left'; g.fillStyle=soft; g.font='700 11px "JetBrains Mono",monospace';
+  g.fillText('F1 ПО МІСЯЦЯХ · тонка лінія — другий спосіб', x0-16, 222);
+  function yv(v){ return by1-(by1-by0)*v; }
+  g.setLineDash([4,4]); g.strokeStyle=amber; g.lineWidth=1.1;
+  g.beginPath(); g.moveTo(x0-12,yv(0.8)); g.lineTo(x1+4,yv(0.8)); g.stroke(); g.setLineDash([]);
+  g.textAlign='right'; g.fillStyle=amber; g.font='10.5px "JetBrains Mono",monospace';
+  g.fillText('0.80', x1+2, yv(0.8)-5);
+  g.strokeStyle=soft+ah(0.55); g.lineWidth=1.1;
+  g.beginPath();
+  for(k=0;k<12;k++){ x=px(k); if(k===0) g.moveTo(x,yv(other[k])); else g.lineTo(x,yv(other[k])); }
+  g.stroke();
+  g.strokeStyle=col; g.lineWidth=2.2;
+  g.beginPath();
+  for(k=0;k<12;k++){ x=px(k); if(k===0) g.moveTo(x,yv(f1[k])); else g.lineTo(x,yv(f1[k])); }
+  g.stroke();
+  for(k=0;k<12;k++){
+    x=px(k); g.fillStyle=col;
+    g.beginPath(); g.arc(x, yv(f1[k]), 3.2, 0, 6.284); g.fill();
+  }
+  g.textAlign='right'; g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  g.fillText('1.0', x0-16, by0+4); g.fillText('0', x0-16, by1+4);
+  g.textAlign='center';
+  for(k=0;k<12;k++){ g.fillText(String(k+1), px(k), by1+18); }
+  g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace';
+  g.fillText('місяців від запуску', 382, 392);
+}
+function syncSkew(){
+  I('kF').textContent = fmt3(kMode ? YEAR_PROD : YEAR_NOTE);
+  I('kD').textContent = kMode ? ('на '+fmt3(YEAR_GAP)+' нижче') : ('на '+fmt3(YEAR_GAP)+' вище');
+  I('kM').textContent = fmt3(kMode ? DEV_PROD[11] : DEV_NOTE[11]);
+  I('kP').textContent = kMode ? '4 990 ₴' : '3 325 ₴';
+  if(kMode)
+    verd(I('kV'),'t-no','ЦЕ ЧИСЛО ТИ ОТРИМАЄШ',
+      'Довідник заморожено в дні запуску. Відхилення повзе з 0.205 до 0.538, і F1 за рік падає до 0.614 — на 0.111 нижче за обіцянку зошита. Той самий довідник, побудований із минулого місяця, дав би 0.730.');
+  else
+    verd(I('kV'),'t-mid','ЦЕ ЧИСЛО ТИ ПОКАЖЕШ',
+      'Довідник щоразу свіжий, тому відхилення весь рік тримається біля 0.17-0.21, а F1 за рік виходить 0.725. Одна біда: у мить публікації оголошень цього місяця ще не існує, тож у бою так порахувати неможливо.');
+  drawSkew();
+}
+
+/* ══════════ Схема 2 · три види дрейфу ══════════ */
+function drawDrift(){
+  var cv=I('cvDrift'); if(!cv) return;
+  var g=dpr(cv), ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      raise=css('--raise'), rose=css('--rose'), teal=css('--teal');
+  var xs=[10,240,470], pw=220, k, i;
+  var ttl=['ДРЕЙФ ДАНИХ','ДРЕЙФ КОНЦЕПЦІЇ','ДРЕЙФ МІТОК'];
+  var sub=['розподіл поїхав','значення змінилось','частка класів інша'];
+  var b1=['ціна: 3 980 → 2 250 ₴','шахраї змінили схему','у нас: 16 % весь рік'];
+  var b2=['лікує новий довідник','лікує свіжа розмітка','спершу перевір джерело'];
+  function bell(x0,w,y0,h,mu,sd,col,fill){
+    var x,t,v,first=true;
+    g.beginPath();
+    for(x=0;x<=w;x+=2){
+      t=x/w; v=Math.exp(-0.5*Math.pow((t-mu)/sd,2));
+      if(first){ g.moveTo(x0+x, y0+h-v*h); first=false; } else g.lineTo(x0+x, y0+h-v*h);
+    }
+    if(fill){ g.lineTo(x0+w,y0+h); g.lineTo(x0,y0+h); g.closePath();
+      g.fillStyle=col+ah(0.20); g.fill(); }
+    g.strokeStyle=col; g.lineWidth=1.8; g.stroke();
+  }
+  for(k=0;k<3;k++){
+    g.fillStyle=raise; rr(g, xs[k], 10, pw, 280, 11); g.fill();
+    g.strokeStyle=hair; g.lineWidth=1.2; g.stroke();
+    g.textAlign='center';
+    g.fillStyle=rose; g.font='700 12px "JetBrains Mono",monospace';
+    g.fillText(ttl[k], xs[k]+pw/2, 34);
+    g.fillStyle=soft; g.font='11px "JetBrains Mono",monospace';
+    g.fillText(sub[k], xs[k]+pw/2, 52);
+    g.fillStyle=ink; g.font='11px "JetBrains Mono",monospace';
+    g.fillText(b1[k], xs[k]+pw/2, 246);
+    g.fillStyle=teal; g.font='11px "JetBrains Mono",monospace';
+    g.fillText(b2[k], xs[k]+pw/2, 268);
+  }
+  var px0, py0=80, ph=110, pw2=180;
+  /* 1 · дрейф даних: розподіл їде, межа стоїть */
+  px0=xs[0]+20;
+  bell(px0,pw2,py0,ph,0.30,0.13,teal,false);
+  bell(px0,pw2,py0,ph,0.66,0.13,rose,true);
+  g.setLineDash([4,4]); g.strokeStyle=soft; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(px0+pw2*0.86, py0-8); g.lineTo(px0+pw2*0.86, py0+ph+6); g.stroke();
+  g.setLineDash([]);
+  g.textAlign='center'; g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  g.fillText('межа стоїть', px0+pw2*0.72, py0+ph+22);
+  /* 2 · дрейф концепції: розподіл стоїть, межа їде */
+  px0=xs[1]+20;
+  bell(px0,pw2,py0,ph,0.45,0.15,soft,true);
+  g.strokeStyle=teal; g.lineWidth=1.6;
+  g.beginPath(); g.moveTo(px0+pw2*0.30, py0-8); g.lineTo(px0+pw2*0.30, py0+ph+6); g.stroke();
+  g.setLineDash([4,4]); g.strokeStyle=rose; g.lineWidth=1.8;
+  g.beginPath(); g.moveTo(px0+pw2*0.74, py0-8); g.lineTo(px0+pw2*0.74, py0+ph+6); g.stroke();
+  g.setLineDash([]);
+  arrow(g, px0+pw2*0.34, py0-14, px0+pw2*0.70, py0-14, rose, true);
+  g.textAlign='center'; g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  g.fillText('межа їде', px0+pw2*0.52, py0+ph+22);
+  /* 3 · дрейф міток: частка класів */
+  px0=xs[2]+30;
+  var bw3=54, gap=32, base=py0+ph;
+  function stack(x,frac,lab){
+    var H=110;
+    g.fillStyle=hair; rr(g, x, base-H, bw3, H, 4); g.fill();
+    g.fillStyle=rose+ah(0.75); rr(g, x, base-H*frac, bw3, H*frac, 4); g.fill();
+    g.textAlign='center'; g.fillStyle=ink; g.font='700 11px "JetBrains Mono",monospace';
+    g.fillText(Math.round(frac*100)+' %', x+bw3/2, base-H*frac-8);
+    g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+    g.fillText(lab, x+bw3/2, base+18);
+  }
+  stack(px0, 0.16, 'було');
+  stack(px0+bw3+gap, 0.35, 'стало');
+}
+
+/* ══════════ Інтерактив 3 · дрейф у часі ══════════ */
+function drawTime(){
+  var cv=I('cvTime'); if(!cv) return;
+  var g=dpr(cv), ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var m=+I('mon31').value; if(!isFinite(m)) m=1;
+  var x0=80, x1=684, k, x;
+
+  /* панель А · гістограма */
+  var ay0=40, ay1=176, amax=0.36, bwid=(x1-x0)/10;
+  g.textAlign='left'; g.fillStyle=soft; g.font='700 11px "JetBrains Mono",monospace';
+  g.fillText('РОЗПОДІЛ ВІДХИЛЕННЯ · сірий контур — день запуску', x0-16, 26);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-10,ay1); g.lineTo(x1+4,ay1); g.stroke();
+  var cur=HIST[m-1];
+  for(k=0;k<10;k++){
+    x = x0 + k*bwid;
+    var hc=(ay1-ay0)*cur[k]/amax, hr=(ay1-ay0)*REF_HIST[k]/amax;
+    g.fillStyle=rose+ah(0.55);
+    g.fillRect(x+3, ay1-hc, bwid-6, hc);
+    g.strokeStyle=soft; g.lineWidth=1.3;
+    g.strokeRect(x+3, ay1-hr, bwid-6, hr);
+  }
+  g.textAlign='center'; g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  var lbl=['0','','0.2','','0.4','','0.6','','1.0','>1.3'];
+  for(k=0;k<10;k++){ if(lbl[k]) g.fillText(lbl[k], x0+k*bwid+bwid/2, ay1+15); }
+  g.fillText('відхилення ціни від типової', 382, ay1+32);
+
+  /* панель Б · F1 */
+  var by0=238, by1=330;
+  function px(i){ return x0 + (x1-x0)*i/11; }
+  function yv(v){ return by1-(by1-by0)*v; }
+  g.textAlign='left'; g.fillStyle=soft; g.font='700 11px "JetBrains Mono",monospace';
+  g.fillText('F1 · суцільна — уже відома, пунктир — правда, якої ще не видно', x0-16, 226);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-10,by1); g.lineTo(x1+4,by1); g.stroke();
+  g.setLineDash([4,4]); g.strokeStyle=amber; g.lineWidth=1.1;
+  g.beginPath(); g.moveTo(x0-10,yv(0.8)); g.lineTo(x1+4,yv(0.8)); g.stroke(); g.setLineDash([]);
+  g.textAlign='right'; g.fillStyle=amber; g.font='10px "JetBrains Mono",monospace';
+  g.fillText('0.80', x1+2, yv(0.8)-5);
+  var known=m-LAG;
+  /* відома частина — суцільна */
+  if(known>=1){
+    g.strokeStyle=teal; g.lineWidth=2.4; g.beginPath();
+    for(k=0;k<known;k++){ x=px(k); if(k===0) g.moveTo(x,yv(F1_TRUE[k])); else g.lineTo(x,yv(F1_TRUE[k])); }
+    g.stroke();
+  }
+  /* ще не відома — пунктир */
+  g.setLineDash([5,4]); g.strokeStyle=rose; g.lineWidth=2;
+  g.beginPath();
+  for(k=Math.max(0,known-1);k<m;k++){ x=px(k);
+    if(k===Math.max(0,known-1)) g.moveTo(x,yv(F1_TRUE[k])); else g.lineTo(x,yv(F1_TRUE[k])); }
+  g.stroke(); g.setLineDash([]);
+  for(k=0;k<m;k++){
+    x=px(k); g.fillStyle = (k<known) ? teal : rose;
+    g.beginPath(); g.arc(x, yv(F1_TRUE[k]), 3.2, 0, 6.284); g.fill();
+  }
+  g.strokeStyle=rose+ah(0.45); g.lineWidth=1.2;
+  g.beginPath(); g.moveTo(px(m-1), by0-6); g.lineTo(px(m-1), by1+4); g.stroke();
+  g.textAlign='right'; g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  g.fillText('1.0', x0-16, by0+4); g.fillText('0', x0-16, by1+4);
+
+  /* панель В · PSI */
+  var cy0=372, cy1=452, pmax=0.6;
+  g.textAlign='left'; g.fillStyle=soft; g.font='700 11px "JetBrains Mono",monospace';
+  g.fillText('PSI · без міток, того ж дня · пороги 0.10 і 0.25 · вище 0.6 обрізано', x0-16, 360);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-10,cy1); g.lineTo(x1+4,cy1); g.stroke();
+  function yp(v){ return cy1-(cy1-cy0)*v/pmax; }
+  var t2;
+  for(t2=0;t2<2;t2++){
+    var lev=[0.10,0.25][t2];
+    g.setLineDash([4,4]); g.strokeStyle=amber; g.lineWidth=1.1;
+    g.beginPath(); g.moveTo(x0-10,yp(lev)); g.lineTo(x1+4,yp(lev)); g.stroke(); g.setLineDash([]);
+  }
+  /* майбутніх місяців не малюємо: читач не має бачити те, чого ще не сталось */
+  for(k=0;k<m;k++){
+    x=px(k);
+    var h2=(cy1-cy0)*Math.min(PSI[k],pmax)/pmax;
+    g.fillStyle = PSI[k]>=0.25 ? rose+ah(0.8) : (PSI[k]>=0.10 ? amber+ah(0.8) : teal+ah(0.6));
+    rr(g, x-13, cy1-h2, 26, h2, 3); g.fill();
+    if(PSI[k]>pmax){
+      g.textAlign='center'; g.fillStyle=css('--raise');
+      g.font='700 9px "JetBrains Mono",monospace';
+      g.fillText(PSI[k].toFixed(2), x, cy1-h2+12);
+    }
+  }
+  g.textAlign='center'; g.fillStyle=soft; g.font='10px "JetBrains Mono",monospace';
+  for(k=0;k<12;k++){ g.fillStyle = (k<m) ? soft : hair; g.fillText(String(k+1), px(k), cy1+16); }
+  g.textAlign='right'; g.fillStyle=soft;
+  g.fillText('0.6', x0-16, cy0+4); g.fillText('0', x0-16, cy1+4);
+}
+function syncTime(){
+  var m=+I('mon31').value; if(!isFinite(m)) m=1;
+  I('mon31v').textContent=m;
+  var known=m-LAG;
+  I('dP').textContent=fmt3(PSI[m-1]);
+  I('dK').textContent=fmt3(KS[m-1]);
+  I('dT').textContent=fmt3(F1_TRUE[m-1]);
+  I('dS').textContent = known>=1 ? fmt3(F1_TRUE[known-1]) : '—';
+  var tag, cap, txt;
+  if(PSI[m-1] < 0.10){ tag='t-ok'; cap='ПОКИ СПОКІЙНО'; }
+  else if(PSI[m-1] < 0.25){ tag='t-mid'; cap = (m===5) ? 'ПЕРШИЙ СИГНАЛ' : 'ЗСУВ РОСТЕ'; }
+  else { tag='t-no'; cap='ЗСУВ ЗНАЧНИЙ'; }
+  txt = 'PSI = '+fmt3(PSI[m-1])+', KS = '+fmt3(KS[m-1])+'. Насправді F1 цього місяця — <b>'
+      + fmt3(F1_TRUE[m-1])+'</b>, але на екрані в тебе '
+      + (known>=1 ? ('якість місяця '+known+': <b>'+fmt3(F1_TRUE[known-1])+'</b>.')
+                  : 'ще нічого: перші мітки прийдуть у місяці 3.');
+  if(m<=4)
+    txt += ' Розподіл ознаки майже на місці, якість вище межі 0.80 — робити нічого не треба.';
+  else if(m===5)
+    txt += ' Саме цього місяця сталися дві речі: PSI вперше перейшов 0.10, а якість уперше '
+         + 'провалилась під 0.80. Перше видно сьогодні, друге стане видно аж у місяці 7.';
+  else if(m===6)
+    txt += ' Модель зламалась місяць тому, метрика покаже це в місяці 7. PSI сигналить другий місяць поспіль.';
+  else if(m===7)
+    txt += ' Це перший місяць, коли падіння нарешті видно у звіті. Сталось воно два місяці тому, '
+         + 'а PSI сказав про нього ще тоді: розрив між поломкою і виявленням — рівно стільки, '
+         + 'скільки їде розмітка.';
+  else
+    txt += ' Модель зламалась у місяці 5, метрика показала це в місяці 7, а PSI кричить із місяця 5.';
+  verd(I('dV'), tag, cap, txt);
+  drawTime();
+}
+
+/* ══════════ Схема 3 · щаблі викату ══════════ */
+function drawRoll(){
+  var cv=I('cvRoll'); if(!cv) return;
+  var g=dpr(cv), ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      raise=css('--raise'), rose=css('--rose'), teal=css('--teal');
+  var k;
+  g.textAlign='left'; g.fillStyle=rose; g.font='700 12px "JetBrains Mono",monospace';
+  g.fillText('НОВА МОДЕЛЬ ІДЕ ЗЛІВА НАПРАВО', 14, 28);
+  var oy=76, oh=80;
+  g.fillStyle=raise; rr(g, 14, oy, 118, oh, 10); g.fill();
+  g.strokeStyle=teal; g.lineWidth=1.8; g.stroke();
+  g.textAlign='center'; g.fillStyle=ink; g.font='700 11.5px "JetBrains Mono",monospace';
+  g.fillText('СТАРА', 73, oy+32);
+  g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace';
+  g.fillText('вирішує', 73, oy+50);
+  g.fillText('весь час', 73, oy+66);
+  var xs=[152,288,424,560], bw=124;
+  var nm=['ТІНЬ','КАНАРКА','A/B','100 %'];
+  var s1=['рахує, не вирішує','5 % оголошень','50 / 50, тиждень','повний викат'];
+  var s2=['нуль ризику','ловить грубе','чи справді краща','стара напоготові'];
+  for(k=0;k<4;k++){
+    g.fillStyle=raise; rr(g, xs[k], oy, bw, oh, 10); g.fill();
+    g.strokeStyle=rose; g.lineWidth=1.6; g.stroke();
+    g.textAlign='center';
+    g.fillStyle=rose; g.font='700 12px "JetBrains Mono",monospace';
+    g.fillText(nm[k], xs[k]+bw/2, oy+28);
+    g.fillStyle=ink; g.font='10.5px "JetBrains Mono",monospace';
+    g.fillText(s1[k], xs[k]+bw/2, oy+50);
+    g.fillStyle=soft;
+    g.fillText(s2[k], xs[k]+bw/2, oy+68);
+  }
+  arrow(g, 134, oy+oh/2, 149, oy+oh/2, hair, true);
+  for(k=0;k<3;k++) arrow(g, xs[k]+bw+2, oy+oh/2, xs[k+1]-3, oy+oh/2, hair, true);
+  /* відкат */
+  var ry=206;
+  g.setLineDash([4,4]); g.strokeStyle=rose+ah(0.6); g.lineWidth=1.2;
+  for(k=0;k<4;k++){
+    g.beginPath(); g.moveTo(xs[k]+bw/2, oy+oh+2); g.lineTo(xs[k]+bw/2, ry); g.stroke();
+  }
+  g.setLineDash([]);
+  arrow(g, xs[3]+bw/2, ry, 73, ry, rose, true);
+  g.beginPath(); g.moveTo(73, ry); g.lineTo(73, oy+oh+3); g.stroke();
+  arrow(g, 73, ry, 73, oy+oh+3, rose, true);
+  g.textAlign='center'; g.fillStyle=rose; g.font='700 11.5px "JetBrains Mono",monospace';
+  g.fillText('ВІДКАТ — з будь-якого щабля, за наперед записаною умовою', 350, 240);
+  g.fillStyle=soft; g.font='11px "JetBrains Mono",monospace';
+  g.fillText('стара модель лишається готовою прийняти трафік до самого кінця', 350, 262);
+}
+
+/* ══════════ звʼязування ══════════ */
+function redrawAll(){ drawLife(); drawGrid(); drawSkew(); drawDrift(); drawTime(); drawRoll(); }
+seg('segTrain31', function(i){ gTrain=i; syncGrid(); });
+seg('segInfer31', function(i){ gInfer=i; syncGrid(); });
+seg('segSkew31', function(i){ kMode=i; syncSkew(); });
+on('mon31','input',syncTime);
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+syncGrid(); syncSkew(); syncTime(); redrawAll();
+
+})();
+</script>
+</body>
+</html>

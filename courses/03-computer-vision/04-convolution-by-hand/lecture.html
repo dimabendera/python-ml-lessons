@@ -1,0 +1,2401 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Згортка вручну</title>
+<meta name="description" content="Згортка від першого множення до Кенні: вікно ковзає по зображенню, девʼять множень дають одне число. Чому cv2.filter2D рахує кореляцію, а не згортку, і коли це видно. Сума коефіцієнтів 1 або 0, чотири режими межі, бокс проти гауса, роздільність 81 множення проти 18, різкість як «мінус розмите», Собель, і Кенні, розібраний на чотири окремі кроки.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .nums td, .nums th, .ctl .cap, .kgrid input{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .kgrid input{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:inherit; font-size:15px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* девʼять полів конструктора ядра */
+.kgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:5px; margin-bottom:12px}
+.kgrid input{width:100%; min-width:0; padding:6px 2px; text-align:center;
+  font-family:"JetBrains Mono",monospace; font-size:13px; font-weight:700;
+  border:1px solid var(--hair); border-radius:6px;
+  background:var(--paper); color:var(--ink)}
+.kgrid input:focus-visible{outline:2px solid var(--teal); outline-offset:2px}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 1 · Тема 04</p>
+    <h1>Згортка вручну</h1>
+    <p class="stand">Одна операція, з якої зроблено все — від розмиття у фоторедакторі
+      до сучасних моделей зору. Девʼять множень, одна сума, і значення пікселя вперше
+      залежить від сусідів.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Піксель дивиться на сусідів</a></li>
+        <li><a href="#s2">Ядро й операція по кроках</a></li>
+        <li><a href="#s3">Кореляція проти згортки</a></li>
+        <li><a href="#s4">Нормування: сума 1 або 0</a></li>
+        <li><a href="#s5">Краї зображення</a></li>
+        <li><a href="#s6">Розмиття: бокс проти гауса</a></li>
+        <li><a href="#s7">Роздільність: 81 проти 18</a></li>
+        <li><a href="#s8">Різкість — це мінус розмите</a></li>
+        <li><a href="#s9">Градієнт і Собель</a></li>
+        <li><a href="#s10">Кенні: чотири кроки</a></li>
+        <li><a href="#s11">Чому одного ядра замало</a></li>
+        <li><a href="#s12">Куди далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../03-opencv-basics/lecture.html">← 03. OpenCV: базові операції</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../05-classic-features/lecture.html">05. Класичні ознаки →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Усе, що ми робили із зображенням досі, мало спільну властивість, яку легко
+не помітити. Обрізання, поворот і зміна розміру <strong>переставляли</strong> пікселі,
+не змінюючи значень. Яскравість, контраст і переведення в сірий міняли кожен піксель
+<strong>окремо</strong>. Жодна операція ані разу не спитала, що лежить поруч.</p>
+
+<p>А майже все цікаве в зображенні живе саме в «поруч». Межа предмета — це не властивість
+одного пікселя, а перепад між сусідніми. Розмитість — це те, наскільки схожі сусіди.
+Текстура, кут, подряпина на екрані телефона — відношення між пікселями, а не значення
+в одному з них.</p>
+
+<p>Операція, яка вміє питати «а що навколо?», зветься <strong>згорткою</strong> (convolution).
+Саме з неї зроблені всі сучасні моделі зору — і саме тому ми пройдемо її повільно й руками:
+порахуємо олівцем, напишемо подвійним циклом, звіримо з бібліотекою й дійдемо до детектора
+меж Кенні, розібравши його на чотири окремі операції.</p>
+
+<h2 id="s1"><span class="num">01 / Сусіди</span>Піксель дивиться на сусідів</h2>
+
+<p>У <a href="../03-opencv-basics/lecture.html">попередній темі</a> ми навчилися читати,
+масштабувати, обрізати й розфарбовувати зображення засобами OpenCV. Усі ті операції
+поділялися на дві родини, і жодна не виходила за межі одного пікселя.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>родина</th><th>що робить</th><th>приклади</th></tr></thead>
+  <tbody>
+    <tr><td>Переставити</td><td>число лишається тим самим, змінюється лише його адреса</td>
+        <td>обрізання, поворот, дзеркало, зміна розміру</td></tr>
+    <tr><td>Перерахувати</td><td>кожен піксель окремо проходить через формулу</td>
+        <td>яскравість, контраст, поріг, сірий, HSV</td></tr>
+    <tr><td>Подивитись навколо</td><td>нове значення залежить від сусідів</td>
+        <td>розмиття, різкість, пошук меж</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Третій рядок — це вся ця тема. Як «подивитись навколо» й отримати одне число?
+Найпростіша чесна відповідь: узяти невеликий квадрат сусідів, дати кожному вагу
+і скласти. Ваги вирішують усе.</p>
+
+<p>Однакові додатні ваги дають середнє по околиці — <strong>розмиття</strong>. Велика
+додатна вага в центрі проти маленьких відʼємних у сусідів — центр «перекричить» околицю,
+і перепади стануть крутішими, тобто <strong>різкість</strong>. Відʼємні ваги ліворуч
+і додатні праворуч дають різницю «правий бік мінус лівий» — <strong>вертикальну
+межу</strong>. Три різні ефекти, а механіка одна: маленька табличка чисел, помножена
+на квадрат сусідів. Табличка зветься <strong>ядром</strong> (kernel), інколи —
+фільтром.</p>
+
+<h2 id="s2"><span class="num">02 / Механіка</span>Ядро й операція по кроках</h2>
+
+<p>Ядро — маленький масив чисел, майже завжди непарного розміру: 3 × 3, 5 × 5, 9 × 9.
+Непарність потрібна, щоб у ядра був однозначний <strong>центр</strong> — саме він
+накладається на піксель, значення якого ми рахуємо.</p>
+
+<p>Операція складається з чотирьох дій, які повторюються для кожного пікселя:</p>
+
+<ol class="steps">
+  <li>поставити ядро центром на черговий піксель;</li>
+  <li>перемножити кожне число ядра з тим пікселем, під яким воно опинилось;</li>
+  <li>додати всі добутки — вийде одне число;</li>
+  <li>записати його у вихідне зображення, у позицію, де стояв центр.</li>
+</ol>
+
+<p>Одне застереження, бо це джерело плутанини: <strong>сума кладеться в нове зображення,
+а не в старе</strong>. Інакше наступне вікно читало б уже перероблені числа, і результат
+залежав би від порядку обходу.</p>
+
+<div class="eq">результат[r, c] = Σ<span class="sub">i</span> Σ<span class="sub">j</span> &nbsp;ядро[i, j] × зображення[r + i − 1, c + j − 1]</div>
+
+<p>Велика грецька літера <strong>Σ</strong> («сигма») означає «додай усе, що йде далі,
+перебравши індекс». Сигм тут дві: перша перебирає рядки ядра (<code>i</code>), друга —
+стовпці (<code>j</code>), разом девʼять добутків. <code>r</code> і <code>c</code> —
+номер рядка (row) і стовпця (column) пікселя, який ми рахуємо; віднята одиниця зсуває
+вікно так, щоб центр ядра припав рівно на <code>[r, c]</code>. Формула потрібна лише
+щоб ти впізнав цей запис у документації.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · що беремо</span>
+    <p>Крихітне зображення 5 × 5: ліві три колонки темні (12…20), праві дві світлі
+    (90…96). Між третьою й четвертою колонками — різка межа. Ядро — розмиття 3 × 3,
+    де всі девʼять коефіцієнтів дорівнюють одній девʼятій, тобто приблизно 0.1111.</p>
+    <div class="eq left">12  14  15  90  92
+13  15  16  91  93
+14  16  18  92  94
+15  17  19  93  95
+16  18  20  94  96</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · перше положення вікна</span>
+    <p>Ставимо ядро в лівий верхній кут. Під ним квадрат 12, 14, 15 / 13, 15, 16 /
+    14, 16, 18. Множимо кожне число на 0.1111 і додаємо:</p>
+    <div class="eq">1.33 + 1.56 + 1.67 + 1.44 + 1.67 + 1.78 + 1.56 + 1.78 + 2.00 = <strong>14.78</strong></div>
+    <p>Коли ваги однакові, є коротший шлях: скласти девʼять чисел (133) і поділити
+    на девʼять.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · зсуваємо на піксель</span>
+    <p>Вікно рухається на колонку праворуч, і в суму вже потрапили три світлі числа:
+    367 ÷ 9 = <strong>40.78</strong>. Одне світле вторгнення підняло значення майже втричі.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · що вийшло</span>
+    <p>Вікно має де стояти лише в девʼяти положеннях: центр не може вилізти за край.
+    Тому з масиву 5 × 5 вийшов результат 3 × 3:</p>
+    <div class="eq left">14.78  40.78  66.78
+15.89  41.89  67.89
+17.00  43.00  69.00</div>
+    <p>Ліва колонка — чиста темна ділянка, права — чиста світла, середня показує межу,
+    розмазану по трьох колонках. Розмиття не стерло межу — воно її розтягнуло.</p>
+  </div>
+</div>
+
+<p>Тепер прожени те саме на очах. Кнопка «крок» пересуває вікно на один піксель:
+підсвічуються девʼять множень, унизу росте сума, і клітинка результату заповнюється
+тим самим числом, яке ми щойно рахували руками.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Ядро по кроках</p>
+  <p class="fig-sub">Вікно 3 × 3 ковзає по зображенню 5 × 5. Ліворуч — вхід із підсвіченим вікном, посередині — ядро й девʼять добутків, праворуч — результат, який заповнюється на очах.</p>
+  <div class="panel">
+    <div><canvas id="cStep" width="940" height="430" aria-label="Зображення 5 на 5, ядро 3 на 3, девʼять добутків і результат 3 на 3, що заповнюється кроками"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">ядро</span>
+        <div class="seg" id="stepSeg">
+          <button type="button" data-i="0" aria-pressed="true">розмиття</button>
+          <button type="button" data-i="1" aria-pressed="false">Собель x</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пораховано</b><i id="stN">0 / 9</i></div>
+        <div class="cellv"><b>сума</b><i id="stS">—</i></div>
+      </div>
+      <div class="btnrow">
+        <button type="button" id="stNext">крок</button>
+        <button type="button" id="stAll">усе</button>
+      </div>
+      <button type="button" id="stReset">спочатку</button>
+      <div class="verdict" id="stVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Прожени всі девʼять кроків обома ядрами.</b> Розмиття дає числа між
+    найменшим і найбільшим у вікні — воно усереднює. Собель дає нуль там, де сусіди
+    однакові, і велике число там, де є перепад: те саме вікно, ті самі девʼять множень,
+    протилежний за змістом результат.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Пастка</span>Кореляція проти згортки</h2>
+
+<p>А тепер головна несподіванка теми, і стосується вона не математики, а того, що
+насправді роблять бібліотеки. Те, що ми щойно порахували, у математиці зветься не
+згорткою, а <strong>кореляцією</strong> (cross-correlation). Справжня згортка
+відрізняється однією дією: перед роботою вона <strong>перевертає ядро на 180°</strong> —
+відбиває його й по горизонталі, і по вертикалі.</p>
+
+<div class="eq left">кореляція : результат[r,c] = Σ ядро[i,j] × зображення[r+i−1, c+j−1]
+згортка   : результат[r,c] = Σ ядро[i,j] × зображення[r−i+1, c−j+1]</div>
+
+<p>Знаки при <code>i</code> та <code>j</code> у другому рядку відʼємні: індекс зображення
+йде <em>назустріч</em> індексу ядра. Це те саме, що повернути ядро на пів оберта
+й далі рахувати звичайну кореляцію.</p>
+
+<p>Питання на мільйон: що робить <code>cv2.filter2D</code> — функція, якою в OpenCV
+рахують «згортку»? Відповідь перевірено запуском: вона рахує <strong>кореляцію</strong>.
+Звірка зі <code>scipy.ndimage</code>, де обидві операції є окремими функціями:</p>
+
+<div class="eq left">filter2D == correlate        : True
+filter2D == convolve         : False
+filter2D(flip(k)) == convolve : True</div>
+
+<p>Третій рядок — рецепт: щоб отримати в OpenCV справжню згортку, ядро треба перевернути
+самому (<code>np.flip</code>), а вже потім віддати у <code>filter2D</code>.</p>
+
+<div class="note warn"><b>Як перевірити й не помилитись.</b> Найкоротший дослід —
+подати на вхід чорне зображення з єдиною білою точкою: кореляція покладе в результат
+ядро, повернуте на 180°, згортка — ядро як є. Але тут легко зробити протилежний
+висновок: людина дивиться на відгук, бачить «щось схоже на ядро» й вирішує, що це
+згортка. Порівнюй не на око, а програмою: <code>np.allclose</code> з самим ядром
+і з <code>np.flip(ядро)</code> окремо. Симетричне ядро для цієї перевірки не годиться
+взагалі.</div>
+
+<p>Звідси й уся плутанина: <strong>найпоширеніші ядра симетричні</strong>. Розмиття,
+гаус, лапласіан після повороту на 180° збігаються самі із собою, тому кореляція
+й згортка дають на них побайтово однаковий результат. Різниця зʼявляється рівно тоді,
+коли ядро несиметричне. На нашому фрагменті фото таке ядро дало розбіжність до
+<strong>38.7</strong> рівня яскравості у <strong>53.7 %</strong> пікселів — це не
+похибка округлення, а дзеркальний результат.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Кореляція проти згортки</p>
+  <p class="fig-sub">Ліворуч — ядро й відгук на одиничний імпульс числами. Праворуч — те саме фото, оброблене двома способами. Перемкни ядро на симетричне — і різниця зникне.</p>
+  <div class="panel">
+    <div><canvas id="cCorr" width="940" height="440" aria-label="Ядро, відгук на одиничний імпульс і два результати обробки фото: кореляцією та згорткою"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">ядро</span>
+        <div class="seg" id="corrSeg">
+          <button type="button" data-i="0" aria-pressed="true">змазування</button>
+          <button type="button" data-i="1" aria-pressed="false">розмиття</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">що виділено рамкою</span>
+        <div class="seg" id="corrOp">
+          <button type="button" data-i="0" aria-pressed="true">кореляція</button>
+          <button type="button" data-i="1" aria-pressed="false">згортка</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>макс різниця</b><i id="coD">—</i></div>
+        <div class="cellv"><b>різних пікселів</b><i id="coP">—</i></div>
+      </div>
+      <div class="verdict" id="coVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Ядро «змазування» несиметричне</b> — його коефіцієнти в рядку ростуть
+    зліва направо. Кореляція змазує в один бік, згортка — у протилежний. Симетричне
+    ядро розмиття дає різницю рівно <b>нуль</b>: обидві операції на ньому невідрізненні.</figcaption>
+</figure>
+
+<p>Чому ж тоді всі говорять «згортковий шар»? Бо для <strong>навченого</strong> ядра
+різниці немає: коли коефіцієнти не пишуть, а підбирають навчанням, мережа однаково
+знайде матрицю, яка дає потрібний результат, — хай навіть у дзеркальному вигляді.
+Назва прижилась історично, і міняти її пізно. Але поки ядро пишеш <em>ти</em>,
+різниця цілком реальна.</p>
+
+<h2 id="s4"><span class="num">04 / Сума</span>Нормування: сума 1 або 0</h2>
+
+<p>У будь-якого ядра з підручника сума коефіцієнтів дорівнює або одиниці, або нулю.
+Це не традиція, а прямий наслідок арифметики.</p>
+
+<p>Уяви рівну ділянку, де всі пікселі мають яскравість 100. Сума добутків дорівнює
+100, помноженому на суму коефіцієнтів. Якщо та сума одинична, на виході теж буде 100 —
+рівне лишилось рівним. Якщо двійка, вийде 200: картинка стане вдвічі яскравішою
+без жодної причини.</p>
+
+<div class="eq">на рівній ділянці: результат = яскравість × (сума коефіцієнтів ядра)</div>
+
+<p><strong>Сума 1 — ядро перерозподіляє.</strong> Загальна яскравість зберігається,
+міняється лише те, як вона розкладена між сусідами: розмиття, гаус, різкість, тиснення.
+Перевірка на нашому фото: середня яскравість входу 162.56, після розмиття — теж 162.56,
+після ядра різкості — знову 162.56.</p>
+
+<p><strong>Сума 0 — ядро шукає різницю.</strong> На рівній ділянці результат нульовий,
+хай яка там яскравість: хоч 10, хоч 200. Ненульове значення зʼявляється тільки там,
+де сусіди <em>відрізняються</em>. Це ядра-детектори: Собель, лапласіан, будь-який пошук
+межі. Середнє після Собеля на нашому фото — 0.21, тобто практично нуль.</p>
+
+<p>А що буває, якщо забути? Найпоширеніша помилка — узяти бокс-фільтр із девʼятьма
+одиницями й не поділити на девʼять. Сума стає девʼяткою, середня яскравість стрибає
+зі 162.6 до <strong>1463</strong>, <strong>100 %</strong> чисел вилітає за 255 —
+і після обрізання від фото лишається біла пляма з рівно <strong>одним</strong>
+унікальним значенням.</p>
+
+<div class="note"><b>Одним реченням.</b> Сума коефіцієнтів — це коефіцієнт підсилення
+сталої складової зображення. Одиниця означає «сталу лишаємо як є», нуль — «сталу
+викидаємо, лишаємо тільки зміни». Будь-яке інше число означає «множимо яскравість
+на нього», і це майже ніколи не те, чого хотіли.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Конструктор ядра</p>
+  <p class="fig-sub">Девʼять коефіцієнтів, які можна вписати руками. Праворуч — результат, унизу — скільки значень вилетіло за межі 0…255.</p>
+  <div class="panel">
+    <div><canvas id="cKern" width="940" height="330" aria-label="Оригінал фото і результат обробки заданим ядром, зі шкалою обрізаних значень"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">коефіцієнти ядра</span>
+        <div class="kgrid">
+          <input type="text" id="k0" value="0" inputmode="decimal" aria-label="коефіцієнт 1 1">
+          <input type="text" id="k1" value="-1" inputmode="decimal" aria-label="коефіцієнт 1 2">
+          <input type="text" id="k2" value="0" inputmode="decimal" aria-label="коефіцієнт 1 3">
+          <input type="text" id="k3" value="-1" inputmode="decimal" aria-label="коефіцієнт 2 1">
+          <input type="text" id="k4" value="5" inputmode="decimal" aria-label="коефіцієнт 2 2">
+          <input type="text" id="k5" value="-1" inputmode="decimal" aria-label="коефіцієнт 2 3">
+          <input type="text" id="k6" value="0" inputmode="decimal" aria-label="коефіцієнт 3 1">
+          <input type="text" id="k7" value="-1" inputmode="decimal" aria-label="коефіцієнт 3 2">
+          <input type="text" id="k8" value="0" inputmode="decimal" aria-label="коефіцієнт 3 3">
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">пресет</span>
+        <div class="seg wrap" id="kernSeg">
+          <button type="button" data-i="0" aria-pressed="false">розмиття</button>
+          <button type="button" data-i="1" aria-pressed="true">різкість</button>
+          <button type="button" data-i="2" aria-pressed="false">Собель x</button>
+          <button type="button" data-i="3" aria-pressed="false">тиснення</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сума ядра</b><i id="knS">—</i></div>
+        <div class="cellv"><b>середнє виходу</b><i id="knM">—</i></div>
+      </div>
+      <div class="verdict" id="knVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Спробуй зламати навмисно.</b> Постав у центр 9, а решту лиши нулями —
+    сума стане девʼяткою, і фото вибілиться. Постав усі девʼять одиниць — те саме.
+    Пресет «Собель x» має суму нуль: результат майже весь чорний, світяться лише межі.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Краї</span>Краї зображення</h2>
+
+<p>Повернімося до кроку, який у розділі 2 ми обійшли мовчки. Коли вікно 3 × 3 стоїть
+на кутовому пікселі, пʼять із девʼяти клітинок висять за межами зображення — читати
+там нічого. Для ядра 9 × 9 зіпсованою стає вже рамка завширшки в чотири пікселі
+по периметру.</p>
+
+<ol class="steps">
+  <li><strong>Обрізати результат</strong> (режим <code>valid</code>): рахуємо тільки там,
+      де вікно помістилось цілком. Чесно, але зображення меншає — з 240 × 320 після
+      ядра 9 × 9 лишиться 232 × 312.</li>
+  <li><strong>Добудувати кадр</strong> навколо зображення й порахувати все. Розмір
+      зберігається, але значення на краю ми частково вигадали.</li>
+  <li><strong>Добудувати й потім обрізати</strong> — компроміс конвеєрів обробки:
+      зіпсовану рамку відкидаємо наприкінці, коли всі фільтри відпрацювали.</li>
+</ol>
+
+<p>Другий варіант стоїть за замовчуванням майже скрізь, тому питання «чим саме заповнити
+кадр» практичне. OpenCV дає чотири відповіді; подивимось на них на масиві з чисел
+від 0 до 8, до якого дописано рамку в один піксель:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>режим межі</th><th>верхній рядок після добудови</th><th>що робить</th></tr></thead>
+  <tbody>
+    <tr><td><code>BORDER_CONSTANT</code></td><td>0 0 0 0 0</td><td>заповнює сталою, звичайно нулем</td></tr>
+    <tr><td><code>BORDER_REPLICATE</code></td><td>0 0 1 2 2</td><td>розмножує крайній піксель</td></tr>
+    <tr><td><code>BORDER_REFLECT</code></td><td>0 0 1 2 2</td><td>дзеркалить разом із крайнім</td></tr>
+    <tr><td><code>BORDER_REFLECT_101</code></td><td>4 3 4 5 4</td><td>дзеркалить від крайнього, не дублюючи</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Різниця між двома останніми — в одному пікселі. <code>REFLECT</code> відбиває так,
+що крайній піксель зустрічається двічі поспіль: у верхньому рядку видно «0 0».
+<code>REFLECT_101</code> відбиває <em>від</em> крайнього, не повторюючи його, і тому
+у верхньому рядку опиняються значення з другого рядка оригіналу. Саме він стоїть
+за замовчуванням у більшості функцій OpenCV: не створює на краю штучної сходинки
+з двох однакових пікселів.</p>
+
+<p>Тепер найважливіше — <strong>чому це має значення саме для згортки</strong>. Тема 03
+уводила режими межі як технічну подробицю. Тут вони подробицею бути перестають, бо
+режим межі <em>створює структуру, якої в зображенні не було</em>, і наступний фільтр
+її чесно знайде. Ось кутовий піксель нашого фото після гаусового розмиття 9 × 9:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>режим межі</th><th>кут (0, 0)</th><th>центр (120, 160)</th></tr></thead>
+  <tbody>
+    <tr><td>було до фільтрації</td><td>199.00</td><td>—</td></tr>
+    <tr><td><code>BORDER_CONSTANT</code></td><td>78.85</td><td>119.03</td></tr>
+    <tr><td><code>BORDER_REPLICATE</code></td><td>200.95</td><td>119.03</td></tr>
+    <tr><td><code>BORDER_REFLECT</code></td><td>201.60</td><td>119.03</td></tr>
+    <tr><td><code>BORDER_REFLECT_101</code></td><td>202.10</td><td>119.03</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Центр однаковий у всіх чотирьох — до нього кадр не дотягується. А кут відрізняється
+<strong>утричі</strong>: <code>BORDER_CONSTANT</code> домішує чорноту, якої в кадрі
+не було, і світлий кут стільниці темніє з 199 до 79. По периметру зʼявляється темна
+рамка, і детектор меж потім чесно знайде вздовж краю різку межу, якої не існує.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Що саме підставляється на краю</p>
+  <p class="fig-sub">Ліворуч — лівий верхній кут зображення числами: сірі клітинки справжні, кольорові — добудований кадр. Праворуч — той самий кут після розмиття.</p>
+  <div class="panel">
+    <div><canvas id="cEdge" width="940" height="420" aria-label="Числа кутової ділянки зображення з добудованим кадром і результат розмиття цього кута"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">режим межі</span>
+        <div class="seg wrap" id="edgeSeg">
+          <button type="button" data-i="0" aria-pressed="false">CONSTANT</button>
+          <button type="button" data-i="1" aria-pressed="false">REPLICATE</button>
+          <button type="button" data-i="2" aria-pressed="false">REFLECT</button>
+          <button type="button" data-i="3" aria-pressed="true">REFLECT_101</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кут після фільтра</b><i id="edC">—</i></div>
+        <div class="cellv"><b>відхилення</b><i id="edD">—</i></div>
+      </div>
+      <div class="verdict" id="edVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Відхилення</b> міряється від режиму <code>REFLECT_101</code> — того,
+    що стоїть за замовчуванням. У трьох режимах воно мале, у <code>CONSTANT</code> —
+    величезне, і темна рамка по краю видно неозброєним оком.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Розмиття</span>Розмиття: бокс проти гауса</h2>
+
+<p>Найпростіше розмиття — те, яке ми рахували руками: усі коефіцієнти однакові. Воно
+зветься <strong>бокс-фільтром</strong> (box filter), в OpenCV це <code>cv2.blur</code>.
+Кожен піксель стає середнім по квадрату сусідів.</p>
+
+<p>Вада бокса геометрична. Квадрат 9 × 9 дає однакову вагу сусідові збоку, який стоїть
+за чотири пікселі, і сусідові в кутку, який стоїть за <span class="raw">4 × √2 ≈ 5.7</span>
+пікселя — на 41 % далі. Розмиття перестає бути однаковим у всі боки: по діагоналях воно
+розмазує сильніше, і яскрава точка перетворюється не на кружечок, а на
+<strong>квадрат</strong>.</p>
+
+<p>Це міряється числом. Візьмімо квадрат ядра й уписане в нього коло; порахуймо, яка
+частка ваги лежить <em>поза</em> цим колом, тобто в кутах:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>sigma</th><th>розмір ядра</th><th>вага в кутах: гаус</th><th>вага в кутах: бокс</th></tr></thead>
+  <tbody>
+    <tr><td>1.0</td><td>7 × 7</td><td>1.06 %</td><td>40.82 %</td></tr>
+    <tr><td>1.5</td><td>9 × 9</td><td>2.73 %</td><td>39.51 %</td></tr>
+    <tr><td>2.0</td><td>13 × 13</td><td>0.93 %</td><td>33.14 %</td></tr>
+    <tr><td>3.0</td><td>19 × 19</td><td>0.86 %</td><td>29.92 %</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>У бокса в кутах лишається близько третини всієї ваги, у гауса — один-три відсотки.
+Ось звідки беруться «квадратні» артефакти.</p>
+
+<p><strong>Гаусове ядро</strong> будують інакше: вага сусіда спадає з відстанню за
+формулою дзвону — найбільша в центрі, на краю ядра майже нульова.</p>
+
+<div class="eq">вага(d) = e<span class="sup">−d²/(2σ²)</span></div>
+
+<p>Тут <code>d</code> — відстань від центра ядра до клітинки в пікселях, а
+<span class="raw">σ</span> («сигма») — єдиний параметр, що задає ширину дзвону. Літера
+<code>e</code> — стала приблизно 2.718; підносити її до відʼємного степеня означає
+«швидко спадати». Чим більша <span class="raw">σ</span>, тим повільніше спадає вага
+і тим ширше розмиття.</p>
+
+<p>Розмір ядра й <span class="raw">σ</span> плутати не можна:
+<span class="raw">σ</span> вирішує, <em>як сильно</em> розмиває, розмір — <em>де ядро
+обривають</em>. На відстані трьох <span class="raw">σ</span> вага вже мізерна, тому
+звичайне правило — розмір близько <span class="raw">6σ + 1</span>, округлений до
+непарного. Ядро 3 × 3 із <span class="raw">σ = 5</span> виродиться в бокс, бо всі
+коефіцієнти вийдуть майже однакові; ядро 31 × 31 із <span class="raw">σ = 0.5</span>
+складатиметься переважно з нулів, а часу зʼїсть у сто разів більше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Бокс проти гауса</p>
+  <p class="fig-sub">Ліворуч — фото після розмиття. Посередині — відгук на одну яскраву точку в збільшенні: саме тут видно квадрат проти кружечка. Праворуч — переріз ядра.</p>
+  <div class="panel">
+    <div><canvas id="cBlur" width="940" height="330" aria-label="Розмите фото, відгук фільтра на одиничну точку і переріз ядра"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="sig6"><span class="raw">σ</span> розмиття <output id="sig6o">1.5</output></label>
+        <input type="range" id="sig6" min="0.5" max="3.5" step="0.1" value="1.5">
+      </div>
+      <div class="ctl">
+        <span class="cap">ядро</span>
+        <div class="seg" id="blurSeg">
+          <button type="button" data-i="0" aria-pressed="true">гаус</button>
+          <button type="button" data-i="1" aria-pressed="false">бокс</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розмір ядра</b><i id="blK">—</i></div>
+        <div class="cellv"><b>множень на піксель</b><i id="blM">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вага в кутах</b><i id="blC">—</i></div>
+        <div class="cellv"><b>шум після</b><i id="blN">—</i></div>
+      </div>
+      <div class="verdict" id="blVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Чесна деталь.</b> Бокс тим самим вікном тлумить шум трохи краще за гаус —
+    він усереднює всі пікселі порівну. Платить він за це формою: третина ваги йде в кути,
+    і точка розпливається квадратом. Гаус жертвує часткою придушення шуму заради того,
+    щоб розмиття було однаковим у всі боки.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Економія</span>Роздільність: 81 проти 18</h2>
+
+<p>Гаусове ядро має властивість, заради якої його й люблять інженери. Двовимірне ядро
+9 × 9 можна не застосовувати цілком: досить пройти зображення двічі одновимірним ядром
+з девʼяти чисел — спершу по рядках, потім по стовпцях. Результат буде
+<strong>той самий</strong>.</p>
+
+<p>Причина в тому, що двовимірний дзвін розкладається на добуток двох одновимірних:
+вага клітинки залежить окремо від зсуву по горизонталі й окремо від зсуву по вертикалі.
+Ядро, для якого так можна, називають <strong>роздільним</strong> (separable).</p>
+
+<div class="eq">ядро[i, j] = вага(i) × вага(j)</div>
+
+<p>Вигода на числах. Двовимірне ядро 9 × 9 вимагає <strong>81</strong> множення на
+піксель. Два одновимірні проходи — по девʼять кожен, разом <strong>18</strong>.
+Це в <strong>4.5</strong> раза менше роботи, і виграш росте з розміром: для 21 × 21
+буде 441 проти 42, тобто вже вдесятеро.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">перевірка · збігається?</span>
+    <p><code>cv2.filter2D</code> із двовимірним ядром проти <code>cv2.sepFilter2D</code>
+    із двома одновимірними: <code>np.allclose</code> істинний при допуску
+    10<span class="sup">−3</span>, найбільша різниця — 2 × 10<span class="sup">−13</span>.
+    Це похибка чисел із рухомою комою, а не розбіжність алгоритмів.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">перевірка · швидше?</span>
+    <p>Двісті проходів двовимірним ядром — 0.156 с, двома одновимірними — 0.021 с.
+    Реальне прискорення <strong>7.3</strong> раза, навіть більше за теоретичні 4.5:
+    одновимірний прохід іще й приязніший до кешу процесора.</p>
+  </div>
+</div>
+
+<p>Ідею варто запамʼятати надовго: коли операція розкладається на послідовність дешевших
+із тим самим результатом — це майже завжди перемога. Блок 2 застосує ту саму думку
+до згорткових мереж.</p>
+
+<div class="note"><b>Не всяке ядро роздільне.</b> Гаус і бокс — так, ядра Собеля —
+теж (<code>[1, 2, 1]</code> упоперек і <code>[−1, 0, 1]</code> уздовж). А довільна
+матриця з девʼятьма випадковими числами — ні. Перевіряють це рангом матриці:
+роздільні саме ті ядра, у яких ранг дорівнює одиниці.</div>
+
+<h2 id="s8"><span class="num">08 / Різкість</span>Різкість — це мінус розмите</h2>
+
+<p>«Додати різкості» звучить як щось протилежне розмиттю, тож перше припущення новачка —
+що має бути якесь «зворотне розмиття». Насправді навпаки: різкість роблять
+<em>за допомогою</em> розмиття.</p>
+
+<p>Думка в одному реченні: розмиття знищує дрібні деталі, отже, різниця «оригінал мінус
+розмите» — це і є ті деталі у чистому вигляді. Додай їх назад — і вони стануть удвічі
+виразнішими.</p>
+
+<div class="eq">різке = оригінал + сила × (оригінал − розмите)</div>
+
+<p>Тут <code>сила</code> — звичайний множник: 0 нічого не міняє, 1 подвоює деталі.
+Прийом зветься <strong>unsharp mask</strong>, «маска нерізкості», і назва спантеличує:
+різкість роблять через нерізку копію. Пішла вона з доцифрової фотографії, де для цього
+справді брали розмиту негативну плівку.</p>
+
+<p>Другий спосіб — одне ядро замість трьох дій:</p>
+
+<div class="eq left"> 0  −1   0
+−1   5  −1
+ 0  −1   0</div>
+
+<p>Сума коефіцієнтів дорівнює одиниці — яскравість зберігається. Центр із вагою 5
+«перекрикує» чотирьох сусідів із вагою −1. На рівній ділянці результат дорівнює самому
+пікселю: 5 × 100 − 4 × 100 = 100. А на перепаді центр отримує підсилення, і перепад
+стає крутішим. Це та сама формула, згорнута в табличку, тільки з жорстко зашитим
+найпростішим розмиттям — тоді як unsharp mask дозволяє взяти гаус із будь-якою
+<span class="raw">σ</span>.</p>
+
+<p>Числа з нашого фото: стандартне відхилення яскравості (груба міра контрасту)
+становило 43.62 в оригіналі, 47.81 після ядра різкості й 45.36 після unsharp mask
+із <span class="raw">σ = 1.5</span> і силою 1. Обидва способи підняли контраст,
+ядро — агресивніше.</p>
+
+<div class="note warn"><b>Чим платимо.</b> Різкість підсилює <em>усі</em> дрібні перепади
+без розбору, а шум матриці — це теж дрібні перепади. Тому надто велика сила витягує
+з тіней зернистість, а навколо контрастних меж малює світлу й темну облямівку —
+так званий ореол. Правило просте: додавай різкість останньою дією й дивись на результат
+у масштабі 100 %, а не на зменшеній копії, де ореолів не видно.</div>
+
+<h2 id="s9"><span class="num">09 / Градієнт</span>Градієнт і Собель</h2>
+
+<p>Дійшли до найважливішого застосування згортки в класичному зорі — пошуку меж.
+Спершу домовмось, що таке межа <em>числом</em>.</p>
+
+<p>Межа — це місце, де яскравість швидко змінюється, а «швидко» міряють різницею
+сусідів: праворуч 90, ліворуч 10 — різниця 80, це багато; 101 проти 100 — це рівна
+ділянка. Найпростіше ядро для цього — <code>[−1, 0, 1]</code>: віднімає лівого сусіда
+від правого.</p>
+
+<p>Але таке ядро занадто довірливе: дивиться на один рядок, і випадковий шумовий піксель
+дасть фальшивий сплеск. <strong>Ядро Собеля</strong> лікує це однією зміною: дивиться
+на три рядки, а середньому дає подвійну вагу.</p>
+
+<div class="eq left">Собель по x        Собель по y
+−1   0  +1       −1  −2  −1
+−2   0  +2        0   0   0
+−1   0  +1       +1  +2  +1</div>
+
+<p>Ліве ядро рахує, наскільки правий бік світліший за лівий, і реагує на
+<strong>вертикальні</strong> межі. Праве робить те саме по вертикалі й реагує на
+<strong>горизонтальні</strong>. Подвійна вага середнього рядка — вбудоване згладжування
+впоперек напрямку: шумовий піксель у крайньому рядку вплине вдвічі слабше.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">рахуємо руками · штучна сходинка</span>
+    <p>Вікно, у якому ліві дві колонки мають яскравість 10, а права — 90. Множимо
+    на ядро Собеля по x; середня колонка ядра — нулі, тож лишається права колонка
+    мінус ліва:</p>
+    <div class="eq left">10  10  90
+10  10  90
+10  10  90</div>
+    <div class="eq">(90 + 180 + 90) − (10 + 20 + 10) = 360 − 40 = <strong>320</strong></div>
+    <p>Коротше: сума ваг з одного боку дорівнює чотирьом, тому результат — це просто
+    <strong>4 × (90 − 10)</strong>. Висота перепаду, помножена на чотири.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">від двох чисел до двох характеристик</span>
+    <p>Два ядра дають два числа на піксель, <code>gx</code> і <code>gy</code>, а разом
+    вони утворюють вектор — <strong>градієнт</strong>, у якого є довжина й напрямок.</p>
+    <div class="eq">модуль = √(gx² + gy²) &nbsp;&nbsp;·&nbsp;&nbsp; напрямок = arctan(gy ÷ gx)</div>
+    <p><strong>Модуль</strong> — наскільки різкий перепад, тобто «сила межі».
+    <strong>Напрямок</strong> — у який бік яскравість росте найшвидше; він завжди
+    перпендикулярний до самої межі. <code>arctan</code> — функція, яка з відношення
+    двох катетів дає кут; руками її не рахують.</p>
+  </div>
+</div>
+
+<p>На нашому фото модуль градієнта доходить до 586.8, а медіана по кадру — 10.8.
+На рівній ділянці стільниці, де є лише шум матриці, модуль близько 17.5; на межі
+корпусу — 420.2. Різниця більш ніж у двадцять разів, і саме на ній тримаються всі
+порогові детектори меж.</p>
+
+<div class="note"><b>Наша реалізація збігається з бібліотечною побітово.</b>
+<code>cv2.Sobel</code> із <code>ksize=3</code> — це буквально <code>filter2D</code>
+з наведеним вище ядром: різниця на всьому зображенні дорівнює рівно нулю, без жодного
+допуску. Усередині немає нічого, крім девʼяти множень.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Собель: чотири погляди на те саме фото</p>
+  <p class="fig-sub">Перемикай канал і дивись на два збільшені фрагменти: вертикальну межу корпусу й горизонтальну. Одне ядро бачить лише одну з них.</p>
+  <div class="panel">
+    <div><canvas id="cSob" width="940" height="400" aria-label="Фото телефона у чотирьох поданнях: gx, gy, модуль градієнта і напрямок, із двома збільшеними фрагментами меж"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показуємо</span>
+        <div class="seg wrap" id="sobSeg">
+          <button type="button" data-i="0" aria-pressed="false">gx</button>
+          <button type="button" data-i="1" aria-pressed="false">gy</button>
+          <button type="button" data-i="2" aria-pressed="true">модуль</button>
+          <button type="button" data-i="3" aria-pressed="false">напрямок</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>верт. межа</b><i id="soV">—</i></div>
+        <div class="cellv"><b>гориз. межа</b><i id="soH">—</i></div>
+      </div>
+      <div class="verdict" id="soVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Числа в табло</b> — середній відгук поточного ядра на двох ділянках
+    фото: бічній грані корпусу (вертикальна межа) і верхній грані (горизонтальна).
+    На <code>gx</code> друге число падає майже до нуля, на <code>gy</code> — перше.
+    Модуль бачить обидві, бо складає внески двох ядер.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Кенні</span>Кенні: чотири кроки, а не один виклик</h2>
+
+<p>Модуль градієнта — уже непоганий детектор меж, але в нього дві біди. Межа виходить
+завширшки в кілька пікселів, бо градієнт великий не тільки на переході, а й поруч.
+І доводиться обирати поріг, а будь-який вибір поганий: високий рве межу на пунктир,
+низький тягне шум.</p>
+
+<p><strong>Детектор Кенні</strong> (Canny edge detector) лікує обидві біди. Його майже
+завжди подають одним викликом <code>cv2.Canny(img, 100, 200)</code>, і тому він виглядає
+чорною скринькою. Насправді всередині чотири операції, і кожну ми вже вміємо.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · згладити</span>
+    <p>Похідна підсилює шум: на рівній ділянці сусіди й так стрибають, а Собель цей
+    стрибок помножить на чотири. Тому спершу гаусове розмиття — шум на нашому фото
+    впав із 2.32 до 1.08, тобто в 2.1 раза.</p>
+    <p>Тут деталь, про яку мовчать підручники: <strong><code>cv2.Canny</code> цього
+    кроку не робить.</strong> Вона починає одразу з градієнта, а згладжувати має ти сам.
+    Без цього детектор знайде 1020 пікселів межі замість 743 — зайві триста це шум,
+    старанно підсилений Собелем.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · градієнт</span>
+    <p>Той самий Собель: модуль і напрямок у кожному пікселі. Після згладжування
+    максимальний модуль — 299.9, а пікселів із модулем понад 100 набирається 2772.
+    Це занадто товсті межі: контур телефона має бути завширшки в один піксель.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · притлумити немаксимуми</span>
+    <p>Головна ідея Кенні. Межа — це гребінь: уздовж напрямку градієнта модуль росте,
+    досягає максимуму точно на переході й падає. Лишаємо піксель, лише якщо він
+    не менший за двох сусідів <em>уздовж градієнта</em>, тобто впоперек самої межі.
+    Напрямок округлюємо до одного з чотирьох: горизонталь, вертикаль, дві діагоналі.
+    З 2772 пікселів лишається 1034.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · гістерезис двома порогами</span>
+    <p>Замість одного порога беремо два. Піксель вище <em>верхнього</em> — межа
+    беззаперечно. Піксель між нижнім і верхнім — межа <strong>лише якщо</strong> він
+    сполучений ланцюжком із беззаперечним. Решта викидається. На порогах 100 і 200 наше
+    фото дало 353 беззаперечні пікселі й 696 кандидатів, з яких сполученістю
+    врятувалося 436. Разом 789 пікселів межі.</p>
+  </div>
+</div>
+
+<p>Слово <strong>гістерезис</strong> прийшло з фізики й означає «поведінка залежить від
+попереднього стану». Тут буквально так: доля слабкого пікселя залежить не від нього
+самого, а від того, чи дотягнувся до нього ланцюжок від сильного. Саме це й не дає межі
+розсипатись на пунктир.</p>
+
+<div class="note warn"><b>Пастка, на якій спотикаються всі, хто пише Кенні сам.</b>
+У зображенні номер рядка росте <em>вниз</em>, а не вгору, як на шкільному кресленні.
+Тому кут 45°, порахований через <code>arctan2(gy, gx)</code>, вказує вправо-<em>вниз</em>,
+і сусіди для нього — <code>(r−1, c−1)</code> та <code>(r+1, c+1)</code>, а не навпаки.
+Переплутавши дві діагоналі місцями, дістанеш код, який виглядає правильним, не падає —
+і мовчки викидає половину діагональних меж. У практиці цієї теми така помилка знижувала
+збіг із <code>cv2.Canny</code> з 94 % до 51 %.</div>
+
+<p>Про збіг. Власна реалізація всіх чотирьох кроків дає 789 пікселів межі проти 743
+у <code>cv2.Canny</code>, причому всі 743 бібліотечні входять у наші. Частка спільних
+до обʼєднання — <strong>94.2 %</strong>. Точного збігу тут не буває: OpenCV округлює
+напрямок своїм способом і по-своєму розвʼязує нічиї. Ці шість відсотків — не помилка,
+а чесна ціна за те, що реалізацій одного алгоритму буває багато.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Кенні по кроках</p>
+  <p class="fig-sub">Чотири стадії перемикачем і два пороги повзунками. Праворуч — розподіл модуля градієнта після притлумлення; вертикальні лінії показують, де саме стоять пороги.</p>
+  <div class="panel">
+    <div><canvas id="cCanny" width="940" height="470" aria-label="Стадії детектора Кенні на фото телефона й гістограма модуля градієнта з двома порогами"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">стадія</span>
+        <div class="seg wrap" id="cnSeg">
+          <button type="button" data-i="0" aria-pressed="false">1 згладити</button>
+          <button type="button" data-i="1" aria-pressed="false">2 градієнт</button>
+          <button type="button" data-i="2" aria-pressed="false">3 гребені</button>
+          <button type="button" data-i="3" aria-pressed="true">4 межі</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="lo7">нижній поріг <output id="lo7o">40</output></label>
+        <input type="range" id="lo7" min="5" max="150" step="5" value="40">
+      </div>
+      <div class="ctl">
+        <label for="hi7">верхній поріг <output id="hi7o">100</output></label>
+        <input type="range" id="hi7" min="20" max="300" step="5" value="100">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пікселів межі</b><i id="cnN">—</i></div>
+        <div class="cellv"><b>з них сильних</b><i id="cnS">—</i></div>
+      </div>
+      <div class="verdict" id="cnVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Пороги мають на чому працювати.</b> На ідеальній синтетичній фігурі
+    ця демонстрація була б нерухомою: різкий перехід 0 → 255 дає модуль близько 1082,
+    і будь-яка пара порогів нижче цього числа лишає ті самі 276 пікселів межі.
+    Тут зображення з шумом матриці й мʼякими переходами — тому пороги справді
+    щось означають.</figcaption>
+</figure>
+
+<p>На цьому легко обпектися, готуючи демонстрацію. Ось поміряна таблиця: чистий
+чорно-білий квадрат проти нашого фото з шумом.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>пороги</th><th>чистий квадрат</th><th>фото з шумом</th></tr></thead>
+  <tbody>
+    <tr><td>20 / 60</td><td>276</td><td>3342</td></tr>
+    <tr><td>50 / 150</td><td>276</td><td>1212</td></tr>
+    <tr><td>100 / 200</td><td>276</td><td>1111</td></tr>
+    <tr><td>150 / 250</td><td>276</td><td>1012</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>На квадраті число не змінюється жодного разу: усі його межі однаково нескінченно різкі,
+і жоден поріг нижче 1082 їх не зачіпає. На фото кількість падає більш ніж утричі. Мораль:
+якщо пороги «нічого не роблять», проблема не в порогах, а в картинці.</p>
+
+<h2 id="s11"><span class="num">11 / Межа</span>Чому одного ядра замало</h2>
+
+<p>Ми навчилися рахувати одну відповідь на кожен піксель. Тепер чесно назвімо, чого
+ця відповідь не вміє — бо саме звідси росте решта курсу.</p>
+
+<p><strong>Перша сліпота — напрямок.</strong> Ядро <code>gx</code> шукає вертикальні межі
+й на горизонтальних дає майже нуль:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>межа</th><th>середнє |gx|</th><th>середнє |gy|</th></tr></thead>
+  <tbody>
+    <tr><td>вертикальна (бічна грань)</td><td>179.3</td><td>6.5</td></tr>
+    <tr><td>горизонтальна (верхня грань)</td><td>5.9</td><td>200.4</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Одне ядро бачить «свою» межу в <strong>30 разів</strong> сильніше за чужу. Лікується
+це просто — двома ядрами й модулем. Але для меж під кутом 30° уже доводиться або
+покладатися на комбінацію двох, або заводити ядра для проміжних напрямків.</p>
+
+<p><strong>Друга сліпота — масштаб</strong>, і про неї згадують рідше. Ядро 3 × 3
+дивиться на три пікселі й міряє перепад саме на такій відстані. Ось відгук того самого
+Собеля на перепади однакової висоти (з 10 до 90), розмазані на різну ширину:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>перепад розмазано на</th><th>максимум |gx|</th></tr></thead>
+  <tbody>
+    <tr><td>1 піксель</td><td>320.0</td></tr>
+    <tr><td>5 пікселів</td><td>128.0</td></tr>
+    <tr><td>10 пікселів</td><td>64.0</td></tr>
+    <tr><td>40 пікселів</td><td>16.0</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Висота перепаду однакова в усіх чотирьох рядках, а відгук різниться в двадцять разів —
+залежно лише від того, на скількох пікселях перепад відбувається. Одне ядро міряє один
+масштаб, і поріг, підібраний під різкі межі, пропустить мʼякі.</p>
+
+<p><strong>Третя сліпота — зміст.</strong> Ядро не знає, що таке телефон. Воно однаково
+голосно кричить на межі корпусу, на краю тіні, на подряпині й на випадковому відблиску.
+Відрізнити важливу межу від неважливої одним ядром неможливо в принципі.</p>
+
+<p>Звідси висновок, до якого йшла вся тема: ознак треба <strong>багато й різних</strong> —
+різного напрямку, різного масштабу, — а потім із них треба щось зібрати. Історично
+відповідей дві. Класична: людина вигадує набір ядер і правило, як звести їхні відгуки
+в опис зображення. Сучасна: коефіцієнти не вигадують, а <em>навчають</em> на даних.</p>
+
+<p>Друга відповідь — це вже згорткові мережі, і вони належать блоку 2. Тут важливо інше:
+<strong>механіка в обох випадках та сама</strong>. Мережа не робить із зображенням нічого,
+чого не робить <code>filter2D</code>; вона лише перебирає коефіцієнти замість тебе,
+спираючись на
+<a href="../../02-ai-ml/13-gradient-descent/lecture.html">градієнтний спуск</a>
+й <a href="../../02-ai-ml/34-backpropagation/lecture.html">зворотне поширення</a>,
+які ти вже знаєш.</p>
+
+<h2 id="s12"><span class="num">12 / Далі</span>Куди далі</h2>
+
+<p>Підсумуймо. Згортка — маленька табличка чисел, яку прикладають до кожного пікселя
+разом із сусідами: помножили поелементно, склали, записали в новий масив. Сума
+коефіцієнтів вирішує, зберігати яскравість чи шукати різницю; режим межі — що робити
+з краєм. Гаус розмиває однаково в усі боки й економить у 4.5 раза завдяки роздільності.
+Різкість — це оригінал плюс те, що зникає при розмитті. Собель дає модуль і напрямок
+градієнта, а Кенні складається з чотирьох кроків, кожен з яких ти тепер можеш написати
+сам. І найважливіше: <code>cv2.filter2D</code> рахує кореляцію, а не згортку — для
+симетричного ядра це нічого не змінює, а для твого власного несиметричного змінює все.</p>
+
+<p>Ми навчилися рахувати <strong>одну відповідь на кожен піксель</strong>: наскільки тут
+різко, у який бік, наскільки розмито. Але щоб порівняти два зображення чи знайти той
+самий телефон на іншому фото, потрібна відповідь не на піксель, а <strong>на все
+зображення</strong>. Саме цим займається <strong>тема 05, «Класичні ознаки»</strong>:
+вона бере відгуки фільтрів і збирає з них компактний опис — гістограму напрямків
+градієнта, набір характерних точок, дескриптор околиці. І показує, де такий підхід
+ламається, а це найкоротший шлях до розуміння, навіщо потрібен блок 2.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти напишеш
+згортку подвійним циклом і звіриш її з <code>cv2.filter2D</code>; побачиш на числах
+різницю кореляції та згортки; перепишеш той самий цикл векторизовано й поміряєш
+прискорення; порівняєш чотири режими межі; розкладеш гаусове ядро на два проходи;
+зробиш власний Собель, який збігається з <code>cv2.Sobel</code> побітово; і збереш
+Кенні з чотирьох кроків, домігшись збігу з <code>cv2.Canny</code> на рівні 94 %.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../03-opencv-basics/lecture.html"><span class="dir">попередня</span><span class="ttl">03. OpenCV: базові операції</span></a>
+    <a class="next" href="../05-classic-features/lecture.html"><span class="dir">наступна</span><span class="ttl">05. Класичні ознаки</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function sans(px){return '600 '+px+'px Unbounded,system-ui,sans-serif';}
+function fmt(v,d){return (Math.round(v*Math.pow(10,d))/Math.pow(10,d)).toFixed(d);}
+/* «31 раз», але «5 разів» — інакше вердикт читається як помилка */
+function razWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+/* «1 піксель», але «5 пікселів» — інакше підпис читається як помилка */
+function pxWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'піксель';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'пікселі';
+  return 'пікселів';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   «Фото товару з оголошення» — ті самі формули, що в practice.ipynb,
+   тільки з кроком у два пікселі: 160 × 120 замість 320 × 240.
+   Числа в табло рахуються з ЦЬОГО масиву, тому вони самоузгоджені;
+   числа в тексті лекції взяті із зошита (грабля №13).
+   ═══════════════════════════════════════════════════════════════ */
+var IW=160, IH=120;
+function rgap(y,x,l,t,r,b,rad){
+  var gx=Math.max(Math.max(l+rad-x, x-(r-rad)),0);
+  var gy=Math.max(Math.max(t+rad-y, y-(b-rad)),0);
+  return gx*gx+gy*gy;
+}
+/* детермінований «шум матриці»: однаковий у всіх читачів */
+function noiseAt(i){
+  var v=((i+1)*16807)%2147483647;
+  v=v^(v>>13);
+  v=(v*48271)%2147483647;
+  v=v^(v>>17);
+  v=(v*16807)%2147483647;
+  if(!isFinite(v)) v=0;
+  return (v%11)-5;
+}
+var GRAY=null;
+function grayPhoto(){
+  if(GRAY) return GRAY;
+  var a=new Float32Array(IW*IH), r, c, i=0;
+  for(r=0;r<IH;r++){
+    for(c=0;c<IW;c++,i++){
+      var y=r*2, x=c*2;
+      var down=y/240, right=x/320;
+      var R=214-26*down+10*right, G=201-24*down+8*right, B=182-20*down+6*right;
+      var dist=Math.sqrt(rgap(y,x,107,37,235,229,18))-18;
+      var dark=Math.min(Math.max((18-dist)/18,0),1);
+      R*=1-0.30*dark; G*=1-0.30*dark; B*=1-0.30*dark;
+      if(rgap(y,x,96,24,224,216,18)<=324){
+        var sh=10*(1-down);
+        R=58+sh; G=64+sh; B=74+sh;
+      }
+      var scr=rgap(y,x,105,33,215,207,6)<=36;
+      if(scr){
+        var ramp=((x-105)/110+(y-33)/174)/2;
+        R=26+206*ramp; G=58+66*ramp; B=170-128*ramp;
+      }
+      if(rgap(y,x,117,170,203,186,5)<=25){ R=40; G=200; B=90; }
+      if(scr){
+        var band=(x-105)*0.80+(y-33)*0.55;
+        var gl=Math.min(Math.max(1-Math.abs(band-74)/30,0),1);
+        var add=gl*gl*95; R+=add; G+=add; B+=add;
+      }
+      /* коефіцієнт 0.67 зрівнює шум із зошитом: там три незалежні числа на піксель
+         зводяться в сіре зваженою сумою, і його стандартне відхилення виходить ≈2.1 */
+      var nz=noiseAt(i)*0.67;
+      R=Math.min(Math.max(R+nz,0),255);
+      G=Math.min(Math.max(G+nz,0),255);
+      B=Math.min(Math.max(B+nz,0),255);
+      a[i]=0.299*R+0.587*G+0.114*B;
+    }
+  }
+  GRAY=a;
+  return a;
+}
+
+/* ── межові режими: індекс за межами масиву перетворюємо на дійсний ── */
+function ixConst(i,n){ return (i<0||i>=n) ? -1 : i; }
+function ixRep(i,n){ return i<0?0:(i>=n?n-1:i); }
+function ixRefl(i,n){ while(i<0||i>=n){ if(i<0) i=-i-1; if(i>=n) i=2*n-1-i; } return i; }
+function ix101(i,n){ if(n===1) return 0; while(i<0||i>=n){ if(i<0) i=-i; if(i>=n) i=2*(n-1)-i; } return i; }
+function pick(mode){
+  if(mode==='const') return ixConst;
+  if(mode==='rep') return ixRep;
+  if(mode==='refl') return ixRefl;
+  return ix101;
+}
+/* кореляція квадратним ядром ks × ks (саме її рахує cv2.filter2D) */
+function correlate(src,w,h,k,ks,mode){
+  var f=pick(mode||'r101'), half=(ks-1)/2, out=new Float32Array(w*h);
+  var r,c,i,j,yy,xx,s,v;
+  for(r=0;r<h;r++){
+    for(c=0;c<w;c++){
+      s=0;
+      for(i=0;i<ks;i++){
+        yy=f(r+i-half,h);
+        for(j=0;j<ks;j++){
+          xx=f(c+j-half,w);
+          v=(yy<0||xx<0)?0:src[yy*w+xx];
+          s+=v*k[i*ks+j];
+        }
+      }
+      out[r*w+c]=s;
+    }
+  }
+  return out;
+}
+/* два одновимірні проходи — для розмиття це вчетверо швидше */
+function sepBlur(src,w,h,k1,ks){
+  var half=(ks-1)/2, tmp=new Float32Array(w*h), out=new Float32Array(w*h);
+  var r,c,i,s;
+  for(r=0;r<h;r++) for(c=0;c<w;c++){
+    s=0;
+    for(i=0;i<ks;i++) s+=k1[i]*src[r*w+ix101(c+i-half,w)];
+    tmp[r*w+c]=s;
+  }
+  for(r=0;r<h;r++) for(c=0;c<w;c++){
+    s=0;
+    for(i=0;i<ks;i++) s+=k1[i]*tmp[ix101(r+i-half,h)*w+c];
+    out[r*w+c]=s;
+  }
+  return out;
+}
+function gauss1d(ks,sigma){
+  var k=new Float64Array(ks), half=(ks-1)/2, i, s=0;
+  for(i=0;i<ks;i++){ k[i]=Math.exp(-(i-half)*(i-half)/(2*sigma*sigma)); s+=k[i]; }
+  for(i=0;i<ks;i++) k[i]/=s;
+  return k;
+}
+function box1d(ks){
+  var k=new Float64Array(ks), i;
+  for(i=0;i<ks;i++) k[i]=1/ks;
+  return k;
+}
+function outer(k1,ks){
+  var k=new Float64Array(ks*ks), i, j;
+  for(i=0;i<ks;i++) for(j=0;j<ks;j++) k[i*ks+j]=k1[i]*k1[j];
+  return k;
+}
+/* частка ваги ядра поза колом, уписаним у його квадрат */
+function cornerShare(k,ks){
+  var cen=(ks-1)/2, i, j, out=0, all=0, d;
+  for(i=0;i<ks;i++) for(j=0;j<ks;j++){
+    d=Math.sqrt((i-cen)*(i-cen)+(j-cen)*(j-cen));
+    all+=k[i*ks+j];
+    if(d>cen) out+=k[i*ks+j];
+  }
+  return all>0 ? out/all : 0;
+}
+
+/* ── малювання масиву на канві ────────────────────────────────
+   putImageData ігнорує setTransform, тому пишемо в offscreen-канву
+   й виводимо через drawImage (грабля №1). */
+var OFF=document.createElement('canvas'), OFFG=OFF.getContext('2d');
+function blit(g,arr,w,h,dx,dy,dw,dh,map){
+  OFF.width=w; OFF.height=h;
+  var im=OFFG.createImageData(w,h), d=im.data, i, col;
+  for(i=0;i<w*h;i++){
+    col=map(arr[i]);
+    d[i*4]=col[0]; d[i*4+1]=col[1]; d[i*4+2]=col[2]; d[i*4+3]=255;
+  }
+  OFFG.putImageData(im,0,0);
+  g.imageSmoothingEnabled=false;
+  g.drawImage(OFF,dx,dy,dw,dh);
+}
+function mGray(v){ var n=Math.round(Math.min(Math.max(v,0),255)); return [n,n,n]; }
+function mSigned(v){
+  var t=Math.min(Math.max(v/260,-1),1);
+  if(t>=0) return [Math.round(20+235*t),Math.round(24+120*t),Math.round(30+40*t)];
+  return [Math.round(20-10*t),Math.round(24+60*(-t)),Math.round(30+225*(-t))];
+}
+function mHot(v){
+  var t=Math.min(Math.max(v/300,0),1);
+  return [Math.round(255*Math.min(1,t*1.7)),
+          Math.round(255*Math.max(0,Math.min(1,t*1.7-0.55))),
+          Math.round(255*Math.max(0,Math.min(1,t*2.2-1.3)))];
+}
+function frameBox(g,x,y,w,h){
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(x+0.5,y+0.5,w-1,h-1);
+}
+function capt(g,txt,x,y,color,px){
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=color; g.font=mono(px||11);
+  g.fillText(txt,x,y);
+}
+
+/* ═══ 1 · Ядро по кроках ═══════════════════════════════════ */
+var TINY=[12,14,15,90,92, 13,15,16,91,93, 14,16,18,92,94, 15,17,19,93,95, 16,18,20,94,96];
+var STEPK=[
+  {n:'розмиття ⅑', k:[1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9], lab:['0.111','0.111','0.111','0.111','0.111','0.111','0.111','0.111','0.111'], dec:2},
+  {n:'Собель x', k:[-1,0,1,-2,0,2,-1,0,1], lab:['-1','0','+1','-2','0','+2','-1','0','+1'], dec:0}
+];
+var stepSel=0, stepPos=0;   /* 0…9, скільки клітинок уже пораховано */
+function stepValue(kern,p){
+  var r=Math.floor(p/3), c=p%3, i, j, s=0;
+  for(i=0;i<3;i++) for(j=0;j<3;j++) s+=TINY[(r+i)*5+(c+j)]*kern[i*3+j];
+  return s;
+}
+function drawStep(){
+  var cv=I('cStep'); if(!cv) return;
+  var g=dpr(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), teal=css('--teal'),
+      hair=css('--hair'), amber=css('--amber'), paper=css('--paper');
+  var K=STEPK[stepSel], cell=48, i, j, v;
+  var cur=Math.min(stepPos,8), wr=Math.floor(cur/3), wc=cur%3;
+  var active=stepPos<9;
+
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Зображення 5 × 5',20,26);
+  g.fillText('Ядро 3 × 3',300,26);
+  g.fillText('Девʼять добутків',480,26);
+  g.fillText('Результат 3 × 3',730,26);
+
+  /* вхід */
+  for(i=0;i<5;i++) for(j=0;j<5;j++){
+    var x=20+j*cell, y=42+i*cell;
+    var inWin=active && i>=wr && i<wr+3 && j>=wc && j<wc+3;
+    g.fillStyle=inWin?css('--rose-w'):paper;
+    g.fillRect(x,y,cell-3,cell-3);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(x+0.5,y+0.5,cell-4,cell-4);
+    g.fillStyle=inWin?rose:soft; g.font=mono(14,inWin);
+    g.textAlign='center';
+    g.fillText(String(TINY[i*5+j]),x+(cell-3)/2,y+(cell-3)/2+5);
+  }
+  if(active){
+    g.strokeStyle=rose; g.lineWidth=2.5;
+    g.strokeRect(20+wc*cell-2,42+wr*cell-2,3*cell+1,3*cell+1);
+  }
+
+  /* ядро */
+  for(i=0;i<3;i++) for(j=0;j<3;j++){
+    var kx=300+j*52, ky=42+i*52;
+    g.fillStyle=paper; g.fillRect(kx,ky,49,49);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(kx+0.5,ky+0.5,48,48);
+    g.fillStyle=teal; g.font=mono(13,true); g.textAlign='center';
+    g.fillText(K.lab[i*3+j],kx+24,ky+29);
+  }
+
+  /* девʼять добутків */
+  g.textAlign='left';
+  if(active){
+    var sum=0;
+    for(i=0;i<3;i++) for(j=0;j<3;j++){
+      var a=TINY[(wr+i)*5+(wc+j)], b=K.k[i*3+j], pr=a*b;
+      sum+=pr;
+      var ty=60+(i*3+j)*20;
+      g.fillStyle=soft; g.font=mono(12);
+      g.fillText(String(a),480,ty);
+      g.fillText('×',514,ty);
+      g.fillStyle=teal;
+      g.fillText(K.lab[i*3+j],534,ty);
+      g.fillStyle=soft;
+      g.fillText('=',578,ty);
+      g.fillStyle=ink; g.font=mono(12,true);
+      g.fillText(fmt(pr,K.dec),596,ty);
+    }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(480,248); g.lineTo(690,248); g.stroke();
+    g.fillStyle=rose; g.font=mono(15,true);
+    g.fillText('сума  '+fmt(sum,2),480,270);
+  }else{
+    g.fillStyle=soft; g.font=mono(12);
+    g.fillText('усі девʼять положень',480,62);
+    g.fillText('пораховано',480,82);
+  }
+
+  /* результат */
+  for(i=0;i<3;i++) for(j=0;j<3;j++){
+    var p=i*3+j, rx=730+j*62, ry=42+i*52;
+    var done=p<stepPos;
+    g.fillStyle=done?css('--teal-w'):paper;
+    g.fillRect(rx,ry,59,49);
+    g.strokeStyle=(active&&p===stepPos)?rose:hair;
+    g.lineWidth=(active&&p===stepPos)?2:1;
+    g.strokeRect(rx+0.5,ry+0.5,58,48);
+    if(done){
+      g.fillStyle=ink; g.font=mono(13,true); g.textAlign='center';
+      g.fillText(fmt(stepValue(K.k,p),K.dec===0?0:2),rx+29,ry+29);
+    }else{
+      g.fillStyle=hair; g.font=mono(13); g.textAlign='center';
+      g.fillText('·',rx+29,ry+29);
+    }
+    g.textAlign='left';
+  }
+
+  /* пояснення внизу */
+  g.fillStyle=soft; g.font=mono(11.5);
+  g.fillText('Вікно ковзає зліва направо, потім переходить на рядок нижче.',20,296);
+  g.fillText('Сума девʼяти добутків стає значенням у центрі вікна.',20,316);
+  g.fillStyle=amber; g.font=mono(11.5,true);
+  if(stepSel===0){
+    g.fillText('Розмиття: результат завжди між найменшим і найбільшим числом вікна.',20,344);
+  }else{
+    g.fillText('Собель: нуль там, де ліва й права колонки вікна однакові.',20,344);
+  }
+  /* легенда кольорів */
+  g.fillStyle=css('--rose-w'); g.fillRect(20,364,16,14);
+  g.strokeStyle=rose; g.lineWidth=1; g.strokeRect(20.5,364.5,15,13);
+  capt(g,'поточне вікно',44,375,soft);
+  g.fillStyle=css('--teal-w'); g.fillRect(180,364,16,14);
+  g.strokeStyle=hair; g.strokeRect(180.5,364.5,15,13);
+  capt(g,'уже пораховано',204,375,soft);
+  frameBox(g,14,14,912,402);
+}
+function updStep(){
+  var K=STEPK[stepSel];
+  I('stN').textContent=stepPos+' / 9';
+  if(stepPos<9){
+    I('stS').textContent=fmt(stepValue(K.k,stepPos),2);
+    verd('stVd','t-mid','КРОК '+(stepPos+1),
+      'Вікно стоїть у позиції ('+(Math.floor(stepPos/3)+1)+', '+(stepPos%3+1)+
+      '). Праворуч виписані всі девʼять добутків; їхня сума — '+
+      fmt(stepValue(K.k,stepPos),2)+'.');
+  }else{
+    var mn=1e9, mx=-1e9, p;
+    for(p=0;p<9;p++){ var vv=stepValue(K.k,p); if(vv<mn) mn=vv; if(vv>mx) mx=vv; }
+    I('stS').textContent='—';
+    if(stepSel===0){
+      verd('stVd','t-ok','ГОТОВО',
+        'Результат від '+fmt(mn,2)+' до '+fmt(mx,2)+'. Усі значення лежать усередині '+
+        'діапазону вхідних чисел (12…96): розмиття усереднює й ніколи не виходить за межі.');
+    }else{
+      verd('stVd','t-ok','ГОТОВО',
+        'Результат від '+fmt(mn,0)+' до '+fmt(mx,0)+'. Ліва колонка близька до нуля — '+
+        'там сусіди майже однакові. Середня й права великі: туди потрапила межа.');
+    }
+  }
+  I('stNext').disabled=(stepPos>=9);
+  I('stAll').disabled=(stepPos>=9);
+  drawStep();
+}
+
+/* ═══ 2 · Кореляція проти згортки ══════════════════════════ */
+var CORRK=[
+  {n:'змазування', k:[0,0,0, 1/6,2/6,3/6, 0,0,0], lab:['0','0','0','1','2','3','0','0','0'],
+   note:'коефіцієнти в рядку ростуть зліва направо · сума 1'},
+  {n:'розмиття', k:[1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9], lab:['1','1','1','1','1','1','1','1','1'],
+   note:'усі девʼять коефіцієнтів однакові · сума 1'}
+];
+var corrSel=0, corrOp=0;
+function flip3(k){
+  var out=new Float64Array(9), i;
+  for(i=0;i<9;i++) out[i]=k[8-i];
+  return out;
+}
+function drawCorr(){
+  var cv=I('cCorr'); if(!cv) return;
+  var g=dpr(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), teal=css('--teal'),
+      hair=css('--hair'), paper=css('--paper');
+  var K=CORRK[corrSel], i, j;
+  var src=grayPhoto();
+  var a=correlate(src,IW,IH,K.k,3,'r101');
+  var b=correlate(src,IW,IH,flip3(K.k),3,'r101');
+
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Ядро «'+K.n+'»',20,30);
+  capt(g,corrSel===0?'ростуть зліва направо':'усі однакові',20,48,soft,10.5);
+
+  /* ядро числами */
+  for(i=0;i<3;i++) for(j=0;j<3;j++){
+    var kx=20+j*46, ky=60+i*46;
+    g.fillStyle=paper; g.fillRect(kx,ky,43,43);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(kx+0.5,ky+0.5,42,42);
+    g.fillStyle=teal; g.font=mono(13,true); g.textAlign='center';
+    g.fillText(K.lab[i*3+j],kx+21,ky+27);
+  }
+  g.textAlign='left';
+  capt(g,corrSel===0?'(поділено на 6)':'(поділено на 9)',20,216,soft,10.5);
+
+  /* відгук на одиничний імпульс */
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Відгук на точку',196,30);
+  capt(g,'вхід: одна яскрава крапка',196,48,soft,10.5);
+  var imp=new Float32Array(49); imp[3*7+3]=(corrSel===0?6:9);
+  var resp=correlate(imp,7,7,K.k,3,'const');
+  for(i=0;i<3;i++) for(j=0;j<3;j++){
+    var rx=196+j*46, ry=60+i*46, val=resp[(i+2)*7+(j+2)];
+    g.fillStyle=Math.abs(val)>0.001?css('--rose-w'):paper;
+    g.fillRect(rx,ry,43,43);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(rx+0.5,ry+0.5,42,42);
+    g.fillStyle=Math.abs(val)>0.001?rose:soft; g.font=mono(13,true); g.textAlign='center';
+    g.fillText(fmt(val,0),rx+21,ry+27);
+  }
+  g.textAlign='left';
+  g.fillStyle=corrSel===0?rose:soft; g.font=mono(11,corrSel===0);
+  if(corrSel===0){
+    g.fillText('це ядро, повернуте на 180°:',20,244);
+    g.fillText('filter2D рахує кореляцію',20,262);
+  }else{
+    g.fillText('симетричне ядро від повороту',20,244);
+    g.fillText('не змінюється — доказу не видно',20,262);
+  }
+
+  /* два результати */
+  var bw=248, bh=186, x1=396, x2=664, yy=62;
+  g.fillStyle=ink; g.font=sans(12.5);
+  g.fillText('кореляція · filter2D',x1,30);
+  g.fillText('справжня згортка',x2,30);
+  capt(g,'ядро як є',x1,48,soft,10.5);
+  capt(g,'ядро на 180°',x2,48,soft,10.5);
+  blit(g,a,IW,IH,x1,yy,bw,bh,mGray);
+  blit(g,b,IW,IH,x2,yy,bw,bh,mGray);
+  g.lineWidth=corrOp===0?3:1;
+  g.strokeStyle=corrOp===0?rose:hair;
+  g.strokeRect(x1-1.5,yy-1.5,bw+3,bh+3);
+  g.lineWidth=corrOp===1?3:1;
+  g.strokeStyle=corrOp===1?rose:hair;
+  g.strokeRect(x2-1.5,yy-1.5,bw+3,bh+3);
+
+  /* смужка індикатора зблизька — на ній напрямок змазування видно найкраще */
+  var zx=52, zy=80, zw=32, zh=16, k2=7.6, zyPos=yy+bh+22;
+  var cut=function(arr){
+    var o=new Float32Array(zw*zh), r, c;
+    for(r=0;r<zh;r++) for(c=0;c<zw;c++) o[r*zw+c]=arr[(zy+r)*IW+(zx+c)];
+    return o;
+  };
+  blit(g,cut(a),zw,zh,x1,zyPos,zw*k2,zh*k2,mGray);
+  blit(g,cut(b),zw,zh,x2,zyPos,zw*k2,zh*k2,mGray);
+  frameBox(g,x1,zyPos,zw*k2,zh*k2);
+  frameBox(g,x2,zyPos,zw*k2,zh*k2);
+  capt(g,'смужка індикатора зблизька',x1,zyPos+zh*k2+16,soft,10.5);
+  capt(g,'та сама смужка',x2,zyPos+zh*k2+16,soft,10.5);
+  frameBox(g,14,14,912,412);
+}
+function updCorr(){
+  var K=CORRK[corrSel], src=grayPhoto();
+  var a=correlate(src,IW,IH,K.k,3,'r101');
+  var b=correlate(src,IW,IH,flip3(K.k),3,'r101');
+  var i, mx=0, cnt=0, d;
+  for(i=0;i<a.length;i++){
+    d=Math.abs(a[i]-b[i]);
+    if(d>mx) mx=d;
+    if(d>1) cnt++;
+  }
+  var share=cnt/a.length*100;
+  I('coD').textContent=fmt(mx,1);
+  I('coP').textContent=fmt(share,1)+' %';
+  if(corrSel===1){
+    verd('coVd','t-ok','РІЗНИЦІ НЕМАЄ',
+      'Ядро розмиття симетричне: після повороту на 180° воно збігається саме із собою. '+
+      'Кореляція й згортка дають побайтово однаковий результат — ось чому підміну '+
+      'десятиліттями ніхто не помічав.');
+  }else{
+    verd('coVd','t-no','РІЗНИЦЯ РЕАЛЬНА',
+      'Несиметричне ядро змазує в протилежні боки: розбіжність до '+fmt(mx,1)+
+      ' рівнів яскравості у '+fmt(share,1)+' % пікселів. Відгук на точку ліворуч — '+
+      'це ядро, повернуте на 180°, тобто filter2D рахує саме кореляцію.');
+  }
+  drawCorr();
+}
+
+/* ═══ 3 · Конструктор ядра ═════════════════════════════════ */
+var KPRE=[
+  [1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9,1/9],
+  [0,-1,0,-1,5,-1,0,-1,0],
+  [-1,0,1,-2,0,2,-1,0,1],
+  [-2,-1,0,-1,1,1,0,1,2]
+];
+var KPRELAB=[
+  ['0.1111','0.1111','0.1111','0.1111','0.1111','0.1111','0.1111','0.1111','0.1111'],
+  ['0','-1','0','-1','5','-1','0','-1','0'],
+  ['-1','0','1','-2','0','2','-1','0','1'],
+  ['-2','-1','0','-1','1','1','0','1','2']
+];
+function readKernel(){
+  var k=new Float64Array(9), i, v;
+  for(i=0;i<9;i++){
+    v=parseFloat(String(I('k'+i).value).replace(',','.'));
+    k[i]=isFinite(v)?v:0;
+  }
+  return k;
+}
+function drawKern(){
+  var cv=I('cKern'); if(!cv) return;
+  var g=dpr(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), hair=css('--hair'),
+      teal=css('--teal'), amber=css('--amber');
+  var src=grayPhoto(), k=readKernel();
+  var res=correlate(src,IW,IH,k,3,'r101');
+  var i, lo=0, hi=0, mn=1e9, mx=-1e9, sum=0;
+  for(i=0;i<res.length;i++){
+    if(res[i]<0) lo++;
+    if(res[i]>255) hi++;
+    if(res[i]<mn) mn=res[i];
+    if(res[i]>mx) mx=res[i];
+    sum+=res[i];
+  }
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Оригінал',20,26);
+  g.fillText('Результат твого ядра',330,26);
+  blit(g,src,IW,IH,20,38,296,222,mGray);
+  blit(g,res,IW,IH,330,38,296,222,mGray);
+  frameBox(g,20,38,296,222);
+  frameBox(g,330,38,296,222);
+
+  /* шкала: скільки значень вилетіло за 0…255 */
+  var bx=650, bw=272;
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Куди потрапили значення',bx,26);
+  var span=Math.max(mx,255)-Math.min(mn,0);
+  if(span<1) span=1;
+  var toX=function(v){ return bx+(v-Math.min(mn,0))/span*bw; };
+  /* дві смуги одна під одною: що дозволено і що насправді вийшло */
+  g.fillStyle=css('--teal-w');
+  g.fillRect(toX(0),46,Math.max(toX(255)-toX(0),2),15);
+  g.strokeStyle=teal; g.lineWidth=1;
+  g.strokeRect(toX(0)+0.5,46.5,Math.max(toX(255)-toX(0),2)-1,14);
+  capt(g,'дозволено 0…255',bx,74,teal,11);
+  g.fillStyle=css('--rose-w');
+  g.fillRect(toX(mn),84,Math.max(toX(mx)-toX(mn),2),15);
+  g.strokeStyle=rose; g.lineWidth=1;
+  g.strokeRect(toX(mn)+0.5,84.5,Math.max(toX(mx)-toX(mn),2)-1,14);
+  capt(g,'вийшло '+fmt(mn,0)+'…'+fmt(mx,0),bx,112,rose,11);
+
+  var rows=[
+    ['сума коефіцієнтів', fmt(k[0]+k[1]+k[2]+k[3]+k[4]+k[5]+k[6]+k[7]+k[8],3)],
+    ['середнє входу', fmt(meanOf(src),2)],
+    ['середнє виходу', fmt(sum/res.length,2)],
+    ['обрізано знизу', fmt(lo/res.length*100,1)+' %'],
+    ['обрізано зверху', fmt(hi/res.length*100,1)+' %']
+  ];
+  for(i=0;i<rows.length;i++){
+    capt(g,rows[i][0],bx,146+i*22,soft,11.5);
+    g.textAlign='right';
+    g.fillStyle=ink; g.font=mono(12.5,true);
+    g.fillText(rows[i][1],bx+bw,146+i*22);
+    g.textAlign='left';
+  }
+  g.fillStyle=amber; g.font=mono(11);
+  g.fillText('Значення поза 0…255 обрізаються',bx,272);
+  g.fillText('при показі — саме тому картинка',bx,290);
+  g.fillText('вибілюється або чорніє.',bx,308);
+  frameBox(g,14,14,912,302);
+}
+function meanOf(a){
+  var s=0, i;
+  for(i=0;i<a.length;i++) s+=a[i];
+  return s/a.length;
+}
+function updKern(){
+  var k=readKernel(), src=grayPhoto();
+  var sum=0, i;
+  for(i=0;i<9;i++) sum+=k[i];
+  var res=correlate(src,IW,IH,k,3,'r101');
+  var m=meanOf(res), min=meanOf(src);
+  I('knS').textContent=fmt(sum,3);
+  I('knM').textContent=fmt(m,1);
+  if(Math.abs(sum-1)<0.02){
+    verd('knVd','t-ok','СУМА 1 · ЯСКРАВІСТЬ ЗБЕРЕЖЕНО',
+      'Середнє входу '+fmt(min,1)+', середнє виходу '+fmt(m,1)+
+      '. Ядро перерозподіляє яскравість між сусідами, майже не міняючи загальної: '+
+      'різниця в '+fmt(Math.abs(m-min),2)+' береться лише з країв кадру.');
+  }else if(Math.abs(sum)<0.02){
+    verd('knVd','t-ok','СУМА 0 · ЦЕ ДЕТЕКТОР',
+      'Середнє виходу '+fmt(m,1)+' — практично нуль. На рівних ділянках таке ядро '+
+      'мовчить і спалахує лише там, де сусіди різні. Саме так шукають межі.');
+  }else{
+    verd('knVd','t-no','СУМА '+fmt(sum,2)+' · ЯСКРАВІСТЬ ПОЇХАЛА',
+      'Середнє входу '+fmt(min,1)+' перетворилось на '+fmt(m,1)+
+      ', бо кожен піксель помножився приблизно на '+fmt(sum,2)+
+      '. Поділи всі коефіцієнти на суму — і картинка повернеться.');
+  }
+  drawKern();
+}
+
+/* ═══ 4 · Краї зображення ══════════════════════════════════ */
+var EMODES=[
+  {n:'BORDER_CONSTANT', m:'const', d:'заповнює нулем'},
+  {n:'BORDER_REPLICATE', m:'rep', d:'розмножує крайній піксель'},
+  {n:'BORDER_REFLECT', m:'refl', d:'дзеркалить разом із крайнім'},
+  {n:'BORDER_REFLECT_101', m:'r101', d:'дзеркалить від крайнього'}
+];
+var edgeSel=3;
+function edgeCorner(mode){
+  var src=grayPhoto(), k1=gauss1d(9,1.6), k=outer(k1,9);
+  return correlate(src,IW,IH,k,9,mode);
+}
+function drawEdge(){
+  var cv=I('cEdge'); if(!cv) return;
+  var g=dpr(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), hair=css('--hair'),
+      teal=css('--teal'), paper=css('--paper');
+  var M=EMODES[edgeSel], src=grayPhoto();
+  var f=pick(M.m), i, j;
+
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Кут зображення числами',20,30);
+  capt(g,'сірі — справжні пікселі, рожеві — кадр',20,48,soft,10.5);
+
+  /* 6 × 6 справжніх пікселів плюс рамка в дві клітинки */
+  var N=6, PAD=2, cell=34, ox=20, oy=60;
+  for(i=-PAD;i<N;i++){
+    for(j=-PAD;j<N;j++){
+      var yy=f(i,IH), xx=f(j,IW);
+      var out=(i<0||j<0);
+      var v=(yy<0||xx<0)?0:src[yy*IW+xx];
+      var x=ox+(j+PAD)*cell, y=oy+(i+PAD)*cell;
+      g.fillStyle=out?css('--rose-w'):paper;
+      g.fillRect(x,y,cell-3,cell-3);
+      g.strokeStyle=out?rose:hair; g.lineWidth=1;
+      g.strokeRect(x+0.5,y+0.5,cell-4,cell-4);
+      g.fillStyle=out?rose:ink; g.font=mono(11.5,out);
+      g.textAlign='center';
+      g.fillText(String(Math.round(v)),x+(cell-3)/2,y+(cell-3)/2+4);
+    }
+  }
+  g.textAlign='left';
+  g.strokeStyle=teal; g.lineWidth=2;
+  g.strokeRect(ox+PAD*cell-2,oy+PAD*cell-2,N*cell+1,N*cell+1);
+  capt(g,'бірюзова рамка — саме зображення',ox,oy+(N+PAD)*cell+18,teal,11);
+  capt(g,M.n,ox,oy+(N+PAD)*cell+38,rose,12);
+  capt(g,M.d,ox,oy+(N+PAD)*cell+56,soft,11);
+
+  /* результат: кут після гаусового розмиття */
+  var res=edgeCorner(M.m), base=edgeCorner('r101');
+  var Z=44, k2=5.0, x0=350, x1=x0+Z*k2+24;
+  var cut=function(arr){
+    var o=new Float32Array(Z*Z), r, c;
+    for(r=0;r<Z;r++) for(c=0;c<Z;c++) o[r*Z+c]=arr[r*IW+c];
+    return o;
+  };
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Той самий кут після розмиття 9 × 9',x0,30);
+  capt(g,'ліворуч — обраний режим, праворуч — різниця з REFLECT_101',x0,48,soft,10.5);
+  blit(g,cut(res),Z,Z,x0,60,Z*k2,Z*k2,mGray);
+  frameBox(g,x0,60,Z*k2,Z*k2);
+  var diff=new Float32Array(Z*Z), r, c;
+  for(r=0;r<Z;r++) for(c=0;c<Z;c++) diff[r*Z+c]=Math.abs(res[r*IW+c]-base[r*IW+c])*3;
+  blit(g,diff,Z,Z,x1,60,Z*k2,Z*k2,mHot);
+  frameBox(g,x1,60,Z*k2,Z*k2);
+  if(edgeSel===3){
+    g.fillStyle=soft; g.font=mono(11.5,true); g.textAlign='center';
+    g.fillText('це і є еталон',x1+Z*k2/2,60+Z*k2/2);
+    g.textAlign='left';
+  }
+  capt(g,'результат',x0,60+Z*k2+18,soft,11);
+  capt(g,'де саме розійшлося',x1,60+Z*k2+18,soft,11);
+
+  var corner=res[0], baseC=base[0], ty=60+Z*k2+50;
+  g.fillStyle=ink; g.font=mono(13,true);
+  g.fillText('кут (0,0) = '+fmt(corner,2),x0,ty);
+  g.fillStyle=Math.abs(corner-baseC)>10?rose:teal; g.font=mono(13,true);
+  g.fillText('відхилення від REFLECT_101: '+fmt(corner-baseC,2),x0,ty+22);
+  g.fillStyle=soft; g.font=mono(11);
+  g.fillText('центр кадру в усіх режимах однаковий:',x0,ty+46);
+  g.fillText('кадр до нього просто не дотягується.',x0,ty+64);
+  frameBox(g,14,14,912,392);
+}
+function updEdge(){
+  var M=EMODES[edgeSel];
+  var res=edgeCorner(M.m), base=edgeCorner('r101');
+  var d=res[0]-base[0];
+  I('edC').textContent=fmt(res[0],2);
+  I('edD').textContent=(d>=0?'+':'')+fmt(d,2);
+  if(edgeSel===0){
+    verd('edVd','t-no','ЧОРНОТА, ЯКОЇ НЕ БУЛО',
+      'Кут став '+fmt(res[0],1)+' замість '+fmt(base[0],1)+
+      '. У кадр підставлено нулі, тобто чистий чорний, — і по всьому периметру '+
+      'зʼявилась темна рамка. Детектор меж знайде її як справжню межу.');
+  }else if(edgeSel===3){
+    verd('edVd','t-ok','ЗА ЗАМОВЧУВАННЯМ',
+      'Кут '+fmt(res[0],1)+'. Дзеркалення від крайнього пікселя не дублює його, '+
+      'тому на краю не виникає штучної сходинки з двох однакових значень.');
+  }else{
+    verd('edVd','t-mid','БЛИЗЬКО ДО ЕТАЛОНА',
+      'Кут '+fmt(res[0],1)+', відхилення '+fmt(d,2)+' рівня. Режим продовжує зображення '+
+      'його ж значеннями, тому нічого чужорідного на краю не зʼявляється.');
+  }
+  drawEdge();
+}
+
+/* ═══ 5 · Бокс проти гауса ═════════════════════════════════ */
+var blurSel=0;
+/* Python округлює половину до парного, JS — угору. Без цього розмір ядра
+   в інтерактиві розійшовся б із таблицею в тексті (грабля №13). */
+function pyRound(x){
+  var f=Math.floor(x), d=x-f;
+  if(Math.abs(d-0.5)<1e-9) return (f%2===0)?f:f+1;
+  return Math.round(x);
+}
+function blurKernel(sigma,isBox){
+  var ks=2*pyRound(3*sigma)+1;
+  if(ks<3) ks=3;
+  return {ks:ks, k1:isBox?box1d(ks):gauss1d(ks,sigma)};
+}
+function drawBlur(){
+  var cv=I('cBlur'); if(!cv) return;
+  var g=dpr(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), hair=css('--hair'),
+      teal=css('--teal');
+  var sigma=+I('sig6').value, isBox=(blurSel===1);
+  var K=blurKernel(sigma,isBox);
+  var src=grayPhoto();
+  var res=sepBlur(src,IW,IH,K.k1,K.ks);
+  var i, j;
+
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Фото після розмиття',20,26);
+  blit(g,res,IW,IH,20,38,320,240,mGray);
+  frameBox(g,20,38,320,240);
+  capt(g,(isBox?'бокс':'гаус')+' · ядро '+K.ks+' × '+K.ks+' · sigma '+fmt(sigma,1),20,296,soft);
+
+  /* відгук на одну точку */
+  var Z=41, imp=new Float32Array(Z*Z);
+  imp[20*Z+20]=255;
+  var half=(K.ks-1)/2, resp=new Float32Array(Z*Z), r, c, s, ii;
+  for(r=0;r<Z;r++) for(c=0;c<Z;c++){
+    s=0;
+    for(ii=0;ii<K.ks;ii++) s+=K.k1[ii]*imp[r*Z+ix101(c+ii-half,Z)];
+    resp[r*Z+c]=s;
+  }
+  var resp2=new Float32Array(Z*Z);
+  for(r=0;r<Z;r++) for(c=0;c<Z;c++){
+    s=0;
+    for(ii=0;ii<K.ks;ii++) s+=K.k1[ii]*resp[ix101(r+ii-half,Z)*Z+c];
+    resp2[r*Z+c]=s;
+  }
+  var peak=0;
+  for(i=0;i<resp2.length;i++) if(resp2[i]>peak) peak=resp2[i];
+  var norm=new Float32Array(Z*Z);
+  for(i=0;i<resp2.length;i++) norm[i]=resp2[i]/peak*255;
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Відгук на одну точку',372,26);
+  blit(g,norm,Z,Z,372,38,205,205,mHot);
+  frameBox(g,372,38,205,205);
+  capt(g,isBox?'квадрат — кути важать стільки ж':'кружечок — вага спадає рівномірно',
+       372,262,isBox?rose:teal,11);
+
+  /* переріз ядра */
+  var px=615, py=48, pw=305, ph=195;
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Переріз ядра',px,26);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.strokeRect(px+0.5,py+0.5,pw,ph);
+  var mxk=0;
+  for(i=0;i<K.ks;i++) if(K.k1[i]>mxk) mxk=K.k1[i];
+  var bw=Math.min(26,pw/(K.ks+1));
+  var cx=px+pw/2;
+  for(i=0;i<K.ks;i++){
+    var hgt=K.k1[i]/mxk*(ph-34);
+    var x=cx+(i-half)*bw-bw/2+1;
+    g.fillStyle=isBox?css('--rose-w'):css('--teal-w');
+    g.fillRect(x,py+ph-14-hgt,bw-2,hgt);
+    g.strokeStyle=isBox?rose:teal; g.lineWidth=1;
+    g.strokeRect(x+0.5,py+ph-14-hgt+0.5,bw-3,hgt);
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(px+6,py+ph-14); g.lineTo(px+pw-6,py+ph-14); g.stroke();
+  capt(g,'вага сусіда залежно від відстані',px,py+ph+18,soft,11);
+  capt(g,isBox?'усі однакові — сусід за 4 пікселі важить'
+              :'спадає за формулою дзвону: далекий сусід',px,py+ph+36,soft,11);
+  capt(g,isBox?'стільки ж, скільки сусід за 1'
+              :'майже нічого не важить',px,py+ph+54,soft,11);
+  frameBox(g,14,14,912,302);
+}
+function updBlur(){
+  var sigma=+I('sig6').value, isBox=(blurSel===1);
+  I('sig6o').textContent=fmt(sigma,1);
+  var K=blurKernel(sigma,isBox);
+  var k2=outer(K.k1,K.ks);
+  var share=cornerShare(k2,K.ks)*100;
+  var src=grayPhoto(), res=sepBlur(src,IW,IH,K.k1,K.ks);
+  /* шум міряємо на рівній ділянці стільниці — там немає нічого, крім шуму */
+  var r, c, n=0, s=0, s2=0, v;
+  for(r=6;r<26;r++) for(c=6;c<26;c++){ v=res[r*IW+c]; s+=v; s2+=v*v; n++; }
+  var sd=Math.sqrt(Math.max(s2/n-(s/n)*(s/n),0));
+  var n0=0, t=0, t2=0;
+  for(r=6;r<26;r++) for(c=6;c<26;c++){ v=src[r*IW+c]; t+=v; t2+=v*v; n0++; }
+  var sd0=Math.sqrt(Math.max(t2/n0-(t/n0)*(t/n0),0));
+  I('blK').textContent=K.ks+' × '+K.ks;
+  I('blM').textContent=(K.ks*K.ks)+' / '+(2*K.ks);
+  I('blC').textContent=fmt(share,share<1?2:1)+' %';
+  I('blN').textContent=fmt(sd,2);
+  if(isBox){
+    verd('blVd','t-no','КВАДРАТНІ АРТЕФАКТИ',
+      fmt(share,share<1?2:1)+' % ваги ядра лежить у кутах, поза вписаним колом. Точка '+
+      'розпливається квадратом, а не кружечком. Шум упав із '+fmt(sd0,2)+' до '+
+      fmt(sd,2)+' — трохи краще за гаус тим самим вікном, і це вся його перевага.');
+  }else{
+    verd('blVd','t-ok','РОЗМИТТЯ ОДНАКОВЕ В УСІ БОКИ',
+      'У кутах ядра лишилось '+fmt(share,share<1?2:1)+' % ваги, тому точка стає кружечком. '+
+      'Шум упав із '+fmt(sd0,2)+' до '+fmt(sd,2)+'. Ядро '+K.ks+' × '+K.ks+
+      ' коштує '+(K.ks*K.ks)+' множень на піксель, а двома проходами — лише '+(2*K.ks)+'.');
+  }
+  drawBlur();
+}
+
+/* ═══ 6 · Собель ═══════════════════════════════════════════ */
+var SOBK=[-1,0,1,-2,0,2,-1,0,1];
+var SOBKY=[-1,-2,-1,0,0,0,1,2,1];
+var sobSel=2;
+var SOBC=null;
+function sobelData(){
+  if(SOBC) return SOBC;
+  var src=grayPhoto();
+  var gx=correlate(src,IW,IH,SOBK,3,'r101');
+  var gy=correlate(src,IW,IH,SOBKY,3,'r101');
+  var mag=new Float32Array(IW*IH), ang=new Float32Array(IW*IH), i;
+  for(i=0;i<gx.length;i++){
+    mag[i]=Math.sqrt(gx[i]*gx[i]+gy[i]*gy[i]);
+    ang[i]=Math.atan2(gy[i],gx[i]);
+  }
+  SOBC={gx:gx, gy:gy, mag:mag, ang:ang, src:src};
+  return SOBC;
+}
+/* середній модуль обраного каналу на прямокутній ділянці */
+function meanAbs(arr,r0,r1,c0,c1){
+  var r, c, s=0, n=0;
+  for(r=r0;r<r1;r++) for(c=c0;c<c1;c++){ s+=Math.abs(arr[r*IW+c]); n++; }
+  return s/n;
+}
+/* ділянки на фото: бічна грань корпусу і верхня грань */
+var VBOX={r0:40, r1:88, c0:46, c1:51};
+var HBOX={r0:10, r1:15, c0:62, c1:100};
+function drawSob(){
+  var cv=I('cSob'); if(!cv) return;
+  var g=dpr(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), hair=css('--hair'),
+      teal=css('--teal');
+  var D=sobelData(), i;
+  var arr, map, name;
+  if(sobSel===0){ arr=D.gx; map=mSigned; name='gx · відгук на вертикальні межі'; }
+  else if(sobSel===1){ arr=D.gy; map=mSigned; name='gy · відгук на горизонтальні межі'; }
+  else if(sobSel===2){ arr=D.mag; map=mHot; name='модуль градієнта · сила межі'; }
+  else{
+    arr=new Float32Array(IW*IH);
+    for(i=0;i<arr.length;i++) arr[i]=D.mag[i]>60?(D.ang[i]+Math.PI):-1;
+    map=function(v){
+      if(v<0) return [26,30,36];
+      var t=v/(2*Math.PI)*6, s=Math.floor(t), fr=t-s;
+      var tab=[[240,80,90],[240,200,70],[110,220,110],[70,210,220],[110,130,240],[230,100,220],[240,80,90]];
+      var a=tab[s%6], b=tab[(s+1)%6];
+      return [Math.round(a[0]+(b[0]-a[0])*fr),Math.round(a[1]+(b[1]-a[1])*fr),
+              Math.round(a[2]+(b[2]-a[2])*fr)];
+    };
+    name='напрямок градієнта · колір = кут';
+  }
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText(name,20,30);
+  blit(g,arr,IW,IH,20,42,400,300,map);
+  frameBox(g,20,42,400,300);
+
+  /* рамки ділянок, на яких рахуються числа */
+  var kx=400/IW, ky=300/IH;
+  g.strokeStyle=teal; g.lineWidth=2;
+  g.strokeRect(20+VBOX.c0*kx,42+VBOX.r0*ky,(VBOX.c1-VBOX.c0)*kx,(VBOX.r1-VBOX.r0)*ky);
+  g.strokeStyle=rose;
+  g.strokeRect(20+HBOX.c0*kx,42+HBOX.r0*ky,(HBOX.c1-HBOX.c0)*kx,(HBOX.r1-HBOX.r0)*ky);
+
+  /* легенда кольору для режиму «напрямок» */
+  if(sobSel===3){
+    var lw=260, li;
+    for(li=0;li<lw;li++){
+      var col=map(li/lw*2*Math.PI);
+      g.fillStyle='rgb('+col[0]+','+col[1]+','+col[2]+')';
+      g.fillRect(20+li,352,1,12);
+    }
+    frameBox(g,20,352,lw,12);
+    capt(g,'кут градієнта від 0° до 360°',20+lw+12,362,soft,10.5);
+  }else{
+    capt(g,'бірюзова рамка — вертикальна межа, рожева — горизонтальна',20,362,soft,10.5);
+  }
+
+  /* збільшені фрагменти: один під одним, щоб підписи не наїжджали */
+  var x0=460, zk=3.4;
+  var cutBox=function(bx){
+    var w=bx.c1-bx.c0+16, h=bx.r1-bx.r0+8;
+    var c0=Math.max(0,bx.c0-8), r0=Math.max(0,bx.r0-4);
+    var o=new Float32Array(w*h), r, c;
+    for(r=0;r<h;r++) for(c=0;c<w;c++) o[r*w+c]=arr[(r0+r)*IW+(c0+c)];
+    return {a:o, w:w, h:h};
+  };
+  var A=cutBox(VBOX), B=cutBox(HBOX);
+  g.fillStyle=teal; g.font=mono(11.5,true);
+  g.fillText('вертикальна межа',x0,58);
+  blit(g,A.a,A.w,A.h,x0,66,A.w*zk,A.h*zk,map);
+  frameBox(g,x0,66,A.w*zk,A.h*zk);
+  g.fillStyle=rose; g.font=mono(11.5,true);
+  g.fillText('горизонтальна межа',x0,296);
+  blit(g,B.a,B.w,B.h,x0,304,B.w*zk,B.h*zk,map);
+  frameBox(g,x0,304,B.w*zk,B.h*zk);
+
+  var vv=meanAbs(arr,VBOX.r0,VBOX.r1,VBOX.c0,VBOX.c1);
+  var hh=meanAbs(arr,HBOX.r0,HBOX.r1,HBOX.c0,HBOX.c1);
+  var nx=700;
+  g.fillStyle=teal; g.font=mono(11.5,true);
+  g.fillText('вертикальна',nx,80);
+  g.fillStyle=ink; g.font=mono(20,true);
+  g.fillText(fmt(vv,1),nx,110);
+  g.fillStyle=rose; g.font=mono(11.5,true);
+  g.fillText('горизонтальна',nx,146);
+  g.fillStyle=ink; g.font=mono(20,true);
+  g.fillText(fmt(hh,1),nx,176);
+  g.fillStyle=soft; g.font=mono(11);
+  if(sobSel<2){
+    g.fillText('одне ядро бачить лише',nx,214);
+    g.fillText('«свою» межу, а на чужій',nx,232);
+    g.fillText('дає майже нуль.',nx,250);
+  }else if(sobSel===2){
+    g.fillText('модуль складає внески',nx,214);
+    g.fillText('двох ядер, тому бачить',nx,232);
+    g.fillText('обидві межі однаково.',nx,250);
+  }else{
+    g.fillText('колір кодує кут: бічна',nx,214);
+    g.fillText('й верхня грані різні,',nx,232);
+    g.fillText('бо межі різні.',nx,250);
+  }
+  frameBox(g,14,14,912,372);
+}
+function updSob(){
+  var D=sobelData(), arr;
+  if(sobSel===0) arr=D.gx;
+  else if(sobSel===1) arr=D.gy;
+  else arr=D.mag;
+  var vv=meanAbs(arr,VBOX.r0,VBOX.r1,VBOX.c0,VBOX.c1);
+  var hh=meanAbs(arr,HBOX.r0,HBOX.r1,HBOX.c0,HBOX.c1);
+  I('soV').textContent=fmt(vv,1);
+  I('soH').textContent=fmt(hh,1);
+  if(sobSel===0){
+    verd('soVd','t-no','ГОРИЗОНТАЛЬНА МЕЖА НЕ ВИДНА',
+      'Ядро gx дає '+fmt(vv,1)+' на вертикальній межі й лише '+fmt(hh,1)+
+      ' на горизонтальній — у '+fmt(vv/Math.max(hh,0.01),0)+' '+
+      razWord(Math.round(vv/Math.max(hh,0.01)))+' менше. '+
+      'Верхня грань корпусу для нього просто не існує.');
+  }else if(sobSel===1){
+    verd('soVd','t-no','ВЕРТИКАЛЬНА МЕЖА НЕ ВИДНА',
+      'Дзеркальна картина: '+fmt(hh,1)+' на горизонтальній межі проти '+fmt(vv,1)+
+      ' на вертикальній. Кожне ядро сліпе рівно до тієї межі, на яку не розраховане.');
+  }else if(sobSel===2){
+    verd('soVd','t-ok','ОБИДВІ МЕЖІ ВИДНО',
+      'Модуль √(gx² + gy²) складає внески двох ядер: '+fmt(vv,1)+' і '+fmt(hh,1)+
+      '. Ціна — ми втратили інформацію про напрямок, лишилась тільки сила.');
+  }else{
+    verd('soVd','t-mid','НАПРЯМОК ЗБЕРІГАЄ ТЕ, ЩО ВТРАЧАЄ МОДУЛЬ',
+      'Колір кодує кут градієнта — він завжди перпендикулярний до самої межі. '+
+      'Бічна й верхня грані корпусу пофарбовані різними кольорами; сила межі тут '+
+      'не показана взагалі (числа в табло лишаються від модуля: '+fmt(vv,1)+
+      ' і '+fmt(hh,1)+').');
+  }
+  drawSob();
+}
+
+/* ═══ 7 · Кенні по кроках ══════════════════════════════════ */
+var cnSel=3, CNC=null;
+function cannyBase(){
+  if(CNC) return CNC;
+  var src=grayPhoto();
+  var sm=sepBlur(src,IW,IH,gauss1d(5,1.2),5);
+  var gx=correlate(sm,IW,IH,SOBK,3,'rep');
+  var gy=correlate(sm,IW,IH,SOBKY,3,'rep');
+  var mag=new Float32Array(IW*IH), i, r, c;
+  for(i=0;i<mag.length;i++) mag[i]=Math.sqrt(gx[i]*gx[i]+gy[i]*gy[i]);
+  /* притлумлення немаксимумів: рядки ростуть УНИЗ, тому діагоналі саме такі */
+  var thin=new Float32Array(IW*IH), a, n1, n2;
+  for(r=1;r<IH-1;r++) for(c=1;c<IW-1;c++){
+    i=r*IW+c;
+    a=Math.atan2(gy[i],gx[i])*180/Math.PI;
+    a=((a%180)+180)%180;
+    if(a<22.5||a>=157.5){ n1=mag[i-1]; n2=mag[i+1]; }
+    else if(a<67.5){ n1=mag[i-IW-1]; n2=mag[i+IW+1]; }
+    else if(a<112.5){ n1=mag[i-IW]; n2=mag[i+IW]; }
+    else{ n1=mag[i-IW+1]; n2=mag[i+IW-1]; }
+    if(mag[i]>=n1 && mag[i]>=n2) thin[i]=mag[i];
+  }
+  CNC={src:src, sm:sm, mag:mag, thin:thin};
+  return CNC;
+}
+/* гістерезис: від кожного сильного пікселя розповзаємось по кандидатах */
+function hysteresis(thin,lo,hi){
+  var out=new Uint8Array(IW*IH), stack=[], i, r, c, dr, dc, j;
+  for(i=0;i<thin.length;i++) if(thin[i]>=hi){ out[i]=2; stack.push(i); }
+  while(stack.length){
+    i=stack.pop();
+    r=Math.floor(i/IW); c=i%IW;
+    for(dr=-1;dr<=1;dr++) for(dc=-1;dc<=1;dc++){
+      if(r+dr<0||r+dr>=IH||c+dc<0||c+dc>=IW) continue;
+      j=(r+dr)*IW+(c+dc);
+      if(!out[j] && thin[j]>=lo){ out[j]=1; stack.push(j); }
+    }
+  }
+  return out;
+}
+function drawCanny(){
+  var cv=I('cCanny'); if(!cv) return;
+  var g=dpr(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), hair=css('--hair'),
+      teal=css('--teal'), amber=css('--amber');
+  var D=cannyBase(), lo=+I('lo7').value, hi=+I('hi7').value;
+  if(hi<=lo) hi=lo+5;
+  var edges=hysteresis(D.thin,lo,hi), i;
+  var arr, map, name, sub;
+  if(cnSel===0){ arr=D.sm; map=mGray; name='Крок 1 · згладжене зображення';
+                 sub='гаус sigma 1.2 — інакше Собель підсилить шум'; }
+  else if(cnSel===1){ arr=D.mag; map=mHot; name='Крок 2 · модуль градієнта';
+                 sub='межі є, але завтовшки в кілька пікселів'; }
+  else if(cnSel===2){
+    arr=new Float32Array(IW*IH);
+    for(i=0;i<arr.length;i++) arr[i]=D.thin[i];
+    map=function(v){
+      if(v>=hi) return [250,90,130];
+      if(v>=lo) return [245,190,80];
+      if(v>0) return [60,70,82];
+      return [20,24,30];
+    };
+    name='Крок 3 · тільки гребені';
+    sub='рожеві — сильні, жовті — кандидати, сірі — нижче порога';
+  }else{
+    arr=new Float32Array(IW*IH);
+    for(i=0;i<arr.length;i++) arr[i]=edges[i];
+    map=function(v){
+      if(v===2) return [250,90,130];
+      if(v===1) return [245,190,80];
+      return [20,24,30];
+    };
+    name='Крок 4 · межі після гістерезису';
+    sub='жовті пікселі врятовані сполученістю із сильними';
+  }
+  g.textAlign='left'; g.textBaseline='alphabetic';
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText(name,20,26);
+  capt(g,sub,20,44,soft);
+  blit(g,arr,IW,IH,20,56,480,360,map);
+  frameBox(g,20,56,480,360);
+
+  /* розподіл модуля після притлумлення + два пороги */
+  var px=540, py=76, pw=380, ph=280;
+  g.fillStyle=ink; g.font=sans(13);
+  g.fillText('Розподіл модуля на гребенях',px,26);
+  capt(g,'скільки пікселів має яку силу межі',px,44,soft);
+  var BINS=48, MAXM=320, hist=new Float64Array(BINS), b;
+  for(i=0;i<D.thin.length;i++) if(D.thin[i]>1){
+    b=Math.floor(D.thin[i]/MAXM*BINS);
+    if(b>=BINS) b=BINS-1;
+    hist[b]++;
+  }
+  var mxh=0;
+  for(i=0;i<BINS;i++) if(hist[i]>mxh) mxh=hist[i];
+  g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(px+0.5,py+0.5,pw,ph);
+  var bwid=pw/BINS;
+  for(i=0;i<BINS;i++){
+    var val=(i+0.5)/BINS*MAXM;
+    var hgt=Math.sqrt(hist[i]/mxh)*(ph-16);
+    g.fillStyle=val>=hi?css('--rose-w'):(val>=lo?css('--amber-w'):css('--teal-w'));
+    g.fillRect(px+i*bwid+0.5,py+ph-hgt,bwid-1,hgt);
+  }
+  var xOf=function(v){ return px+Math.min(v,MAXM)/MAXM*pw; };
+  g.strokeStyle=amber; g.lineWidth=2; g.setLineDash([5,4]);
+  g.beginPath(); g.moveTo(xOf(lo),py); g.lineTo(xOf(lo),py+ph); g.stroke();
+  g.strokeStyle=rose;
+  g.beginPath(); g.moveTo(xOf(hi),py); g.lineTo(xOf(hi),py+ph); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle=amber; g.font=mono(11,true);
+  g.fillText('нижній '+lo,Math.min(xOf(lo)+5,px+pw-70),py+16);
+  g.fillStyle=rose;
+  g.fillText('верхній '+hi,Math.min(xOf(hi)+5,px+pw-74),py+34);
+  capt(g,'0',px,py+ph+16,soft,10.5);
+  capt(g,String(MAXM),px+pw-24,py+ph+16,soft,10.5);
+  capt(g,'модуль градієнта',px+pw/2-48,py+ph+16,soft,10.5);
+
+  var strong=0, saved=0, total=0;
+  for(i=0;i<edges.length;i++){
+    if(edges[i]===2){ strong++; total++; }
+    else if(edges[i]===1){ saved++; total++; }
+  }
+  g.fillStyle=ink; g.font=mono(12.5,true);
+  g.fillText('сильних: '+strong,px,py+ph+44);
+  g.fillText('урятовано сполученістю: '+saved,px,py+ph+64);
+  g.fillText('разом межі: '+total+' '+pxWord(total),px,py+ph+84);
+  frameBox(g,14,14,912,442);
+}
+function updCanny(){
+  var lo=+I('lo7').value, hi=+I('hi7').value;
+  I('lo7o').textContent=String(lo);
+  I('hi7o').textContent=String(hi);
+  if(hi<=lo){
+    hi=lo+5;
+    I('hi7').value=String(hi);
+    I('hi7o').textContent=String(hi);
+  }
+  var D=cannyBase(), edges=hysteresis(D.thin,lo,hi), i, strong=0, saved=0;
+  for(i=0;i<edges.length;i++){
+    if(edges[i]===2) strong++;
+    else if(edges[i]===1) saved++;
+  }
+  var total=strong+saved;
+  I('cnN').textContent=String(total);
+  I('cnS').textContent=String(strong);
+  if(total===0){
+    verd('cnVd','t-no','МЕЖ НЕ ЛИШИЛОСЬ',
+      'Верхній поріг '+hi+' вищий за будь-який модуль на гребенях, тому жоден піксель '+
+      'не став беззаперечною межею, а без них немає від чого рятувати слабкі.');
+  }else if(saved/total>0.5){
+    verd('cnVd','t-ok','ГІСТЕРЕЗИС ПРАЦЮЄ НА ПОВНУ',
+      'Сильних пікселів лише '+strong+', але сполученістю врятовано ще '+saved+
+      ' — тобто '+fmt(saved/total*100,0)+' % контуру. Саме це й не дає межам '+
+      'розсипатися на пунктир.');
+  }else if(total>900){
+    verd('cnVd','t-no','ПОРОГИ ЗАНАДТО НИЗЬКІ',
+      total+' пікселів межі — це вже не контури, а шум матриці, який пройшов крізь '+
+      'обидва пороги. Підніми нижній: він вирішує, кого взагалі розглядати.');
+  }else{
+    verd('cnVd','t-mid','РОЗУМНИЙ БАЛАНС',
+      total+' пікселів межі: '+strong+' беззаперечних і '+saved+' урятованих. '+
+      'Підніми верхній поріг — контур почне рватися; опусти нижній — полізе шум.');
+  }
+  drawCanny();
+}
+
+/* ═══════ монтаж ═══════ */
+function drawAll(){
+  drawStep(); drawCorr(); drawKern(); drawEdge(); drawBlur(); drawSob(); drawCanny();
+}
+function segWire(id,fn){
+  var btns=document.querySelectorAll('#'+id+' button');
+  Array.prototype.forEach.call(btns,function(b){
+    b.addEventListener('click',function(){
+      Array.prototype.forEach.call(btns,function(o){
+        o.setAttribute('aria-pressed', o===b ? 'true':'false');
+      });
+      fn(+b.getAttribute('data-i'));
+    });
+  });
+}
+segWire('stepSeg',function(i){ stepSel=i; stepPos=0; updStep(); });
+segWire('corrSeg',function(i){ corrSel=i; updCorr(); });
+segWire('corrOp',function(i){ corrOp=i; updCorr(); });
+segWire('edgeSeg',function(i){ edgeSel=i; updEdge(); });
+segWire('blurSeg',function(i){ blurSel=i; updBlur(); });
+segWire('sobSeg',function(i){ sobSel=i; updSob(); });
+segWire('cnSeg',function(i){ cnSel=i; updCanny(); });
+segWire('kernSeg',function(i){
+  var j;
+  for(j=0;j<9;j++) I('k'+j).value=KPRELAB[i][j];
+  updKern();
+});
+
+on('stNext','click',function(){ if(stepPos<9){ stepPos++; updStep(); } });
+on('stAll','click',function(){ stepPos=9; updStep(); });
+on('stReset','click',function(){ stepPos=0; updStep(); });
+var kk;
+for(kk=0;kk<9;kk++) on('k'+kk,'input',updKern);
+on('sig6','input',updBlur);
+on('lo7','input',updCanny);
+on('hi7','input',updCanny);
+
+updStep(); updCorr(); updKern(); updEdge(); updBlur(); updSob(); updCanny();
+
+window.addEventListener('resize',drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change',drawAll);
+}
+})();
+</script>
+</body>
+</html>

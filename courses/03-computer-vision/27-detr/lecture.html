@@ -1,0 +1,1990 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DETR: детекція як передбачення множини</title>
+<meta name="description" content="DETR прибирає останню рукотворну деталь детектора — NMS. Детекція як передбачення множини: мережа видає N = 10 запитів, і набір цілком зіставляється з розміткою угорським алгоритмом. Свій scipy.optimize.linear_sum_assignment проти власної реалізації — нуль розбіжностей на 300 матрицях; жадібне зіставлення розходиться з оптимальним на 11.7 % сцен свіжої мережі. Без однозначного зіставлення запити колапсують: розкид центрів між запитами 0.18 px проти 9.16 px. Своя маленька DETR на сценах 64×64: mAP@0.5 = 0.3869 проти 0.9380 в anchor-free при тому самому бюджеті епох — ціна повільної збіжності. Дублікатів до NMS: 0.40 пари на сцену проти 10.63. На сцені, де NMS губить предмет (IoU 0.703), повнота DETR 0.983 проти 0.500.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* грабля №3: під uppercase латинська N і грецькі літери псуються.
+   Правило .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw{text-transform:none}
+
+/* у перемикачі «жадібно / угорський» дві кнопки, а у виборі ваг — три */
+.seg.wrap button{flex:1 1 30%}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 5 · Тема 27</p>
+    <h1>DETR: детекція як передбачення множини</h1>
+    <p class="stand">Із детектора по черзі прибрали кандидат-області, потім якорі. Лишився
+      NMS — останній крок конвеєра, який ніхто не вчить і який назавжди губить предмети,
+      що стоять поруч. DETR прибирає і його, але не хитрішим фільтром: він міняє саме
+      питання, на яке відповідає мережа.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Що ще лишилось рукотворного</a></li>
+        <li><a href="#s2">Детекція як передбачення множини</a></li>
+        <li><a href="#s3">Фіксований набір запитів</a></li>
+        <li><a href="#s4">Угорське зіставлення</a></li>
+        <li><a href="#s5">Вартість зіставлення</a></li>
+        <li><a href="#s6">Втрата після зіставлення</a></li>
+        <li><a href="#s7">Архітектура</a></li>
+        <li><a href="#s8">Запити спеціалізуються</a></li>
+        <li><a href="#s9">Своя DETR</a></li>
+        <li><a href="#s10">Ціна: збіжність</a></li>
+        <li><a href="#s11">Дрібні предмети</a></li>
+        <li><a href="#s12">Що з цього лишилось</a></li>
+        <li><a href="#s13">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../26-one-stage/lecture.html">← 26. Одноетапні: focal loss і anchor-free</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../28-detection-practice/lecture.html">28. Детекція на практиці →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Останні три теми були про те, як із детектора по черзі викидали
+рукотворні деталі. <a href="../24-two-stage/lecture.html">Тема 24</a> прибрала окремий
+етап пошуку кандидат-областей, <a href="../26-one-stage/lecture.html">тема 26</a> —
+якорі, тобто набір заготовлених рамок, які доводилось вгадувати під датасет. Лишилась
+одна деталь, і вона стоїть у самому кінці конвеєра: <b>NMS</b>. Мережа видає сотні
+рамок, серед них купа дублікатів, і окремий алгоритм прибирає зайві за жорстким
+порогом. Він не вчиться, він не знає нічого про картинку, і — найгірше — він регулярно
+викидає не дублікат, а справжній другий предмет. Ця тема прибирає й NMS. Не хитрішим
+фільтром, а зміною самого питання, на яке відповідає мережа.</p>
+
+<h2 id="s1"><span class="num">01 / Залишок</span>Що ще лишилось рукотворного</h2>
+
+<p>Зберемо докупи, що саме прибрали попередні теми, і чого це коштувало.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>деталь</th><th>хто прибрав і чим замінив</th></tr>
+  <tr><td>кандидат-області</td><td>тема 24 показала, чому їх виносили в окремий етап; тема 25 прибрала цей етап зовсім — вся сцена обробляється за один прохід</td></tr>
+  <tr><td>якорі</td><td>тема 26: замість заготовлених рамок позиція передбачає чотири відстані до країв предмета. Голова стала втричі легшою, а <code>mAP</code> зріс із 0.8610 до 0.9187</td></tr>
+  <tr><td>вибірка негативних</td><td>тема 26: focal loss тлумить легкі приклади замість того, щоб їх викидати</td></tr>
+  <tr><td>NMS</td><td><b>нічим</b></td></tr>
+</table></div>
+
+<p>Чому NMS узагалі потрібен, зрозуміло: щільна голова питає про предмет у кожній
+позиції карти ознак, тож сусідні позиції описують той самий предмет і дають майже
+однакові рамки. Наш anchor-free детектор із теми 26 на перевірному наборі видає
+<b>7.91</b> передбачення на сцену з оцінкою не нижчою за 0.3 — при тому що предметів у сцені в
+середньому <b>2.06</b>. Пар передбачень, які накривають одне одного з IoU більшим за
+0.7, у нього <b>10.63 на сцену</b>: дублікати не виняток, а норма. NMS зрізає ці 7.91
+до 2.25 і залишає нуль таких пар.</p>
+
+<p>Здавалося б, працює. Але подивись на ціну. NMS діє за одним-єдиним правилом: узяти
+найвпевненішу рамку, викинути всі, що перекриваються з нею сильніше за поріг,
+повторити. Правило нічого не знає про те, чи перекриті рамки описують один предмет,
+чи два різні. <a href="../23-detection-setup/lecture.html">Тема 23</a> заміряла це
+прямо: дві рамки 60 × 120, зсунуті на 10 пікселів, мають IoU <b>0.7143</b> — і при
+будь-якому з трьох звичних порогів (0.3, 0.5, 0.7) з двох рамок лишається
+<b>одна</b>. Це не крайній випадок: так виглядає будь-яка вулична сцена, де людина
+стоїть за людиною або машина за машиною.</p>
+
+<div class="note warn"><b>Тут не допоможе підбір порога.</b> Опустиш поріг — почнеш
+губити ще більше справжніх предметів. Піднімеш — повернуться дублікати, і точність
+впаде. Тема 23 показала цей обмін у числах: жадібний поріг 0.1 підняв точність,
+але вибив частину істинних рамок. Порога, який розрізняє «дублікат» і «другий
+предмет», не існує, бо на вході в NMS цієї інформації просто немає.</div>
+
+<p>Отже, проблема не в порозі, а в тому, що дублікати взагалі зʼявляються. І тут
+напрошується інша думка: а що, як їх не породжувати?</p>
+
+<h2 id="s2"><span class="num">02 / Множина</span>Детекція як передбачення множини</h2>
+
+<p>Усі детектори, які ми розібрали, відповідають на питання «що в цій позиції?» —
+і повторюють це питання для кожної позиції сітки, кожного якоря, кожної
+кандидат-області. Відповідь виходить довгим списком оцінок, який потім треба
+причісувати.</p>
+
+<p>DETR (detection transformer, 2020) ставить питання інакше: <b>назви всі предмети
+сцени одразу, як один набір</b>. Не «чи є предмет у клітинці (3, 5)», а «ось сцена —
+перелічи, що на ній є». Вихід мережі — не карта оцінок, а фіксований список із
+<code>N</code> позицій, кожна з яких або називає предмет із рамкою, або каже
+«порожньо».</p>
+
+<p>Це звучить як косметична зміна формулювання, але з неї одразу випливає технічна
+проблема, якої не було раніше. <b>Множина не має порядку.</b> Якщо мережа сказала
+«коло ліворуч, квадрат праворуч», а розмітка каже «квадрат праворуч, коло ліворуч» —
+це та сама відповідь. Але функція втрати працює з числами, і якщо порівнювати
+передбачення з розміткою попарно за індексом (перше з першим, друге з другим), та сама
+правильна відповідь дістане різну втрату залежно від того, у якому порядку її записали.
+Мережа почне вчити не «що на сцені», а «в якому порядку про це звітувати».</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Множина не має порядку, а втрата за індексом — має</p>
+  <p class="fig-sub">Ліворуч сцена: дві істинні рамки й чотири передбачення. Кнопки
+    міняють <b>лише порядок</b> передбачень у списку — самі рамки не рухаються.
+    Праворуч дві втрати: наївна попарно за індексом і та, що спершу зіставляє.</p>
+  <div class="panel">
+    <div><canvas id="cOrd" width="940" height="420" aria-label="Сцена з двома істинними рамками та чотирма передбаченнями; праворуч стовпчики двох варіантів втрати при різних перестановках"></canvas></div>
+    <div>
+      <span class="cap">порядок передбачень</span>
+      <div class="seg wrap" id="segOrd">
+        <button type="button" data-i="0" aria-pressed="false">1 2 3 4</button>
+        <button type="button" data-i="1" aria-pressed="true">2 1 3 4</button>
+        <button type="button" data-i="2" aria-pressed="false">3 4 1 2</button>
+        <button type="button" data-i="3" aria-pressed="false">4 3 2 1</button>
+        <button type="button" data-i="4" aria-pressed="false">2 4 1 3</button>
+        <button type="button" data-i="5" aria-pressed="false">3 1 4 2</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>втрата за індексом</b><i id="oIdx">—</i></div>
+        <div class="cellv"><b>втрата після зіставлення</b><i id="oSet">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>розмах по всіх 24 перестановках</b><i id="oRange" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="oVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Обидві втрати рахуються тут же, у браузері, за формулою з розділу 5.</b>
+    Права цифра не змінюється жодного разу — зіставлення шукає найдешевшу пару, і йому
+    байдуже, у якому рядку списку вона лежить. Ліва стрибає в девʼять разів, хоча
+    жодна рамка не зрушила з місця.</figcaption>
+</figure>
+
+<p>Висновок із цієї картинки й є ключем до всієї теми. Щоб навчати мережу на множині,
+потрібна втрата, яка <b>не залежить від порядку</b>. Такі втрати будують так: спершу
+знайти найкращу відповідність між передбаченнями й істинами, потім штрафувати вже
+знайдені пари. Перший крок і зветься <b>зіставленням</b> (matching).</p>
+
+<h2 id="s3"><span class="num">03 / Запити</span>Фіксований набір запитів</h2>
+
+<p>Скільки позицій має бути у списку? Предметів на сцені може бути один, а може
+двадцять. Мережа з виходом змінної довжини — річ незручна: тензори фіксованого розміру
+доводиться десь обрізати або доповнювати.</p>
+
+<p>DETR робить простіше: список <b>завжди однакової довжини</b> <code>N</code>. Ця
+<code>N</code> — гіперпараметр, і вона свідомо береться з запасом, більшою за
+максимальну кількість предметів у сцені. В оригінальній статті на COCO вона дорівнює
+<b>100</b>. У нашій маленькій моделі предметів у сцені щонайбільше три, тож ми беремо
+<code>N = 10</code>.</p>
+
+<p>Кожна з <code>N</code> позицій називається <b>запитом</b> (query). Запит — це
+навчуваний вектор, з яким мережа приходить до карти ознак і питає: «а що тут для
+мене?». Запитів рівно <code>N</code>, вони однакові для всіх картинок, і кожен віддає
+одну відповідь: клас плюс рамка.</p>
+
+<p>Але предметів же менше, ніж запитів. Куди дівати зайві? До списку класів додають
+ще один, службовий — <b>«порожньо»</b> (в оригіналі ∅, no object). Запит, якому нічого
+не дісталось, каже «порожньо», і його рамка нікого не цікавить.</p>
+
+<div class="note"><b>Це не марнотратство.</b> Запити не змагаються за обчислення: усі
+десять проходять крізь ту саму мережу одним тензором, і десятий коштує рівно стільки
+ж, скільки перший. Для порівняння: наша щільна голова з теми 26 рахує оцінку в
+64 позиціях × 3 класи = 192 числа на сцену, тобто в <b>девʼятнадцять</b> разів більше
+рішень, ніж десять запитів DETR. Дорого не «мати запас», дорого — питати про кожну
+точку карти.</div>
+
+<p>У навченій моделі «порожньо» справді стає найчастішою відповіддю. Наша DETR на
+120 перевірних сценах видає 1 200 рішень, і <b>49.4 %</b> із них — «порожньо». Кожен
+із десяти запитів мовчить у 37-62 % сцен; жоден не мовчить завжди й жоден не говорить
+завжди. Не-порожніх відповідей виходить <b>5.06</b> на сцену при 2.06 істинних
+рамках — модель усе ще перестраховується, але помірно: щільна голова з теми 26 при
+порозі 0.3 віддає <b>7.91</b>, а до порога — усі 64 позиції.</p>
+
+<h2 id="s4"><span class="num">04 / Зіставлення</span>Угорське зіставлення</h2>
+
+<p>Задача звучить так. Є <code>N</code> передбачень і <code>M</code> істинних рамок,
+причому <code>M</code> зазвичай набагато менше. Треба кожній істині призначити рівно
+одне передбачення так, щоб сумарно вийшло якнайкраще. «Якнайкраще» треба чимось
+міряти — для кожної пари «передбачення <i>i</i>, істина <i>j</i>» рахують число, яке
+називають <b>вартістю</b>: чим воно менше, тим краще пара пасує одна одній. З цих
+чисел складається таблиця <code>N</code> × <code>M</code> — <b>матриця вартості</b>.</p>
+
+<p>Розберімо руками. Три передбачення, дві істини, вартості такі (менше — краще):</p>
+
+<div class="eq left">        І1     І2
+  П1   0.30   0.40
+  П2   0.35   0.90
+  П3   1.20   1.30</div>
+
+<p>Найочевидніший спосіб — жадібний: знайти в усій таблиці найменше число, зафіксувати
+цю пару, викреслити її рядок і стовпець, повторити. Найменше тут — <code>0.30</code>
+у клітинці П1-І1. Викреслюємо перший рядок і перший стовпець. У тому, що лишилось,
+найменше — <code>0.90</code> у П2-І2. Сума: <code>0.30 + 0.90 = 1.20</code>.</p>
+
+<p>А тепер спробуймо інакше: П1 віддамо другій істині (<code>0.40</code>), а першу
+візьме П2 (<code>0.35</code>). Сума: <code>0.75</code>. Це на <b>0.45</b> дешевше — і
+жодного хитрого прийому тут немає, просто жадібний алгоритм на першому кроці забрав
+П1 собі, не подивившись, що П1 — єдиний, хто взагалі непогано пасує до І2.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · що ми шукаємо</span>
+    <p>Потрібне <b>призначення</b>: набір пар, у якому кожне передбачення бере
+    щонайбільше одну істину, кожна істина дістає рівно одне передбачення, а сума
+    вартостей вибраних пар мінімальна.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · перебрати не вийде</span>
+    <p>При <code>N = 10</code> і <code>M = 3</code> варіантів
+    <code>10 × 9 × 8 = 720</code> — ще можна. Але на COCO <code>N = 100</code>, і
+    навіть при <code>M = 7</code> варіантів уже 80 678 106 432 000 — вісімдесят
+    трильйонів. І це для однієї картинки з партії.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · угорський алгоритм</span>
+    <p>Задача про призначення розвʼязується точно й швидко — за час, що росте як
+    <code>куб</code> від розміру таблиці. Метод відомий із 1955 року й зветься
+    <b>угорським алгоритмом</b> (Hungarian algorithm, метод Мункреса). У Python він
+    лежить у <code>scipy.optimize.linear_sum_assignment</code>.</p>
+  </div>
+</div>
+
+<p>Ідея алгоритму пояснюється без формул. Якщо відняти те саме число від усіх
+елементів одного рядка, <b>оптимальне призначення не зміниться</b>: у будь-якому
+призначенні з цього рядка береться рівно одна клітинка, тож уся сума просто впаде на
+це число. Те саме для стовпця. Алгоритм користується цим, щоб зробити в таблиці
+якомога більше нулів, а потім знайти набір нулів, які не ділять між собою жодного
+рядка чи стовпця. Такий набір і є оптимальним призначенням — дешевше за нуль у
+невідʼємній таблиці бути не може.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Матриця вартості: жадібно проти оптимально</p>
+  <p class="fig-sub">Клітинки таблиці можна міняти повзунком. Перемикач обирає спосіб
+    зіставлення; підсвічені клітинки — обрані пари, число внизу — сумарна вартість.</p>
+  <div class="panel">
+    <div><canvas id="cMat" width="940" height="400" aria-label="Таблиця вартості три на два з підсвіченим зіставленням і сумарною вартістю двох способів"></canvas></div>
+    <div>
+      <div class="seg" id="segMat">
+        <button type="button" data-i="0" aria-pressed="true">жадібно</button>
+        <button type="button" data-i="1" aria-pressed="false">угорський</button>
+      </div>
+      <div class="ctl">
+        <label for="m11">вартість П1-І1 <output id="m11v">0.30</output></label>
+        <input type="range" id="m11" min="0.05" max="1.20" step="0.05" value="0.30">
+      </div>
+      <div class="ctl">
+        <label for="m12">вартість П1-І2 <output id="m12v">0.40</output></label>
+        <input type="range" id="m12" min="0.05" max="1.20" step="0.05" value="0.40">
+      </div>
+      <div class="ctl">
+        <label for="m21">вартість П2-І1 <output id="m21v">0.35</output></label>
+        <input type="range" id="m21" min="0.05" max="1.20" step="0.05" value="0.35">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>жадібно</b><i id="mG">—</i></div>
+        <div class="cellv"><b>оптимально</b><i id="mH">—</i></div>
+      </div>
+      <div class="verdict" id="mVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Три вартості з шести можна крутити, решта закріплені
+    (П2-І2 = 0.90, П3-І1 = 1.20, П3-І2 = 1.30).</b> Жадібний спосіб програє не завжди:
+    у більшості положень повзунків обидва дають однакову суму. Але щойно найдешевша
+    клітинка стоїть у рядку, який <b>потрібніший</b> іншому стовпцю, — жадібний
+    переплачує.</figcaption>
+</figure>
+
+<p>Наскільки часто це трапляється насправді? Зошит перевіряє двічі. На
+<b>2 000</b> випадкових матриць 10 × <code>M</code> жадібний розходиться з оптимальним
+у <b>6.5 %</b> випадків, переплачуючи в середньому <b>0.026</b>, а в найгіршому
+випадку <b>1.72</b>. А на справжніх матрицях вартості нашої DETR картина ще
+цікавіша:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>матриці вартості</th><th>розійшлись</th><th>сер. переплата</th><th>найгірша</th></tr>
+  <tr class="hot"><td>свіжа мережа</td><td>14 зі 120 (11.7 %)</td><td>0.0394</td><td>0.7557</td></tr>
+  <tr><td>навчена мережа</td><td>0 зі 120 (0.0 %)</td><td>0.0000</td><td>0.0000</td></tr>
+</table></div>
+
+<p>Читається це так: <b>зіставлення важливе саме тоді, коли мережа ще нічого не
+вміє</b>. У свіжої мережі всі передбачення схожі одне на одне, вартості близькі, і
+жадібний вибір легко промахується — на кожній девʼятій сцені. У навченої мережі кожна
+істина має свого явного фаворита, і будь-який розумний спосіб дає ту саму відповідь.
+Але навченою вона стане тільки в тому разі, якщо на початку навчання її вели
+правильно.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Угорський алгоритм по кроках</p>
+  <p class="fig-sub">Та сама таблиця 3 × 2, доповнена до квадратної третім
+    стовпцем «порожньо». Кнопка «крок» веде алгоритм: віднімання по рядках, віднімання
+    по стовпцях, вибір нулів. Кнопка «спочатку» повертає таблицю у вихідний стан.</p>
+  <div class="panel">
+    <div><canvas id="cStep" width="940" height="400" aria-label="Таблиця три на три, що змінюється на кожному кроці угорського алгоритму, з підписом поточної дії"></canvas></div>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>крок</b><i id="stName" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>нулів у таблиці</b><i id="stZero">—</i></div>
+        <div class="cellv"><b>сума призначення</b><i id="stSum">—</i></div>
+      </div>
+      <button id="stNext" type="button">крок →</button>
+      <button id="stReset" type="button">спочатку</button>
+      <div class="verdict" id="stVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Третій стовпець — «порожньо»: він потрібен, щоб таблиця стала
+    квадратною.</b> Вартість «порожньо» однакова для всіх передбачень, тож на
+    призначення справжніх пар вона не впливає — це лише спосіб прилаштувати зайві
+    передбачення. Зверни увагу на суму: після віднімань вона падає, але <b>вибір
+    клітинок</b> лишається тим самим, що й у вихідній таблиці.</figcaption>
+</figure>
+
+<p>Зошит перевіряє власну реалізацію угорського алгоритму проти
+<code>scipy.optimize.linear_sum_assignment</code> на 300 випадкових матрицях різного
+розміру: розбіжностей <b>нуль</b>. Усередині бібліотеки магії немає — там ті самі
+віднімання по рядках і стовпцях, тільки акуратно запаковані.</p>
+
+<h2 id="s5"><span class="num">05 / Вартість</span>З чого складається вартість</h2>
+
+<p>Матрицю вартості ми досі брали з неба. Тепер розберімо, звідки беруться її числа.
+Пара «передбачення — істина» пасує одна одній тим краще, чим більше збігаються дві
+речі: <b>клас</b> і <b>рамка</b>. Тому вартість складають із трьох доданків.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">доданок 1 · клас</span>
+    <p>Беремо ймовірність, яку передбачення дає <b>саме тому класу</b>, що стоїть в
+    істині, і ставимо її зі знаком мінус. Упевнене влучання в клас — велика
+    ймовірність — робить вартість меншою.</p>
+    <div class="eq">вартість<span class="sub">клас</span> = −p<span class="sub">i</span>(клас істини j)</div>
+  </div>
+  <div class="step">
+    <span class="lbl">доданок 2 · L1 по координатах</span>
+    <p><code>L1</code> — це сума модулів різниць по чотирьох числах рамки. Координати
+    беруть <b>нормованими</b>: поділеними на розмір картинки, тобто в межах від 0 до 1.
+    Без нормування та сама помилка в пікселях важила б по-різному на великих і малих
+    картинках.</p>
+    <div class="eq">вартість<span class="sub">L1</span> = |Δx<span class="sub">1</span>| + |Δy<span class="sub">1</span>| + |Δx<span class="sub">2</span>| + |Δy<span class="sub">2</span>|</div>
+  </div>
+  <div class="step">
+    <span class="lbl">доданок 3 · GIoU</span>
+    <p><code>1 − GIoU</code>, де <code>GIoU</code> — узагальнений IoU. Про нього
+    докладніше нижче.</p>
+  </div>
+</div>
+
+<p>Навіщо третій доданок, якщо є другий? <code>L1</code> має ваду, яку легко
+проґавити: <b>одна й та сама його величина означає різне для великих і малих
+рамок</b>. Промах у 4 пікселі на рамці 40 × 40 — це майже точне влучання, IoU
+дорівнює 0.82. Той самий промах на рамці 8 × 8 дає IoU 0.33 — тобто не проходить
+навіть наймʼякшого порога. Наші
+предмети мають бік від 13 до 21 пікселя, тобто розкид у півтора раза, і на COCO цей
+розкид на порядки більший.</p>
+
+<p><code>IoU</code> цієї вади не має — він відносний за побудовою. Але в нього є своя:
+<b>коли рамки не перетинаються, IoU дорівнює нулю й перестає щось казати</b>. Рамка
+поруч і рамка на іншому кінці картинки дістануть однакову оцінку 0, а отже, однаковий
+градієнт — тобто ніякий. Саме це й лікує <code>GIoU</code>: до IoU додається штраф за
+порожнє місце в найменшому прямокутнику, який накриває обидві рамки.</p>
+
+<div class="eq">GIoU = IoU − (площа накривного прямокутника − площа обʼєднання) / площа накривного прямокутника</div>
+
+<p>Словами: якщо рамки збігаються, накривний прямокутник дорівнює обʼєднанню, штраф
+нульовий і <code>GIoU = IoU = 1</code>. Якщо рамки далеко, обʼєднання займає малу
+частку накривного прямокутника, штраф великий, і <code>GIoU</code> йде в мінус. Ось що
+дає зошит для двох рамок 10 × 10, які розʼїжджаються:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>відстань між рамками</th><th>IoU</th><th>GIoU</th></tr>
+  <tr><td>12 px</td><td>0.0000</td><td>−0.5868</td></tr>
+  <tr><td>20 px</td><td>0.0000</td><td>−0.7778</td></tr>
+  <tr><td>30 px</td><td>0.0000</td><td>−0.8750</td></tr>
+  <tr><td>40 px</td><td>0.0000</td><td>−0.9200</td></tr>
+</table></div>
+
+<p><code>IoU</code> у всіх чотирьох рядках однаковий і мовчить. <code>GIoU</code>
+монотонно спадає — тобто дає напрямок «наближайся» навіть там, де перетину ще немає.
+Готова функція лежить у <code>torchvision.ops.generalized_box_iou</code>; зошит пише
+власну й звіряє — розбіжність <b>нуль</b> до останнього біта.</p>
+
+<p>Три доданки складають із вагами. Канонічні значення зі статті:
+<code>1</code> для класу, <code>5</code> для <code>L1</code>, <code>2</code> для
+<code>GIoU</code>.</p>
+
+<div class="eq">вартість = 1 · (−p<span class="sub">клас</span>) + 5 · L1 + 2 · (1 − GIoU)</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Ваги вартості вирішують, хто кому дістанеться</p>
+  <p class="fig-sub">Сцена з двома істинами й трьома передбаченнями. П2 має ідеальну
+    рамку для І2, але майже не вірить у її клас; П3 — навпаки. Повзунки міняють ваги
+    трьох доданків; лінії показують поточне зіставлення.</p>
+  <div class="panel">
+    <div><canvas id="cW" width="940" height="430" aria-label="Сцена з двома істинними й трьома передбаченими рамками, лініями зіставлення й таблицею вартості"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="wCls">вага класу <output id="wClsv">1.0</output></label>
+        <input type="range" id="wCls" min="0" max="6" step="0.5" value="1">
+      </div>
+      <div class="ctl">
+        <label for="wL1">вага <span class="raw">L1</span> <output id="wL1v">5.0</output></label>
+        <input type="range" id="wL1" min="0" max="15" step="0.5" value="5">
+      </div>
+      <div class="ctl">
+        <label for="wGi">вага <span class="raw">GIoU</span> <output id="wGiv">2.0</output></label>
+        <input type="range" id="wGi" min="0" max="8" step="0.5" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>І2 дістається</b><i id="wWho">—</i></div>
+        <div class="cellv"><b>сума вартості</b><i id="wSum">—</i></div>
+      </div>
+      <div class="verdict" id="wVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Числа збігаються з тим, що друкує зошит для цього самого прикладу.</b>
+    При канонічних вагах 1 / 5 / 2 другу істину забирає П2 — рамка важить більше за
+    клас. Підніми вагу класу до 3, і І2 переходить до П3, який стоїть на піксель
+    гірше, зате знає, що там квадрат. Однакове збільшення обох геометричних ваг
+    (10 і 4) нічого не міняє: важать не самі ваги, а їхнє співвідношення.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Втрата</span>Втрата після зіставлення</h2>
+
+<p>Зіставлення знайдено — тепер із нього роблять функцію втрати. Тут є приємна
+деталь: <b>втрата рахується майже за тією самою формулою, що й вартість</b>. Різниця
+у двох речах.</p>
+
+<p><b>Перше.</b> Вартість рахують, не знаючи, хто з ким стане в пару, тому в неї беруть
+величини, зручні для порівняння: імовірність класу як є. У втраті замість імовірності
+стоїть звичайна крос-ентропія — вона дає кращі градієнти. Зіставлення при цьому
+рахують <b>без градієнта</b>: воно вже знайдене, це просто список пар.</p>
+
+<p><b>Друге, і важливіше.</b> Втрата стосується всіх <code>N</code> запитів, а не лише
+зіставлених <code>M</code>. Запити, яким не дісталося істини, мусять навчитися казати
+«порожньо». І тут повертається знайома біда: якщо <code>N = 100</code>, а предметів
+сім, то 93 зі 100 доданків втрати — це «порожньо». Той самий дисбаланс, заради якого
+в <a href="../26-one-stage/lecture.html">темі 26</a> вигадали focal loss.</p>
+
+<p>DETR лікує його простіше: класу «порожньо» дають <b>меншу вагу</b> у крос-ентропії.
+В оригінальній статті — <code>0.1</code>, тобто вдесятеро менше за звичайний клас.
+Наша модель бере те саме число. Це грубіше за focal loss, зате не додає жодного
+показника, який треба підбирати кривими.</p>
+
+<div class="eq left">втрата = крос-ентропія(усі N запитів, вага «порожньо» = 0.1)
+       + (5 · L1 + 2 · (1 − GIoU)) / кількість зіставлених пар</div>
+
+<p>Геометричні доданки ділять на кількість пар, а не на <code>N</code>: інакше сцена
+з одним предметом і сцена з трьома давали б градієнт різної величини просто через
+кількість предметів.</p>
+
+<h2 id="s7"><span class="num">07 / Архітектура</span>Що всередині DETR</h2>
+
+<p>Тепер зберімо мережу. Вона складається з чотирьох частин, і три з них нам уже
+знайомі.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>частина</th><th>що робить</th></tr>
+  <tr><td>тіло (backbone)</td><td>звичайна згорткова мережа. Сцену 64 × 64 стискає до карти ознак 8 × 8 на 64 канали — те саме тіло, що в темах 23, 25 і 26</td></tr>
+  <tr><td>позиційне кодування</td><td>карту ознак розгортають у послідовність із 64 векторів. Порядок при цьому губиться, тому до кожного вектора додають позиційний — як у <a href="../20-vision-transformer/lecture.html">темі 20</a></td></tr>
+  <tr><td>енкодер</td><td>кілька шарів self-attention із <a href="../19-conv-to-attention/lecture.html">теми 19</a>. Кожна позиція карти дивиться на всі інші</td></tr>
+  <tr><td>декодер</td><td>N запитів. Кожен шар декодера має self-attention між запитами й крос-увагу від запитів до карти ознак</td></tr>
+</table></div>
+
+<p>Дві операції декодера роблять різні речі, і саме з їхнього поділу росте вся
+поведінка DETR.</p>
+
+<p><b>Крос-увага</b> — це те, як запит дивиться на картинку. Механіка та сама, що в
+темі 19: <code>softmax(QK<span class="sup">T</span>/√d)V</code>, тільки запити
+<code>Q</code> беруться з <code>N</code> запитів, а ключі <code>K</code> і значення
+<code>V</code> — із карти ознак. Запит отримує зважену суму ознак тих місць, які його
+цікавлять. Ніхто не наказує йому, куди дивитися: ваги вчаться.</p>
+
+<p><b>Self-attention між запитами</b> — це те, як запити домовляються. Кожен запит
+бачить, що збираються відповісти інші, і може врахувати це у власній відповіді. Ось
+тут і зникає джерело дублікатів: якщо один запит уже впевнено взяв предмет, іншому
+вигідно взяти інший предмет або сказати «порожньо». Дублікат не викидають — його
+просто немає причини породжувати.</p>
+
+<div class="note"><b>Одна деталь, яку легко проґавити.</b> Увага
+<a href="../19-conv-to-attention/lecture.html">еквіваріантна щодо перестановки</a>: якщо
+переставити входи, виходи переставляться так само. Тому <code>N</code> однакових
+нульових запитів дали б <code>N</code> однакових відповідей. Щоб запити були різними,
+кожен із них — <b>окремий навчуваний вектор</b>. Різниця між ними — єдине, що взагалі
+дозволяє їм спеціалізуватися.</div>
+
+<h2 id="s8"><span class="num">08 / Спеціалізація</span>Запити спеціалізуються</h2>
+
+<p>Найкрасивіше, що відбувається в DETR, ніхто не програмував. Запити нічим не
+відрізняються один від одного за призначенням: усі десять мають однакову форму, ті
+самі шари, ту саму втрату. Але після навчання вони <b>ділять між собою сцену</b>.</p>
+
+<p>Замір простий. Для кожного запиту беремо всі перевірні сцени, де він сказав не
+«порожньо», і рахуємо середній центр його рамки та середній розмір. Ось що вийшло в
+нашої моделі:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>запит</th><th>сцен, де говорить</th><th>середній центр x</th><th>середній центр y</th><th>середній бік</th></tr>
+  <tr><td>0</td><td>55</td><td>36.2</td><td>17.1</td><td>16.6</td></tr>
+  <tr><td>1</td><td>75</td><td>25.4</td><td>36.8</td><td>19.1</td></tr>
+  <tr><td>2</td><td>62</td><td>43.8</td><td>19.6</td><td>17.6</td></tr>
+  <tr><td>3</td><td>54</td><td>45.2</td><td>27.7</td><td>17.7</td></tr>
+  <tr class="hot"><td>4</td><td>76</td><td>19.0</td><td>41.8</td><td>16.6</td></tr>
+  <tr><td>5</td><td>59</td><td>44.6</td><td>40.4</td><td>16.5</td></tr>
+  <tr><td>6</td><td>65</td><td>22.0</td><td>29.5</td><td>18.8</td></tr>
+  <tr><td>7</td><td>69</td><td>22.4</td><td>21.5</td><td>16.3</td></tr>
+  <tr class="hot"><td>8</td><td>46</td><td>46.0</td><td>46.1</td><td>15.8</td></tr>
+  <tr><td>9</td><td>46</td><td>31.5</td><td>46.8</td><td>16.0</td></tr>
+</table></div>
+
+<p>Середні центри розкидані по <code>x</code> від 19.0 до 46.0, по <code>y</code> —
+від 17.1 до 46.8. Полотно має 64 пікселі, тобто запити розібрали між собою майже
+половину його ширини й висоти. Запит 4 сидить у лівому низу, запит 8 — у правому
+низу, запит 0 — угорі посередині.</p>
+
+<p>Щоб число мало сенс, його треба з чимось порівняти. Усередині <b>одного</b> запиту
+центр гуляє від сцени до сцени зі стандартним відхиленням <b>7.4</b> пікселя — це
+природно, бо предмети щоразу в різних місцях. А розмах середніх <b>між</b> запитами —
+27.0 і 29.8 пікселя, тобто вчетверо більший. Отже, різниця між запитами не тоне в
+розкиді всередині запиту: вони справді дивляться в різні місця.</p>
+
+<div class="note warn"><b>Чесна половина результату.</b> За розміром спеціалізації
+майже немає: середній бік рамки в усіх десяти запитів лежить у вузькій смузі
+15.8-19.1 пікселя. І це очікувано — наші предмети мають бік від 13 до 21 пікселя,
+розкид усього в півтора раза, тож ділити за розміром просто нічого. В оригінальній
+DETR на COCO, де предмети відрізняються в десятки разів, запити ділять і розмір теж.
+Не переноси наш результат на великі датасети: розмах, якого немає в даних, мережа
+вигадати не може.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Карта запитів</p>
+  <p class="fig-sub">Кожна точка — один запит, поставлений у свій середній центр;
+    діаметр точки пропорційний середньому боку рамки. Перемикач показує або карту
+    центрів, або частку сцен, де запит мовчить.</p>
+  <div class="panel">
+    <div><canvas id="cQ" width="940" height="430" aria-label="Полотно 64 на 64 з десятьма кружками — середніми центрами запитів; поруч стовпчики частки мовчання"></canvas></div>
+    <div>
+      <div class="seg" id="segQ">
+        <button type="button" data-i="0" aria-pressed="true">центри</button>
+        <button type="button" data-i="1" aria-pressed="false">мовчання</button>
+      </div>
+      <div class="ctl">
+        <label for="qPick">підсвітити запит <output id="qPickv">4</output></label>
+        <input type="range" id="qPick" min="0" max="9" step="1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>центр запиту</b><i id="qC">—</i></div>
+        <div class="cellv"><b>середній бік</b><i id="qS">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>говорить у сценах</b><i id="qN">—</i></div>
+        <div class="cellv"><b>відстань до сусіда</b><i id="qD">—</i></div>
+      </div>
+      <div class="verdict" id="qVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Усі десять точок — заміри зошита, не малюнок від руки.</b> Сірий
+    хрестик у центрі полотна — середній центр усіх істинних рамок; якби спеціалізації
+    не було, всі десять точок злиплися б навколо нього. Відстань до найближчого сусіда
+    показує, наскільки щільно запити стоять: у найтіснішому місці карти вона менша за
+    розкид усередині одного запиту, тобто там два запити справді ділять одну ділянку.</figcaption>
+</figure>
+
+<p>Звідки береться ця спеціалізація? Її ніхто не задає — вона наслідок зіставлення.
+Якщо запит 4 випадково частіше опинявся найдешевшим для предметів у лівому низу,
+йому частіше діставались саме вони, він на них учився, ставав для них ще дешевшим — і
+так далі. Це те, що зазвичай зветься самозакріпленням: маленька початкова перевага
+росте сама.</p>
+
+<p>А тепер найважливіше: <b>що буде, якщо зіставлення прибрати</b>. Уявімо наївний
+варіант — хай кожна істина тягне до себе всі запити одразу, без розподілу
+відповідальності. Зошит навчає таку модель 12 епох і міряє розкид середніх центрів
+між запитами:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>як навчали</th><th>розкид центрів між запитами</th><th>mAP@0.5</th></tr>
+  <tr class="hot"><td>без зіставлення</td><td>0.18 px</td><td>0.0120</td></tr>
+  <tr><td>зі зіставленням</td><td>9.16 px</td><td>0.0306</td></tr>
+</table></div>
+
+<p><b>0.18 пікселя</b> — це нуль. Усі десять запитів злиплися в одну точку й
+передбачають, по суті, ту саму рамку: коли кожну істину тягнуть усі, найкраще, що
+може зробити запит, — стати посередині між ними. Мережа з десятьма запитами
+перетворюється на мережу з одним. Отже, однозначність зіставлення — не технічна
+дрібниця для зручності, а те, без чого вся конструкція вироджується.</p>
+
+<h2 id="s9"><span class="num">09 / Своя DETR</span>Своя маленька DETR</h2>
+
+<p>Зберімо все й перевірмо на тих самих сценах 64 × 64, що в темах 23, 25 і 26. Тіло —
+те саме, далі позиційне кодування, два шари енкодера, два шари декодера з
+<code>N = 10</code> запитами, дві голови: клас (три класи плюс «порожньо») і рамка
+(<code>cx</code>, <code>cy</code>, <code>w</code>, <code>h</code> через сигмоїду).
+Навчання — AdamW, 36 епох, три зерна, як і в суперника.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>модель</th><th>параметрів</th><th>mAP@0.5</th><th>розкид по зернах</th><th>mAP@0.5:0.95</th></tr>
+  <tr><td>DETR</td><td>237 416</td><td>0.3869</td><td>0.0636</td><td>0.1520</td></tr>
+  <tr class="hot"><td>anchor-free (тема 26)</td><td>64 615</td><td>0.9380</td><td>0.0784</td><td>0.5213</td></tr>
+</table></div>
+
+<p>Прочитаймо це чесно. Наша DETR при однаковому бюджеті епох <b>сильно програє</b> —
+0.3869 проти 0.9380, і це при тому, що параметрів у неї майже вчетверо більше. Три зерна
+дали 0.4189, 0.3866 і 0.3553, тобто розкид не пояснює розриву. Це не наша помилка
+збірки й не випадковість: так DETR і поводиться, і причину ми розберемо в наступному
+розділі.</p>
+
+<p>Але тепер поміряймо те, заради чого DETR узагалі вигадали. Порахуємо, скільки пар
+передбачень із IoU більшим за 0.7 віддає кожна модель <b>до</b> будь-якого NMS.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>модель</th><th>передбачень ≥ 0.3 на сцену</th><th>пар IoU &gt; 0.7</th><th>сцен із дублікатами</th></tr>
+  <tr><td>DETR</td><td>6.53</td><td>0.40</td><td>33 %</td></tr>
+  <tr class="hot"><td>щільна голова</td><td>7.91</td><td>10.63</td><td>98 %</td></tr>
+  <tr><td>щільна голова + NMS(0.5)</td><td>2.25</td><td>0.00</td><td>0 %</td></tr>
+</table></div>
+
+<p>Різниця в <b>26.6 раза</b>. Щільна голова дає дублікати практично на
+кожній сцені — 98 % проти 33 %. І звертай увагу: кількість передбачень у двох моделей
+майже однакова (6.53 і 7.91), різна саме їхня <b>структура</b>. DETR теж
+перестраховується, але її зайві передбачення розкидані по сцені, а не складені стосом
+на одному предметі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Дублікати до NMS</p>
+  <p class="fig-sub">Скільки пар передбачень накривають одне одного сильніше за
+    поріг. Перемикач обирає модель, повзунок — поріг IoU, за яким пару вважають
+    дублікатом. Обидва ряди — заміри зошита на 120 перевірних сценах.</p>
+  <div class="panel">
+    <div><canvas id="cDup" width="940" height="420" aria-label="Стовпчики кількості перекритих пар для DETR і щільної голови при різних порогах IoU"></canvas></div>
+    <div>
+      <div class="seg" id="segDup">
+        <button type="button" data-i="0" aria-pressed="true">DETR</button>
+        <button type="button" data-i="1" aria-pressed="false">щільна голова</button>
+      </div>
+      <div class="ctl">
+        <label for="dTh">поріг IoU дубліката <output id="dThv">0.70</output></label>
+        <input type="range" id="dTh" min="0" max="4" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пар на сцену</b><i id="dVal">—</i></div>
+        <div class="cellv"><b>у скільки разів більше</b><i id="dRat">—</i></div>
+      </div>
+      <div class="verdict" id="dVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Повзунок має пʼять положень — рівно ті пороги, які поміряв зошит
+    (0.5, 0.6, 0.7, 0.8, 0.9).</b> Зверни увагу на праву колонку при найсуворішому
+    порозі: майже ідентичних пар у DETR 0.01 на сцену, тобто одна на сотню, а в
+    щільної голови 1.18 — по одній на кожну сцену.</figcaption>
+</figure>
+
+<p>Тепер головна перевірка теми. Тема 23 показала сцену, на якій NMS ламається: два
+<b>справжні</b> предмети, чиї рамки перекриваються з IoU 0.714, і при звичайному порозі
+0.5 один із них зникає назавжди. Побудуймо таку сцену в нашому світі: два предмети
+одного класу, зсунуті рівно так, щоб IoU їхніх істинних рамок дорівнював заданому. По
+60 сцен на кожне значення, обидві навчені моделі, повнота при IoU 0.5.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>IoU істинних рамок</th><th>DETR (без NMS)</th><th>щільна + NMS(0.5)</th><th>щільна без NMS</th></tr>
+  <tr><td>0.199</td><td>0.958</td><td>0.950</td><td>1.000</td></tr>
+  <tr><td>0.408</td><td>0.958</td><td>0.842</td><td>1.000</td></tr>
+  <tr><td>0.542</td><td>0.983</td><td>0.617</td><td>1.000</td></tr>
+  <tr class="hot"><td>0.703</td><td>0.983</td><td><b>0.500</b></td><td>1.000</td></tr>
+</table></div>
+
+<p><b>Так, DETR цю сцену розвʼязує.</b> На перекритті 0.703 — практично тому самому,
+що в темі 23, — DETR знаходить 98.3 % предметів, а щільний детектор із NMS рівно
+половину. Половина — це не «майже», це буквально: з кожної пари виживає один.</p>
+
+<p>А тепер найважливіший рядок таблиці, останній. Щільна голова <b>без</b> NMS
+знаходить обидва предмети в <b>100 %</b> випадків. Тобто мережа їх бачила. Її
+передбачення були правильні. Їх знищив фільтр, дописаний після мережі, який за
+означенням не вміє відрізнити другий предмет від дубліката першого. Це і є та ціна,
+яку DETR не платить — не тому, що краще бачить, а тому, що в її конвеєрі цього кроку
+немає.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Сцена, на якій NMS помиляється</p>
+  <p class="fig-sub">Два предмети одного класу з заданим перекриттям. Ліворуч —
+    сцена й рамки, праворуч — повнота трьох варіантів конвеєра. Повзунки міняють
+    перекриття істинних рамок і поріг NMS.</p>
+  <div class="panel">
+    <div><canvas id="cNms" width="940" height="430" aria-label="Дві перекриті рамки на сцені та стовпчики повноти для DETR, щільної голови з NMS і без NMS"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="nIou">IoU істинних рамок <output id="nIouv">0.703</output></label>
+        <input type="range" id="nIou" min="0" max="3" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <label for="nTh">поріг NMS <output id="nThv">0.5</output></label>
+        <input type="range" id="nTh" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>DETR</b><i id="nD">—</i></div>
+        <div class="cellv"><b>щільна + NMS</b><i id="nN">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>щільна без NMS</b><i id="nR">1.000</i></div>
+      </div>
+      <div class="verdict" id="nVd"></div>
+    </div>
+  </div>
+  <figcaption><b>DETR не залежить від порога NMS, бо NMS у ній немає — її стовпчик
+    нерухомий.</b> Підняти поріг до 0.9 і справді рятує обидва предмети, але це той
+    самий обмін, що в темі 23: разом із ними повертаються дублікати — 10.63 пари на
+    сцену з попереднього інтерактиву. Поріг, який лишає обидва предмети й не пускає
+    дублікатів, у щільної голови не існує.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Ціна</span>Ціна: збіжність</h2>
+
+<p>Повернімося до розриву в <code>mAP</code>. Ось криві навчання обох моделей —
+середнє по трьох зернах, той самий датасет, той самий оптимізатор, та сама кількість
+епох.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>епоха</th><th>DETR</th><th>anchor-free</th></tr>
+  <tr><td>3</td><td>0.0041</td><td>0.0455</td></tr>
+  <tr><td>6</td><td>0.0110</td><td>0.5897</td></tr>
+  <tr><td>9</td><td>0.0393</td><td>0.7767</td></tr>
+  <tr class="hot"><td>12</td><td>0.0509</td><td><b>0.9165</b></td></tr>
+  <tr><td>18</td><td>0.1612</td><td>0.9407</td></tr>
+  <tr><td>24</td><td>0.2744</td><td>0.9359</td></tr>
+  <tr><td>30</td><td>0.3824</td><td>0.9564</td></tr>
+  <tr><td>36</td><td>0.3869</td><td>0.9380</td></tr>
+</table></div>
+
+<p>Anchor-free детектор виходить на 0.92 вже на дванадцятій епосі й далі лише
+дрібно коливається. DETR на дванадцятій епосі має <b>0.0509</b> — у вісімнадцять разів
+менше — і <b>ще росте</b> на тридцять шостій. Ми обірвали навчання не там, де крива
+вийшла на полицю, а там, де скінчився бюджет зошита.</p>
+
+<p>Це не властивість нашої маленької збірки, а відома вада DETR, названа в самій
+статті. Цитоване число: оригінальна DETR навчалась <b>500 епох</b> на COCO, тоді як
+Faster R-CNN у стандартному розкладі — <b>12</b>. Різниця більш ніж у сорок разів. Ми
+дістали ту саму картину на іграшковій задачі й за лічені хвилини замість тижнів.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">чому так · причина 1</span>
+    <p><b>Зіставлення нестабільне на початку.</b> Поки мережа нічого не вміє, вартості
+    близькі одна до одної, і той самий запит на сусідніх кроках дістає то один
+    предмет, то інший. Ми це поміряли: на свіжій мережі навіть жадібний і оптимальний
+    способи розходяться на 11.7 % сцен. Запит отримує суперечливі вказівки й довго не
+    може ні на чому зупинитися.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">чому так · причина 2</span>
+    <p><b>На один предмет — один градієнт.</b> У щільної голови кожен предмет
+    навчають десятки позицій одразу: сигнал приходить із багатьох місць. У DETR
+    предмет дістається рівно одному запиту, решта девʼять учаться казати «порожньо».
+    Корисного сигналу на крок у рази менше.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">чому так · причина 3</span>
+    <p><b>Крос-увага спершу дивиться всюди.</b> На старті ваги уваги майже рівномірні,
+    тож запит бачить розмиту суму всієї карти. Щоб він навчився дивитись у конкретне
+    місце, потрібно багато кроків — і саме це прискорили наступні роботи.</p>
+  </div>
+</div>
+
+<h2 id="s11"><span class="num">11 / Дрібні</span>Дрібні предмети</h2>
+
+<p>Друга вада виходить із першої частини архітектури. Енкодер працює на <b>одній</b>
+карті ознак — найглибшій і найгрубішій. У нашій моделі це 8 × 8, тобто одна клітинка
+на 8 пікселів сцени. Предмет із боком 6 пікселів займає менш ніж клітинку, і всі
+подробиці його форми вже усереднені.</p>
+
+<p>У <a href="../26-one-stage/lecture.html">темі 26</a> ця біда вже виникала, і там її
+лікували FPN — пірамідою карт різної дрібності, де дрібні предмети шукають на
+детальнішому рівні. DETR цього не робить: карта одна. Причина проста й неприємна —
+ціна уваги. Self-attention рахує вагу для <b>кожної пари</b> позицій, тож витрати
+ростуть як квадрат їхньої кількості. Карта 8 × 8 — це 64 позиції й 4 096 пар. Карта
+64 × 64 — це 4 096 позицій і 16 мільйонів пар: у чотири тисячі разів більше. Взяти
+детальнішу карту неможливо не через принцип, а через арифметику.</p>
+
+<p>Розвʼязок знайшли за рік. <b>Deformable DETR</b> замінює повну увагу на розріджену:
+кожен запит дивиться не на всі позиції, а на кілька десятків точок, які сам собі
+обирає. Витрати перестають рости квадратично, і тоді вже можна взяти <b>кілька</b>
+карт різної дрібності, як у FPN. Заявлений результат: збіжність за 50 епох замість
+500 і помітно кращі дрібні предмети. Далі йшли <b>Conditional DETR</b> і
+<b>DAB-DETR</b>, які додали запиту явну привʼязку до місця, і <b>DINO</b>, що звів усе
+докупи.</p>
+
+<div class="note"><b>Спільне в усіх продовженнях одне.</b> Ніхто з них не повернув ані
+якорі, ані NMS. Правили те, <b>як</b> запит знаходить своє місце в картинці, а не саму
+постановку «видати множину й зіставити її з розміткою».</div>
+
+<h2 id="s12"><span class="num">12 / Спадок</span>Що з цього лишилось</h2>
+
+<p>DETR у чистому вигляді не витіснила згорткові детектори — вона надто дорога й надто
+повільно вчиться. Але її головна ідея розійшлася далеко за межі трансформерів.</p>
+
+<ul>
+  <li><b>YOLOv10</b> прибрала NMS зі звичайного згорткового детектора: під час
+    навчання працюють дві голови, і та, що йде в роботу, навчається однозначному
+    зіставленню — рівно так, як DETR;</li>
+  <li><b>сегментація</b>: Mask2Former описує і семантичні області, і окремі екземпляри
+    однаково — як множину запитів із маскою в кожного, і зіставляє їх із розміткою тим
+    самим угорським алгоритмом;</li>
+  <li><b>трекінг</b>: у сімействі TrackFormer і MOTR запит переживає кадр і йде далі —
+    те, що тримало предмет на кадрі <i>t</i>, шукає його на кадрі <i>t</i> + 1, і
+    траєкторія виходить сама, без окремого алгоритму зшивання;</li>
+  <li><b>сама операція</b> <code>linear_sum_assignment</code> тепер стоїть у втратах
+    задач, які до детекції стосунку не мають: розпізнавання поз, читання таблиць,
+    передбачення молекулярних структур.</li>
+</ul>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Підсумок і місток далі</h2>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>ідея</th><th>у чому суть</th></tr>
+  <tr><td>Множина замість списку</td><td>наївна попарна втрата міняється в девʼять разів від самої лише перестановки передбачень (2.72 … 24.59); після зіставлення вона стала</td></tr>
+  <tr><td>Фіксовані N запитів</td><td>у нашій моделі 10; 49.4 % рішень — «порожньо», не-порожніх відповідей 5.06 на сцену при 2.06 істинних рамках</td></tr>
+  <tr><td>Угорське зіставлення</td><td>жадібний спосіб розходиться з оптимальним на 11.7 % сцен свіжої мережі; на навченій — на 0 %</td></tr>
+  <tr><td>Однозначність обовʼязкова</td><td>без неї запити злипаються: розкид центрів між запитами 0.18 px замість 9.16</td></tr>
+  <tr><td>GIoU крім L1</td><td><code>L1</code> не знає масштабу, <code>IoU</code> мовчить без перетину: 0.0000 на всіх відстанях проти GIoU від −0.59 до −0.92</td></tr>
+  <tr><td>NMS не потрібен</td><td>дублікатів 0.40 пари на сцену проти 10.63 у щільної голови — у 26.6 раза менше</td></tr>
+  <tr><td>Ціна</td><td>0.3869 проти 0.9380 при однаковому бюджеті; на 12-й епосі 0.0509 проти 0.9165</td></tr>
+</table></div>
+
+<p>Головна пара чисел теми — <b>0.983 і 0.500</b>. Це повнота на сценах, де два
+предмети одного класу перекриваються з IoU 0.703 — рівно тому випадку, який тема 23
+назвала провалом NMS. І ключ до цієї пари в останньому стовпці тієї таблиці:
+<b>1.000</b>. Щільна голова знаходить обидва предмети. Втрачає їх не мережа, а
+жорсткий фільтр після неї.</p>
+
+<p>Але не читай тему як «DETR перемогла». На нашій задачі вона програє anchor-free
+детектору більш ніж удвічі за <code>mAP</code> і має майже вчетверо більше параметрів.
+Правильний висновок інший: <b>детекція як передбачення множини — це постановка, а не
+архітектура</b>. Постановка виявилась настільки вдалою, що її перенесли в згорткові
+детектори, у сегментацію й у трекінг, а від самого трансформера в багатьох із них
+нічого не лишилось.</p>
+
+<p>На цьому блок про детекцію закінчено. Ми пройшли всі підходи: двоетапні з
+кандидат-областями, одноетапні з сіткою й якорями, anchor-free і, нарешті, множинні.
+Кожен наступний прибирав рукотворну деталь попереднього — і жоден не виявився
+«правильним» на всі випадки.</p>
+
+<p><a href="../28-detection-practice/lecture.html">Наступна тема</a> — про вибір.
+Який детектор брати під конкретну задачу, скільки даних йому треба, як їх розмічати,
+що робити з рідкісними класами й де в реальному конвеєрі ховаються помилки, яких немає
+в жодній статті.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../26-one-stage/lecture.html"><span class="dir">попередня</span><span class="ttl">26. Одноетапні: focal loss і anchor-free</span></a>
+    <a class="next" href="../28-detection-practice/lecture.html"><span class="dir">наступна</span><span class="ttl">28. Детекція на практиці</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* «1 число», «3 числа», «5 чисел» — без цього табло виглядає неписьменно */
+function numWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' число';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' числа';
+  return n+' чисел';
+}
+/* детермінований генератор: картинка однакова у всіх читачів */
+function LCG(s){
+  if(!isFinite(s) || s<=0) s=1;
+  var x=(s>>>0)||1;
+  return function(){ x=(Math.imul(x,1664525)+1013904223)>>>0; return x/4294967296; };
+}
+
+
+/* ═══════ дані: усе поміряно зошитом practice.ipynb ═══════ */
+var SCENE=64;                       /* сторона сцени в пікселях */
+
+/* ── інтерактив 1: сцена з двома істинами й чотирма передбаченнями ── */
+var ORD_TRUTH=[{b:[8,10,26,28], c:0}, {b:[34,30,52,48], c:1}];
+var ORD_PRED=[
+  {b:[10,12,28,30], p:[0.75,0.10]},
+  {b:[33,29,51,47], p:[0.08,0.70]},
+  {b:[40, 6,54,20], p:[0.30,0.25]},
+  {b:[ 6,40,20,54], p:[0.20,0.30]}
+];
+var ORD_PERM=[[0,1,2,3],[1,0,2,3],[2,3,0,1],[3,2,1,0],[1,3,0,2],[2,0,3,1]];
+
+/* ── інтерактив 2 і 3: матриця вартості 3 × 2 ── */
+var MAT_FIX={p22:0.90, p31:1.20, p32:1.30};
+var EMPTY_COST=0.90;                /* стовпець «порожньо» в інтерактиві 3 */
+
+/* ── інтерактив 4: приклад із трьох передбачень і двох істин ── */
+var W_TRUTH=[{b:[10,10,30,30], c:0}, {b:[34,20,50,36], c:1}];
+var W_PRED=[
+  {b:[12,12,32,32], p:[0.80,0.10]},
+  {b:[34,20,50,36], p:[0.60,0.15]},
+  {b:[33,19,49,35], p:[0.10,0.70]}
+];
+
+/* ── інтерактив 5: заміри по десяти запитах навченої DETR ── */
+var QUERIES=[
+  {n:55, x:36.2, y:17.1, s:16.6, mute:0.542},
+  {n:75, x:25.4, y:36.8, s:19.1, mute:0.375},
+  {n:62, x:43.8, y:19.6, s:17.6, mute:0.483},
+  {n:54, x:45.2, y:27.7, s:17.7, mute:0.550},
+  {n:76, x:19.0, y:41.8, s:16.6, mute:0.367},
+  {n:59, x:44.6, y:40.4, s:16.5, mute:0.508},
+  {n:65, x:22.0, y:29.5, s:18.8, mute:0.458},
+  {n:69, x:22.4, y:21.5, s:16.3, mute:0.425},
+  {n:46, x:46.0, y:46.1, s:15.8, mute:0.617},
+  {n:46, x:31.5, y:46.8, s:16.0, mute:0.617}
+];
+var TRUTH_MEAN={x:32.2, y:31.5, s:16.6};   /* середня істинна рамка перевірного набору */
+var INSIDE_STD=7.4;                        /* розкид центра x усередині одного запиту */
+
+/* ── інтерактив 6: пар передбачень із IoU понад поріг, на сцену ── */
+var DUP_TH=[0.5,0.6,0.7,0.8,0.9];
+var DUP_DETR=[2.30,1.04,0.40,0.10,0.01];
+var DUP_DENSE=[13.67,12.74,10.63,6.36,1.18];
+
+/* ── інтерактив 7: повнота на сценах із двома перекритими предметами ── */
+var NMS_IOU=[0.199,0.408,0.542,0.703];
+var NMS_TH=[0.3,0.5,0.7,0.9];
+var REC_DETR=[0.958,0.958,0.983,0.983];
+var REC_DENSE=[[0.858,0.950,1.000,1.000],
+               [0.533,0.842,0.983,1.000],
+               [0.500,0.617,0.917,1.000],
+               [0.500,0.500,0.708,1.000]];
+var REC_RAW=1.000;
+
+/* ═══════ спільна геометрія рамок ═══════ */
+function areaOf(b){return Math.max(0,b[2]-b[0])*Math.max(0,b[3]-b[1]);}
+function interOf(a,b){
+  var w=Math.min(a[2],b[2])-Math.max(a[0],b[0]);
+  var h=Math.min(a[3],b[3])-Math.max(a[1],b[1]);
+  return (w>0&&h>0)?w*h:0;
+}
+function iouOf(a,b){
+  var i=interOf(a,b), u=areaOf(a)+areaOf(b)-i;
+  return u>0? i/u : 0;
+}
+function giouOf(a,b){
+  var i=interOf(a,b), u=areaOf(a)+areaOf(b)-i;
+  if(u<=0) return -1;
+  var cw=Math.max(a[2],b[2])-Math.min(a[0],b[0]);
+  var ch=Math.max(a[3],b[3])-Math.min(a[1],b[1]);
+  var c=cw*ch;
+  return i/u - (c-u)/c;
+}
+function l1Of(a,b){
+  var k,s=0;
+  for(k=0;k<4;k++) s+=Math.abs(a[k]-b[k]);
+  return s/SCENE;                       /* координати нормовані на сторону сцени */
+}
+/* вартість пари: клас, L1 і GIoU з вагами */
+function pairCost(pred,truth,wc,wl,wg){
+  return -wc*pred.p[truth.c] + wl*l1Of(pred.b,truth.b) + wg*(1-giouOf(pred.b,truth.b));
+}
+/* оптимальне зіставлення перебором: рядків мало, стовпців ще менше */
+function bestAssign(cost,rows,cols){
+  var best=null, bestSum=Infinity;
+  var used=[], pick=[];
+  function walk(j){
+    var i;
+    if(j===cols){
+      var s=0,k;
+      for(k=0;k<cols;k++) s+=cost[pick[k]][k];
+      if(s<bestSum-1e-12){ bestSum=s; best=pick.slice(); }
+      return;
+    }
+    for(i=0;i<rows;i++){
+      if(used[i]) continue;
+      used[i]=true; pick[j]=i; walk(j+1); used[i]=false;
+    }
+  }
+  walk(0);
+  return {pick:best, sum:bestSum};
+}
+/* жадібне зіставлення: найдешевша клітинка, викреслити рядок і стовпець */
+function greedyAssign(cost,rows,cols){
+  var doneRow=[], doneCol=[], pick=[], k, i, j, sum=0;
+  for(k=0;k<cols;k++){
+    var bi=-1,bj=-1,bv=Infinity;
+    for(i=0;i<rows;i++){
+      if(doneRow[i]) continue;
+      for(j=0;j<cols;j++){
+        if(doneCol[j]) continue;
+        if(cost[i][j]<bv){ bv=cost[i][j]; bi=i; bj=j; }
+      }
+    }
+    if(bi<0) break;
+    doneRow[bi]=true; doneCol[bj]=true; pick[bj]=bi; sum+=bv;
+  }
+  return {pick:pick, sum:sum};
+}
+/* «у 5.9 раза», «у 64 рази», «у 118 разів» — без цього вердикт неписьменний */
+function timesWord(n){
+  if(Math.abs(n-Math.round(n))>1e-9) return 'раза';
+  var k=Math.round(n), d=k%10, dd=k%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+
+/* ═══════ 1 · множина не має порядку ═══════ */
+(function(){
+  var cv=I('cOrd'); if(!cv) return;
+  var which=1;
+
+  /* втрата пари: клас через −log p, геометрія та сама, що у вартості */
+  function lossPair(pred,truth){
+    var p=Math.max(1e-6,pred.p[truth.c]);
+    return -Math.log(p) + 5*l1Of(pred.b,truth.b) + 2*(1-giouOf(pred.b,truth.b));
+  }
+  function byIndex(order){
+    var k,s=0;
+    for(k=0;k<ORD_TRUTH.length;k++) s+=lossPair(ORD_PRED[order[k]],ORD_TRUTH[k]);
+    return s;
+  }
+  function matched(){
+    var cost=[],i,j;
+    for(i=0;i<4;i++){ cost[i]=[]; for(j=0;j<2;j++) cost[i][j]=lossPair(ORD_PRED[i],ORD_TRUTH[j]); }
+    return bestAssign(cost,4,2).sum;
+  }
+  /* розмах наївної втрати по всіх 24 перестановках чотирьох передбачень */
+  function spread(){
+    var lo=Infinity, hi=-Infinity, a,b,c,d, seq=[0,1,2,3];
+    for(a=0;a<4;a++) for(b=0;b<4;b++) for(c=0;c<4;c++) for(d=0;d<4;d++){
+      if(a===b||a===c||a===d||b===c||b===d||c===d) continue;
+      var v=byIndex([a,b,c,d]);
+      if(v<lo) lo=v; if(v>hi) hi=v;
+    }
+    return [lo,hi];
+  }
+  var SPREAD=spread(), FIXED=matched();
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var order=ORD_PERM[which];
+    var pad=26, side=Math.min(H-2*pad, 330), sc=side/SCENE;
+    var ox=pad, oy=(H-side)/2;
+
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,side,side);
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(ox,oy,side,side);
+
+    var k;
+    g.lineWidth=2;
+    for(k=0;k<ORD_TRUTH.length;k++){
+      var t=ORD_TRUTH[k].b;
+      g.strokeStyle=css('--teal');
+      g.strokeRect(ox+t[0]*sc, oy+t[1]*sc, (t[2]-t[0])*sc, (t[3]-t[1])*sc);
+      capt(g,'І'+(k+1), ox+t[0]*sc+3, oy+t[1]*sc-5, css('--teal'), 11, true);
+    }
+    for(k=0;k<order.length;k++){
+      var p=ORD_PRED[order[k]].b;
+      g.strokeStyle=css('--rose'); g.setLineDash([4,3]);
+      g.strokeRect(ox+p[0]*sc, oy+p[1]*sc, (p[2]-p[0])*sc, (p[3]-p[1])*sc);
+      g.setLineDash([]);
+      capt(g,'№'+(k+1), ox+p[2]*sc-22, oy+p[3]*sc-6, css('--rose'), 11, true);
+    }
+    capt(g,'сцена 64 × 64', ox, oy+side+16, css('--soft'), 11);
+    capt(g,'суцільна — істина, пунктир — передбачення', ox, oy+side+31, css('--soft'), 10);
+
+    /* стовпчики двох втрат */
+    var bx=ox+side+60, bw=W-bx-40;
+    var idx=byIndex(order);
+    var top=oy+16, rowH=54, scale=(bw-130)/Math.max(SPREAD[1],FIXED);
+    var bars=[['за індексом',idx,css('--rose')],['після зіставлення',FIXED,css('--teal')]];
+    for(k=0;k<2;k++){
+      var yy=top+k*rowH*2;
+      capt(g,bars[k][0], bx, yy-6, css('--soft'), 11);
+      g.fillStyle=bars[k][2];
+      g.fillRect(bx, yy, Math.max(2,bars[k][1]*scale), 22);
+      capt(g,f2(bars[k][1]), bx+bars[k][1]*scale+8, yy+16, css('--ink'), 13, true);
+    }
+    /* смуга розмаху наївної втрати */
+    var yy2=top+2.4*rowH*2;
+    capt(g,'розмах «за індексом» по всіх 24 перестановках', bx, yy2-8, css('--soft'), 11);
+    g.fillStyle=css('--hair');
+    g.fillRect(bx+SPREAD[0]*scale, yy2, (SPREAD[1]-SPREAD[0])*scale, 12);
+    g.fillStyle=css('--amber');
+    g.fillRect(bx+idx*scale-1, yy2-4, 3, 20);
+    capt(g,f2(SPREAD[0]), bx+SPREAD[0]*scale, yy2+28, css('--soft'), 10);
+    capt(g,f2(SPREAD[1]), bx+SPREAD[1]*scale, yy2+28, css('--soft'), 10);
+  }
+
+  function update(){
+    var idx=byIndex(ORD_PERM[which]);
+    I('oIdx').textContent=f2(idx);
+    I('oSet').textContent=f2(FIXED);
+    I('oRange').textContent=f2(SPREAD[0])+' … '+f2(SPREAD[1]);
+    var times=SPREAD[1]/SPREAD[0];
+    if(Math.abs(idx-SPREAD[0])<1e-9){
+      verd('oVd','t-mid','ПОЩАСТИЛО З ПОРЯДКОМ',
+        'Саме цей порядок збігся з правильним зіставленням, тож наївна втрата '+
+        'дорівнює чесній: '+f2(idx)+'. Але це випадковість запису, а не якість відповіді.');
+    } else {
+      verd('oVd','t-no','ТА САМА ВІДПОВІДЬ, ІНША ВТРАТА',
+        'Рамки не рухались — змінився лише порядок у списку. Наївна втрата стала '+
+        f2(idx)+' замість найкращих '+f2(SPREAD[0])+
+        '. По всіх 24 перестановках вона гуляє в '+f2(times)+
+        ' раза, а втрата після зіставлення весь час дорівнює '+f2(FIXED)+'.');
+    }
+    draw();
+  }
+  segment('segOrd', function(i){ which=i; update(); });
+  window.addEventListener('resize', draw);
+  update();
+})();
+
+/* ═══════ 2 · матриця вартості: жадібно проти оптимально ═══════ */
+(function(){
+  var cv=I('cMat'); if(!cv) return;
+  var mode=0;
+
+  function matrix(){
+    return [[+I('m11').value, +I('m12').value],
+            [+I('m21').value, MAT_FIX.p22],
+            [MAT_FIX.p31,     MAT_FIX.p32]];
+  }
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var m=matrix();
+    var gd=greedyAssign(m,3,2), hu=bestAssign(m,3,2);
+    var chosen=(mode===0?gd:hu).pick;
+
+    var cw=150, ch=62, ox=120, oy=90;
+    var i,j;
+    capt(g,'І1', ox+cw*0.5, oy-16, css('--teal'), 13, true, 'center');
+    capt(g,'І2', ox+cw*1.5, oy-16, css('--teal'), 13, true, 'center');
+    for(i=0;i<3;i++){
+      capt(g,'П'+(i+1), ox-18, oy+i*ch+ch*0.62, css('--rose'), 13, true, 'right');
+      for(j=0;j<2;j++){
+        var hit=(chosen[j]===i);
+        g.fillStyle=hit?(mode===0?css('--rose-w'):css('--teal-w')):css('--paper');
+        g.fillRect(ox+j*cw, oy+i*ch, cw-6, ch-6);
+        g.strokeStyle=hit?(mode===0?css('--rose'):css('--teal')):css('--hair');
+        g.lineWidth=hit?2:1;
+        g.strokeRect(ox+j*cw, oy+i*ch, cw-6, ch-6);
+        capt(g,f2(m[i][j]), ox+j*cw+(cw-6)/2, oy+i*ch+ch*0.62,
+             hit?css('--ink'):css('--soft'), 17, hit, 'center');
+      }
+    }
+    capt(g,'матриця вартості: менше — краще', ox, oy-42, css('--soft'), 12);
+
+    /* дві суми стовпчиками праворуч */
+    var bx=ox+2*cw+70, bw=W-bx-40;
+    var mx=Math.max(gd.sum,hu.sum,0.1), sc=(bw-90)/mx;
+    var rows=[['жадібно',gd.sum,css('--rose')],['оптимально',hu.sum,css('--teal')]];
+    for(i=0;i<2;i++){
+      var yy=oy+20+i*70;
+      capt(g,rows[i][0], bx, yy-6, css('--soft'), 11);
+      g.fillStyle=rows[i][2];
+      g.fillRect(bx, yy, Math.max(2,rows[i][1]*sc), 24);
+      capt(g,f2(rows[i][1]), bx+rows[i][1]*sc+8, yy+17, css('--ink'), 14, true);
+    }
+    var gap=gd.sum-hu.sum;
+    capt(g,'переплата жадібного: '+f2(gap), bx, oy+186, gap>1e-9?css('--rose'):css('--soft'), 12, true);
+  }
+  function update(){
+    I('m11v').textContent=(+I('m11').value).toFixed(2);
+    I('m12v').textContent=(+I('m12').value).toFixed(2);
+    I('m21v').textContent=(+I('m21').value).toFixed(2);
+    var m=matrix();
+    var gd=greedyAssign(m,3,2), hu=bestAssign(m,3,2);
+    I('mG').textContent=f2(gd.sum);
+    I('mH').textContent=f2(hu.sum);
+    var gap=gd.sum-hu.sum;
+    if(gap>1e-9){
+      verd('mVd','t-no','ЖАДІБНИЙ ПРОГРАВ',
+        'Він переплатив '+f2(gap)+': '+f2(gd.sum)+' замість '+f2(hu.sum)+
+        '. Причина завжди та сама — на першому кроці він забрав найдешевшу клітинку, '+
+        'не подивившись, чи цей рядок потрібніший іншому стовпцю.');
+    } else {
+      verd('mVd','t-ok','ТУТ СПОСОБИ ЗБІГЛИСЯ',
+        'Обидва дали '+f2(hu.sum)+'. Так буває в більшості положень повзунків — '+
+        'на 2 000 випадкових матриць зошит нарахував розбіжність лише в 6.5 % випадків. '+
+        'Але саме на них жадібний і псує навчання.');
+    }
+    draw();
+  }
+  segment('segMat', function(i){ mode=i; update(); });
+  on('m11','input',update); on('m12','input',update); on('m21','input',update);
+  window.addEventListener('resize', draw);
+  update();
+})();
+
+/* ═══════ 3 · угорський алгоритм по кроках ═══════ */
+(function(){
+  var cv=I('cStep'); if(!cv) return;
+  var step=0;
+  var BASE=[[0.30,0.40,EMPTY_COST],[0.35,0.90,EMPTY_COST],[1.20,1.30,EMPTY_COST]];
+  var NAMES=['вихідна таблиця','мінус мінімум рядка','мінус мінімум стовпця','вибір нулів'];
+
+  function stateAt(k){
+    var m=[],i,j;
+    for(i=0;i<3;i++) m[i]=BASE[i].slice();
+    if(k>=1){
+      for(i=0;i<3;i++){
+        var mn=Math.min(m[i][0],m[i][1],m[i][2]);
+        for(j=0;j<3;j++) m[i][j]=Math.round((m[i][j]-mn)*1000)/1000;
+      }
+    }
+    if(k>=2){
+      for(j=0;j<3;j++){
+        var mc=Math.min(m[0][j],m[1][j],m[2][j]);
+        for(i=0;i<3;i++) m[i][j]=Math.round((m[i][j]-mc)*1000)/1000;
+      }
+    }
+    return m;
+  }
+  function zeros(m){
+    var i,j,c=0;
+    for(i=0;i<3;i++) for(j=0;j<3;j++) if(m[i][j]<1e-9) c++;
+    return c;
+  }
+  var PICK=bestAssign(BASE,3,3);          /* стовпець j дістає рядок PICK.pick[j] */
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var m=stateAt(step);
+    var cw=130, ch=62, ox=150, oy=110;
+    var titles=['І1','І2','порожньо'];
+    var i,j;
+    for(j=0;j<3;j++)
+      capt(g,titles[j], ox+cw*(j+0.5)-3, oy-16, j<2?css('--teal'):css('--soft'), 13, true, 'center');
+    for(i=0;i<3;i++){
+      capt(g,'П'+(i+1), ox-18, oy+i*ch+ch*0.62, css('--rose'), 13, true, 'right');
+      for(j=0;j<3;j++){
+        var isZero=m[i][j]<1e-9;
+        var picked=(step===3 && PICK.pick[j]===i);
+        g.fillStyle=picked?css('--teal-w'):(isZero&&step>0?css('--amber-w'):css('--paper'));
+        g.fillRect(ox+j*cw, oy+i*ch, cw-6, ch-6);
+        g.strokeStyle=picked?css('--teal'):css('--hair');
+        g.lineWidth=picked?2:1;
+        g.strokeRect(ox+j*cw, oy+i*ch, cw-6, ch-6);
+        capt(g,f2(m[i][j]), ox+j*cw+(cw-6)/2, oy+i*ch+ch*0.62,
+             picked?css('--ink'):(isZero?css('--amber'):css('--soft')), 16, picked||isZero, 'center');
+      }
+    }
+    capt(g,'крок '+step+' з 3 · '+NAMES[step], ox, oy-52, css('--ink'), 14, true);
+    var hint;
+    if(step===0) hint='Вартість «порожньо» однакова для всіх рядків — вона нікого не вирізняє.';
+    else if(step===1) hint='У кожному рядку зʼявився нуль. Оптимальний вибір від цього не змінився.';
+    else if(step===2) hint='Тепер нуль є і в кожному стовпці, де його бракувало.';
+    else hint='Три нулі, що не ділять ані рядка, ані стовпця, — це й є відповідь.';
+    capt(g,hint, ox, oy+3*ch+30, css('--soft'), 12);
+    if(step===3){
+      var s=0;
+      for(j=0;j<3;j++) s+=BASE[PICK.pick[j]][j];
+      capt(g,'у вихідній таблиці ця сама трійка коштує '+f2(s),
+           ox, oy+3*ch+52, css('--teal'), 12, true);
+    }
+  }
+  function update(){
+    var m=stateAt(step);
+    I('stName').textContent=NAMES[step];
+    I('stZero').textContent=String(zeros(m));
+    if(step===3){
+      var s=0,j;
+      for(j=0;j<3;j++) s+=BASE[PICK.pick[j]][j];
+      I('stSum').textContent=f2(s);
+      verd('stVd','t-ok','ЗНАЙДЕНО',
+        'Призначення: П'+(PICK.pick[0]+1)+'→І1, П'+(PICK.pick[1]+1)+'→І2, П'+
+        (PICK.pick[2]+1)+'→порожньо. У вихідній таблиці воно коштує '+f2(s)+
+        ' — саме стільки, скільки дав угорський алгоритм у попередньому інтерактиві.');
+    } else {
+      I('stSum').textContent='—';
+      verd('stVd','t-mid','ГОТУЄМО НУЛІ',
+        'Нулів у таблиці: '+zeros(m)+'. Віднімання сталої від рядка чи стовпця не міняє '+
+        'того, який набір клітинок оптимальний, — воно лише зсуває всю суму. '+
+        'Тому нулі можна робити безкарно.');
+    }
+    I('stNext').disabled=(step>=3);
+    draw();
+  }
+  on('stNext','click',function(){ if(step<3){ step++; update(); } });
+  on('stReset','click',function(){ step=0; update(); });
+  window.addEventListener('resize', draw);
+  update();
+})();
+
+/* ═══════ 4 · ваги вартості ═══════ */
+(function(){
+  var cv=I('cW'); if(!cv) return;
+
+  function costMatrix(){
+    var wc=+I('wCls').value, wl=+I('wL1').value, wg=+I('wGi').value;
+    var m=[],i,j;
+    for(i=0;i<3;i++){ m[i]=[]; for(j=0;j<2;j++) m[i][j]=pairCost(W_PRED[i],W_TRUTH[j],wc,wl,wg); }
+    return m;
+  }
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var m=costMatrix(), best=bestAssign(m,3,2);
+    var pad=26, side=Math.min(H-2*pad, 340), sc=side/SCENE, ox=pad, oy=(H-side)/2;
+
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,side,side);
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(ox,oy,side,side);
+    var k;
+    g.lineWidth=2;
+    for(k=0;k<2;k++){
+      var t=W_TRUTH[k].b;
+      g.strokeStyle=css('--teal');
+      g.strokeRect(ox+t[0]*sc, oy+t[1]*sc, (t[2]-t[0])*sc, (t[3]-t[1])*sc);
+      capt(g,'І'+(k+1), ox+t[0]*sc+3, oy+t[1]*sc-6, css('--teal'), 11, true);
+    }
+    for(k=0;k<3;k++){
+      var p=W_PRED[k].b, taken=(best.pick.indexOf(k)>=0);
+      g.strokeStyle=taken?css('--rose'):css('--hair');
+      g.setLineDash([4,3]);
+      g.strokeRect(ox+p[0]*sc, oy+p[1]*sc, (p[2]-p[0])*sc, (p[3]-p[1])*sc);
+      g.setLineDash([]);
+      capt(g,'П'+(k+1), ox+p[2]*sc+5, oy+p[1]*sc+13+k*19, taken?css('--rose'):css('--soft'), 11, true);
+    }
+    /* лінії зіставлення */
+    g.lineWidth=1.5; g.strokeStyle=css('--amber');
+    for(k=0;k<2;k++){
+      var pb=W_PRED[best.pick[k]].b, tb=W_TRUTH[k].b;
+      g.beginPath();
+      g.moveTo(ox+(pb[0]+pb[2])/2*sc, oy+(pb[1]+pb[3])/2*sc);
+      g.lineTo(ox+(tb[0]+tb[2])/2*sc, oy+(tb[1]+tb[3])/2*sc);
+      g.stroke();
+    }
+    capt(g,'сцена 64 × 64 · лінія — обрана пара', ox, oy+side+16, css('--soft'), 11);
+
+    /* таблиця вартості */
+    var bx=ox+side+50, cw=132, ch=54, ty=oy+34;
+    capt(g,'І1', bx+cw*0.5, ty-14, css('--teal'), 12, true, 'center');
+    capt(g,'І2', bx+cw*1.5, ty-14, css('--teal'), 12, true, 'center');
+    var i,j;
+    for(i=0;i<3;i++){
+      capt(g,'П'+(i+1), bx-14, ty+i*ch+ch*0.6, css('--rose'), 12, true, 'right');
+      for(j=0;j<2;j++){
+        var hit=(best.pick[j]===i);
+        g.fillStyle=hit?css('--teal-w'):css('--paper');
+        g.fillRect(bx+j*cw, ty+i*ch, cw-6, ch-6);
+        g.strokeStyle=hit?css('--teal'):css('--hair'); g.lineWidth=hit?2:1;
+        g.strokeRect(bx+j*cw, ty+i*ch, cw-6, ch-6);
+        capt(g,f3(m[i][j]), bx+j*cw+(cw-6)/2, ty+i*ch+ch*0.6,
+             hit?css('--ink'):css('--soft'), 14, hit, 'center');
+      }
+    }
+    capt(g,'вартість пари при поточних вагах', bx, ty-36, css('--soft'), 11);
+    capt(g,'сума обраних: '+f3(best.sum), bx, ty+3*ch+22, css('--ink'), 13, true);
+  }
+  function update(){
+    var wc=+I('wCls').value, wl=+I('wL1').value, wg=+I('wGi').value;
+    I('wClsv').textContent=wc.toFixed(1);
+    I('wL1v').textContent=wl.toFixed(1);
+    I('wGiv').textContent=wg.toFixed(1);
+    var m=costMatrix(), best=bestAssign(m,3,2);
+    var owner=best.pick[1];
+    I('wWho').textContent='П'+(owner+1);
+    I('wSum').textContent=f3(best.sum);
+    if(wc===0 && wl===0 && wg===0){
+      verd('wVd','t-no','ВАРТОСТІ БІЛЬШЕ НЕМАЄ',
+        'Усі три ваги нульові, тож уся матриця складається з нулів і зіставлення '+
+        'вибирає пари навмання. Це крайній випадок, який показує, що сама по собі '+
+        'процедура зіставлення нічого не знає про рамки — усе знання сидить у вартості.');
+    } else if(owner===1){
+      var canonical=(wc===1 && wl===5 && wg===2);
+      verd('wVd','t-mid','ГЕОМЕТРІЯ ПЕРЕВАЖИЛА',
+        'Другу істину взяв П2 — його рамка збігається з нею точно, хоча в клас квадрата '+
+        'він вірить лише на 0.15. '+(canonical
+          ? 'Це канонічні ваги 1 / 5 / 2: координати важать упʼятеро більше за клас.'
+          : 'При вазі класу '+wc.toFixed(1)+' проти '+wl.toFixed(1)+' і '+wg.toFixed(1)+
+            ' у геометрії клас нічого не вирішує.'));
+    } else if(owner===2){
+      verd('wVd','t-ok','КЛАС ПЕРЕВАЖИВ',
+        'Другу істину взяв П3: його рамка гірша на піксель по кожній координаті, '+
+        'зате він упевнено каже «квадрат» (0.70 проти 0.15). При вазі класу '+wc.toFixed(1)+
+        ' це вигідніше.');
+    } else {
+      verd('wVd','t-no','ЗІСТАВЛЕННЯ РОЗВАЛИЛОСЬ',
+        'Другу істину забрав П1, хоча він стоїть у протилежному кутку сцени. '+
+        'Такі ваги знецінили геометрію: при wL1 = '+wl.toFixed(1)+' і wGIoU = '+wg.toFixed(1)+
+        ' відстань між рамками майже не впливає на вартість.');
+    }
+    draw();
+  }
+  on('wCls','input',update); on('wL1','input',update); on('wGi','input',update);
+  window.addEventListener('resize', draw);
+  update();
+})();
+
+/* ═══════ 5 · карта запитів ═══════ */
+(function(){
+  var cv=I('cQ'); if(!cv) return;
+  var mode=0;
+
+  function nearest(k){
+    var best=1e9, j;
+    for(j=0;j<QUERIES.length;j++){
+      if(j===k) continue;
+      var dx=QUERIES[j].x-QUERIES[k].x, dy=QUERIES[j].y-QUERIES[k].y;
+      var d=Math.sqrt(dx*dx+dy*dy);
+      if(d<best) best=d;
+    }
+    return best;
+  }
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var pick=+I('qPick').value;
+    var pad=26, side=Math.min(H-2*pad, 350), sc=side/SCENE, ox=pad, oy=(H-side)/2;
+
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,side,side);
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(ox,oy,side,side);
+    /* середній центр істинних рамок */
+    var mx=ox+TRUTH_MEAN.x*sc, my=oy+TRUTH_MEAN.y*sc;
+    g.strokeStyle=css('--soft'); g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(mx-8,my); g.lineTo(mx+8,my);
+    g.moveTo(mx,my-8); g.lineTo(mx,my+8); g.stroke();
+
+    var k;
+    for(k=0;k<QUERIES.length;k++){
+      var q=QUERIES[k];
+      var r=q.s*sc/2;
+      g.beginPath();
+      g.arc(ox+q.x*sc, oy+q.y*sc, r, 0, Math.PI*2);
+      g.fillStyle=(k===pick)?css('--rose-w'):css('--teal-w');
+      g.fill();
+      g.strokeStyle=(k===pick)?css('--rose'):css('--teal');
+      g.lineWidth=(k===pick)?2.5:1.2;
+      g.stroke();
+      capt(g,String(k), ox+q.x*sc, oy+q.y*sc+4, (k===pick)?css('--rose'):css('--soft'),
+           12, k===pick, 'center');
+    }
+    capt(g,'кожен кружок — один запит · діаметр = середній бік рамки',
+         ox, oy+side+16, css('--soft'), 11);
+    capt(g,'сірий хрестик — середній центр істинних рамок',
+         ox, oy+side+31, css('--soft'), 10);
+
+    /* права частина */
+    var bx=ox+side+56, bw=W-bx-40;
+    if(mode===0){
+      capt(g,'середній центр по осі x', bx, oy+18, css('--soft'), 11);
+      var sc2=(bw-80)/SCENE;
+      for(k=0;k<QUERIES.length;k++){
+        var yy=oy+30+k*26;
+        g.fillStyle=(k===pick)?css('--rose'):css('--teal');
+        g.fillRect(bx+20, yy, Math.max(2,QUERIES[k].x*sc2), 14);
+        capt(g,String(k), bx, yy+12, css('--soft'), 10);
+        capt(g,QUERIES[k].x.toFixed(1), bx+24+QUERIES[k].x*sc2, yy+12, css('--ink'), 11, k===pick);
+      }
+      capt(g,'розмах середніх: 19.0 … 46.0 px', bx, oy+30+10*26+18, css('--ink'), 12, true);
+    } else {
+      capt(g,'частка сцен, де запит каже «порожньо»', bx, oy+18, css('--soft'), 11);
+      var sc3=(bw-80);
+      for(k=0;k<QUERIES.length;k++){
+        var yy2=oy+30+k*26;
+        g.fillStyle=(k===pick)?css('--rose'):css('--amber');
+        g.fillRect(bx+20, yy2, Math.max(2,QUERIES[k].mute*sc3), 14);
+        capt(g,String(k), bx, yy2+12, css('--soft'), 10);
+        capt(g,f3(QUERIES[k].mute), bx+24+QUERIES[k].mute*sc3, yy2+12, css('--ink'), 11, k===pick);
+      }
+      capt(g,'жоден запит не мовчить завжди й жоден не говорить завжди',
+           bx, oy+30+10*26+18, css('--ink'), 11, true);
+    }
+  }
+  function update(){
+    var k=+I('qPick').value, q=QUERIES[k];
+    I('qPickv').textContent=String(k);
+    I('qC').textContent=q.x.toFixed(1)+' · '+q.y.toFixed(1);
+    I('qS').textContent=q.s.toFixed(1)+' px';
+    I('qN').textContent=q.n+' зі 120';
+    var d=nearest(k);
+    I('qD').textContent=d.toFixed(1)+' px';
+    if(d>INSIDE_STD){
+      verd('qVd','t-ok','ЗАПИТ МАЄ СВОЮ ДІЛЯНКУ',
+        'Найближчий сусід стоїть за '+d.toFixed(1)+' px, а центр цього запиту гуляє від '+
+        'сцени до сцени лише на '+INSIDE_STD.toFixed(1)+' px. Запити розрізняються сильніше, '+
+        'ніж кожен із них хитається сам.');
+    } else {
+      verd('qVd','t-mid','ТУТ ДВА ЗАПИТИ ПОРУЧ',
+        'Найближчий сусід стоїть за '+d.toFixed(1)+' px — це менше за розкид '+
+        INSIDE_STD.toFixed(1)+' px усередині запиту, тож ці двоє ділять одну ділянку сцени. '+
+        'Спеціалізація не ідеальна: десять запитів на 2.06 предмета — це запас, і частина '+
+        'запасу лягає в ті самі місця.');
+    }
+    draw();
+  }
+  segment('segQ', function(i){ mode=i; draw(); });
+  on('qPick','input',update);
+  window.addEventListener('resize', draw);
+  update();
+})();
+
+/* ═══════ 6 · дублікати до NMS ═══════ */
+(function(){
+  var cv=I('cDup'); if(!cv) return;
+  var mode=0;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var k=+I('dTh').value;
+    var ox=90, oy=60, bw=W-ox-90, bh=H-oy-90;
+    var maxv=14;
+    var sc=(bh-30)/maxv;
+
+    /* осі */
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(ox,oy); g.lineTo(ox,oy+bh); g.lineTo(ox+bw,oy+bh); g.stroke();
+    var t;
+    for(t=0;t<=14;t+=2){
+      var yy=oy+bh-t*sc;
+      capt(g,String(t), ox-10, yy+4, css('--soft'), 10, false, 'right');
+      g.strokeStyle=css('--hair');
+      g.beginPath(); g.moveTo(ox,yy); g.lineTo(ox+bw,yy); g.stroke();
+    }
+    capt(g,'пар передбачень із IoU понад поріг, на одну сцену', ox, oy-22, css('--soft'), 12);
+    capt(g,'поріг IoU', ox+bw/2, oy+bh+46, css('--soft'), 12, false, 'center');
+
+    var step=bw/DUP_TH.length, i;
+    for(i=0;i<DUP_TH.length;i++){
+      var cx=ox+step*(i+0.5);
+      var w=Math.min(46, step*0.34);
+      var pairs=[[DUP_DETR[i], css('--teal'), -w-4, 'DETR'],
+                 [DUP_DENSE[i], css('--rose'), 4, 'щільна']];
+      var j;
+      for(j=0;j<2;j++){
+        var v=pairs[j][0], hgt=Math.max(2,v*sc);
+        var active=(i===k) && ((mode===0&&j===0)||(mode===1&&j===1));
+        g.fillStyle=pairs[j][1];
+        g.globalAlpha=(i===k)?1:0.35;
+        g.fillRect(cx+pairs[j][2], oy+bh-hgt, w, hgt);
+        g.globalAlpha=1;
+        if(i===k)
+          capt(g,f2(v), cx+pairs[j][2]+w/2, oy+bh-hgt-7, css('--ink'), 12, active, 'center');
+      }
+      capt(g,DUP_TH[i].toFixed(1), cx, oy+bh+20, (i===k)?css('--ink'):css('--soft'), 12, i===k, 'center');
+    }
+    /* легенда */
+    g.fillStyle=css('--teal'); g.fillRect(ox+bw-160, oy-14, 12, 12);
+    capt(g,'DETR', ox+bw-142, oy-4, css('--soft'), 11);
+    g.fillStyle=css('--rose'); g.fillRect(ox+bw-80, oy-14, 12, 12);
+    capt(g,'щільна голова', ox+bw-62, oy-4, css('--soft'), 11);
+  }
+  function update(){
+    var k=+I('dTh').value;
+    I('dThv').textContent=DUP_TH[k].toFixed(2);
+    var mine=(mode===0)?DUP_DETR[k]:DUP_DENSE[k];
+    I('dVal').textContent=f2(mine);
+    var ratio=DUP_DENSE[k]/Math.max(0.01,DUP_DETR[k]);
+    var shown=(ratio>=100?Math.round(ratio):+ratio.toFixed(1));
+    I('dRat').textContent='×'+shown;
+    if(mode===0){
+      verd('dVd','t-ok','DETR ПРАКТИЧНО НЕ ДУБЛЮЄ',
+        'При порозі '+DUP_TH[k].toFixed(1)+' у неї '+f2(DUP_DETR[k])+' пари на сцену проти '+
+        f2(DUP_DENSE[k])+' у щільної голови — у '+shown+' '+timesWord(shown)+
+        ' менше. Дублікати не прибрано фільтром: їх не породжено.');
+    } else {
+      verd('dVd','t-no','ЩІЛЬНІЙ ГОЛОВІ NMS ОБОВʼЯЗКОВИЙ',
+        'При порозі '+DUP_TH[k].toFixed(1)+' вона віддає '+f2(DUP_DENSE[k])+
+        ' перекритих пар на сцену — при 2.06 предмета в сцені. Без NMS такий вихід '+
+        'нечитабельний, а з NMS зникає частина справжніх предметів.');
+    }
+    draw();
+  }
+  segment('segDup', function(i){ mode=i; update(); });
+  on('dTh','input',update);
+  window.addEventListener('resize', draw);
+  update();
+})();
+
+/* ═══════ 7 · сцена, на якій NMS помиляється ═══════ */
+(function(){
+  var cv=I('cNms'); if(!cv) return;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var r=+I('nIou').value, t=+I('nTh').value;
+    var pad=26, side=Math.min(H-2*pad, 340), sc=side/SCENE, ox=pad, oy=(H-side)/2;
+
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,side,side);
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(ox,oy,side,side);
+
+    /* дві істинні рамки з потрібним перекриттям: бік 21, зсув із формули IoU */
+    var siz=21, iou=NMS_IOU[r];
+    var shift=Math.round(siz*(1-iou)/(1+iou));
+    var x0=(SCENE-siz-shift)/2, y0=(SCENE-siz)/2;
+    var boxes=[[x0,y0,x0+siz,y0+siz],[x0+shift,y0,x0+shift+siz,y0+siz]];
+    var k;
+    for(k=0;k<2;k++){
+      var b=boxes[k];
+      g.fillStyle=k===0?css('--teal-w'):css('--rose-w');
+      g.fillRect(ox+b[0]*sc, oy+b[1]*sc, (b[2]-b[0])*sc, (b[3]-b[1])*sc);
+      g.strokeStyle=k===0?css('--teal'):css('--rose'); g.lineWidth=2;
+      g.strokeRect(ox+b[0]*sc, oy+b[1]*sc, (b[2]-b[0])*sc, (b[3]-b[1])*sc);
+    }
+    capt(g,'два предмети одного класу', ox, oy+side+16, css('--soft'), 11);
+    capt(g,'IoU істинних рамок '+f3(iou)+' · зсув '+shift+' px',
+         ox, oy+side+31, css('--soft'), 10);
+
+    /* три стовпчики повноти */
+    var bx=ox+side+56, bw=W-bx-40, sc2=bw-120;
+    var rows=[['DETR (без NMS)', REC_DETR[r], css('--teal')],
+              ['щільна + NMS', REC_DENSE[r][t], css('--rose')],
+              ['щільна без NMS', REC_RAW, css('--amber')]];
+    for(k=0;k<3;k++){
+      var yy=oy+34+k*76;
+      capt(g,rows[k][0], bx, yy-8, css('--soft'), 11);
+      g.fillStyle=css('--hair'); g.fillRect(bx, yy, sc2, 24);
+      g.fillStyle=rows[k][2]; g.fillRect(bx, yy, Math.max(2,rows[k][1]*sc2), 24);
+      capt(g,f3(rows[k][1]), bx+sc2+10, yy+17, css('--ink'), 14, true);
+    }
+    capt(g,'повнота при IoU 0.5 · 60 сцен на кожне значення',
+         bx, oy+34+3*76+6, css('--soft'), 11);
+  }
+  function update(){
+    var r=+I('nIou').value, t=+I('nTh').value;
+    I('nIouv').textContent=f3(NMS_IOU[r]);
+    I('nThv').textContent=NMS_TH[t].toFixed(1);
+    var d=REC_DETR[r], n=REC_DENSE[r][t];
+    I('nD').textContent=f3(d);
+    I('nN').textContent=f3(n);
+    I('nR').textContent=f3(REC_RAW);
+    if(n<d-0.02){
+      verd('nVd','t-no','NMS ВИКИДАЄ СПРАВЖНІ ПРЕДМЕТИ',
+        'При перекритті '+f3(NMS_IOU[r])+' і порозі NMS '+NMS_TH[t].toFixed(1)+
+        ' щільна голова знаходить '+f3(n)+' предметів проти '+f3(d)+' у DETR. '+
+        'І дивись на третій стовпчик: без NMS та сама мережа знаходить '+f3(REC_RAW)+
+        ' — губить їх фільтр, а не детектор.');
+    } else if(n>d+0.02){
+      verd('nVd','t-mid','ПОРІГ ПІДНЯТО — ПРЕДМЕТИ ПОВЕРНУЛИСЬ',
+        'При порозі '+NMS_TH[t].toFixed(1)+' щільна голова дає '+f3(n)+' проти '+f3(d)+
+        ' у DETR. Але це той самий обмін, що в темі 23: разом із предметами повертаються '+
+        'дублікати — до NMS їх у неї 10.63 пари на сцену.');
+    } else {
+      verd('nVd','t-ok','ТУТ ОБИДВА КОНВЕЄРИ РІВНІ',
+        'При перекритті '+f3(NMS_IOU[r])+' і порозі '+NMS_TH[t].toFixed(1)+
+        ' обидва дають близьку повноту ('+f3(n)+' і '+f3(d)+
+        '). Предмети стоять досить далеко, щоб NMS не сплутав їх із дублікатами.');
+    }
+    draw();
+  }
+  on('nIou','input',update); on('nTh','input',update);
+  window.addEventListener('resize', draw);
+  update();
+})();
+
+})();
+</script>
+</body>
+</html>

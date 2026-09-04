@@ -1,0 +1,1603 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пошук аномалій</title>
+<meta name="description" content="Пошук аномалій без міток: три різні задачі, які плутають під одним словом; чому це не звичайна класифікація; де ламаються одновимірні правила; локальна щільність і LOF з ручним розрахунком; Isolation Forest; помилка відновлення після PCA; поріг як рішення, а не обчислення; precision@k без розмітки й чесне порівняння знайдених аномалій із шахрайством.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* довгі імена (IsolationForest, negative_outlier_factor_) не мають де
+   перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* дві кнопки поруч під канвою інтерактиву з розрізами */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Машинне навчання · Блок 6 · Тема 28</p>
+    <h1>Пошук аномалій</h1>
+    <p class="stand">Знайти те, що не схоже на решту, — і чесно зізнатися, що
+      «не схоже» й «те, що я шукаю» дуже часто виявляються різними речами.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Слово без означення</a></li>
+        <li><a href="#s2">Чому це не класифікація</a></li>
+        <li><a href="#s3">Де ламається погляд на одну колонку</a></li>
+        <li><a href="#s4">Локальна щільність: LOF</a></li>
+        <li><a href="#s5">Isolation Forest</a></li>
+        <li><a href="#s6">Помилка відновлення</a></li>
+        <li><a href="#s7">Три методи поруч</a></li>
+        <li><a href="#s8">Поріг — це рішення</a></li>
+        <li><a href="#s9">Як оцінювати без міток</a></li>
+        <li><a href="#s10">Аномалія — не те, що ти шукаєш</a></li>
+        <li><a href="#s11">Що далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../27-hierarchical-dbscan/lecture.html">← 27. Ієрархічна та DBSCAN</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../29-model-comparison/lecture.html">29. Порівняння моделей →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Блок навчання без учителя завершується задачею, у якій відповіді немає
+не тимчасово, а принципово. Кластеризація групувала рядки, <a href="../11-pca/lecture.html">метод
+головних компонент</a> стискав стовпці — і в обох випадках ми хоча б знали, що саме
+шукаємо: групи або напрямки розкиду. Тут завдання формулюється так: знайди оголошення,
+які <strong>не схожі на решту</strong>. І перше, що з ним треба зробити, — помітити, що
+це не задача, а її опис побутовою мовою.</p>
+
+<p>Приклад той самий, що й у двох попередніх темах, — дошка оголошень про вживані
+телефони з <a href="../08-pandas-eda/lecture.html">теми 08</a>. Ті самі 1 100 оголошень
+із відомою ціною й ті самі сім числових ознак: ціна, типова ціна для цієї моделі й року,
+оцінка з каталогу, рік випуску, памʼять, стан у балах від 1 до 4 і вік акаунта продавця.
+У таблиці є ще колонка <code>шахрайське</code> — але жоден метод цієї теми її не побачить.
+Ми дістанемо її аж наприкінці, щоб перевірити, чи знайшли те, що хотіли. Спойлер: не
+зовсім, і це головне, що варто винести з теми.</p>
+
+<h2 id="s1"><span class="num">01 / Означення</span>Слово без означення</h2>
+
+<p>«Аномалія — це те, що не схоже на решту.» Речення звучить як означення, але їм не є:
+у ньому два невизначені слова. «Решта» — це весь набір даних, чи його частина, чи те, що
+буває на цій дошці взагалі? «Не схоже» — за якою мірою схожості, порахованою по яких
+ознаках і в яких одиницях? Змінюєш відповідь на будь-яке з цих питань — і список аномалій
+змінюється повністю.</p>
+
+<p>Гірше того: під одним словом ховаються три різні задачі. Вони вимагають різних
+методів, різних порогів і мають абсолютно різну ціну помилки. Плутанина між ними —
+причина більшості розчарувань у цій темі.</p>
+
+<figure>
+  <p class="fig-head">Схема 1 · Три задачі, які називають одним словом</p>
+  <p class="fig-sub">Однакова технічна операція — «знайти несхожі рядки». Різна мета,
+    різний наступний крок і різна ціна того, що ти помилився.</p>
+  <div><canvas id="cvTasks" width="700" height="256" aria-label="Схема трьох задач пошуку аномалій: помилка в даних, рідкісна подія та навмисне зловживання; для кожної наведено приклад із дошки оголошень, що з нею роблять далі й що коштує дорожче — пропуск чи хибна тривога"></canvas></div>
+  <figcaption><b>Той самий рядок може належати до будь-якої з трьох колонок</b> — і від
+    цього залежить, що з ним робити. Ціна 83 500 ₴ за телефон у стані «добре» — майже
+    напевно зайвий нуль, тобто перша колонка. Ціна 95 000 ₴ за запакований флагман
+    2017 року — друга: рідкісне, але справжнє. Ціна 15 160 ₴ за Beta 12, яка скрізь іде
+    по 4 310 ₴, — третя. Розрізняє їх не метод, а людина, що дивиться на рядок цілком.</figcaption>
+</figure>
+
+<p><strong>Помилка в даних.</strong> Датчик збився, оператор натиснув зайву клавішу, при
+злитті таблиць зʼїхав рядок. Такі аномалії треба знайти й <em>прибрати</em> — вони не
+розповідають про світ нічого, крім того, що конвеєр даних десь протікає. Дорого коштує
+пропуск: одне число з зайвим нулем зсуває середнє й ламає навчання моделі.</p>
+
+<p><strong>Рідкісна подія.</strong> Колекційний телефон, землетрус, поломка обладнання,
+рідкісна хвороба. Це не помилка — це справжнє явище, якого мало. Прибрати такі рядки
+означає викинути з даних якраз найцікавіше. Часто саме заради них усе й затівається:
+у виявленні поломок аномалія — це і є прогноз.</p>
+
+<p><strong>Навмисне зловживання.</strong> Шахрайське оголошення, накрутка, зламаний
+акаунт. Головна відмінність від двох попередніх — на тому боці є людина, яка
+<em>намагається не виглядати аномалією</em>. Метод, що добре ловить помилки датчика,
+тут може не працювати взагалі: як тільки правило стає відомим, під нього підлаштовуються.
+І ціна помилки несиметрична — заблокувати чесного продавця значно дорожче, ніж
+пропустити одного шахрая.</p>
+
+<div class="note"><b>Перше практичне рішення теми.</b> Перш ніж вибирати метод, дай
+письмову відповідь на одне питання: <b>що я робитиму з рядком, який метод позначить?</b>
+Викину? Покажу модератору? Заблокую акаунт? Відповідь визначає і поріг, і те, яку
+з двох помилок ти дозволиш собі частіше.</div>
+
+<h2 id="s2"><span class="num">02 / Постановка</span>Чому це не класифікація</h2>
+
+<p>Спокуса очевидна: у нас же є колонка <code>шахрайське</code> — навчімо на ній
+класифікатор і не вигадуймо нічого. Іноді так і треба робити. Але задача пошуку аномалій
+виникає саме тоді, коли цей шлях закритий, і закритий він із трьох причин одразу.</p>
+
+<p><strong>Міток немає або майже немає.</strong> На реальній дошці ніхто не позначає
+оголошення як шахрайські в момент публікації. Позначка зʼявляється потім — після скарг,
+розслідування, повернення грошей, — і то не для всіх. Тобто цільової колонки просто
+немає, а та, що є, описує лише спійманих.</p>
+
+<p><strong>Аномалії різнорідні.</strong> Класифікатор навчається на тому, що спільного
+між обʼєктами класу. Але в аномалій спільного немає за означенням: кожна не схожа на
+решту <em>по-своєму</em>. Одне шахрайське оголошення занижує ціну вдесятеро, друге
+завищує втричі, третє копіює чужий текст. Модель, навчена на перших двох видах, третій
+не впізнає. Нормальні ж оголошення, навпаки, схожі між собою — і саме тому в цій темі
+модель описує <strong>норму</strong>, а аномалією називає все, що в цей опис не вписалось.</p>
+
+<p><strong>Класи вкрай незбалансовані.</strong> На нашій дошці шахрайських оголошень
+139 із 1 100, тобто 12.6 %. Це вже багато для такої задачі: на справжніх майданчиках
+частка йде на десяті відсотка. І тут спрацьовує пастка з
+<a href="../05-precision-recall/lecture.html#s3">теми 05</a>: модель, яка каже «усе чесне»
+і не робить взагалі нічого, отримує на наших даних <strong>87.4 % accuracy</strong>,
+а на реальній дошці з одним відсотком шахрайства — 99 %. Число виглядає чудово й не
+означає нічого. Тому в цій темі accuracy не згадується більше жодного разу: працюємо
+з <a href="../05-precision-recall/lecture.html#s4">precision</a> і
+<a href="../05-precision-recall/lecture.html#s5">recall</a>.</p>
+
+<h2 id="s3"><span class="num">03 / Одна колонка</span>Де ламається погляд на одну колонку</h2>
+
+<p>У <a href="../08-pandas-eda/lecture.html#s5">темі 08</a> ми вже позначали викиди —
+і робили це так, як робить людина з очима: брали одну колонку, малювали розподіл і
+дивились, що відірвалось від решти. Правило міжквартильного розмаху й z-оцінка звідти
+нікуди не діваються, це й досі перше, що варто зробити. Різниця в тому, що там ми
+шукали <em>підозрілі числа в колонці</em>, а тут — <em>підозрілі рядки в таблиці</em>.
+Це різні речі, і зараз буде видно наскільки.</p>
+
+<p>Застосуємо обидва одновимірні правила до всіх семи колонок одразу й позначимо
+оголошення, яке вилетіло хоч за одним:</p>
+
+<div class="eq left">z-оцінка, |z| більше за 3     51 оголошення   із них шахрайських  6
+розмах, 1.5·IQR             156 оголошень   із них шахрайських 26</div>
+
+<p>Тепер порівняй ці числа з часткою шахрайських оголошень на дошці — 12.6 %.
+Правило z-оцінки дало 6 із 51, тобто <strong>11.8 %</strong>: тицьнути пальцем навмання
+було б не гірше. Правило розмаху дало 26 зі 156, тобто <strong>16.7 %</strong>: трохи
+краще за випадковість, але не так, щоб радіти. І це не тому, що правила погані. Просто
+обидва відповідають на питання «чи велике це число», а шахрайське оголошення видає
+не величина, а поєднання.</p>
+
+<h3>Оголошення, у якому кожна колонка в нормі</h3>
+
+<p>Ось рядок 328 із нашої таблиці. Beta 12, 2021 рік, стан «добре», 64 гігабайти,
+акаунт створено 93 дні тому, ціна 15 160 грн. Порахуємо z-оцінку кожної з семи ознак:</p>
+
+<div class="eq left">ціна            15 160 грн   z = +1.00     памʼять       64 ГБ   z = −0.85
+типова ціна      4 310 грн   z = −0.29     стан          2 бали  z = −0.37
+оцінка каталогу  6 616 грн   z = −0.13     вік акаунта   93 дні  z = −0.77
+рік                   2021   z = +0.23</div>
+
+<p>Жодна ознака не виходить навіть за <strong>одне</strong> стандартне відхилення від
+середнього. Жодна не перетинає межу міжквартильного розмаху — ціна 15 160 грн лежить
+під верхньою межею 16 061 грн, і решта колонок навіть близько не підходять до своїх меж.
+За будь-яким одновимірним правилом це найзвичайніше оголошення на дошці.</p>
+
+<p>А тепер прочитай рядок цілком. Beta 12 у стані «добре» — модель, яка на цій самій
+дошці того самого року йде по 4 310 грн, — виставлена за 15 160. Це втричі з половиною
+дорожче за типову ціну; оголошень із таким перевищенням на дошці лише 2.4 %. Ознака, що видає цей рядок, —
+не «ціна» і не «типова ціна», а <strong>їхнє співвідношення</strong>, і жодна колонка
+окремо його не містить.</p>
+
+<p>Саме тут і закінчується одновимірний погляд. Точка може бути звичайною за кожною
+віссю окремо й неможливою на площині — покрути її сам.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Нормальна окремо, аномальна разом</p>
+  <p class="fig-sub">240 оголошень у двох ознаках: ціна й типова ціна для цієї моделі,
+    обидві в тисячах гривень. По краях — розподіли кожної ознаки окремо. Посунь рожеву
+    точку й порівняй два вироки: за осями й за хмарою.</p>
+  <div class="panel">
+    <div><canvas id="cvMarg" width="700" height="470" aria-label="Інтерактивна схема: діаграма розсіювання 240 оголошень у координатах ціна й типова ціна з гістограмами обох ознак по краях; рухома рожева точка, для якої показано положення в кожному розподілі окремо та відстань до хмари з урахуванням звʼязку між ознаками"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="pxA"><span>ціна, тис. грн</span><output id="pxAv">15.2</output></label>
+        <input type="range" id="pxA" min="0.5" max="24" step="0.1" value="15.2">
+      </div>
+      <div class="ctl">
+        <label for="pyA"><span>типова ціна, тис.</span><output id="pyAv">4.3</output></label>
+        <input type="range" id="pyA" min="0.5" max="24" step="0.1" value="4.3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>z ціни</b><i id="mzx">+1.59</i></div>
+        <div class="cellv"><b>z типової</b><i id="mzy">−0.24</i></div>
+        <div class="cellv"><b>відстань до хмари</b><i id="mmd">10.1</i></div>
+        <div class="cellv"><b>поріг (99 %)</b><i id="mth">4.4</i></div>
+      </div>
+      <div class="verdict" id="mV"></div>
+    </div>
+  </div>
+  <figcaption><b>«Відстань до хмари» — це відстань Махаланобіса.</b> Звичайна відстань
+    до центру не годиться: хмара витягнута вздовж діагоналі, тож відхилитись уздовж неї
+    можна далеко й лишитись звичайним, а впоперек — зовсім ні. Махаланобіс міряє відстань
+    у «своїх» одиницях хмари: скільки типових розкидів саме в цьому напрямку. Поріг
+    у комірці — та відстань, яку перевищують рівно 1 % оголошень хмари.</figcaption>
+</figure>
+
+<p>Постав повзунки в 15.2 і 4.3 — це і є наш рядок 328. Обидві осі кажуть «норма»,
+а спільна відстань перевищує поріг більш ніж удвічі. Постав обидва в 20 — ціна висока,
+типова висока, але одне одному відповідає, і відстань падає до звичайної. Ось у цьому
+різниця між «велике число» і «неможливе поєднання», і заради неї існує решта теми.</p>
+
+<h2 id="s4"><span class="num">04 / Сусіди</span>Локальна щільність: LOF</h2>
+
+<p>Найпряміша багатовимірна ідея виростає з відстані, якою ми користувались у
+<a href="../26-kmeans/lecture.html#s2">темі 26</a>. Якщо між двома оголошеннями можна
+поміряти відстань, то в кожного оголошення є сусіди — ті кілька, до яких найближче.
+Нормальна точка живе в натовпі: її сусіди поруч. Аномальна стоїть осторонь: навіть до
+найближчих далеко. Отже, візьмімо середню відстань до <span class="mono">k</span>
+найближчих сусідів і назвімо її оцінкою аномальності.</p>
+
+<p>Ідея правильна рівно доти, доки хмара всюди однаково щільна. А вона такою не буває.
+На нашій дошці дешеві телефони — це тисячі схожих оголошень, що стоять щільно одне до
+одного; дорогі флагмани трапляються десятками, і між ними завжди великі проміжки. Правило
+«далеко до сусідів — значить аномалія» позначить весь дорогий сегмент повністю, і буде
+формально право: там справді порожньо. Змістовно ж воно скаже дурницю.</p>
+
+<p><strong>LOF (local outlier factor, локальний фактор викиду)</strong> лагодить це одним
+поворотом думки. Питання не в тому, наскільки далеко сусіди, а в тому,
+<em>наскільки далі, ніж у самих сусідів</em>. Точка аномальна, якщо навколо неї значно
+просторіше, ніж навколо тих, хто поруч. У щільному районі порожнеча помітна, у розрідженому
+вона — норма.</p>
+
+<figure>
+  <p class="fig-head">Схема 2 · Локальна щільність проти глобальної</p>
+  <p class="fig-sub">Дві групи оголошень і одна точка між ними. Колом позначено середню
+    відстань до трьох найближчих сусідів.</p>
+  <div><canvas id="cvLof" width="700" height="300" aria-label="Схема локального фактора викиду: щільна група з девʼяти точок ліворуч, розріджена група з девʼяти точок праворуч і аномальна точка А між ними; для точки А та для центральної точки розрідженої групи показано коло середньої відстані до трьох сусідів і обчислено відношення цієї відстані до такої ж відстані в сусідів"></canvas></div>
+  <figcaption><b>У точки А та в точки S середні відстані до сусідів майже однакові —
+    2.37 і 2.00.</b> Будь-яке глобальне правило «далеко до сусідів» або позначить обидві,
+    або жодну. Локальне ділить цю відстань на таку саму відстань у сусідів — і числа
+    розходяться в чотири з половиною рази.</figcaption>
+</figure>
+
+<p>Порахуймо це руками для точки А. Крок перший: знаходимо трьох її найближчих сусідів
+і середню відстань до них.</p>
+
+<div class="derive">
+
+<div class="step">
+<span class="lbl">Крок 1 · відстань до сусідів</span>
+<p>Три найближчі до А точки лежать на краю щільної групи, на відстанях
+2.121, 2.500 і 2.500. Середнє:</p>
+<div class="eq left">avg(А) = (2.121 + 2.500 + 2.500) / 3 = <b>2.374</b></div>
+</div>
+
+<div class="step">
+<span class="lbl">Крок 2 · те саме для кожного сусіда</span>
+<p>Тепер для кожного з цих трьох сусідів рахуємо його власну середню відстань до
+<em>його</em> трьох найближчих. Вони стоять у щільній групі, тому числа маленькі:</p>
+<div class="eq left">avg(сусід 1) = (0.500 + 0.500 + 0.707) / 3 = 0.569
+avg(сусід 2) = (0.500 + 0.500 + 0.500) / 3 = 0.500
+avg(сусід 3) = (0.500 + 0.500 + 0.500) / 3 = 0.500
+
+середнє по сусідах = (0.569 + 0.500 + 0.500) / 3 = <b>0.523</b></div>
+</div>
+
+<div class="step">
+<span class="lbl">Крок 3 · відношення</span>
+<p>Оцінка LOF — це відношення першого числа до другого. Одиниця означає «навколо мене
+так само просторо, як навколо моїх сусідів», тобто повна норма:</p>
+<div class="eq left">LOF(А) = 2.374 / 0.523 = <b>4.54</b></div>
+<p>Навколо точки А вчетверо просторіше, ніж навколо її сусідів. Це аномалія.</p>
+</div>
+
+<div class="step">
+<span class="lbl">Крок 4 · контрольна точка</span>
+<p>Тепер точка S у центрі розрідженої групи. Три її сусіди стоять рівно за 2.000 —
+майже стільки ж, скільки в А. Але кожен із них теж має сусідів на відстані 2.000:</p>
+<div class="eq left">LOF(S) = 2.000 / 2.000 = <b>1.00</b></div>
+<p>Абсолютна відстань та сама, вирок протилежний. Ось для чого в назві слово
+«локальний».</p>
+</div>
+
+</div>
+
+<div class="note"><b>Дрібний шрифт.</b> Справжній LOF замість простої відстані бере
+<em>відстань досяжності</em>: якщо точка ближча до сусіда, ніж радіус його власного
+k-го сусіда, відстань штучно збільшують до цього радіуса. Це згладжування, щоб оцінка
+не стрибала від однієї щільно розташованої пари. Ідея відношення від цього не
+змінюється: <code>scikit-learn</code> дає для наших точок 3.87 і 0.78 замість 4.54 і 1.00,
+а порядок і висновок ті самі.</div>
+
+<p>Головний важіль тут — <span class="mono">k</span>, кількість сусідів. Замалий
+(2-3) — і будь-яка пара точок, що випадково стала поруч, оголосить себе окремою
+щільною групою, а решту світу — аномалією. Завеликий — і «локальний» перестає бути
+локальним: сусідство розпливається на пів хмари. Типова робоча величина —
+кілька десятків; ми беремо 20. І тут діє те саме правило без винятків, що й у
+<a href="../26-kmeans/lecture.html#s7">темі 26</a>: <strong>перед LOF обовʼязкове
+масштабування</strong>. LOF рахує відстані, а відстань складається з різниць по всіх
+колонках — тож без спільної шкали вік акаунта, що йде сотнями днів, перекриє стан,
+який іде балами від 1 до 4, повністю.</p>
+
+<h2 id="s5"><span class="num">05 / Розрізи</span>Isolation Forest</h2>
+
+<p>Найкрасивіша ідея теми починається з питання, яке спершу здається не про те.
+Скільки випадкових розрізів треба, щоб <strong>відрізати</strong> точку від усіх інших?</p>
+
+<p>Правила гри такі. Береш випадкову ознаку, береш випадкове значення в межах того,
+що зараз лишилось, і розрізаєш дані навпіл. Далі береш ту половину, у якій опинилась
+твоя точка, і повторюєш. Зупиняєшся, коли в цій частині лишилась сама точка.</p>
+
+<p>Кожен розріз ділить одну частину на дві, ті — ще на дві, і будова, що з цього виростає,
+природно зветься <strong>деревом</strong>: один стовбур згори, розгалуження на кожному
+розрізі, окремі точки в кінцях гілок. Слово тут ужите в найпобутовішому сенсі, ніякої
+теорії за ним поки не стоїть. Важливо тільки одне: кожне питання розрізає простір навпіл,
+і нас цікавить, скільки таких питань довелось поставити.</p>
+
+<p>Тепер спостереження, на якому все тримається. Точка з гущі схована серед сотні
+таких самих — щоб відрізати її, доведеться довго відсікати сусідів по одному.
+А точка, що стоїть окремо, відлітає з першим-другим випадковим розрізом: між нею
+й рештою багато порожнього місця, тож майже будь-яка лінія проходить між ними.
+<strong>Глибина, на якій точка ізолювалась, і є оцінкою нормальності</strong>: мала
+глибина — аномалія, велика — звичайна точка.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Скільки розрізів треба, щоб відрізати точку</p>
+  <p class="fig-sub">Ті самі 114 оголошень двічі. Ліворуч ціль — точка, що стоїть
+    осторонь; праворуч — точка з самої гущі. Тисни «розріз» і рахуй.</p>
+  <div class="panel">
+    <div><canvas id="cvIso" width="700" height="400" aria-label="Дві однакові діаграми розсіювання зі 114 точок: ліворуч виділено аномальну точку осторонь хмари, праворуч — точку в центрі хмари; після кожного натискання кнопки на обох діаграмах додається випадковий розріз, і зона, у якій лишається виділена точка, звужується"></canvas></div>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>розрізів · аномалія</b><i id="iA">0</i></div>
+        <div class="cellv"><b>розрізів · гуща</b><i id="iB">0</i></div>
+        <div class="cellv"><b>сер. за 300 спроб</b><i id="iAm">3.5</i></div>
+        <div class="cellv"><b>сер. за 300 спроб</b><i id="iBm">11.0</i></div>
+      </div>
+      <div class="btnrow">
+        <button type="button" id="isoCut">розріз</button>
+        <button type="button" id="isoAll">до кінця</button>
+      </div>
+      <button type="button" id="isoNew">новий випадок</button>
+      <div class="verdict" id="iV"></div>
+    </div>
+  </div>
+  <figcaption><b>Праві дві комірки — середня глибина за 300 незалежних прогонів</b>,
+    порахована прямо тут при завантаженні сторінки. Один прогін нічого не доводить:
+    буває, що й точку з гущі відітне другий розріз. Саме тому метод зветься лісом —
+    оцінка береться як середнє по сотні дерев.</figcaption>
+</figure>
+
+<p>Ось чому в назві методу стоїть <strong>ліс</strong>, а не дерево. Розрізи випадкові,
+тож одне дерево нічого не доводить: буває, що звичайнісіньку точку з гущі відітне другий
+розріз, а аномалію хтось прикриє невдалою лінією. Це шум конкретного жеребкування.
+Ліки від такого шуму завжди ті самі, що й у будь-якому вимірюванні: повторити дослід
+багато разів і взяти середнє. Сто дерев — сто незалежних спроб; середня глибина по них
+уже майже не залежить від того, як лягли окремі розрізи, і саме вона стає оцінкою. Цей
+прийом — «багато випадкових спроб, усереднених» — далі в курсі ти зустрінеш ще не раз,
+і не лише для пошуку аномалій.</p>
+
+<p><code>IsolationForest</code> будує 100 дерев (у нас 200),
+кожне на випадковій підвибірці, для кожної точки усереднює глибину ізоляції й
+перетворює її на число від 0 до 1. Ділити доводиться на очікувану глибину для
+випадкової точки, бо в дерева з 256 обʼєктів і в дерева з 10 000 «нормальна» глибина
+різна.</p>
+
+<p>Три властивості, за які метод люблять. Він <strong>не міряє відстаней</strong> —
+отже, не потребує масштабування й не страждає від
+<a href="../11-pca/lecture.html#s1">прокляття розмірності</a> так, як LOF.
+Він <strong>швидкий</strong>: дерева будуються на підвибірках по кілька сотень рядків
+і не ростуть углиб. І він майже не має налаштувань: кількість дерев і розмір підвибірки
+на результат впливають слабко.</p>
+
+<div class="note warn"><b>Де він ламається.</b> Кожен розріз — це умова про
+<em>одну</em> колонку: «ціна менша за 5 000» або «рік не пізніший за 2019». На картинці
+це означає лінію, строго перпендикулярну до однієї з осей; похилих розрізів метод не
+робить узагалі. Тому
+аномалію, що лежить <em>усередині</em> діапазону кожної ознаки, але поза хмарою,
+метод бачить погано: щоб відрізати точку в дірці посеред даних, потрібно кілька розрізів
+з обох боків, і глибина виходить звичайною. Це рівно наш рядок 328 — і саме тому
+<code>IsolationForest</code> поставив його аж на 568-ме місце з 1 100.</div>
+
+<h2 id="s6"><span class="num">06 / Відновлення</span>Помилка відновлення</h2>
+
+<p>Третій метод ми фактично побудували в <a href="../11-pca/lecture.html#s10">темі 11</a>,
+просто не назвали. Схема така: стиснути таблицю до кількох головних компонент,
+а потім із цих компонент зібрати сім ознак назад. Точка не повернеться на своє місце —
+частину інформації викинули. <strong>Відстань між оригіналом і відновленою копією</strong>
+і є оцінкою аномальності.</p>
+
+<p>Чому це працює. Головні компоненти описують те, як влаштована основна маса даних:
+дорожчий телефон — свіжіший рік — більша памʼять — вища оцінка каталогу. Оголошення,
+яке живе за цими правилами, відновлюється майже точно: щоб його описати, вистачає
+кількох чисел. Оголошення, у якому правила порушені, відновити з цих кількох чисел
+неможливо — його «неправильність» лежала саме в тих напрямках, які ми викинули.</p>
+
+<p>Беремо три компоненти з семи — це 71.1 % розкиду — і міряємо, наскільки схибило
+відновлення. Ось що виходить на стандартизованих ознаках:</p>
+
+<div class="eq left">медіана помилки відновлення      1.10
+найбільша помилка                6.98   Gamma X 2017, стан «нове», 512 ГБ, 95 000 ₴</div>
+
+<p>Перші пʼять рядків за помилкою відновлення — це три колекційні Gamma X і два
+оголошення із зайвим нулем у ціні. Метод спрацював бездоганно й знайшов рівно те, чого ми
+не просили: найдивніші рядки таблиці, а не найшахрайськіші. До цього ми ще повернемось.</p>
+
+<p>Кількість компонент тут — головний важіль, і працює він у зрозумілий бік. Лишиш одну
+компоненту — «нормою» вважатиметься лише найголовніша вісь, і половина чесних оголошень
+відновиться погано. Лишиш усі сім — відновлення стане точним для всіх, помилка
+занулиться й метод перестане розрізняти будь-що. Робоче правило: стільки компонент,
+скільки треба на 70-90 % розкиду.</p>
+
+<h2 id="s7"><span class="num">07 / Порівняння</span>Три методи поруч</h2>
+
+<p>Три методи ми вже маємо, і разом з одновимірними правилами їх пʼять. Ось таблиця,
+до якої варто повертатись, обираючи метод під конкретну таблицю.</p>
+
+<p>Шостий спосіб у тебе теж уже є, просто під іншою назвою. Побудуй
+<a href="../26-kmeans/lecture.html">кластери</a> й подивись, як далеко кожна точка
+від свого центра: ті, що далеко від усіх, — кандидати в аномалії. А
+<a href="../27-hierarchical-dbscan/lecture.html">DBSCAN</a> взагалі віддає їх готовим
+списком: усе, що він позначив шумом, і є те, що не вписалось у жодну щільну область.
+Різниця між «шум» і «аномалія» тут не в математиці, а в тому, навіщо ти дивишся:
+для кластеризації це сміття, яке заважає, для тебе — саме те, що шукаєш.</p>
+
+<figure>
+  <p class="fig-head">Таблиця 1 · Що припускає метод і коли він ламається</p>
+  <p class="fig-sub">Головна колонка — друга: у кожного методу є припущення, і аномалія,
+    яка в нього вписалась, лишиться непоміченою.</p>
+  <div class="scroll-x">
+  <table class="plain">
+    <thead><tr><th>метод</th><th>що припускає</th><th>коли ламається</th><th>категорійні ознаки</th></tr></thead>
+    <tbody>
+      <tr><td>z-оцінка</td><td>одна колонка; розподіл приблизно симетричний і без важкого хвоста</td><td>скошені дані; будь-яка аномалія, що видно лише в поєднанні колонок</td><td>не працює — потрібне число</td></tr>
+      <tr><td>Міжквартильний розмах</td><td>одна колонка; форма розподілу будь-яка</td><td>там само: бачить лише величину числа, а не рядок</td><td>не працює</td></tr>
+      <tr><td>Відстань Махаланобіса</td><td>усі дані — одна витягнута еліптична хмара</td><td>кілька груп; нелінійні звʼязки; самі аномалії псують оцінку хмари</td><td>тільки після кодування числами</td></tr>
+      <tr><td>LOF</td><td>відстань має сенс; щільність можна порівнювати з локальною</td><td>висока розмірність; чутливий до k та до масштабування</td><td>one-hot розтягує простір і розмиває відстані</td></tr>
+      <tr><td>Isolation Forest</td><td>аномалії рідкісні й відділені хоча б за однією віссю</td><td>аномалія в «дірці» посеред хмари; багато зайвих ознак</td><td>працює з числами; порядкове кодування терпить</td></tr>
+      <tr><td>Помилка відновлення (PCA)</td><td>основна структура даних лінійна</td><td>нелінійні звʼязки; вимагає стандартизації та вибору кількості компонент</td><td>тільки після кодування числами</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption><b>Масштабування потрібне всім, крім двох.</b> Одновимірні правила
+    працюють у межах однієї колонки, тож їм байдуже. <code>IsolationForest</code>
+    ріже кожну вісь окремо, і будь-яке монотонне перетворення однієї ознаки нічого
+    в ньому не міняє. Махаланобіс, LOF та PCA міряють відстані між ознаками разом —
+    без <code>StandardScaler</code> вони міряють одиниці вимірювання, а не дані.</figcaption>
+</figure>
+
+<p>Практичне питання: чи згодні методи між собою? Візьмімо в кожного топ-50
+найаномальніших оголошень і подивімось на перетини.</p>
+
+<div class="eq left">Isolation Forest і LOF          21 спільних із 50
+Isolation Forest і відновлення  19 спільних із 50
+LOF і відновлення               30 спільних із 50
+усі три разом                   19 спільних із 50</div>
+
+<p>Перекриття є, але воно далеко не повне. У Isolation Forest <b>29</b> рядків із 50 не
+знайшов жоден інший метод; у LOF таких <b>18</b>, у помилки відновлення — <b>20</b>.
+Це не привід шукати найкращий метод — це підказка запускати кілька. Оголошення,
+яке потрапило в топ усіх трьох, дивне напевно; оголошення, яке знайшов лише один,
+варто подивитись окремо — і, можливо, дізнатись про свої дані щось нове.</p>
+
+<h2 id="s8"><span class="num">08 / Поріг</span>Поріг — це рішення</h2>
+
+<p>А тепер найпрактичніший розділ теми. Жоден із трьох методів не відповідає на питання
+«чи це аномалія». Кожен видає <strong>число</strong> — оцінку. Далі оголошення
+шикуються за цим числом у стовпчик, і хтось має провести межу.</p>
+
+<p>Спокуса — попросити компʼютер провести її самому. У <code>IsolationForest</code>
+навіть є параметр <code>contamination</code>, куди пишуть очікувану частку аномалій.
+Варто розуміти, що він робить: він не визначає поріг, а <strong>виконує вже прийняте
+тобою рішення</strong>. Ставиш 0.05 — метод відріже рівно 5 % найгірших, скільки б
+справжніх аномалій там не було. Число ти приніс ззовні.</p>
+
+<p>Звідки його брати насправді — з економіки задачі, а не зі статистики. Потрібні дві
+величини: скільки коштує перевірити один позначений рядок і скільки коштує пропустити
+один справжній. Якщо перевірка — це погляд модератора на дві секунди, можна позначати
+щедро. Якщо це дзвінок продавцеві або блокування акаунта, кожна хибна тривога
+дорога, і поріг має бути жорстким.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Поріг і його ціна</p>
+  <p class="fig-sub">Оцінки LOF по всіх 1 100 оголошеннях дошки. Повзунок задає частку,
+    яку ми позначаємо аномальною й віддаємо на перевірку. Числа справжні: колонку
+    «шахрайське» видно тільки нам, а не методу.</p>
+  <div class="panel">
+    <div><canvas id="cvThr" width="700" height="420" aria-label="Схема ціни порогу: горизонтальна смуга показує, скільки оголошень позначено аномальними при обраній частці й скільки серед них справді шахрайських; нижче криві точності та повноти залежно від частки позначених, з поточним положенням повзунка"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="frc8"><span>позначаємо, % дошки</span><output id="frc8v">3.0</output></label>
+        <input type="range" id="frc8" min="0.5" max="30" step="0.5" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>на перевірку</b><i id="tK">33</i></div>
+        <div class="cellv"><b>справжніх знахідок</b><i id="tF">17</i></div>
+        <div class="cellv"><b>точність</b><i id="tP">51.5 %</i></div>
+        <div class="cellv"><b>повнота</b><i id="tR">12.2 %</i></div>
+      </div>
+      <div class="verdict" id="tV"></div>
+    </div>
+  </div>
+  <figcaption><b>Обидві криві падають і ростуть одночасно — це та сама пара, що в
+    <a href="../05-precision-recall/lecture.html#s6">темі 05</a>.</b> Розширюючи список
+    на перевірку, ти неминуче знаходиш більше шахраїв і неминуче витрачаєш більше часу
+    даремно. Правильного положення повзунка не існує: воно є лише в кожної конкретної
+    задачі з її цінами.</figcaption>
+</figure>
+
+<p>Прогони повзунок від краю до краю — картина повчальна. На 1 % список складається
+з 11 оголошень, шахрайських серед них 3. На 3 % — 33 оголошення й 17 знахідок, найкраща
+точність за всю шкалу. На 10 % на перевірку йде 110 рядків, з яких справжніх 31: модератор
+витрачає втричі більше часу, щоб знайти вдвічі більше. На 30 % позначено вже кожне третє
+оголошення на дошці, знайдено 59 шахраїв зі 139, і слово «аномалія» остаточно
+знецінилось.</p>
+
+<h2 id="s9"><span class="num">09 / Оцінка</span>Як оцінювати без міток</h2>
+
+<p>Питання, від якого не сховатись: як зрозуміти, що детектор працює, коли правильних
+відповідей немає? Чесна відповідь — <strong>ніяк</strong>. Не існує способу поміряти
+якість пошуку аномалій, не дізнавшись хоча б про частину рядків, аномальні вони чи ні.
+Усе, що є, — способи дізнатись це дешевше.</p>
+
+<p><strong>Розмітити невелику вибірку.</strong> Береш дві-три сотні рядків, дивишся
+на них очима або віддаєш експерту, отримуєш маленький, але справжній тест. Дорого
+й повільно, зате далі можна рахувати звичайні precision і recall.</p>
+
+<p><strong>Подивитись на топ-N очима.</strong> Найдешевше і найкорисніше на початку.
+Береш двадцять найаномальніших рядків і читаєш їх повністю. Половина сумнівів
+знімається на цьому кроці: одразу видно, чи метод знаходить те, що ти вважаєш дивним,
+чи просто найбільші числа в таблиці.</p>
+
+<p><strong>Порахувати precision@k.</strong> Найпоширеніша метрика цієї задачі, і вона
+буквально описує роботу модератора: серед перших <span class="mono">k</span> рядків
+списку — скільки виявились справжніми? Її головна перевага в тому, що для неї не треба
+розмічати всю таблицю: досить перевірити ті самі <span class="mono">k</span> рядків,
+які ти й так збирався дивитись.</p>
+
+<div class="note"><b>Чого тут майже ніколи не буває.</b> ROC-AUC із
+<a href="../06-roc-auc/lecture.html">теми 06</a> для пошуку аномалій рахують рідко, і
+не через складність. При частці аномалій у відсоток чи менше площа під ROC-кривою
+майже не реагує на те, що коїться на початку списку — а саме початок списку і є вся
+задача. Дивитись треба на precision@k або на площу під PR-кривою.</div>
+
+<h2 id="s10"><span class="num">10 / Чесність</span>Аномалія — не те, що ти шукаєш</h2>
+
+<p>Тепер дістаємо колонку <code>шахрайське</code>, якої жоден метод не бачив, і рахуємо
+precision@20: скільки справжніх шахрайських оголошень у перших двадцяти рядках кожного
+списку.</p>
+
+<figure>
+  <p class="fig-head">Таблиця 2 · Топ-20 кожного методу проти колонки «шахрайське»</p>
+  <p class="fig-sub">1 100 оголошень, 139 із них шахрайські — 12.6 %. Саме з цим числом
+    і треба порівнювати кожен рядок.</p>
+  <div class="scroll-x">
+  <table class="nums">
+    <thead><tr>
+      <th>метод</th><th>шахрайських у топ-20</th><th>precision@20</th>
+      <th>краще за випадковість</th><th>що саме в топі</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>LOF</td><td>9</td><td>45.0 %</td><td>у 3.6 раза</td><td>перші шість — колекційні й одруки</td></tr>
+      <tr><td>Помилка відновлення</td><td>2</td><td>10.0 %</td><td>гірше</td><td>колекційні, одруки, дорогі флагмани</td></tr>
+      <tr><td>Isolation Forest</td><td>1</td><td>5.0 %</td><td>гірше</td><td>майже суцільно Gamma X Ultra 2024</td></tr>
+      <tr><td>Правило 1.5·IQR</td><td>—</td><td>16.7 %</td><td>у 1.3 раза</td><td>156 позначених, 26 шахраїв</td></tr>
+      <tr><td>Правило |z| більше 3</td><td>—</td><td>11.8 %</td><td>гірше</td><td>51 позначене, 6 шахраїв</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <figcaption><b>Три методи з пʼяти спрацювали гірше за випадковий вибір</b> — не тому,
+    що вони погані, а тому, що шукали не те. Найаномальніші рядки цієї дошки —
+    це найдорожчі телефони, а найдорожчі телефони на ній чесні.</figcaption>
+</figure>
+
+<p>Найпоказовіше не в цифрах, а в перетині. У топ-20 усіх трьох багатовимірних методів
+одночасно потрапили рівно <strong>чотири</strong> оголошення. Це ті самі чотири
+колекційні Gamma X 2017 року в стані «нове» з 512 гігабайтами, за 82-95 тисяч гривень,
+яких ми вже бачили в <a href="../08-pandas-eda/lecture.html#s5">темі 08</a>. Три
+незалежні методи, побудовані на трьох різних ідеях, одностайно назвали найдивнішими
+рядками таблиці чотири абсолютно чесні оголошення.</p>
+
+<p>І вони мають рацію. Ці рядки справді ні на що не схожі: семирічний флагман,
+запакований, із максимальною памʼяттю, за ціну нового. У даних вони — найяскравіша
+аномалія. У задачі — ринок колекціонерів.</p>
+
+<p>Дзеркальний випадок — наш рядок 328. Beta 12 за 15 160 грн при типовій ціні 4 310 —
+шахрайське оголошення, у якому <em>жодна ознака не виходить за одне стандартне
+відхилення</em>. LOF поставив його на 14-те місце з 1 100 і виявився єдиним, хто його
+побачив; помилка відновлення дала 278-ме, Isolation Forest — 568-ме. А акуратно складене
+шахрайське оголошення — з правдоподібною ціною, звичайним роком і нормальною памʼяттю —
+не потрапить у жоден список узагалі, і жоден із цих методів у цьому не винен.</p>
+
+<div class="note warn"><b>Головне речення теми.</b> Пошук аномалій відповідає на питання
+«що тут не схоже на решту», а не на питання «де тут шахрайство». Ці множини перетинаються,
+але не збігаються, і розмір перетину — властивість твоїх даних, а не якість методу.
+Якщо precision@20 вийшов низьким — це не провал детектора. Це відповідь: у цих даних
+дивне й шкідливе — різні речі, і для другого потрібні мітки, ознаки на кшталт
+<span class="mono">ціна поділити на типову</span>
+(<a href="../10-feature-engineering/lecture.html#s2">тема 10</a>) або звичайний
+класифікатор.</div>
+
+<p>Де ж тоді пошук аномалій справді потрібен? Там, де «дивне» і є ціллю. Контроль
+якості даних перед навчанням: перш ніж будувати модель, знайди рядки, яких не мало
+бути. Моніторинг обладнання: датчик, показання якого перестали бути схожими на власне
+минуле. Перша розвідка незнайомої таблиці: топ-20 найаномальніших рядків розповідає
+про дані більше, ніж двадцять гістограм. І — як фільтр перед розміткою: якщо перевірити
+можна лише сотню рядків, розумно взяти не випадкову сотню, а найдивнішу.</p>
+
+<h2 id="s11"><span class="num">11 / Далі</span>Що далі</h2>
+
+<p>Підсумок теми в пʼятьох рядках. Аномалія — це не властивість рядка, а результат
+рішення, як міряти схожість. Одновимірні правила бачать великі числа, а не дивні
+рядки. LOF порівнює щільність навколо точки зі щільністю навколо її сусідів, Isolation Forest
+рахує глибину випадкової ізоляції, помилка відновлення міряє, наскільки погано рядок вписався в головну структуру
+даних. Усі троє дають оцінку, а не відповідь; поріг — це рішення про ціну помилки.
+І жоден із них не обіцяв шукати саме те, що потрібно тобі.</p>
+
+<p>На цьому блок навчання без учителя завершено. Далі курс повертається до задач із
+готовими відповідями: наступний блок — перші моделі з учителем, які вчаться на вже
+розмічених прикладах. А одна ідея з цієї теми чекатиме нас значно пізніше, у блоці про
+нейромережі, і переїде туди майже без змін. Помилка відновлення після PCA працює тому,
+що ми стиснули дані до кількох чисел і спробували зібрати назад. Точно так само
+влаштований <strong>автоенкодер</strong>: мережа, яку вчать віддавати на виході те
+саме, що на вході, змушуючи інформацію протиснутись крізь вузький середній шар. Різниця
+одна, і вона вирішальна: PCA вміє стискати тільки лінійно, а мережа — як завгодно.
+Тому автоенкодер помічає дивні рядки там, де залежності криві, а PCA бачить лише
+рівну хмару. Механізм оцінки лишається той самий: подали рядок, отримали копію,
+поміряли відстань.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ми беремо ту саму
+дошку й проходимо весь шлях: одновимірні правила й скільки вони ловлять; пошук
+оголошення, нормального за кожною ознакою окремо; три методи поруч у спільній таблиці
+з оцінками; узгодженість між ними; топ-20 кожного проти колонки <code>шахрайське</code>
+й чесний висновок про те, що збіглося, а що ні.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../27-hierarchical-dbscan/lecture.html"><span class="dir">попередня</span><span class="ttl">27. Ієрархічна та DBSCAN</span></a>
+    <a class="next" href="../29-model-comparison/lecture.html"><span class="dir">наступна</span><span class="ttl">29. Порівняння моделей</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function ah(a){var v=Math.round(Math.max(0,Math.min(1,a))*255).toString(16);
+  return v.length<2?'0'+v:v;}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function arrow(g,x1,y1,x2,y2,col,wide){
+  g.strokeStyle=col; g.lineWidth=wide?2:1.3;
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke();
+  var a=Math.atan2(y2-y1,x2-x1), h=6;
+  g.beginPath(); g.moveTo(x2,y2);
+  g.lineTo(x2-h*Math.cos(a-0.42),y2-h*Math.sin(a-0.42));
+  g.lineTo(x2-h*Math.cos(a+0.42),y2-h*Math.sin(a+0.42));
+  g.closePath(); g.fillStyle=col; g.fill();
+}
+function verd(el,tag,cap,txt){
+  el.innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function plur(n,one,few,many){
+  var a=n%100, b=n%10;
+  if(a>10&&a<20) return many;
+  if(b===1) return one;
+  if(b>=2&&b<=4) return few;
+  return many;
+}
+function LCG(s){ if(!isFinite(s)) s=1;
+  return function(){s=(s*1664525+1013904223)%4294967296; return s/4294967296;};}
+function mkNorm(r){return function(){var u=0,v=0;while(!u)u=r();while(!v)v=r();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};}
+function fmt(v){var r=Math.round(v); if(r===0) r=0; return r.toLocaleString('uk-UA');}
+function sgn(v,d){return (v>=0?'+':'−')+Math.abs(v).toFixed(d);}
+
+/* ─── дані ───
+   Числа з practice.ipynb: JS не відтворить np.random.default_rng(42),
+   тому лічильники стоять тут (грабля №13). Правлячи генерацію в зошиті,
+   перечитай ці рядки. */
+
+/* колонка «шахрайське» для всіх 1 100 оголошень, відсортованих за оцінкою LOF
+   від найаномальнішого до найзвичайнішого. 139 одиниць. */
+var LOFSORT="00000001110111101100111110001110000101010100000000000010000010000100100000000001000101000100000000000010010000010000000000000000000001000000000000100000000010100010011000000000001000100001000001000000001100000000100000000000100000000000001110001000100010000000000000001000101000000000000000000000000000000000000000000101000000010000100000000010010000100000000000000000000000000000101000000000000100000000100000000000100001000001000000000000000010001011100000000000001000000000000001000010000000000000000100000000000000001000100010000100001000100000000010000010000000001000001000000000000000000000000000000000000001000000000001000000000000000000000000000000000000000100000000100000000000000000000110000000000110000000010100000101000000000000000000000000000000010000000000000000001100000000001001100000000001000000001100000000000000000000100000000000001000010100000100010000001000000000000000000000000000000000000010010100000000000001001000000000000000000001100000000000000000000000000101000101000000100000000001000100000000101000000000000000000000000000010000000001100000000000000000000000001100000001";
+var NTOTAL=LOFSORT.length;      /* 1 100 */
+var NFRAUD=(function(){var c=0,k; for(k=0;k<LOFSORT.length;k++) if(LOFSORT.charAt(k)==='1') c++; return c;})();
+/* накопичена кількість шахрайських серед перших k */
+var CUM=(function(){var a=[0],k; for(k=0;k<LOFSORT.length;k++) a.push(a[k]+(LOFSORT.charAt(k)==='1'?1:0)); return a;})();
+
+/* ══════════ Схема 1 · три задачі під одним словом ══════════ */
+function drawTasks(){
+  var cv=I('cvTasks'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), raise=css('--raise');
+
+  g.font='11px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillStyle=soft;
+  g.fillText('одна операція: знайти рядки, не схожі на решту', 22, 20);
+
+  var cols=[
+    {c:amber, t:'ПОМИЛКА В ДАНИХ',
+     ex:['Beta 12 Pro, стан «добре»,','ціна 83 500 ₴'],
+     wh:['зайвий нуль при введенні'],
+     nx:['виправити або прибрати'],
+     pr:['дорожче: пропустити']},
+    {c:teal, t:'РІДКІСНА ПОДІЯ',
+     ex:['Gamma X 2017, запакований,','512 ГБ, ціна 95 000 ₴'],
+     wh:['колекційний апарат'],
+     nx:['залишити й вивчити'],
+     pr:['дорожче: викинути']},
+    {c:rose, t:'НАВМИСНЕ ЗЛОВЖИВАННЯ',
+     ex:['Beta 12, стан «добре»,','ціна 15 160 ₴ проти 4 310 ₴'],
+     wh:['приманка з передоплатою'],
+     nx:['показати модератору'],
+     pr:['дорожче: хибна тривога']}
+  ];
+  var bw=212, gap=14, x0=22, y0=32, bh=H-y0-14, k, i;
+  for(k=0;k<3;k++){
+    var bx=x0+k*(bw+gap);
+    g.fillStyle=raise; rr(g,bx,y0,bw,bh,11); g.fill();
+    g.strokeStyle=hair; g.lineWidth=1.2; g.stroke();
+    /* кольорова смуга зверху */
+    g.fillStyle=cols[k].c; rr(g,bx,y0,bw,4,2); g.fill();
+
+    var y=y0+26;
+    g.textAlign='left';
+    g.fillStyle=cols[k].c; g.font='700 11px "JetBrains Mono",monospace';
+    g.fillText(cols[k].t, bx+14, y); y+=22;
+
+    g.fillStyle=soft; g.font='9.5px "JetBrains Mono",monospace';
+    g.fillText('ПРИКЛАД', bx+14, y); y+=15;
+    g.fillStyle=ink; g.font='11.5px "JetBrains Mono",monospace';
+    for(i=0;i<cols[k].ex.length;i++){ g.fillText(cols[k].ex[i], bx+14, y); y+=15; }
+    y+=9;
+
+    g.fillStyle=soft; g.font='9.5px "JetBrains Mono",monospace';
+    g.fillText('ЩО ЦЕ НАСПРАВДІ', bx+14, y); y+=15;
+    g.fillStyle=ink; g.font='11.5px "JetBrains Mono",monospace';
+    for(i=0;i<cols[k].wh.length;i++){ g.fillText(cols[k].wh[i], bx+14, y); y+=15; }
+    y+=9;
+
+    g.fillStyle=soft; g.font='9.5px "JetBrains Mono",monospace';
+    g.fillText('ЩО РОБИТИ ДАЛІ', bx+14, y); y+=15;
+    g.fillStyle=ink; g.font='11.5px "JetBrains Mono",monospace';
+    for(i=0;i<cols[k].nx.length;i++){ g.fillText(cols[k].nx[i], bx+14, y); y+=15; }
+    y+=11;
+
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(bx+14,y-6); g.lineTo(bx+bw-14,y-6); g.stroke();
+    g.fillStyle=cols[k].c; g.font='700 11px "JetBrains Mono",monospace';
+    for(i=0;i<cols[k].pr.length;i++){ g.fillText(cols[k].pr[i], bx+14, y+9); y+=15; }
+  }
+}
+
+/* ══════════ Інтерактив 1 · нормальна окремо, аномальна разом ══════════ */
+/* хмара оголошень: типова ціна логнормальна, ціна майже дорівнює типовій */
+var MCL=(function(){
+  var r=LCG(2024), nd=mkNorm(r), a=[], k;
+  for(k=0;k<240;k++){
+    var t=Math.exp(1.35+1.15*nd());
+    var c=t*Math.exp(0.16*nd());
+    t=Math.min(Math.max(t,0.5),24); c=Math.min(Math.max(c,0.4),24);
+    a.push([c,t]);
+  }
+  return a;
+})();
+var MST=(function(){
+  var n=MCL.length, mx=0, my=0, k;
+  for(k=0;k<n;k++){ mx+=MCL[k][0]; my+=MCL[k][1]; }
+  mx/=n; my/=n;
+  var sxx=0, syy=0, sxy=0;
+  for(k=0;k<n;k++){
+    var a=MCL[k][0]-mx, b=MCL[k][1]-my;
+    sxx+=a*a; syy+=b*b; sxy+=a*b;
+  }
+  sxx/=(n-1); syy/=(n-1); sxy/=(n-1);
+  var det=sxx*syy-sxy*sxy;
+  return {mx:mx, my:my, sx:Math.sqrt(sxx), sy:Math.sqrt(syy),
+          ixx:syy/det, iyy:sxx/det, ixy:-sxy/det};
+})();
+function mahal(x,y){
+  var a=x-MST.mx, b=y-MST.my;
+  var q=MST.ixx*a*a + 2*MST.ixy*a*b + MST.iyy*b*b;
+  return Math.sqrt(Math.max(q,0));
+}
+/* поріг: відстань, яку перевищує рівно 1 % точок хмари */
+var MTHR=(function(){
+  var a=[], k;
+  for(k=0;k<MCL.length;k++) a.push(mahal(MCL[k][0],MCL[k][1]));
+  a.sort(function(p,q){return p-q;});
+  return a[Math.floor(a.length*0.99)];
+})();
+/* гістограми: 24 стовпчики по 1 тис. грн */
+function histOf(col){
+  var h=new Array(24), k;
+  for(k=0;k<24;k++) h[k]=0;
+  for(k=0;k<MCL.length;k++){
+    var b=Math.floor(MCL[k][col]);
+    if(b<0) b=0; if(b>23) b=23;
+    h[b]++;
+  }
+  return h;
+}
+var HX=histOf(0), HY=histOf(1);
+
+function drawMarg(){
+  var cv=I('cvMarg'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), raise=css('--raise');
+  var vx=+I('pxA').value, vy=+I('pyA').value;
+  if(!isFinite(vx)) vx=15.2; if(!isFinite(vy)) vy=4.3;
+  I('pxAv').textContent=vx.toFixed(1);
+  I('pyAv').textContent=vy.toFixed(1);
+
+  /* геометрія: гістограма зверху, поле, гістограма праворуч */
+  var L=62, R=520, T=112, B=402, HT=26, HB=100, RL=534, RR=680;
+  function px(v){return L+(v/24)*(R-L);}
+  function py(v){return B-(v/24)*(B-T);}
+
+  /* сітка й осі */
+  g.strokeStyle=hair; g.lineWidth=1;
+  var v;
+  g.font='11px "JetBrains Mono",monospace'; g.textAlign='center';
+  for(v=0;v<=24;v+=6){
+    g.strokeStyle=hair;
+    g.beginPath(); g.moveTo(px(v),T); g.lineTo(px(v),B); g.stroke();
+    g.fillStyle=soft; g.fillText(String(v), px(v), B+16);
+  }
+  g.textAlign='right';
+  for(v=0;v<=24;v+=6){
+    g.strokeStyle=hair;
+    g.beginPath(); g.moveTo(L,py(v)); g.lineTo(R,py(v)); g.stroke();
+    g.fillStyle=soft; g.fillText(String(v), L-7, py(v)+4);
+  }
+  g.strokeStyle=hair; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(L,T); g.lineTo(L,B); g.lineTo(R,B); g.stroke();
+
+  /* хмара */
+  var k;
+  g.save(); g.beginPath(); g.rect(L,T,R-L,B-T); g.clip();
+  for(k=0;k<MCL.length;k++){
+    g.fillStyle=soft+ah(0.42);
+    g.beginPath(); g.arc(px(MCL[k][0]),py(MCL[k][1]),2.6,0,6.284); g.fill();
+  }
+  g.restore();
+
+  /* гістограма ціни зверху */
+  var hmax=0;
+  for(k=0;k<24;k++){ if(HX[k]>hmax) hmax=HX[k]; if(HY[k]>hmax) hmax=HY[k]; }
+  var bin=Math.floor(vx); if(bin<0) bin=0; if(bin>23) bin=23;
+  for(k=0;k<24;k++){
+    var bx=px(k), bw2=px(k+1)-px(k)-1.5;
+    var hh=(HX[k]/hmax)*(HB-HT);
+    g.fillStyle=(k===bin)?rose+ah(0.75):soft+ah(0.30);
+    g.fillRect(bx+0.75, HB-hh, bw2, hh);
+  }
+  var biny=Math.floor(vy); if(biny<0) biny=0; if(biny>23) biny=23;
+  for(k=0;k<24;k++){
+    var byy=py(k+1), bh2=py(k)-py(k+1)-1.5;
+    var ww=(HY[k]/hmax)*(RR-RL);
+    g.fillStyle=(k===biny)?rose+ah(0.75):soft+ah(0.30);
+    g.fillRect(RL, byy+0.75, ww, bh2);
+  }
+
+  /* рухома точка */
+  g.strokeStyle=rose; g.lineWidth=1.2; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(px(vx),py(vy)); g.lineTo(px(vx),HB); g.stroke();
+  g.beginPath(); g.moveTo(px(vx),py(vy)); g.lineTo(RL,py(vy)); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle=rose;
+  g.beginPath(); g.arc(px(vx),py(vy),6.5,0,6.284); g.fill();
+  g.strokeStyle=raise; g.lineWidth=1.8; g.stroke();
+
+  /* підписи */
+  g.fillStyle=soft; g.font='11px "JetBrains Mono",monospace';
+  g.textAlign='center'; g.fillText('ціна, тис. грн', (L+R)/2, B+34);
+  g.save(); g.translate(16,(T+B)/2); g.rotate(-Math.PI/2);
+  g.textAlign='center'; g.fillText('типова ціна, тис. грн', 0, 0); g.restore();
+  g.textAlign='left'; g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace';
+  g.fillText('розподіл ціни', L, HT-8);
+  g.fillText('розподіл', RL, HT-8);
+  g.fillText('типової ціни', RL, HT+5);
+
+  /* числа */
+  var zx=(vx-MST.mx)/MST.sx, zy=(vy-MST.my)/MST.sy, md=mahal(vx,vy);
+  I('mzx').textContent=sgn(zx,2);
+  I('mzy').textContent=sgn(zy,2);
+  I('mmd').textContent=md.toFixed(1);
+  I('mth').textContent=MTHR.toFixed(1);
+
+  var okX=Math.abs(zx)<=2.5, okY=Math.abs(zy)<=2.5, far=md>MTHR;
+  var el=I('mV');
+  if(okX&&okY&&far){
+    verd(el,'t-no','АНОМАЛІЯ, ЯКУ ОСІ НЕ БАЧАТЬ',
+      'За ціною z = '+sgn(zx,2)+', за типовою z = '+sgn(zy,2)+' — обидві за модулем менші '+
+      'за 2.5, тож одновимірне правило мовчить. А відстань до хмари '+md.toFixed(1)+
+      ' проти порогу '+MTHR.toFixed(1)+': поєднання неможливе.');
+  } else if(far){
+    verd(el,'t-mid','ВИДНО Й ОДНОВИМІРНИМ ПРАВИЛОМ',
+      'Відстань до хмари '+md.toFixed(1)+' перевищує поріг '+MTHR.toFixed(1)+
+      ', але тут спрацює й правило «|z| більше 2.5»: z = '+sgn(zx,2)+' і '+sgn(zy,2)+
+      '. Багатовимірний метод нічого нового не додає.');
+  } else if(!okX||!okY){
+    verd(el,'t-mid','ВЕЛИКЕ ЧИСЛО, АЛЕ НЕ ДИВНЕ',
+      'Правило «|z| більше 2.5» спрацювало: z = '+sgn(zx,2)+' і '+sgn(zy,2)+
+      '. Проте відстань до хмари всього '+md.toFixed(1)+' проти порогу '+MTHR.toFixed(1)+
+      ' — дорого, але узгоджено: ціна відповідає типовій. Одновимірне правило дало б хибну тривогу.');
+  } else {
+    verd(el,'t-ok','ЗВИЧАЙНЕ ОГОЛОШЕННЯ',
+      'z = '+sgn(zx,2)+' і '+sgn(zy,2)+', відстань до хмари '+md.toFixed(1)+
+      ' проти порогу '+MTHR.toFixed(1)+'. Ціна відповідає типовій — точка лежить там, де всі.');
+  }
+}
+
+/* ══════════ Схема 2 · локальна щільність проти глобальної ══════════ */
+var DENSE=[[2,2],[2.5,2],[3,2],[2,2.5],[2.5,2.5],[3,2.5],[2,3],[2.5,3],[3,3]];
+var SPARSE=[[8,1],[10,1],[12,1],[8,3],[10,3],[12,3],[8,5],[10,5],[12,5]];
+var APT=[4.5,4.5];
+function drawLof(){
+  var cv=I('cvLof'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), raise=css('--raise');
+  var L=45, B=H-18, sc=36;
+  function px(v){return L+(v-1.8)*sc;}
+  function py(v){return B-(v-0.8)*sc;}
+
+  g.font='11px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillStyle=soft;
+  /* підпис щільної групи — під нею: збоку його перекриває коло навколо A */
+  g.fillText('щільна група', px(1.85), py(1.25));
+  g.fillText('розріджена група', px(7.6), py(6.2));
+
+  var k;
+  /* кола середньої відстані до трьох сусідів */
+  g.setLineDash([4,3]); g.lineWidth=1.5;
+  g.strokeStyle=rose;
+  g.beginPath(); g.arc(px(APT[0]),py(APT[1]),2.374*sc,0,6.284); g.stroke();
+  g.strokeStyle=teal;
+  g.beginPath(); g.arc(px(10),py(3),2.0*sc,0,6.284); g.stroke();
+  g.setLineDash([]);
+
+  for(k=0;k<DENSE.length;k++){
+    g.fillStyle=ink+ah(0.8);
+    g.beginPath(); g.arc(px(DENSE[k][0]),py(DENSE[k][1]),4,0,6.284); g.fill();
+  }
+  for(k=0;k<SPARSE.length;k++){
+    g.fillStyle=(SPARSE[k][0]===10&&SPARSE[k][1]===3)?teal:ink+ah(0.8);
+    g.beginPath(); g.arc(px(SPARSE[k][0]),py(SPARSE[k][1]),(SPARSE[k][0]===10&&SPARSE[k][1]===3)?5.5:4,0,6.284); g.fill();
+  }
+  g.fillStyle=rose;
+  g.beginPath(); g.arc(px(APT[0]),py(APT[1]),6,0,6.284); g.fill();
+
+  g.font='700 13px "JetBrains Mono",monospace'; g.textAlign='center';
+  g.fillStyle=rose; g.fillText('A', px(APT[0]), py(APT[1])-13);
+  g.fillStyle=teal; g.fillText('S', px(10), py(3)-13);
+
+  /* пояснення праворуч */
+  var bx=470, by=54, bw=W-bx-14;
+  g.fillStyle=raise; rr(g,bx,by,bw,206,10); g.fill();
+  g.strokeStyle=hair; g.lineWidth=1.2; g.stroke();
+  var rows=[
+    [rose, '700', 'точка A'],
+    [soft, '', 'до сусідів     2.374'],
+    [soft, '', 'у сусідів      0.523'],
+    [ink,  '700', 'LOF = 4.54'],
+    ['',   '', ''],
+    [teal, '700', 'точка S'],
+    [soft, '', 'до сусідів     2.000'],
+    [soft, '', 'у сусідів      2.000'],
+    [ink,  '700', 'LOF = 1.00']
+  ];
+  for(k=0;k<rows.length;k++){
+    if(!rows[k][2]) continue;
+    g.fillStyle=rows[k][0];
+    g.font=(rows[k][1]==='700'?'700 12px':'11.5px')+' "JetBrains Mono",monospace';
+    g.textAlign='left';
+    g.fillText(rows[k][2], bx+15, by+24+k*21);
+  }
+  g.fillStyle=soft; g.font='10.5px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillText('пунктир — середня відстань', bx+2, by-24);
+  g.fillText('до трьох найближчих сусідів', bx+2, by-9);
+}
+
+/* ══════════ Інтерактив 2 · Isolation Forest ══════════ */
+var IPTS=(function(){
+  var r=LCG(7), nd=mkNorm(r), a=[], k;
+  for(k=0;k<110;k++) a.push([9+2.6*nd(), 9+2.2*nd()]);
+  a.push([19.5,17.0]); a.push([2.0,16.5]); a.push([18.0,3.0]); a.push([16.5,15.0]);
+  return a;
+})();
+var IANOM=IPTS.length-4;                 /* точка, що стоїть осторонь */
+var IDENSE=(function(){
+  var cx=0, cy=0, k;
+  for(k=0;k<IPTS.length;k++){ cx+=IPTS[k][0]; cy+=IPTS[k][1]; }
+  cx/=IPTS.length; cy/=IPTS.length;
+  var best=0, bd=1e9;
+  for(k=0;k<IPTS.length;k++){
+    var d=(IPTS[k][0]-cx)*(IPTS[k][0]-cx)+(IPTS[k][1]-cy)*(IPTS[k][1]-cy);
+    if(d<bd){ bd=d; best=k; }
+  }
+  return best;
+})();
+/* один розріз: випадкова вісь, випадкове значення в межах точок, що лишились */
+function isoStep(state, rnd){
+  if(state.done) return;
+  var idx=state.idx, k;
+  var x0=1e9, x1=-1e9, y0=1e9, y1=-1e9;
+  for(k=0;k<idx.length;k++){
+    var p=IPTS[idx[k]];
+    if(p[0]<x0) x0=p[0]; if(p[0]>x1) x1=p[0];
+    if(p[1]<y0) y0=p[1]; if(p[1]>y1) y1=p[1];
+  }
+  var ax=(rnd()<0.5)?0:1;
+  if(ax===0 && x1-x0<1e-9) ax=1;
+  if(ax===1 && y1-y0<1e-9) ax=0;
+  var lo=(ax===0)?x0:y0, hi=(ax===0)?x1:y1;
+  if(hi-lo<1e-9){ state.done=true; return; }
+  var val=lo+rnd()*(hi-lo);
+  var tv=IPTS[state.target][ax], side=(tv<val);
+  var next=[];
+  for(k=0;k<idx.length;k++) if((IPTS[idx[k]][ax]<val)===side) next.push(idx[k]);
+  state.cuts.push({ax:ax, val:val, box:[state.box[0],state.box[1],state.box[2],state.box[3]]});
+  /* нова коробка — та половина, у якій лишилась ціль */
+  if(ax===0){ if(side) state.box[1]=Math.min(state.box[1],val); else state.box[0]=Math.max(state.box[0],val); }
+  else      { if(side) state.box[3]=Math.min(state.box[3],val); else state.box[2]=Math.max(state.box[2],val); }
+  state.idx=next; state.n++;
+  if(next.length<=1) state.done=true;
+}
+function isoNewState(target){
+  return {target:target, idx:(function(){var a=[],k; for(k=0;k<IPTS.length;k++) a.push(k); return a;})(),
+          box:[-1,25,-1,25], cuts:[], n:0, done:false};
+}
+/* середня глибина ізоляції за 300 незалежних прогонів */
+function isoMean(target, seed){
+  var rnd=LCG(seed), tot=0, t;
+  for(t=0;t<300;t++){
+    var st=isoNewState(target), guard=0;
+    while(!st.done && guard<80){ isoStep(st,rnd); guard++; }
+    tot+=st.n;
+  }
+  return tot/300;
+}
+var IMEAN_A=isoMean(IANOM,3), IMEAN_B=isoMean(IDENSE,3);
+var isoSeed=11, isoRnd=LCG(isoSeed);
+var isoA=isoNewState(IANOM), isoB=isoNewState(IDENSE);
+
+function drawIsoPanel(g, ox, oy, w, h, st, title, col){
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'), raise=css('--raise');
+  function px(v){return ox+((v-0)/24)*w;}
+  function py(v){return oy+h-((v-0)/24)*h;}
+  g.fillStyle=raise; rr(g,ox,oy,w,h,8); g.fill();
+  g.strokeStyle=hair; g.lineWidth=1.2; g.stroke();
+
+  g.save(); g.beginPath(); g.rect(ox,oy,w,h); g.clip();
+  /* поточна коробка ізоляції */
+  var b=st.box;
+  g.fillStyle=col+ah(0.13);
+  g.fillRect(px(Math.max(b[0],0)), py(Math.min(b[3],24)),
+             px(Math.min(b[1],24))-px(Math.max(b[0],0)),
+             py(Math.max(b[2],0))-py(Math.min(b[3],24)));
+  /* лінії розрізів, обрізані до коробки, що діяла на момент розрізу */
+  var k;
+  g.lineWidth=1.1; g.strokeStyle=soft+ah(0.75);
+  for(k=0;k<st.cuts.length;k++){
+    var c=st.cuts[k], cb=c.box;
+    g.beginPath();
+    if(c.ax===0){
+      g.moveTo(px(c.val), py(Math.min(cb[3],24)));
+      g.lineTo(px(c.val), py(Math.max(cb[2],0)));
+    } else {
+      g.moveTo(px(Math.max(cb[0],0)), py(c.val));
+      g.lineTo(px(Math.min(cb[1],24)), py(c.val));
+    }
+    g.stroke();
+  }
+  /* точки */
+  for(k=0;k<IPTS.length;k++){
+    if(k===st.target) continue;
+    g.fillStyle=ink+ah(0.30);
+    g.beginPath(); g.arc(px(IPTS[k][0]),py(IPTS[k][1]),2.4,0,6.284); g.fill();
+  }
+  g.fillStyle=col;
+  g.beginPath(); g.arc(px(IPTS[st.target][0]),py(IPTS[st.target][1]),6,0,6.284); g.fill();
+  g.strokeStyle=raise; g.lineWidth=1.8; g.stroke();
+  g.restore();
+
+  g.font='700 11.5px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillStyle=col; g.fillText(title, ox, oy-22);
+  g.font='11px "JetBrains Mono",monospace';
+  g.fillStyle=soft;
+  g.fillText('розрізів: '+st.n+(st.done?'  ізольовано':''), ox, oy-7);
+}
+function drawIso(){
+  var cv=I('cvIso'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft');
+  var w=310, h=300, oy=82;
+  drawIsoPanel(g, 30, oy, w, h, isoA, 'ЦІЛЬ ОСТОРОНЬ ХМАРИ', rose);
+  drawIsoPanel(g, 30+w+40, oy, w, h, isoB, 'ЦІЛЬ У ГУЩІ', teal);
+  g.font='11px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillStyle=soft;
+  g.fillText('114 оголошень у двох ознаках · сірі лінії — уже зроблені розрізи', 30, 18);
+  g.fillText('підсвічена зона — те, що лишилось разом із ціллю', 30, 34);
+
+  I('iA').textContent=String(isoA.n)+(isoA.done?' ✓':'');
+  I('iB').textContent=String(isoB.n)+(isoB.done?' ✓':'');
+  I('iAm').textContent=IMEAN_A.toFixed(1);
+  I('iBm').textContent=IMEAN_B.toFixed(1);
+
+  var el=I('iV');
+  if(!isoA.done||!isoB.done){
+    verd(el,'t-mid','РІЖЕМО',
+      'Аномалія: '+isoA.n+' '+plur(isoA.n,'розріз','розрізи','розрізів')+
+      (isoA.done?' — ізольовано.':', ще в компанії.')+' Точка з гущі: '+isoB.n+' '+
+      plur(isoB.n,'розріз','розрізи','розрізів')+
+      (isoB.done?' — ізольовано.':', ще в компанії.')+' Тисни далі.');
+  } else if(isoA.n<isoB.n){
+    verd(el,'t-ok','ГЛИБИНА І Є ОЦІНКОЮ',
+      'Аномалію відрізало за '+isoA.n+', точку з гущі — за '+isoB.n+
+      '. Різниця в '+(isoB.n/isoA.n).toFixed(1)+' раза, і саме вона стає оцінкою: '+
+      'що менша глибина, то аномальніша точка.');
+  } else {
+    verd(el,'t-no','ОДНЕ ДЕРЕВО — ЩЕ НЕ ОЦІНКА',
+      'Цього разу аномалію відрізало за '+isoA.n+', а точку з гущі — за '+isoB.n+
+      ': випадковість зіграла проти. Дивись на середні за 300 прогонів — '+
+      IMEAN_A.toFixed(1)+' проти '+IMEAN_B.toFixed(1)+'. Саме тому потрібен ліс, а не дерево.');
+  }
+}
+
+/* ══════════ Інтерактив 3 · поріг і його ціна ══════════ */
+function drawThr(){
+  var cv=I('cvThr'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), raise=css('--raise');
+  var frac=+I('frc8').value; if(!isFinite(frac)) frac=3;
+  I('frc8v').textContent=frac.toFixed(1);
+  var k=Math.round(NTOTAL*frac/100); if(k<1) k=1;
+  var found=CUM[k], falseAl=k-found, missed=NFRAUD-found;
+  var prec=found/k, rec=found/NFRAUD;
+
+  /* ── смуга «що піде на перевірку» ── */
+  var L=40, R=W-40, T=52, BH=34;
+  g.font='11px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillStyle=soft;
+  g.fillText('усі 1 100 оголошень, відсортовані за оцінкою LOF · риска — кожне шахрайське', L, 18);
+  var wAll=R-L, wK=wAll*k/NTOTAL, step=wAll/NTOTAL, j;
+  g.fillStyle=hair; rr(g,L,T,wAll,BH,6); g.fill();
+  g.save(); g.beginPath(); rr(g,L,T,wAll,BH,6); g.clip();
+  /* зона, яку відправляємо на перевірку */
+  g.fillStyle=rose+ah(0.30); g.fillRect(L,T,wK,BH);
+  /* штрихкод шахрайських: у зоні перевірки — знахідка, поза нею — пропуск */
+  for(j=0;j<NTOTAL;j++){
+    if(LOFSORT.charAt(j)!=='1') continue;
+    g.fillStyle=(j<k)?teal:ink+ah(0.35);
+    g.fillRect(L+j*step, T+3, Math.max(step,1.4), BH-6);
+  }
+  g.restore();
+  g.strokeStyle=ink; g.lineWidth=1.6;
+  g.beginPath(); g.moveTo(L+wK,T-7); g.lineTo(L+wK,T+BH+7); g.stroke();
+  g.font='10.5px "JetBrains Mono",monospace';
+  g.textAlign='left';
+  g.fillStyle=teal; g.fillText('знайдено ' + found, L, T+BH+22);
+  g.fillStyle=rose; g.fillText('хибних тривог ' + falseAl, L+118, T+BH+22);
+  g.textAlign='right';
+  g.fillStyle=soft; g.fillText('пропущено ' + missed + ' шахраїв', R, T+BH+22);
+  g.textAlign='left'; g.fillStyle=ink; g.font='700 11px "JetBrains Mono",monospace';
+  g.fillText('поріг: '+k+' на перевірку', L+wK+7, T-13);
+
+  /* ── криві точності й повноти ── */
+  var GL=62, GR=W-150, GT=136, GB=H-42;
+  function gx(f){return GL+(f/30)*(GR-GL);}
+  function gy(v){return GB-v*(GB-GT);}
+  g.strokeStyle=hair; g.lineWidth=1;
+  var v;
+  g.font='11px "JetBrains Mono",monospace';
+  g.textAlign='right';
+  for(v=0;v<=1.0001;v+=0.25){
+    g.strokeStyle=hair;
+    g.beginPath(); g.moveTo(GL,gy(v)); g.lineTo(GR,gy(v)); g.stroke();
+    g.fillStyle=soft; g.fillText(Math.round(v*100)+' %', GL-7, gy(v)+4);
+  }
+  g.textAlign='center';
+  for(v=0;v<=30;v+=5){
+    g.strokeStyle=hair;
+    g.beginPath(); g.moveTo(gx(v),GT); g.lineTo(gx(v),GB); g.stroke();
+    g.fillStyle=soft; g.fillText(String(v), gx(v), GB+16);
+  }
+  g.strokeStyle=hair; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(GL,GT); g.lineTo(GL,GB); g.lineTo(GR,GB); g.stroke();
+
+  var f, kk, pen;
+  g.lineWidth=2;
+  /* точність */
+  g.strokeStyle=teal; g.beginPath(); pen=false;
+  for(f=0.5; f<=30.0001; f+=0.25){
+    kk=Math.round(NTOTAL*f/100); if(kk<1) kk=1;
+    var p=CUM[kk]/kk;
+    if(!pen){ g.moveTo(gx(f),gy(p)); pen=true; } else g.lineTo(gx(f),gy(p));
+  }
+  g.stroke();
+  /* повнота */
+  g.strokeStyle=amber; g.beginPath(); pen=false;
+  for(f=0.5; f<=30.0001; f+=0.25){
+    kk=Math.round(NTOTAL*f/100); if(kk<1) kk=1;
+    var rr2=CUM[kk]/NFRAUD;
+    if(!pen){ g.moveTo(gx(f),gy(rr2)); pen=true; } else g.lineTo(gx(f),gy(rr2));
+  }
+  g.stroke();
+
+  /* поточне положення */
+  g.strokeStyle=ink; g.lineWidth=1.4; g.setLineDash([4,3]);
+  g.beginPath(); g.moveTo(gx(frac),GT); g.lineTo(gx(frac),GB); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle=teal;  g.beginPath(); g.arc(gx(frac),gy(prec),4.5,0,6.284); g.fill();
+  g.fillStyle=amber; g.beginPath(); g.arc(gx(frac),gy(rec),4.5,0,6.284); g.fill();
+
+  g.font='11px "JetBrains Mono",monospace'; g.textAlign='left';
+  g.fillStyle=teal;  g.fillText('точність', GR+12, gy(prec)+4);
+  g.fillStyle=amber; g.fillText('повнота',  GR+12, gy(rec)+4);
+  g.fillStyle=soft; g.textAlign='center';
+  g.fillText('частка дошки, позначена аномальною, %', (GL+GR)/2, GB+34);
+
+  I('tK').textContent=String(k);
+  I('tF').textContent=String(found);
+  I('tP').textContent=(prec*100).toFixed(1)+' %';
+  I('tR').textContent=(rec*100).toFixed(1)+' %';
+
+  var el=I('tV');
+  var perFind=(found>0)?(falseAl/found).toFixed(1):'—';
+  var nFind=found+' '+plur(found,'справжня знахідка','справжні знахідки','справжніх знахідок');
+  if(prec>=0.40){
+    verd(el,'t-ok','ЩІЛЬНИЙ СПИСОК',
+      'Модератор перегляне '+k+' '+plur(k,'оголошення','оголошення','оголошень')+
+      ' і знайде '+found+' шахрайських: '+(prec*100).toFixed(1)+
+      ' % влучань, приблизно '+perFind+' хибної тривоги на кожну знахідку. '+
+      'Але поза списком лишилось '+missed+' шахраїв — повнота лише '+(rec*100).toFixed(1)+' %.');
+  } else if(prec>=0.20){
+    verd(el,'t-mid','РОЗУМНИЙ КОМПРОМІС',
+      k+' на перевірку, '+nFind+' — '+(prec*100).toFixed(1)+
+      ' % влучань і '+perFind+' хибної тривоги на кожну. Спіймано '+
+      (rec*100).toFixed(1)+' % усіх шахраїв, пропущено '+missed+'.');
+  } else if(k<20){
+    verd(el,'t-no','ЗАКОРОТКИЙ СПИСОК',
+      'Лише '+k+' на перевірку і '+found+' '+plur(found,'знахідка','знахідки','знахідок')+
+      '. Верхівка списку — найдивніші оголошення дошки, а найдивніші тут чесні: '+
+      'колекційні апарати й одруки в ціні. Повнота '+(rec*100).toFixed(1)+' %.');
+  } else {
+    verd(el,'t-no','СПИСОК РОЗДУВСЯ',
+      k+' оголошень на перевірку заради '+found+' знахідок — '+(prec*100).toFixed(1)+
+      ' % влучань і '+perFind+' хибної тривоги на кожну. Повнота виросла до '+
+      (rec*100).toFixed(1)+' %, але слово «аномалія» вже нічого не означає.');
+  }
+}
+
+/* ══════════ звʼязування ══════════ */
+function redrawAll(){ drawTasks(); drawMarg(); drawLof(); drawIso(); drawThr(); }
+on('pxA','input',drawMarg);
+on('pyA','input',drawMarg);
+on('frc8','input',drawThr);
+on('isoCut','click',function(){
+  isoStep(isoA,isoRnd); isoStep(isoB,isoRnd); drawIso();
+});
+on('isoAll','click',function(){
+  var guard=0;
+  while((!isoA.done||!isoB.done) && guard<80){
+    isoStep(isoA,isoRnd); isoStep(isoB,isoRnd); guard++;
+  }
+  drawIso();
+});
+on('isoNew','click',function(){
+  isoSeed=(isoSeed*7+13)%99991;
+  isoRnd=LCG(isoSeed);
+  isoA=isoNewState(IANOM); isoB=isoNewState(IDENSE);
+  drawIso();
+});
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+redrawAll();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,2272 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Що бачить мережа: карти уваги і як перевірити, чи можна їм вірити</title>
+<meta name="description" content="Як зазирнути всередину згорткової мережі: ваги першого шару, карти активацій, власна реалізація Grad-CAM крок за кроком, чутливість до заслону. І головне — перевірка на осудність: що станеться з картою, якщо зіпсувати мережі ваги. Усі числа заміряні на мережі з 6 класів фігур 28×28.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+/* рядок, який і є відкриттям заміру, — підсвічуємо */
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* блок коду мережі в тексті: моноширинний, зі збереженням відступів */
+pre.arch{font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.6;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 18px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow)}
+pre.arch b{color:var(--rose); font-weight:700}
+pre.arch i{color:var(--soft); font-style:normal}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 3 · Тема 17</p>
+    <h1>Що бачить мережа</h1>
+    <p class="stand">Намалювати теплову карту поверх зображення легко — це десяток
+      рядків коду. Значно важче зʼясувати, чи вона взагалі щось означає. Ця тема
+      про обидва вміння, і друге важливіше за перше.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Мережа відповіла. Чому саме так?</a></li>
+        <li><a href="#s2">Найпростіше: подивитись на ваги</a></li>
+        <li><a href="#s3">Карти активацій по шарах</a></li>
+        <li><a href="#s4">Grad-CAM: звідки береться карта</a></li>
+        <li><a href="#s5">Чому карта така груба</a></li>
+        <li><a href="#s6">Заслін: метод без градієнтів</a></li>
+        <li><a href="#s7">Чи згодні два методи між собою</a></li>
+        <li><a href="#s8">Перевірка на осудність</a></li>
+        <li><a href="#s9">Чого карта не каже</a></li>
+        <li><a href="#s10">Де це справді корисно</a></li>
+        <li><a href="#s11">Що є, крім карт</a></li>
+        <li><a href="#s12">Підсумок</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../16-self-supervised/lecture.html">← 16. Самонаглядове навчання</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../18-architecture-comparison/lecture.html">18. Порівняння архітектур →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Мережа подивилась на зображення й відповіла: «коло». Упевненість —
+0.995 із 1. Відповідь правильна. І тут виникає питання, від якого не відмахнутись,
+щойно модель виходить із зошита в реальну роботу: <strong>а чому вона так
+вирішила?</strong> На що вона дивилась? Що саме в цій картинці змусило її сказати
+«коло», а не «кільце»?</p>
+
+<p>Питання не риторичне. Мережа, яка вгадує породу собаки за травою на задньому
+плані, дає на тесті ті самі 96 % — і розсипається на першому ж знімку в приміщенні.
+Тест цього не покаже: у тестовій вибірці трава теж є.</p>
+
+<p>Тема дає два вміння, і вони нерівноцінні. Перше — <b>побудувати карту</b> того,
+куди мережа дивилась; це нескладно, і саме цим заповнені презентації. Друге —
+<b>перевірити, чи ця карта щось означає</b>. Це складніше, це роблять рідше, і саме
+тут ховається найнеприємніший результат теми.</p>
+
+<h2 id="s1"><span class="num">01 / Питання</span>Мережа відповіла. Чому саме так?</h2>
+
+<p>Почнімо з чесного визнання. Мережа — не людина, і слова «вона дивилась сюди»
+в неї немає. Усередині є числа: множення, додавання, порівняння з нулем. Питання
+«чому» ми змушені <b>перекласти</b> на щось, що можна порахувати, і в цьому перекладі
+щось неминуче губиться.</p>
+
+<p>Найпоширеніший переклад такий: <b>«чому» замінюємо на «де»</b>. Замість «за якою
+ознакою» питаємо «яка ділянка зображення вплинула на відповідь найбільше». Питання
+вужче, зате на нього можна відповісти числом і намалювати результат поверх картинки.</p>
+
+<div class="note warn"><b>Тримай цю підміну в голові всю тему.</b> Жоден метод нижче
+не відповідає на питання «чому». Усі вони відповідають на питання «де». Карта, яка
+світиться на предметі, каже: «якби цієї ділянки не було, відповідь змінилась би».
+Вона не каже, <b>що</b> мережа там побачила, і не каже, чи це побачене має сенс.</p></div>
+
+<p>Наскрізний приклад теми — той самий, що в усьому блоці: <b>фігури 28×28 шести
+класів</b>, згенеровані формулами з гаусовим шумом. Мережа теж маленька, і це
+навмисно: у ній усе видно наскрізь.</p>
+
+<pre class="arch">Conv2d(1 → 8,  3×3, padding=1) + ReLU     <i>28×28, 80 ваг</i>
+MaxPool2d(2)                              <i>14×14</i>
+Conv2d(8 → 16, 3×3, padding=1) + ReLU     <i>14×14, 1 168 ваг</i>
+MaxPool2d(2)                              <i>7×7</i>
+<b>Conv2d(16 → 32, 3×3, padding=1) + ReLU</b>    <i>7×7, 4 640 ваг ← сюди чіплятимемо hook</i>
+AdaptiveAvgPool2d(1)                      <i>глобальне усереднення, 32 числа</i>
+Linear(32 → 6)                            <i>198 ваг</i></pre>
+
+<p>Разом 6 086 ваг. Після навчання (30 епох на 1800 прикладах, близько 30 секунд на
+одному ядрі) точність на перевірці — <b>0.968</b> при рівні вгадування 0.167. Будова —
+та сама, що в <a href="../09-cnn-complete/lecture.html">темі 09</a>: тіло зі згорток,
+глобальне усереднення з <a href="../08-pooling/lecture.html">теми 08</a> і один
+лінійний шар у голові.</p>
+
+<p>Далі — сім замірів. Перші чотири будують карти, пʼятий і шостий перевіряють, чи
+можна їм вірити, сьомий показує, чого карта не каже навіть тоді, коли вірити можна.</p>
+
+<h2 id="s2"><span class="num">02 / Ваги</span>Найпростіше: подивитись на ваги</h2>
+
+<p>Найдешевший спосіб зазирнути всередину не потребує ані зображення, ані прогону
+мережі: ваги вже лежать у моделі — просто намалюй їх. Але це працює <b>тільки для
+першого шару</b>. Його ядро має форму 1×3×3: один вхідний канал, девʼять чисел.
+Вхідний канал — це яскравість пікселя, річ, яку око розуміє, тому девʼять чисел можна
+викласти квадратиком і подивитись на них як на картинку.</p>
+
+<p><a href="../07-conv-layer/lecture.html">Тема 07</a> уже показувала ці ядра одразу
+після навчання й ставила питання, на яке ми зараз відповімо числом: <b>чи стають
+навчені ядра схожими на Собеля з <a href="../04-convolution-by-hand/lecture.html">теми
+04</a>?</b></p>
+
+<h3>Як порівняти два ядра числом</h3>
+
+<p>«Схоже» треба чимось міряти. Візьмемо <b>косинусну подібність</b> — величину,
+яка порівнює два набори чисел, не зважаючи на їхній масштаб. Розтягуємо обидва ядра
+в рядок із девʼяти чисел, множимо їх поелементно, додаємо результати й ділимо на
+добуток довжин обох рядків.</p>
+
+<div class="eq">cos(a, b) = (a<span class="sub">1</span>b<span class="sub">1</span> + … + a<span class="sub">9</span>b<span class="sub">9</span>) ÷ (‖a‖ · ‖b‖)</div>
+
+<p>Тут <b>a</b> і <b>b</b> — два ядра, розкладені в рядки; ‖a‖ («норма») — довжина
+рядка, тобто корінь із суми квадратів усіх девʼяти чисел. Ділення на довжини робить
+головне: ядро, помножене на 10, вважається <b>тим самим</b> ядром. Результат лежить
+між −1 і +1. Одиниця — ядра однакові з точністю до яскравості. Нуль — спільного нічого.
+Мінус одиниця — одне є другим із протилежним знаком, а для згортки це той самий
+детектор, лише чорне з білим міняються місцями.</p>
+
+<p>Порахуємо руками на маленькому прикладі, щоб число не було чарівним. Візьмемо
+ядро <code>[1, 0, −1]</code> і ядро <code>[2, 0, −2]</code>. Добуток: 1·2 + 0·0 +
+(−1)(−2) = 4. Довжина першого: √(1+0+1) = 1.41. Довжина другого: √(4+0+4) = 2.83.
+Ділимо: 4 ÷ (1.41 · 2.83) = 4 ÷ 4 = <b>1.0</b>. Ті самі ядра, різна яскравість —
+і косинус це побачив.</p>
+
+<h3>Що вийшло на наших ядрах</h3>
+
+<p>Заміряно на всіх восьми ядрах першого шару після навчання. У таблиці — косинус
+із чотирма класичними ядрами й сума всіх девʼяти ваг.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>ядро</th><th>Собель-X</th><th>Собель-Y</th><th>лапласіан</th><th>рівномірне</th><th>сума ваг</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>0.364</td><td>0.515</td><td>0.179</td><td>−0.123</td><td>−0.30</td></tr>
+    <tr><td>1</td><td>0.233</td><td>0.453</td><td>0.277</td><td>−0.245</td><td>−0.60</td></tr>
+    <tr class="hot"><td>2</td><td>0.243</td><td>0.291</td><td>0.131</td><td>0.847</td><td>2.61</td></tr>
+    <tr><td>3</td><td>0.131</td><td>0.018</td><td>−0.557</td><td>−0.327</td><td>−0.86</td></tr>
+    <tr><td>4</td><td>−0.341</td><td>−0.687</td><td>−0.026</td><td>−0.121</td><td>−0.35</td></tr>
+    <tr class="hot"><td>5</td><td>0.179</td><td>0.054</td><td>0.059</td><td>0.931</td><td>3.84</td></tr>
+    <tr><td>6</td><td>−0.561</td><td>0.030</td><td>0.336</td><td>−0.127</td><td>−0.38</td></tr>
+    <tr class="hot"><td>7</td><td>−0.139</td><td>−0.193</td><td>−0.098</td><td>0.875</td><td>3.15</td></tr>
+  </tbody>
+</table></div>
+
+<p><strong>Детекторів меж тут немає, і це чесна відповідь.</strong> Найкращий збіг
+із Собелем — 0.687 (ядро 4). Багато це чи мало? Я взяв <b>200 цілком випадкових</b>
+ядер 3×3 і порахував те саме: середній збіг випадкового ядра з Собелем — 0.398,
+найкращий із двохсот — <b>0.808</b>. Тобто випадковий шум легко перевершує наше
+найкраще навчене ядро. Ті самі вісім ядер <b>до</b> навчання давали 0.646 — навчання
+зрушило це число на 0.04, тобто ні на що.</p>
+
+<div class="note"><b>Чому це нормальний, а не поганий результат.</b> Наші фігури —
+суцільні плями на порожньому тлі розміром 28×28. Межа фігури тут завтовшки в один
+піксель, і всередині фігури немає нічого — ні текстури, ні градієнта. Детектор меж
+на такому матеріалі не має що детектувати. Мережі вигідніше вивчити щось інше — і
+вона вивчила.</div>
+
+<p><strong>Що таки зʼявилось.</strong> Подивись на підсвічені рядки: ядра 2, 5 і 7
+мають косинус із рівномірним ядром 0.847, 0.931 і 0.875, а суми їхніх ваг — 2.61,
+3.84 і 3.15. Рівномірне ядро — це просто усереднення сусідів, «наскільки тут загалом
+світло». <b>До навчання таких ядер було 0 із 8</b> (найбільша сума за модулем — 1.36),
+після — <b>3 із 8</b>. Мережа вивчила не детектори меж, а <b>детектори
+заповненості</b>. Для шести суцільних фігур це рівно та ознака, яка розрізняє їх
+найдешевше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Ядра першого шару: до й після навчання</p>
+  <p class="fig-sub">Вісім ядер 3×3. Клікни по ядру — воно розкриється крупно, з
+    девʼятьма числами і своїм відгуком на тестовому зображенні. Перемикач унизу
+    показує ті самі ядра до навчання.</p>
+  <div class="panel">
+    <div><canvas id="cKern" width="940" height="470" aria-label="Вісім ядер першого шару, обране ядро крупно і його відгук на зображенні фігури"></canvas></div>
+    <div>
+      <span class="cap">ваги</span>
+      <div class="seg" id="kernSeg">
+        <button data-i="0" aria-pressed="true">після навчання</button>
+        <button data-i="1" aria-pressed="false">до навчання</button>
+      </div>
+      <span class="cap">зображення</span>
+      <div class="seg wrap" id="kernImg">
+        <button data-i="0" aria-pressed="true">коло</button>
+        <button data-i="1" aria-pressed="false">квадрат</button>
+        <button data-i="4" aria-pressed="false">хрест</button>
+        <button data-i="3" aria-pressed="false">кільце</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>cos із Собелем</b><i id="kSob">—</i></div>
+        <div class="cellv"><b>cos із рівномірним</b><i id="kBlob">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сума ваг</b><i id="kSum">—</i></div>
+        <div class="cellv"><b>ядро</b><i id="kNo" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="kVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Клікай по всіх восьми й перемикай «до / після».</b> Найкращий збіг
+    із Собелем після навчання — 0.687, до навчання — 0.646: детектори меж не
+    зʼявились. Зате три ядра з восьми стали майже рівномірними (cos 0.85-0.93), а до
+    навчання таких не було жодного. Відгук праворуч — це саме те, що бачить другий
+    шар мережі.</figcaption>
+</figure>
+
+<h3>Чому далі за перший шар так дивитись марно</h3>
+
+<p>Ядро другого шару має форму 8×3×3: воно приймає <b>вісім карт ознак</b>, а не
+один канал яскравості. Викласти 72 числа в картинку можна, але дивитись на неї
+безглуздо: «яскравість» тут означає «вага восьмої карти ознак у позиції (2,1)», а
+не колір чогось у світі. Третій шар ще гірший: 16×3×3 на кожне з 32 ядер. Тому далі
+за перший шар усі методи цієї теми дивляться не на ваги, а на <b>активації</b> — на
+те, що шар видає на конкретному зображенні.</p>
+
+<h2 id="s3"><span class="num">03 / Активації</span>Карти активацій по шарах</h2>
+
+<p>Подай мережі одне зображення й зупини її після кожного шару. Те, що вона тримає в
+руках у цю мить, і є карта активацій: вісім картинок 28×28, потім шістнадцять 14×14,
+потім тридцять дві 7×7.</p>
+
+<p>«Нейрон спрацював» означає буквально одне: число в цій клітинці більше за нуль.
+Після ReLU (яка перетворює все відʼємне на нулі) картина двійкова — або клітинка
+щось передала далі, або передала точний нуль. Частка клітинок, більших за нуль, —
+це і є міра «наскільки шар взагалі говорить».</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>шар</th><th>форма</th><th>ненульових</th><th>максимум</th><th>маса в 10 % клітинок</th><th>мертвих карт</th></tr></thead>
+  <tbody>
+    <tr><td>conv1 + ReLU</td><td>8 × 28 × 28</td><td>0.655</td><td>3.27</td><td>0.588</td><td>0 з 8</td></tr>
+    <tr><td>conv2 + ReLU</td><td>16 × 14 × 14</td><td>0.341</td><td>19.79</td><td>0.713</td><td>4 з 16</td></tr>
+    <tr><td>conv3 + ReLU</td><td>32 × 7 × 7</td><td>0.553</td><td>51.58</td><td>0.485</td><td>9 з 32</td></tr>
+  </tbody>
+</table></div>
+
+<p><strong>Розрідження є, але воно не монотонне — і про це треба сказати прямо.</strong>
+Частка ненульових іде 0.655 → 0.341 → 0.553. Другий шар справді мовчазніший за
+перший, а третій знову розговорився. Підручникова картинка «від шару до шару відгук
+стає дедалі розрідженішим» на нашій мережі <b>не відтворилась</b>. Те саме на всіх
+трьох перевірених входах: для хреста 0.664 → 0.349 → 0.518, для трикутника
+0.679 → 0.326 → 0.503.</p>
+
+<p><strong>Зате монотонне інше.</strong> Кількість карт, які на цьому зображенні
+мовчать <b>цілком</b> (усі значення — нулі), росте: 0 з 8, потім 4 з 16, потім 9 з 32.
+Це і є справжня спеціалізація: у глибшому шарі більшість карт налаштована на речі,
+яких у цьому зображенні немає, і вони просто не вмикаються. І максимум росте
+в пʼятнадцять разів — від 3.3 до 51.6.</p>
+
+<div class="note warn"><b>Яскрава карта не означає «важлива».</b> Спокуса очевидна:
+знайти найяскравішу карту активацій і оголосити її головною. Перевірмо це числом.
+Я порахував для кожної з 32 карт третього шару її середню яскравість, а потім —
+вагу, яку цій самій карті дає Grad-CAM із наступного розділу. Кореляція між двома
+списками — <b>0.169</b>. Тобто майже нічого: карта може горіти яскраво й не впливати
+на відповідь, і навпаки. Яскравість каже, наскільки сильний сигнал; важливість каже,
+куди цей сигнал іде далі. Це різні речі, і плутати їх — найчастіша помилка при
+читанні картинок із активаціями.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Усі карти ознак кожного шару</p>
+  <p class="fig-sub">Один вхід, три шари. Перемикай шар і зображення; чорні квадрати —
+    карти, які на цьому вході мовчать цілком.</p>
+  <div class="panel">
+    <div><canvas id="cAct" width="940" height="430" aria-label="Сітка карт ознак обраного шару для обраного вхідного зображення"></canvas></div>
+    <div>
+      <span class="cap">шар</span>
+      <div class="seg" id="actSeg">
+        <button data-i="0" aria-pressed="true">conv1</button>
+        <button data-i="1" aria-pressed="false">conv2</button>
+        <button data-i="2" aria-pressed="false">conv3</button>
+      </div>
+      <span class="cap">вхід</span>
+      <div class="seg" id="actImg">
+        <button data-i="0" aria-pressed="true">коло</button>
+        <button data-i="4" aria-pressed="false">хрест</button>
+        <button data-i="5" aria-pressed="false">трикутник</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ненульових</b><i id="aNz">—</i></div>
+        <div class="cellv"><b>максимум</b><i id="aMx">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>мертвих карт</b><i id="aDead">—</i></div>
+        <div class="cellv"><b>маса в 10 %</b><i id="aConc">—</i></div>
+      </div>
+      <div class="verdict" id="aVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Прогони всі три шари на всіх трьох входах.</b> Частка ненульових
+    падає з ~0.66 до ~0.34 і знову підіймається до ~0.52 — розрідження не монотонне.
+    А от мертві карти накопичуються завжди: 0 → 4 → 9. Зверни увагу й на розмір
+    клітинки: у conv3 одна клітинка карти відповідає квадрату 4×4 пікселі
+    вхідного зображення.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Grad-CAM</span>Grad-CAM: звідки береться карта</h2>
+
+<p>Тридцять дві карти 7×7 — це забагато, щоб дивитись очима. Хочеться одну карту:
+<b>ось тут те, через що мережа сказала «коло»</b>. Grad-CAM («gradient-weighted class
+activation mapping», класова карта активацій, зважена градієнтом) робить саме це.</p>
+
+<p>Ідея в одному реченні: <b>скласти всі 32 карти в одну, але не порівну, а з вагами —
+і вага кожної карти дорівнює тому, наскільки її підняття підвищує оцінку потрібного
+класу</b>. Розберімо по кроках.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · що ми маємо</span>
+    <p>Останній згортковий шар видав <b>A</b> — 32 карти розміром 7×7. Це остання
+    точка в мережі, де ще є «де»: далі глобальне усереднення все просторове стирає.
+    Тому карту будують саме тут, і саме тому вона буде 7×7.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · що таке градієнт тут</span>
+    <p>Мережа видає для кожного класу число — <b>логіт</b>, оцінку «наскільки це
+    схоже на клас c». Градієнт логіта по клітинці карти відповідає на питання:
+    <b>якщо я трохи підніму саме це число, наскільки зросте оцінка класу?</b>
+    Похідну знати не обовʼязково — достатньо читати її як «на скільки зміниться
+    результат на одиницю зміни входу». Плюс означає «підняти корисно», мінус —
+    «підняти шкідливо», нуль — «байдуже».</p>
+    <div class="eq">g[k][i][j] = наскільки зросте логіт класу c,<br>якщо підняти клітинку (i, j) карти k</div>
+    <p>Ці числа мережа рахує сама, і не заради нас: рівно ті самі градієнти вона
+    рахує на кожному кроці навчання зворотним поширенням. Ми лише перехоплюємо їх
+    по дорозі.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · чому середнє по простору</span>
+    <p>Градієнт <b>g</b> має ту саму форму, що й <b>A</b>: 32 × 7 × 7. Але нам
+    потрібно 32 числа — по одному <b>на карту</b>, а не на клітинку. Тож усереднюємо
+    градієнт по всіх 49 клітинках карти:</p>
+    <div class="eq">w[k] = (g[k][0][0] + g[k][0][1] + … + g[k][6][6]) ÷ 49</div>
+    <p>Це навмисне стирання «де». Ми питаємо не «яка клітинка важлива» (на це відповість
+    сама карта <b>A</b>), а «наскільки взагалі корисна <b>вся</b> карта <i>k</i> для
+    класу <i>c</i>». Просторову інформацію ми беремо з <b>A</b>, а важливість —
+    з <b>w</b>. Розділення праці.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · зважена сума</span>
+    <p>Тепер складаємо 32 карти в одну, домноживши кожну на її вагу:</p>
+    <div class="eq">S[i][j] = w[0]·A[0][i][j] + w[1]·A[1][i][j] + … + w[31]·A[31][i][j]</div>
+    <p>Карти з додатною вагою додають яскравості, карти з відʼємною — забирають.
+    На нашому колі ваги лежать у діапазоні від −0.0056 до +0.0083, і майже половина
+    з них відʼємна.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 5 · навіщо relu</span>
+    <p>У сумі <b>S</b> є відʼємні клітинки. Вони означають «тут докази <b>проти</b>
+    класу c». Grad-CAM їх викидає: <code>relu(S)</code> замінює все відʼємне на нуль.
+    Причина в постановці питання: ми питаємо «де докази <b>за</b> цей клас», а не
+    «де докази проти». На нашому колі relu обнуляє <b>40.8 %</b> клітинок — тобто
+    двадцять із сорока девʼяти.</p>
+    <div class="eq">карта = relu(S)</div>
+  </div>
+</div>
+
+<p>Далі карту 7×7 розтягують до розміру входу й накладають кольором. Розтягування —
+це вже косметика; уся змістовна робота закінчилась на relu.</p>
+
+<h3>Як це виглядає в коді</h3>
+
+<p><code>register_forward_hook</code> ставить перехоплювач на потрібний шар: коли
+мережа проходитиме крізь нього вперед, наша функція отримає його вихід.
+<code>retain_grad()</code> просить PyTorch не викидати градієнт цього проміжного
+тензора (за замовчуванням він зберігає градієнти лише для ваг). Далі беремо логіт
+потрібного класу й запускаємо <code>backward()</code> від нього — не від помилки,
+як при навчанні, а саме від одного числа.</p>
+
+<div class="eq left">handle = model.relu3.register_forward_hook(hook)
+logits = model(image)
+logits[0, class_index].backward()
+
+a = stored_output[0]              <i># 32 × 7 × 7</i>
+g = stored_output.grad[0]         <i># 32 × 7 × 7</i>
+w = g.mean(dim=(1, 2))            <i># 32</i>
+cam = relu((w[:, None, None] * a).sum(0))</div>
+
+<div class="note"><b>Чому hook саме на ReLU, а не на згортку.</b> Класичний
+Grad-CAM бере карти ознак <b>після</b> нелінійності — тобто вже невідʼємні. Якщо
+почепити hook на <code>conv3</code>, отримаєш вихід до ReLU, де є відʼємні числа,
+і зважена сума почне поводитись інакше: відʼємна вага на відʼємну активацію дасть
+додатний внесок. Це не помилка, а інший метод з іншими властивостями. Ми беремо
+канонічний варіант — після ReLU.</div>
+
+<div class="note warn"><b>Точна тотожність, яку дала наша архітектура.</b> У нас за
+останнім згортковим шаром стоїть глобальне усереднення й один лінійний шар. Логіт
+класу <i>c</i> дорівнює сумі <code>fc[c][k]</code> помножених на середнє карти <i>k</i>.
+Похідна такого виразу по будь-якій клітинці карти <i>k</i> дорівнює
+<code>fc[c][k] / 49</code> — і <b>однакова в усіх 49 клітинках</b>. Тому середнє
+градієнта дорівнює йому ж: <b>w[k] = fc[c][k] / 49</b> рівно, без наближень.
+Перевірено в зошиті: максимальна різниця 1.9 × 10<span class="sup">−9</span>.
+Наслідок серйозний — <b>у такій мережі ваги Grad-CAM не залежать від зображення
+взагалі</b>. Вони фіксовані для класу. Усе, що змінюється від картинки до картинки, —
+самі карти ознак. Тримай це в голові до розділу 08: саме звідси візьметься найдивніше
+число теми.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Grad-CAM крок за кроком</p>
+  <p class="fig-sub">Тисни «наступний крок» і дивись, як із 32 карт ознак виходить
+    одна карта. Показано вісім каналів із 32: чотири з найбільшою вагою і чотири
+    з найменшою.</p>
+  <div class="panel">
+    <div><canvas id="cStep" width="940" height="400" aria-label="Шість кроків побудови Grad-CAM: карти ознак, градієнти, ваги, зважена сума, relu, накладення"></canvas></div>
+    <div>
+      <div class="code tight" id="stepCode">
+        <div data-s="0">a = карти ознак (32×7×7)</div>
+        <div data-s="1">g = градієнт логіта по a</div>
+        <div data-s="2">w = g.mean(dim=(1,2))</div>
+        <div data-s="3">S = sum(w[k] * a[k])</div>
+        <div data-s="4">cam = relu(S)</div>
+        <div data-s="5">накласти на зображення</div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>що на екрані</b><i id="sWhat" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>діапазон значень</b><i id="sRange" class="sm">—</i></div>
+        <div class="cellv"><b>крок</b><i id="sNo">1 / 6</i></div>
+      </div>
+      <div class="btnrow">
+        <button id="stepPrev">← назад</button>
+        <button id="stepNext">наступний крок →</button>
+      </div>
+      <div class="verdict" id="sVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Головне видно на кроці 3.</b> Ваги <code>w</code> — це 32 числа
+    від −0.0056 до +0.0083, і майже половина відʼємна. На кроці 4 відʼємні карти
+    віднімаються з суми, а на кроці 5 relu викидає 40.8 % клітинок — двадцять із
+    сорока девʼяти. Саме тому карта Grad-CAM завжди має великі нульові ділянки.</figcaption>
+</figure>
+
+<h3>Карта для іншого класу</h3>
+
+<p>Grad-CAM будується <b>для класу</b>, а не для зображення. На тому самому колі
+можна спитати: а де докази за «квадрат»? Заміряно: кореляція між картою правильного
+класу («коло») і картами інших пʼяти становить <b>0.944</b> для «квадрата», 0.353 для
+«ромба», −0.381 для «кільця», −0.312 для «хреста» і −0.615 для «трикутника». Тобто
+карти «коло» і «квадрат» майже збігаються.</p>
+
+<p>Це не збій, а прямий наслідок тотожності з попередньої врізки: ваги дорівнюють
+рядкам матриці <code>fc</code>, і якщо рядки для «кола» і «квадрата» схожі між собою,
+то й карти будуть схожі. Практичний висновок незручний: <b>«карта для класу c» іноді
+показує не те, що відрізняє клас c від інших, а те, що спільне для цілої групи
+класів</b>.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Одне зображення, шість запитань</p>
+  <p class="fig-sub">Зображення не змінюється — змінюється лише клас, про який ми
+    питаємо мережу. Знизу — кореляція цієї карти з картою правильного класу.</p>
+  <div class="panel">
+    <div><canvas id="cCls" width="940" height="330" aria-label="Grad-CAM для шести різних класів на одному зображенні кола"></canvas></div>
+    <div>
+      <span class="cap">питаємо про клас</span>
+      <div class="seg wrap" id="clsSeg">
+        <button data-i="0" aria-pressed="true">коло</button>
+        <button data-i="1" aria-pressed="false">квадрат</button>
+        <button data-i="2" aria-pressed="false">ромб</button>
+        <button data-i="3" aria-pressed="false">кільце</button>
+        <button data-i="4" aria-pressed="false">хрест</button>
+        <button data-i="5" aria-pressed="false">трикутник</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>упевненість</b><i id="clP">—</i></div>
+        <div class="cellv"><b>максимум карти</b><i id="clM">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>кореляція з картою «коло»</b><i id="clR">—</i></div>
+      </div>
+      <div class="verdict" id="clVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Перемкни на «квадрат».</b> Карта майже не змінилась — кореляція
+    0.944, хоча мережа дає цьому класу лише 0.001 упевненості. А «трикутник» дає
+    −0.615: там карта справді інша, майже дзеркальна. Карта міняється від класу
+    до класу, але не завжди й не однаково.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Роздільність</span>Чому карта така груба</h2>
+
+<p>Наша карта має розмір 7×7, а зображення — 28×28. Ділимо: одна клітинка карти
+відповідає квадрату <b>4×4 = 16 пікселів</b>. Уся фігура радіусом 7 пікселів займає
+приблизно 3×3 клітинки карти. Тобто вся «увага» описується девʼятьма числами.</p>
+
+<p>Це прямий наслідок того, де карта будується: Grad-CAM працює на останньому
+згортковому шарі, де карти найменші, бо два пулінги зменшили 28 до 7. На справжніх
+мережах пропорція та сама, лише числа більші: у ResNet-50 на вході 224×224 остання
+карта теж 7×7, тобто <b>одна клітинка дорівнює квадрату 32×32 пікселі</b>.</p>
+
+<p><strong>Чому не взяти ранішній шар.</strong> Можна. Другий згортковий шар дає
+карту 14×14, тобто клітинку 2×2 пікселі — учетверо детальніше. Але там менше
+семантики. Компроміс формулюється так: <b>що глибше шар, то грубіша карта й то
+більше вона про «клас»; що ближче до входу, то детальніша карта й то більше вона
+про «текстуру».</b></p>
+
+<p>Заміряно на нашому колі: кореляція між картою з conv3 (7×7) і картою з conv2
+(14×14) дорівнює <b>0.850</b> — вони кажуть майже те саме, тільки з різною
+подрібненістю. Цікаво інше: детальніша карта з conv2 виявилась <b>ближчою</b>
+до незалежного заміру заслоном (0.923 проти 0.836). На маленькій мережі «глибше =
+семантичніше» майже не спрацювало, бо трьох шарів замало, щоб зʼявилась різниця
+в рівні абстракції.</p>
+
+<h2 id="s6"><span class="num">06 / Заслін</span>Заслін: метод без градієнтів</h2>
+
+<p>Grad-CAM спирається на градієнти, тобто на внутрішню механіку мережі. Є спосіб
+простіший і чесніший за задумом: <b>закрити частину зображення й подивитись, чи
+зіпсується відповідь</b>. Мережа при цьому лишається чорною скринькою — ми не
+заглядаємо всередину взагалі.</p>
+
+<p>Механіка: беремо квадрат <i>p</i>×<i>p</i>, заливаємо його сірим (значення 0.5),
+ставимо в позицію (r, c) і питаємо мережу. Записуємо, наскільки впала ймовірність
+правильного класу, пересуваємо квадрат на крок і повторюємо. Із зібраних падінь
+складається карта: де падіння велике, там лежить щось важливе.</p>
+
+<div class="eq">падіння(r, c) = p(клас | ціле зображення) − p(клас | закрито квадрат у (r, c))</div>
+
+<p>Заміряно на нашому колі. Базова впевненість мережі — <b>0.995</b>. Квадрат 7×7
+із кроком 1 дає 22 × 22 = <b>484 положення</b>, і максимальне падіння становить
+<b>0.995</b>: одне-єдине правильно поставлене вікно 7×7 обвалює впевненість
+практично до нуля.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>квадрат</th><th>крок</th><th>прогонів</th><th>макс. падіння</th><th>мін. падіння</th></tr></thead>
+  <tbody>
+    <tr><td>5 × 5</td><td>1</td><td>576</td><td>0.993</td><td>−0.003</td></tr>
+    <tr class="hot"><td>7 × 7</td><td>1</td><td>484</td><td>0.995</td><td>−0.004</td></tr>
+    <tr><td>9 × 9</td><td>1</td><td>400</td><td>0.994</td><td>−0.004</td></tr>
+    <tr><td>11 × 11</td><td>1</td><td>324</td><td>0.906</td><td>−0.004</td></tr>
+  </tbody>
+</table></div>
+
+<p><strong>Ціна методу.</strong> Grad-CAM коштує рівно два проходи — один прямий і
+один зворотний. Заслін квадратом 7×7 із кроком 1 коштує <b>484 прямі проходи</b>,
+тобто приблизно у 240 разів більше. На нашій мережі це частки секунди; на ResNet-50
+і зображенні 224×224 із вікном 32 і кроком 8 — 625 прогонів по 159 мс, понад півтори
+хвилини на одну картинку.</p>
+
+<div class="note warn"><b>Прихована пастка методу: сірий квадрат — теж вхід.</b>
+Мережа ніколи не бачила на навчанні зображень із сірим квадратом посередині. Падіння
+впевненості може означати «ми закрили важливе», а може означати «ми показали мережі
+щось небувале». Розрізнити ці дві причини заслін не вміє. Заміна заливки (нуль,
+середнє по датасету, розмиття, шум) дає різні карти — і жодна з них не є «правильною».
+Зверни увагу й на колонку «мін. падіння»: воно відʼємне (−0.004). Тобто в деяких
+позиціях заслін <b>підвищує</b> впевненість мережі, замість того щоб знижувати.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Заслін будується на очах</p>
+  <p class="fig-sub">Тисни «будувати» — квадрат піде по зображенню, а карта праворуч
+    заповнюватиметься. Лічильник показує справжню ціну методу в прогонах мережі.</p>
+  <div class="panel">
+    <div><canvas id="cOcc" width="940" height="380" aria-label="Зліва зображення з рухомим сірим квадратом, справа карта падіння впевненості, що заповнюється"></canvas></div>
+    <div>
+      <span class="cap">розмір квадрата</span>
+      <div class="seg" id="occP">
+        <button data-i="5" aria-pressed="false">5</button>
+        <button data-i="7" aria-pressed="true">7</button>
+        <button data-i="9" aria-pressed="false">9</button>
+        <button data-i="11" aria-pressed="false">11</button>
+      </div>
+      <span class="cap">крок</span>
+      <div class="seg" id="occS">
+        <button data-i="1" aria-pressed="true">1</button>
+        <button data-i="2" aria-pressed="false">2</button>
+        <button data-i="4" aria-pressed="false">4</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>прогонів мережі</b><i id="oRuns">—</i></div>
+        <div class="cellv"><b>макс. падіння</b><i id="oMax">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>клітинок карти</b><i id="oCells">—</i></div>
+        <div class="cellv"><b>разів дорожче</b><i id="oCost">—</i></div>
+      </div>
+      <div class="btnrow">
+        <button id="occRun">будувати</button>
+        <button id="occAll">показати всю</button>
+      </div>
+      <div class="verdict" id="oVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Прогони всі дванадцять комбінацій.</b> Крок 4 замість 1 здешевлює
+    метод у 13 разів (36 прогонів замість 484), але карта квадратом 7×7 стає 6×6 —
+    грубішою за саму Grad-CAM.
+    А квадрат 11×11 при кроці 1 закриває 15 % зображення й розмазує карту:
+    максимальне падіння спадає з 0.995 до 0.906, бо великий квадрат майже завжди
+    зачіпає фігуру.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Згода</span>Чи згодні два методи між собою</h2>
+
+<p>Ось навіщо нам знадобився другий метод. Grad-CAM і заслін <b>незалежні</b>:
+перший читає градієнти всередині мережі, другий взагалі туди не заглядає. Якщо
+обидва показують на те саме місце — це вже щось. Якщо показують на різні —
+довіряти не можна жодному без окремої перевірки.</p>
+
+<p>Порівнюємо кореляцією. Кореляція (точніше — коефіцієнт Пірсона) — це число від
+−1 до +1: одиниця означає «де в одній карті яскраво, там і в другій яскраво, завжди»,
+нуль — звʼязку немає, мінус одиниця — де в одній яскраво, у другій темно. Обидві карти
+розтягуємо до 28×28 і рахуємо кореляцію по 784 пікселях:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>зображення</th><th>упевненість</th><th>кореляція карт</th><th>висновок</th></tr></thead>
+  <tbody>
+    <tr><td>коло</td><td>0.995</td><td>+0.836</td><td>згодні</td></tr>
+    <tr><td>квадрат</td><td>0.747</td><td>+0.188</td><td>майже не згодні</td></tr>
+    <tr class="hot"><td>ромб</td><td>0.868</td><td>−0.170</td><td>суперечать</td></tr>
+    <tr><td>кільце</td><td>1.000</td><td>+0.612</td><td>загалом згодні</td></tr>
+    <tr><td>хрест</td><td>0.994</td><td>+0.658</td><td>загалом згодні</td></tr>
+    <tr class="hot"><td>трикутник</td><td>0.911</td><td>−0.085</td><td>не повʼязані</td></tr>
+    <tr class="sumrow"><td>середнє</td><td>—</td><td>+0.340</td><td>—</td></tr>
+  </tbody>
+</table></div>
+
+<p><strong>Три з шести — згода, три з шести — ні.</strong> І це найважливіше число
+розділу. Мережа на всіх шести зображеннях відповіла правильно й упевнено. Обидва
+методи відпрацювали без помилок. А результат розходиться — на ромбі вони показують
+буквально в різні боки (−0.170).</p>
+
+<p>Хто з них правий? <b>Питання поставлене неправильно.</b> Еталонної карти, з якою
+можна звірити обидві, немає: «правильної відповіді» на питання «куди дивилась мережа»
+не існує в природі, бо мережа нікуди не дивилась — вона перемножувала числа. Є два
+різні способи перекласти її обчислення в картинку, і вони дають різні картинки.</p>
+
+<p>Практичний висновок звучить сухо, зате витримує перевірку: <b>одна карта — це
+гіпотеза, а не результат</b>. Якщо два незалежні методи показали те саме — гіпотеза
+підкріплена. Якщо ні — треба або третій метод, або прямий експеримент із даними.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Два методи на одному зображенні</p>
+  <p class="fig-sub">Ліворуч Grad-CAM, праворуч заслін, посередині діаграма розсіяння:
+    кожна точка — один піксель, координати — його значення в двох картах.</p>
+  <div class="panel">
+    <div><canvas id="cTwo" width="940" height="360" aria-label="Grad-CAM і карта заслону поруч, між ними діаграма розсіяння двох карт"></canvas></div>
+    <div>
+      <span class="cap">зображення</span>
+      <div class="seg wrap" id="twoSeg">
+        <button data-i="0" aria-pressed="true">коло</button>
+        <button data-i="1" aria-pressed="false">квадрат</button>
+        <button data-i="2" aria-pressed="false">ромб</button>
+        <button data-i="3" aria-pressed="false">кільце</button>
+        <button data-i="4" aria-pressed="false">хрест</button>
+        <button data-i="5" aria-pressed="false">трикутник</button>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>кореляція двох карт</b><i id="twR">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>упевненість мережі</b><i id="twP">—</i></div>
+        <div class="cellv"><b>відповідь</b><i id="twA" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="twVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Перебери всі шість.</b> На колі хмара точок витягнута вздовж
+    діагоналі — кореляція +0.836. На ромбі вона розвертається в другий бік
+    (−0.170), а на трикутнику розсипається в безформну пляму (−0.085). Мережа
+    при цьому в усіх шести випадках відповіла правильно.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Осудність</span>Перевірка на осудність</h2>
+
+<p>Тепер найголовніше в темі. Ми маємо два способи намалювати карту й міру згоди між
+ними — але досі не поставили найпростішого питання: <b>а звідки взагалі відомо, що
+карта показує те, чого мережа навчилась?</b> Перевірка, яка це зʼясовує, називається
+<b>перевіркою на осудність</b> (в оригіналі — sanity check). Логіка в неї безжальна
+й ідеально проста:</p>
+
+<div class="note"><b>Якщо карта пояснює те, що вивчила мережа, то в мережі, яка нічого
+не вивчила, карта має бути іншою.</b> Візьми навчену модель. Заміни їй ваги на
+випадкові. Побудуй карту знову. Якщо карта майже не змінилась — вона малює не знання
+мережі, а властивості самого зображення й архітектури. Тоді вона не пояснює нічого.</div>
+
+<p>Псуємо у два прийоми, від виходу до входу. Спершу <b>тільки голову</b> —
+останній лінійний шар на 198 ваг. Тіло зі згорток лишається навченим. Потім
+<b>усе разом</b>: голову й усі три згорткові шари.</p>
+
+<p>Обидва зіпсовані варіанти дають точність <b>0.167</b> — рівно рівень вгадування
+на шести класах. Ці мережі не «трохи гірші», вони не знають нічого.</p>
+
+<h3>Потрібен орієнтир, інакше числа ні про що</h3>
+
+<p>Кореляція 0.2 — це багато чи мало? Щоб відповісти, я навчив <b>другу мережу тієї
+самої форми з іншого випадкового початку</b>. Вона теж вивчила задачу (точність 0.997).
+Кореляція між картами двох <b>навчених</b> мереж — ось наша верхня планка.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>зображення</th><th>інша навчена</th><th>вип. голова</th><th>вип. тіло</th></tr></thead>
+  <tbody>
+    <tr><td>коло</td><td>+0.959</td><td>−0.116</td><td>−0.128</td></tr>
+    <tr><td>квадрат</td><td>+0.560</td><td>порожня карта</td><td>−0.278</td></tr>
+    <tr><td>ромб</td><td>+0.461</td><td>−0.472</td><td>+0.155</td></tr>
+    <tr class="hot"><td>кільце</td><td>+0.943</td><td><b>+0.995</b></td><td>+0.160</td></tr>
+    <tr><td>хрест</td><td>+0.460</td><td>порожня карта</td><td>−0.136</td></tr>
+    <tr><td>трикутник</td><td>+0.125</td><td>+0.276</td><td>+0.559</td></tr>
+    <tr class="sumrow"><td>середнє</td><td>+0.584</td><td>+0.171</td><td>+0.055</td></tr>
+  </tbody>
+</table></div>
+
+<p><strong>Загальний результат: наша Grad-CAM перевірку проходить.</strong> Дві
+навчені мережі згодні між собою на +0.584, а навчена й зіпсована — на +0.171 і
++0.055. Тобто псування ваг карту таки міняє, і міняє сильно. Перевіримо це ще й
+другим способом: скільки з дванадцяти найяскравіших клітинок карти лишаються
+найяскравішими після псування? Вийшло <b>0.31</b> для випадкової голови і
+<b>0.15</b> для випадкового тіла, тоді як випадковий збіг дав би 12 ÷ 49 = <b>0.245</b>.
+Тобто перекриття на рівні випадкового або нижче.</p>
+
+<p><strong>Але середнє тут ховає два неприємні факти, і замовчувати їх не можна.</strong></p>
+
+<p><b>Факт перший: на одному з шести зображень карта не змінилась зовсім.</b>
+На кільці кореляція навченої карти з картою випадкової голови становить
+<b>+0.995</b>. Це не «схожа» — це практично та сама картинка. Мережа з випадковою
+головою не відрізняє коло від хреста, а карта в неї така сама, як у мережі
+з точністю 0.968.</p>
+
+<p>Звідки це береться, ми вже вивели в розділі 04: ваги Grad-CAM дорівнюють рядку
+матриці <code>fc</code>, поділеному на 49, а карти ознак приходять із <b>тіла</b>,
+якого ми не чіпали. При псуванні лише голови карта = relu(випадкова комбінація тих
+самих карт ознак), і якщо комбінація випадково зберегла знаки в потрібних місцях —
+картинка збігається. На кільці так і сталося.</p>
+
+<p><b>Факт другий: на двох зображеннях із шести метод узагалі не дав карти.</b>
+Для квадрата й хреста випадкова голова видала <b>порожню карту</b> — усі 49 клітинок
+дорівнюють нулю. Зважена сума виявилась відʼємною скрізь, і relu її стерла. Кореляцію
+з порожньою картою порахувати не можна взагалі: у неї немає розкиду.</p>
+
+<div class="note warn"><b>Що з цього виносити.</b> Не «Grad-CAM працює» і не
+«Grad-CAM не працює». А ось що: <b>відповідь залежить від мережі, від зображення й
+від того, які саме ваги ти зіпсував, — і тому перевірку треба робити на своїй
+мережі, а не читати чужий висновок</b>. У нас на шести зображеннях вийшло: чотири
+рази карта помітно змінилась, один раз не змінилась зовсім, двічі метод відмовив.
+Це не привід викинути Grad-CAM. Це привід ніколи не показувати карту як доказ,
+не прогнавши цю перевірку.</div>
+
+<p><b>І деталь, яку видно тільки завдяки орієнтиру.</b> На трикутнику дві
+<b>навчені</b> мережі згодні між собою лише на +0.125 — це найнижче число в колонці.
+А навчена й та, що з випадковим тілом, згодні на <b>+0.559</b>. Тобто зіпсована
+мережа дала карту, схожу на початкову <b>сильніше</b>, ніж мережа, яка задачу
+вивчила. Отже, орієнтир треба брати для кожного зображення окремо: середнє по
+таблиці приховало б і цей випадок теж.</p>
+
+<p>Для повноти я прогнав той самий тест і на заслоні. Кореляція карти заслону
+навченої мережі з картою заслону мережі з випадковою головою — <b>−0.610</b>,
+з випадковим тілом — <b>+0.093</b>. Незалежний метод теж реагує на псування ваг,
+і на цьому зображенні навіть різкіше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Перевірка на осудність</p>
+  <p class="fig-sub">Три версії однієї мережі: навчена, з випадковою головою, з
+    випадковим тілом. Карта будується тим самим кодом. Дивись, чи вона змінюється.</p>
+  <div class="panel">
+    <div><canvas id="cSane" width="940" height="430" aria-label="Вхідне зображення і три карти Grad-CAM: навченої мережі, мережі з випадковою головою і з випадковим тілом"></canvas></div>
+    <div>
+      <span class="cap">зображення</span>
+      <div class="seg wrap" id="saneImg">
+        <button data-i="0" aria-pressed="true">коло</button>
+        <button data-i="1" aria-pressed="false">квадрат</button>
+        <button data-i="2" aria-pressed="false">ромб</button>
+        <button data-i="3" aria-pressed="false">кільце</button>
+        <button data-i="4" aria-pressed="false">хрест</button>
+        <button data-i="5" aria-pressed="false">трикутник</button>
+      </div>
+      <span class="cap">велика панель</span>
+      <div class="seg" id="saneWhich">
+        <button data-i="0" aria-pressed="true">навчена</button>
+        <button data-i="1" aria-pressed="false">вип. голова</button>
+        <button data-i="2" aria-pressed="false">вип. тіло</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>з навченою</b><i id="snR" class="sm">—</i></div>
+        <div class="cellv"><b>орієнтир: інша навчена</b><i id="snT">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>точність цієї мережі</b><i id="snA" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="snVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Обовʼязково подивись «кільце» + «вип. голова».</b> Мережа з точністю
+    0.167 малює ту саму карту, що й мережа з точністю 0.968: кореляція +0.995.
+    А на «квадраті» й «хресті» та сама випадкова голова дає порожню карту. Орієнтир
+    для порівняння — друга незалежно навчена мережа, +0.584 у середньому.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Межі</span>Чого карта не каже</h2>
+
+<p>Припустімо, карта пройшла перевірку на осудність і збіглася з незалежним методом.
+Навіть тоді вона мовчить про чотири речі.</p>
+
+<h3>Вона показує «де», а не «чому»</h3>
+
+<p>Карта світиться на фігурі — отже, її пікселі вплинули на відповідь. Це <b>не</b>
+означає, що мережа впізнала форму: вона могла зважати на площу, на кількість кутів,
+на середню яскравість, і карта в усіх цих випадках виглядатиме однаково.</p>
+
+<h3>Вона не показує, чого мережі бракувало</h3>
+
+<p>Якщо модель помилилась, бо в навчальних даних не було потрібного випадку, карта
+цього не побачить. Вона показує вплив того, що <b>є</b> на зображенні, і не має
+способу вказати на те, чого немає.</p>
+
+<h3>Вона не доказ правильності — і це можна показати числом</h3>
+
+<p>Замір сьомий: фігури в різних положеннях, для кожної — карта і її <b>центр
+ваги</b> (точка, навколо якої зосереджена яскравість), порівняний із центром ваги
+самої фігури.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>що на вході</th><th>відповідь</th><th>упевненість</th><th>центр карти ↔ центр фігури</th></tr></thead>
+  <tbody>
+    <tr><td>квадрат у кутку</td><td>квадрат ✅</td><td>0.990</td><td>3.1 px</td></tr>
+    <tr class="hot"><td>квадрат по центру</td><td>коло ❌</td><td>0.706</td><td><b>0.8 px</b></td></tr>
+    <tr><td>коло біля краю</td><td>квадрат ❌</td><td>0.634</td><td>6.7 px</td></tr>
+    <tr><td>хрест унизу</td><td>ромб ❌</td><td>0.539</td><td>4.3 px</td></tr>
+  </tbody>
+</table></div>
+
+<p><strong>Другий рядок — головний.</strong> Мережа помилилась: назвала квадрат
+колом, з упевненістю 0.706. А карта при цьому <b>ідеальна</b>: її центр відхилився
+від центра фігури лише на 0.8 пікселя. Мережа дивилась рівно туди, куди треба, — і
+відповіла неправильно. Карта, показана окремо, виглядала б як доказ правильної
+роботи.</p>
+
+<p>Перший рядок показує зворотне: мережа відповіла <b>правильно</b> й дуже впевнено
+(0.990), а карта зʼїхала на 3.1 пікселя вбік від фігури. Права відповідь із
+підозрілою картою. Разом ці два рядки закривають питання: <b>між правильністю
+відповіді й акуратністю карти немає ніякого звʼязку</b>.</p>
+
+<h3>У карти немає нуля</h3>
+
+<p>Остання, найтихіша пастка. Карту завжди нормалізують перед показом: найяскравіша
+клітинка стає повністю червоною. Тому карта <b>завжди</b> виглядає впевненою, навіть
+коли жодна клітинка нічого не варта. На колі максимум карти — 1.533, на трикутнику —
+<b>0.229</b>, усемеро менше; після нормалізації обидві виглядають однаково яскраво.
+Отже: <b>дивись не тільки на карту, а й на її сирий максимум</b>. Якщо він мізерний,
+кольорова пляма — це шум, розтягнутий до повної насиченості.</p>
+
+<h2 id="s10"><span class="num">10 / Користь</span>Де це справді корисно</h2>
+
+<p>Після трьох розділів скепсису законно спитати: то навіщо це все? Карти корисні,
+але не там, де їх зазвичай показують.</p>
+
+<h3>Пошук артефактів у даних</h3>
+
+<p>Це головне застосування, і воно окупає всі витрати. Мережа дає прекрасну точність
+на тесті, а карта світиться в кутку, де стоїть дата зйомки, водяний знак або службовий
+підпис. Або на медичних знімках — на лінійці, яку кладуть у кадр лише в одному з двох
+відділень. Модель вивчила ознаку, якої не буде в бойових даних, і жоден показник
+якості цього не покаже, бо артефакт є і в тесті теж. Карта тут працює як <b>детектор
+підозри</b>: вона каже «подивись сюди», далі прибираєш підозрілу ділянку з даних і
+переучуєш. Оце вже доказ.</p>
+
+<h3>Налагодження розмітки</h3>
+
+<p>Модель систематично помиляється на класі. Карти по десятку помилок показують, що
+мережа дивиться на другий предмет у кадрі або на предмет, який у розмітці названо
+іншим словом. Часто це не хиба моделі, а неоднозначна інструкція розмітникам.</p>
+
+<h3>Розмова з людьми, які не читають код</h3>
+
+<p>Замовникові, лікареві, аудиторові карта дає предмет для розмови. Ризик тут треба
+називати вголос: <b>карта переконлива</b> — рівно тому вона й небезпечна, якщо не
+пройшла перевірку на осудність. Показувати її як доказ правильності моделі — це
+вводити людину в оману.</p>
+
+<h3>Протокол приймання моделі</h3>
+
+<p>Практичний порядок, який складається з усього, що ми поміряли:</p>
+
+<ol>
+  <li>побудувати карту двома незалежними методами (градієнтним і заслоном);</li>
+  <li>порахувати кореляцію між ними на десятку зображень;</li>
+  <li>прогнати перевірку на осудність і записати число;</li>
+  <li>окремо подивитись на помилки моделі, а не лише на вдалі випадки;</li>
+  <li>кожну підозру, яку дала карта, перевірити експериментом із даними.</li>
+</ol>
+
+<h2 id="s11"><span class="num">11 / Інше</span>Що є, крім карт</h2>
+
+<p>Карти — не єдиний спосіб зазирнути всередину, просто найдешевший. Решту назву
+коротко, щоб ти знав, що шукати, коли карт забракне.</p>
+
+<ul>
+  <li><b>Аналіз окремого нейрона.</b> Зібрати зображення, на яких конкретний канал
+    дає найбільший відгук. Іноді канал реагує на щось назване словом («смуги», «око»),
+    частіше — ні на що зрозуміле.</li>
+  <li><b>Синтез зображення, що максимізує відгук</b> (feature visualization). Виростити
+    картинку градієнтним підйомом із шуму, замість шукати її в датасеті.</li>
+  <li><b>Проби на проміжних представленнях</b> (probing). Узяти активації шару як
+    ознаки й навчити на них лінійний класифікатор чогось стороннього. Працює —
+    отже, інформація в цьому шарі є.</li>
+  <li><b>Інтегровані градієнти й SmoothGrad.</b> Родичі Grad-CAM, що борються з його
+    головними вадами — грубістю карти й нестабільністю градієнта.</li>
+  <li><b>Аналіз через поняття</b> (concept-based). Перевіряти не «де», а «чи
+    користується мережа поняттям, яке назвала людина» — скажімо, «смугастість».</li>
+</ul>
+
+<p>Усі вони мають ту саму слабкість, що й карти, і всі потребують тієї самої
+перевірки на осудність.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Що лишається в голові</h2>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Ідея</th><th>Що вона насправді дає</th></tr></thead>
+  <tbody>
+    <tr><td><b>Ваги першого шару</b></td><td>Детектори меж не зʼявились (0.687 проти
+      0.808 у випадкового шуму), зʼявились детектори заповненості: 3 ядра з 8</td></tr>
+    <tr><td><b>Карти активацій</b></td><td>Розрідження не монотонне
+      (0.655 → 0.341 → 0.553), зате мертвих карт більшає: 0 → 4 → 9. Яскравість майже
+      не повʼязана з важливістю: кореляція 0.169</td></tr>
+    <tr><td><b>Grad-CAM</b></td><td>Ваги = середнє градієнта по простору, карта =
+      relu зваженої суми, два прогони мережі. При глобальному усередненні ваги
+      дорівнюють рядку <code>fc</code> ÷ 49 рівно</td></tr>
+    <tr><td><b>Роздільність</b></td><td>7×7 на вході 28×28 — клітинка на 16 пікселів.
+      Ранішній шар дає 14×14 і в нас краще збігається із заслоном (0.923 проти 0.836)</td></tr>
+    <tr><td><b>Заслін</b></td><td>Без градієнтів, зате 484 прогони замість 2. Заливка
+      квадрата — сама по собі артефакт</td></tr>
+    <tr><td><b>Згода методів</b></td><td>+0.340 у середньому, від +0.836 до −0.170:
+      три з шести — згода, три — ні</td></tr>
+    <tr><td><b>Перевірка на осудність</b></td><td>Дві навчені мережі: +0.584. Навчена
+      проти зіпсованої: +0.171 і +0.055. Але на одному зображенні з шести — +0.995,
+      а на двох метод дав порожню карту</td></tr>
+    <tr><td><b>Межі карти</b></td><td>Показує «де», не «чому». Правильна відповідь із
+      кривою картою (3.1 px) і хибна з бездоганною (0.8 px) трапляються однаково легко</td></tr>
+  </tbody>
+</table></div>
+
+<p>Якщо винести з теми одне речення, хай це буде таке: <strong>карта — це гіпотеза
+про мережу, а не знання про неї</strong>. Гіпотезу перевіряють: другим методом,
+псуванням ваг, експериментом із даними. Неперевірена карта — гарна картинка, яка
+однаково переконливо виглядає і тоді, коли має рацію, і тоді, коли не має.</p>
+
+<h3>Місток до наступної теми</h3>
+
+<p>За шістнадцять тем ми навчилися будувати згорткові мережі, рахувати їхні форми
+й параметри, навчати їх, переносити чуже навчання на свою задачу, навчати без
+розмітки — а тепер ще й зазирати всередину й чесно оцінювати, наскільки цьому погляду
+можна вірити.</p>
+
+<p>Лишилось питання, з якого проєкт починається, а не закінчується: <strong>яку
+архітектуру взяти</strong>. У блоці ми розібрали AlexNet і VGG, ResNet, MobileNet і
+EfficientNet — кожну окремо. Наступна тема — <strong>18. Порівняння архітектур</strong> —
+ставить їх поруч і питає, як обирати між ними під конкретне обмеження: точність,
+вагу файлу, час на пристрої чи кількість даних, які в тебе є.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <a href="practice.ipynb"><code>practice.ipynb</code></a>
+ти навчиш ту саму мережу; порівняєш її ядра першого шару з Собелем і з двомастами
+випадкових; напишеш <b>власну реалізацію Grad-CAM</b> без жодних сторонніх бібліотек
+і звіриш ваги, пораховані руками, з автоматичними через <code>np.allclose</code>;
+побудуєш карту заслону на 484 прогонах; порахуєш згоду двох методів; і, головне,
+зіпсуєш мережі ваги й поміряєш, чи змінилась карта.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../16-self-supervised/lecture.html"><span class="dir">попередня</span><span class="ttl">16. Самонаглядове навчання</span></a>
+    <a class="next" href="../18-architecture-comparison/lecture.html"><span class="dir">наступна</span><span class="ttl">18. Порівняння архітектур</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function frame(g,x,y,w,h,color,lw){
+  g.strokeStyle=color; g.lineWidth=lw||1; g.strokeRect(x+0.5,y+0.5,w-1,h-1);
+}
+function capt(g,txt,x,y,color,px,bold){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign='left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* «1 раз», «3 рази», «12 разів» */
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+/* «1 прогін», «3 прогони», «5 прогонів» */
+function прогонів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'прогін';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'прогони';
+  return 'прогонів';
+}
+/* «1 карта», «3 карти», «9 карт» */
+function карт(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'карта';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'карти';
+  return 'карт';
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+
+/* ═══════ кольорові шкали ═══════ */
+function hexc(c){
+  c=c.replace('#','');
+  if(c.length===3) c=c.charAt(0)+c.charAt(0)+c.charAt(1)+c.charAt(1)+c.charAt(2)+c.charAt(2);
+  return [parseInt(c.substr(0,2),16), parseInt(c.substr(2,2),16), parseInt(c.substr(4,2),16)];
+}
+function mixc(a,b,t){
+  if(t<0) t=0; if(t>1) t=1;
+  return 'rgb('+Math.round(a[0]+(b[0]-a[0])*t)+','+
+                Math.round(a[1]+(b[1]-a[1])*t)+','+
+                Math.round(a[2]+(b[2]-a[2])*t)+')';
+}
+var PAL={};
+function palette(){
+  PAL.paper=hexc(css('--paper')); PAL.ink=hexc(css('--ink'));
+  PAL.rose=hexc(css('--rose'));   PAL.teal=hexc(css('--teal'));
+  PAL.amber=hexc(css('--amber')); PAL.raise=hexc(css('--raise'));
+  PAL.hair=hexc(css('--hair'));   PAL.soft=hexc(css('--soft'));
+}
+/* сіра шкала для вхідного зображення: 0 — тло, 1 — предмет */
+function gray(t){ return mixc(PAL.paper, PAL.ink, t); }
+/* приглушена сіра — під накладення карти, щоб теплі кольори не тонули */
+function graydim(t){ return mixc(PAL.paper, PAL.soft, t*0.8); }
+/* тепла шкала для карт уваги: 0 — тло, 1 — найяскравіше */
+function hot(t){
+  if(t<0.5) return mixc(PAL.paper, PAL.amber, t*2);
+  return mixc(PAL.amber, PAL.rose, (t-0.5)*2);
+}
+/* знакова шкала: −1 бірюзова, 0 нейтральна, +1 рожева */
+function sgn(t){
+  if(t<0) return mixc(PAL.paper, PAL.teal, -t);
+  return mixc(PAL.paper, PAL.rose, t);
+}
+
+/* ═══════ робота з масивами ═══════ */
+var AL="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
+var IX={}; (function(){var i; for(i=0;i<64;i++) IX[AL.charAt(i)]=i;})();
+/* розпаковує ["символи", мінімум, максимум] у звичайний масив чисел */
+function dec(p){
+  var s=p[0], lo=p[1], hi=p[2], n=s.length, out=new Array(n), i;
+  for(i=0;i<n;i++) out[i]=lo+(IX[s.charAt(i)]/63)*(hi-lo);
+  return out;
+}
+function amax(a){var m=-Infinity,i; for(i=0;i<a.length;i++) if(a[i]>m) m=a[i]; return m;}
+function amin(a){var m=Infinity,i; for(i=0;i<a.length;i++) if(a[i]<m) m=a[i]; return m;}
+/* до [0,1] за власними межами масиву */
+function nrm(a){
+  var lo=amin(a), hi=amax(a), s=hi-lo, out=new Array(a.length), i;
+  for(i=0;i<a.length;i++) out[i]= s>1e-12 ? (a[i]-lo)/s : 0;
+  return out;
+}
+/* до [-1,1] за найбільшим модулем — щоб нуль лишався нулем */
+function nrms(a){
+  var m=0,i,out=new Array(a.length);
+  for(i=0;i<a.length;i++) if(Math.abs(a[i])>m) m=Math.abs(a[i]);
+  for(i=0;i<a.length;i++) out[i]= m>1e-12 ? a[i]/m : 0;
+  return out;
+}
+function slice(a,k,len){return a.slice(k*len,(k+1)*len);}
+/* білінійне розтягування карти n×n до 28×28 — так само, як у зошиті */
+function up28(a,n){
+  var out=new Array(784), sc=n/28, dy,dx;
+  for(dy=0;dy<28;dy++){
+    var sy=(dy+0.5)*sc-0.5; if(sy<0) sy=0; if(sy>n-1) sy=n-1;
+    var y0=Math.floor(sy), y1=Math.min(n-1,y0+1), fy=sy-y0;
+    for(dx=0;dx<28;dx++){
+      var sx=(dx+0.5)*sc-0.5; if(sx<0) sx=0; if(sx>n-1) sx=n-1;
+      var x0=Math.floor(sx), x1=Math.min(n-1,x0+1), fx=sx-x0;
+      out[dy*28+dx]= a[y0*n+x0]*(1-fx)*(1-fy) + a[y0*n+x1]*fx*(1-fy)
+                   + a[y1*n+x0]*(1-fx)*fy     + a[y1*n+x1]*fx*fy;
+    }
+  }
+  return out;
+}
+/* сітка значень w×h, вписана у квадрат size; fn перетворює значення на колір */
+function gridmap(g,vals,w,h,x,y,size,fn){
+  var cw=size/w, ch=size/h, i,j;
+  for(j=0;j<h;j++) for(i=0;i<w;i++){
+    g.fillStyle=fn(vals[j*w+i]);
+    g.fillRect(x+i*cw, y+j*ch, cw+0.6, ch+0.6);
+  }
+}
+/* напис по центру відрізка */
+function ctxt(g,txt,x,y,color,px,bold){
+  g.fillStyle=color; g.font=mono(px,!!bold); g.textAlign='center';
+  g.textBaseline='alphabetic'; g.fillText(txt,x,y); g.textAlign='left';
+}
+function sig(v,d){ return (v>=0?'+':'−')+Math.abs(v).toFixed(d===undefined?3:d); }
+
+/* ═════ дані з зошита — усі числа заміряні, див. practice.ipynb ═════
+   Мережа: 3 згорткові шари (8/16/32) + глобальне усереднення + Linear(32→6).
+   Навчена 30 епох на 1800 фігурах 28×28, точність на перевірці 0.968.
+   Карти пакетовані по 64 рівні на значення — для малюнка цього досить.   */
+const D={"names":["коло","квадрат","ромб","кільце","хрест","трикутник"],"acc":0.968,"probes":[["AEAAAABRAAGEBAAJAAAAAAADCAAAABAAAANAALAABBABRALBAZKABHAJAISACABAAALOAAIAAAQJAAATAAEAAAAAPIAIANAHAEAAAACcAACGAAJHAAAADAMCBAAAAFALAKAKCAQSAAAAOAAAAAQAMAAAAAAAAAVAAESAAAAJABAGAAAARAEAAAIAAAPJFAAMMAHKKMATALGLYTAAKA-LAADAAAAAAAAGAFAAAACAEEZt-+-t5-ABAPAAAAAARAAAOCAAAK--y-2-v9-AWSAKFADABAAAPEATA6o------89-THAAAUGBAAALAAABr80-1--73--y-ZAAAEAAQAOTDHZA4u---z05-9--7ADAGXHBAFAALJAA62---1w+9w-w-NOAGAAAAAKADNA1--6--wz--n---6AAgAUACAAMAOEA55+417yv--s-3ALATAFAAHAIAAAB-0-p-xo+-sx2xFAAHAFAAAXADACB-yryu--zt7-b-ANAAAASKAAAAAAAA+---91+32+yIADAAAAADAABAAAABC966z84-w-CAAHAGDDFAAIFDAHPNDA-9f-sv3QADWUAAAAFFBNAAJHOFAEAAH+EAAAAAALFAAKAAHJVOEEKAALZAACRATAAAKNAAEAANGGANAOAACAIDABAMAAPcZBDTAABGAAAIAADIAGAAAOAAAAJAAAgMAJaAAPGIAYVHJAIAFJAAFAAAAAPDOZAAAAABAEAEAAAAAAAXZRJASAAABAAAAdAAHJAAMDBUABATAAAIISAJAAH",0.0,1.0],["AAAAAFEUAAAAAFAAJAEBIAQFFFAAADAVBAAAAABAHAAMgAAAKAAAAAAAAACAAAKHAAIAAASDPAMAAfKAAEPAAAABREKALaKDCWAAGJAEABAAALAAIACAOdZAJBBUANASCADJAGAALJCBNAAAPAPAAQAAAMPAFJAEAAABAAAODLPHdAKAXVAAIKJAGIANAIAMAAFAAAAGNANAAHNAAABANAGAEFAZFWMAAFBBAAAAFAAADAAAAAUAIAEAAHWCBAHAKAWAA-718u---x06NAALLAAAAAJAGXPAL-2z+r-hx88-DAOAAACDAAKEAadAE---8484-66wAAANFGEBAAKARAAAA-2-1i2m---uAWEANfQCEIAABAABd0+9--51qz--AAAGAAAAVAADAAAAAn904---5---SAAKADAAAAALMAAAF8---s0tw--sIQAAAEIPPPRIAAEAL7z------g35ACPAAZAADFAKAACKA-+-2-++----AAGHSFNTCAAAUAQHV-+9--4--q-0CLAKAOAICAADUEDAS--8q-----z-AADLFFAABAAAAAAACFZAAMAAVAAAEEAAHHAIHAAFAAAJUAhAMQMCAIAAkJXATUUAAAAABAAAYQAPAALAAABVADAAASeGAJAKEDIAAAAAAABGAAAJVLATATAAhUACABAAGDPBeADAARAHAAAAAJIAADANhLAAAAAAAJAAAVGWKTAJiAPVFKQAFAAAACGAZPJAAHFAKmANFASACTAABAUALAJAAAAAUAATBUEAAQMA",0.0,1.0],["BAAZAAAJIAAAAAKAFQIAcJAJFABAAAAAAAABAIAARAAOAADOAAAAAAEABFACVEAAADLAAOACAAAbAAAAICaDSDIAAAAALAAAAFAAECAAAAPATLAKAAAAAABAGAAAAAAAHHAAAGAQAAENENCQQASCBAAKAIEDAAIABAIALAJAKAAcAAAAPWAAPOKPAAAAMAdBAKXGAFRAANCAAAEBPJrFLGNAAMAANAAAAAAFAJAAJAAXA---ANAOAAYEBcEAJAOPAACAAHAA68-v-AAAAEABNNUAANEOAPLJGFD--5-+-+AaAAAAbDMAEIXAIEAAAA--6u----4KAAAAOBAAEAAAAAAZR-+--+-----0JAXAAMQAAACAAAAA--n+6-z9y--9-AAHEAMPAAUSAAA5r-vw-2+--7-1--AAJGXRAAADCiBA3-v06-90-45u1IAAJADARODAAMVEQ39--s--wu-3AKCAbCABAAFAAVLKHG---z8u7--AAAAABABAAAAXAUIAANWz7---4-AaAAAAYAAHUANGABAAPAPM+18--ENADAKCAPJAAANfABAEIQAUA---AAAAOAGIHGTGLHWAQAAAAAAGAS-AAAAAAAAAACXIAAAAJABABSAAALAAAAGgAMDAAAAYAFEACLCFJATdMNAAAAMAAAABAAYAAAPaEAANASSBIJUAPAABAAAASZIPAADAABAAFANAACAAAJIQAAACAAKCARNAKAOAAAACCAAABADODAAAAAAPAMABAGKDAAVAATOHAeFHAAAFFAAA",0.0,1.0],["AALPkLAAAAAMIHDISAAAVQJACABAHALDAAAKAEAALAJFAAAAAJAFAEAAHAAACEAAHfAEFABASAAACAAAAKZJDPNVOADCECAAAABAAJLBVXANFFMAAAAAAAHAFAAAAAMAAAJAOGCAHNMFLBQAARBAAAaGAHAYAABAAAFVAPAeFAOHAJAAaAAEAAAABOAGIADANGAABAJAAMJAPAABAA9TTAUAFLEeDARAAANKKMVAMAA--u-91-AAAWADIIAACKAANOFAFB-v-9x--6-AAFDOAADGbIAKAAhEJ----yt-----ATIGFNGJAGcAALMIr-w1HAKoK-03yAAAAAAAGBNNAIAd-8wFAAJBAMy-5AGAYAZAIAACJAPA---AVHAAAA-7xAUAARGAAAAAAEH--ykAAAAAAA-3-8AAYAPRTAZBAAIB9-2AKJOAOG-v-AAAOAALMMAANAAK-weAAAIAACz-3iKAAAAAALAAAAAA-3--AAAJS--66AMEAAHEAWDATNAHA3j-n-1z9---ELAJCAAACFAAJAAUAA-q-e---8-AKAANAACAPEAAAABAMAM--45w--bQDAFATMAAREAPAAAALAAAJA-AAAEFAaHHCAMOANGMGAAXDAEAAAADAAEIAAAAAAAAAZAADHGANAAAAJIAMBLAAKAAAAASALdAAJXABAHCIAAAAAAAUAAOAGADCAAaABFAAbAaHBGIPFCCRKAAEAAAAFNAaAoNGAAACYAYAJACAJBAMJHNOAAARJBAAAAAbDAAAJKABAAQFfAA",0.0,1.0],["LAAABEANNEAAHMBGAAAKGUBLRNAACAGNAZAAAAFAVIHAAAAMAVJLDDIMAGhAAAAPBEXgANIFGAUIEQLGEWGAAAABDAAICAQAAAAMPDAAAAABIAGAAAPNAPATGAKAAADAAASAAQSEAAIAUAJARANAAAAAPRDAAASEGAAAAFBAAUAAAAAHWAAAAAANAAABANACAAAACAADHAVAANBA-x+-xAFeAAIBAFBGONFEAADABATb6-8--BABAIAHCOANAIACBMAEAPAAq-v-4AAIAMAAAEYECAATAAAAZAEJx3--zAMTAASAOAAATSAAWAAAAAAA5-179RFAHFOGWRAALGAAAEK-v-4--14lzo----AEAIEAABALVAAj96k--26z-s7---AAAFAEQOAAAOI-0w--0---yk8-86AJABAACAAAPCS97t4-----9-----AAANAAeAAAQAI-6--45----t-77sAAAABBAAALAAAALACA---uxOAAEAKAGAGAMOMGIALABAAA--30-AaBAMVAUATAAGMaWJAAAAAA----5HAAASHAAMGFAABMAAOAODLW--z2-TSdECNAAANAGAOALAAPABAA--x-1AAAdAJMAAHAFOAAACAEDAWOLAAAAAFDFAQCAAAMAAAIAAAHAAIAEFPNAAAVGSAATBCBIHAOAAWMAACHAAAADKNADHAAbCLAAAAPaPJBAAIAMAAAAAOADPQARFAGAAAIAAMSKQAAEAAVAAGXBQAAAAXAVAALIDAEAgACAAAMAHAAQAAFAALA",0.0,1.0],["LATRAAACPAMAAAaBDANAAcAAIAAMCFAEBSJAAJKAAAMAADPAAAVNAAAHALEEIGAAdAANAAAHNSBNACACJOAQAAAAAEAHAAAAAAACAAAGELQGAAAADDAAIDEEAAGFAAdAADABXMIHBMAABLEIAPdRAADAJAMRAEAAAANANZHHAAHFJgJFUAAAAJAWTKAIKAEJDUPABAHAMFMAAWARFIXESALAAAEVAAAPAGAINABAELAOAAAAAAAJAAAbAASGAALPAKDOSAAFWJ-eALABBTAAAGAFAANAIHAAMCMAAA0NHACKAFCAARAAAAOAAAAAAKJAL-1-AAAALAAACALAAAAADXAARAAA--9--LAABJAAAAAAFAAAAIAFABAA4--8-CGJAADAENKAAAANAAJAAVS--y---4AADREAAAAGEADAAAARAPQ8+3+---OEDAEAECAaAADAAAAADN---4-43--CJKAAABAQGAAAAGDAA---u-2---3-AAGAAAATMJAAFEEAV-9y-3--y-6-DYHANAAbAAAAANAA6yx----r+v-7-AAAHAAAACMCCAKAEAAAAHNAAYKSAAAILAACAAUbAWAAALAdDCASAAALMAAELAVAAAAAMDAEAAGIALXAJAAHACAAKVAAPHICdAGAAAAEAVAACAHHAXADAAAAAJAAAQAAALACAOEGPAAIFAAAILAXAAVAARGAJAAAAAAAAAJAAAATKALAMAJHADAANzIAANAAEATNAAAAFHEDAEAASQAARWAACPAIAdFAANIACAAA",0.0,1.0]],"pred":[0,1,2,3,4,5],"prob":[[0.995,0.001,0.004,0.0,0.0,0.0],[0.251,0.747,0.0,0.0,0.0,0.002],[0.0,0.0,0.869,0.0,0.131,0.0],[0.0,0.0,0.0,1.0,0.0,0.0],[0.0,0.0,0.001,0.005,0.994,0.0],[0.001,0.0,0.018,0.002,0.068,0.911]],"k1":[-0.2022,0.1114,-0.4622,-0.409,-0.1112,0.1362,0.0452,0.3615,0.2314,0.0012,-0.0675,-0.167,-0.47,-0.3742,-0.2297,0.03,0.2896,0.3832,0.0084,0.0204,0.3629,0.4159,0.1825,0.5344,0.2261,0.3604,0.4999,-0.2061,-0.4291,-0.0327,0.0804,0.4618,0.1546,-0.4099,-0.1494,-0.333,-0.2125,0.3886,0.258,0.335,0.0092,-0.2197,0.0891,-0.579,-0.4199,0.1441,0.4977,0.5779,0.2156,0.3693,0.5947,0.626,0.5312,0.2863,0.538,-0.114,0.0144,-0.0706,-0.4879,-0.4728,0.3106,0.2188,-0.3191,0.3259,0.4989,0.267,0.4004,0.4884,0.4549,0.6348,0.0733,0.0062],"k1f":[-0.0025,0.1788,-0.2743,-0.2453,-0.1284,0.0894,-0.0066,0.2643,-0.0296,0.0882,-0.1007,-0.0655,-0.3184,-0.2208,-0.1374,0.0123,0.1318,0.2,-0.226,-0.1452,0.1211,0.2768,-0.0686,0.2494,-0.0537,0.0353,0.3018,-0.3092,-0.2098,-0.0844,-0.1299,0.288,-0.2161,-0.1534,-0.2329,-0.3122,-0.1946,0.2865,0.1487,0.1616,0.0175,-0.1709,0.0564,-0.3112,-0.2409,-0.1718,0.2103,0.1954,-0.1478,-0.012,0.2132,0.3314,0.1323,0.045,0.2235,-0.1963,0.0621,-0.2584,-0.231,-0.1722,0.1508,0.1341,-0.1975,0.1007,0.183,-0.0421,0.0127,0.0772,0.2068,0.3201,-0.2569,-0.1222],"k1rows":[{"Собель-X":0.364,"Собель-Y":0.515,"лапласіан":0.179,"пляма":-0.123,"sum":-0.299,"span":0.824},{"Собель-X":0.233,"Собель-Y":0.453,"лапласіан":0.277,"пляма":-0.245,"sum":-0.605,"span":0.853},{"Собель-X":0.243,"Собель-Y":0.291,"лапласіан":0.131,"пляма":0.847,"sum":2.611,"span":0.526},{"Собель-X":0.131,"Собель-Y":0.018,"лапласіан":-0.557,"пляма":-0.327,"sum":-0.863,"span":0.891},{"Собель-X":-0.341,"Собель-Y":-0.687,"лапласіан":-0.026,"пляма":-0.121,"sum":-0.351,"span":0.968},{"Собель-X":0.179,"Собель-Y":0.054,"лапласіан":0.059,"пляма":0.931,"sum":3.843,"span":0.482},{"Собель-X":-0.561,"Собель-Y":0.03,"лапласіан":0.336,"пляма":-0.127,"sum":-0.382,"span":1.026},{"Собель-X":-0.139,"Собель-Y":-0.193,"лапласіан":-0.098,"пляма":0.875,"sum":3.15,"span":0.629}],"k1rowsF":[{"Собель-X":0.211,"Собель-Y":0.232,"лапласіан":0.349,"пляма":-0.1,"sum":-0.154,"span":0.539},{"Собель-X":0.229,"Собель-Y":0.379,"лапласіан":0.205,"пляма":-0.274,"sum":-0.411,"span":0.518},{"Собель-X":0.328,"Собель-Y":0.361,"лапласіан":0.271,"пляма":0.287,"sum":0.491,"span":0.528},{"Собель-X":-0.045,"Собель-Y":-0.05,"лапласіан":-0.634,"пляма":-0.662,"sum":-1.36,"span":0.6},{"Собель-X":-0.3,"Собель-Y":-0.646,"лапласіан":-0.039,"пляма":-0.138,"sum":-0.247,"span":0.598},{"Собель-X":0.417,"Собель-Y":0.102,"лапласіан":0.184,"пляма":0.477,"sum":0.796,"span":0.503},{"Собель-X":-0.172,"Собель-Y":0.167,"лапласіан":0.17,"пляма":-0.285,"sum":-0.485,"span":0.482},{"Собель-X":-0.108,"Собель-Y":-0.406,"лапласіан":-0.069,"пляма":0.303,"sum":0.479,"span":0.577}],"k1st":{"best_edge":0.687,"best_blob":0.931,"rand_best":0.808,"rand_mean":0.398,"rand_blob_best":0.851,"rand_blob_mean":0.264,"fresh_edge":0.646,"fresh_blob":0.662,"n_big_sum":3,"n_big_sum_fresh":0},"act":{"0":{"a1":["DDDDDEFDCFDCDDDEEEEDFGFDDEEEDFFDDEACCDDEDDDECCFDEDAEDDDDDEBCFCEDCFDCCEDAEBFDADDCAEDECBDCDBEDDBADCCEEECECAEEFBDDBFDDBCEDDCEBDCDDDCEBEAFEBACDEDBDDDCDCECDDCECDBFDCDBBDDEFEGEFFDCFEHDDDEIKEDBEABAECBCCDDCCDBDCBDAHNPPNENJDBEEBCDBCDEDAFCDBABIOLJAHEIFDFHFCEEDCDCBDFFCEEHLGAAAAAAIBFEBADDFEDDCEDDADFLFBBAAAAAAGACDADECACFEGDDFDKEEAAAAAAAAAEAAAEDGDDDCCCCFBAGAAAAAAAAAAAAADEECACEBBDCAGGLAAAAAAAAAAAFACDDDEDDEDCEEEABAAAAAAAAABAAAAEEADBDCFCADACEAAAAAAABAAAAAAAEAEBDEDEADDCHAAAAABAAAAAAAEADAEEDEBACDDACADADBAAAAAAAADADCECDAEBDDDABAAAAAAAAAAAAAECEEBEDDEEDEFGAAAAAAAAAAAACGFCDCDDEEECDFFEBAAAAAAAAAAAECBADDEDDDEEFDCBADAAAAAAACACBDEADECCFCECACCCBDECAAFADDCHJFCDFCDDCBACCBBCDCBDADCEACDFAACHDCGGCCFDEBIGEDCDDEEAEDBAACECBEHBDDDACDDABBCCCBDDIHEFEFACABAADDGCDBCBBECFECDFFAABEFBEBADCDECADCCBEDCDCBDAAABDADABDCDDHHHHHJHFGIGGHHHIIJIIKLIHIIIIIKJIIHFFHHIIHIHGFGIHFEFHHHGGHFEGJHIIIIGFGHGFHGIHFHHGEIIHHGHHFGHHFFEGHHIIJHGFEJJIHHGFJHHGGIHHHHHHHHGGFJGGGIGDFHIIGFIIHGFGHGIHHIIHHHHGIFFHJIIHJIJIIIJJKHHIIONIHGFEFGGFEFGGGFEFEGFDCFMSTOLITMHGJJHGHHGGIHGJIHGFGMOGBAABCFEKKIHJIIHHFFHIHFJJNKDAAAAAABFFGDEGIJIHHHJHFFGKLGAAAAAAAAABDGGHGFEGJJKIHLJLFAAAAAAAAAAAAAEIJJIHGFEEGFEFFAAAAAAAAAAAACIHFDDGHHGGHFMNHAAAAAAAAAAAEBEIIIJIHHIGHHCBAAAAAAAAAAAAAAAHFCGFIHHGEFCGEAAAAAAAAAAAAAGEFEHHHJHHGHHHEAAAAAAAAAAAABIGGGJIIGEEHHHAAACCAAAAAAAAAAGFHHGFGFHHHHHEAAAAAAAAAAAAAGHIIIHHHIJIIIKKGAAAAAAAAAAAKLIGGGHHIIHGHIIGEDAAAAAAAAAFFEDFHIIHHHJJJGFEFIIFEAAAFHHHHIHFHHGGJHEEDGGFGHFEEEEGFFGMMHFIJHHHGEEFGEGGIHFGGIIGFFHEAAHKGGLKGIJIHIMJIHHHIIHFIIGFEHHEDJHDHGFEFFDBDFFGGFFJMLJIKJFEEDBDHKJHIHGGIIIKJHHIEABFGIGIHGHIHFEDHGFGGGFFFEHFDDHHFEEEGGHHEDDDDFHFHFFEEDEGGGEEHHGEFEFEFHGEDFGFFGIGEEFGEJHGIGKHFEGEEGFIGHFEHGIGGFEGDHKJJEHFGFGFEFDGFHHFGFHDFEFEFGLGHGLHFFEEEEDFEIHIGEEDEDFDGHLFFJKHFEFEEFEEDHEKFGDDDEFDEJIIFIIIFFHFGFIFGHGMKJEFEOMJEIGGFFFFFFHFGFIEHFHLKMPVXkadXQJEFEFEDEFDHEGFGFEHITdnqyrppiWLLHHFEEEDEFDHGHGGPdpx0yzxzrjcQJHEHHFEDDEIFFHLelyu0z0yz0sndNHDHGGEFGJJHIIUjrzyzxxyzzzvdRGEKIGDEIIIJJGdjxy0yvvxxzwzeTFGIHGEEGHGIJNipzz1wtwyuxv0jZJLJKFEEFFHJGOftzzyvtuwuxuykVLMHMEGEFHFIELemyvwurtxttwtfQEMFKEEEHJFGEDdkwqttuuuuuqsWRFHDFGFFHFGDEDUesuvxvxvtvrnPOEFDDGEEHDDDDDKTfuyyxwvwyjbKHEFEEGEDEFEEEGHNVhvtutvsrYOHKHGEEFEEHGFFGJJIMVYaoghaWLGHKJHDFFEEIJKIHKIGGPOKVQTOHEDHKHFEFEEGJJKJJIFEFJHILHGJFHJMMIIGFEDGHGJFIFGEGIEEGGGGEHJMJLMIHIGEHFJFKJJHGGFEHFGEDGGHDLLLLLHDFFIEJIKIFFDFGEHKKJFGFKGIJJGDJHGEIHGGFFGGFDKLLIHJIJGGGEEDHEHEFEEFEFGEFDJHHEEHHFHDEEDJJIJJHJJIIIJJIJIIFIHGGFIIIHIIGHGIJKGIJGGHIIHKIJHJNJIGJJJJKLIHGFHGHILHJJIGIHIFFGKIHIGIHGILIIIJKIHIJGIGIGKHHGEFJKJIHJJHGJFIFIIIJJKJIIEHHKIJIGHKJIIHJJHJGIIJHIGIHJFHJIEFGIJFGFJFHEFFFHIIBGAHJIJJIGKLJJJKKJLJKKKKHCAAACAAAAHGIHHGIIIHFIFGFHHEADDEGAAEEAAGHGIHIIHLIIIKHGIAFBAAAAAAAAADHIKHHGIHHHJIIJHDDAAAAAAAAAAAAEHILJJIFHHEEGAJAAAAAAAAAAADEJIGEDHKJLJIJLFEAAAAAAAAAAAAAFHKLKJHHGEHIAAAAAAAAAAAAAAAADGHAFGIIIIFIJMFAAAAAAAAAAAAFHGLHLIIIGJIJIAAAAAAAAAAAAAAAGJHGGHJHIFIGHEEAAAAAAAAAAAAAHGHIHIIHLIJJJLFAAAAAAAAAAACGKIIIJLKIFHIIIICDEAAAAAAAABBEHGIHHGIHIHIIHGFBAAAAAAAAAACFFGKJJJIHJIIIHJJHDIIAFAGHBFKMKHHHIHJIGEFIIHGHFAAEFAAABIHEFHIJJIHHIKLFHGHJKLIHBFJKHFDGGFHHHIKIIFHHJGHHHFIHIFJGHMNLEGHGFGIFGFHEEEGHHHGIJIHIIIEEHMFFIJIJLKJJNLJJIJJKIGFDEFFIHHGLLFJGFDHHFDGGGFHFHHMLMJJIHDHFEHJKNJJKJIJKJKLJJJIEFHJIKJKJJKCCDCCAADCACCCCBAABACAABCBBBBBAACCBDFABAACBBCCBACBCCACCBCCBDCACDABAACDBCEEAAAGFABFBADDEEABCACCDFDBCCABCCAEAACCCCDACCDEAADBECDCDCCDABGBAAFEDCBCDBBDCEAADBCCCBECAAEBCEBACABAAAACBCAAADBAAADCCDCDEDADDBDBCDDDBCCDAAAAAAAAAGDAADEDCDDBDDDAEDFEAAAAAAAAAABAADACCCDCECAADAAAAAAAAAAAAAAAFDCBABCEBBAEDBAAAAAAAAAAAAAACDEABFDABAAEAAAAAAAAAAAAAAAAJEBAABCCCCDAADAAAAAAAAAAAAADEABADEDEBEDAEAAAAAAAAAAAAAAAAFAAEACCCACCAAAAAAAAAAAAAAACHHAADBEBCCAEDHCAAAAAAAAAAAAJKADFDEBCAAEDEBAAAAAAAAABAACAECDECAABCCFCCCDDAAAAAAAAAADIFBEDCCCCFFBCCCHJAAAAAAAAAAONACBBBCDDBABCBAAFKAAAAAAACOLAAADCCBCBAADBAAADIJGNCAOLMMABADEDBBDBAAAABCDFACLICJKIEBBDCBCCBDEABCACEBECBABFIIAACCAAAFAADDBBFFEBDDDACEEBBBECFAADHBABEAAEBAACAAABBCDBABFDBDGHDAAGAAEDBCEEAAFEDDCDDEAAAACAAEHCAHHCAADCBFEBBCAAEDAAEEDAACDBGDACACFCCDDCCDBCECDHHDBCECDCDCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBAAAAACEAAAAAAAAAAAAAAAAAAAAAABKPfaUOOGAAAAAAAAAAAAAAAAAAHUlnxvnkaREAAAAAAAAAAAAAAAACVs199858zfWOAAAAAAAAAAAAAAAQn4588+779zlaMAAAAAAAAAAAAAKex48+8779+92iKAAAAAAAAAAAAAPk47+75458857mQAAAAAAAAAAAACax7+-7117664+qXEABDAAAAAAAAEXt79940351545vTABAAAAAAAAAABZt85520y45024qRAAAAAAAAAAAAASo5zz0024201zaLAAAAAAAAAAAAANet23644432ywUBAAAAAAAAAAAAABUgu4665336ufFAAAAAAAAAAAAAAAHZly5205z0iJAAAAAAAAAAAAAAAAAEWfckoqdXHAAAAAAAAAAAAAAAAAAAGROVTPOGAAACAAAAAAAAAAAAAAAAAAADEAAAAABFAAAAAAAAAAAAAAAAAAAAAAAAAACAABBAAAAAAAAAABAAAAAAAAAAAAAAACBADAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAABAAAAAAAAABCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBAAAABBABCAACCCDACEBACBCAAEDCAABDAAEDBCAAAADAAACDAABAAAABDBEBAAABBBBBCAEEACBCACCBBCCAABCAAACDBADBCAADAACGAABCDBBAACBDCEBCBAAAABBFAAACBADABBCCAAABDCCBADCDAACDAADGCABAFACCCBBAGDACADICAADBBABAAAAAAAAAAAAAAAACAADDLGDBDDBDDABBEDAFCDBAAAAAAAAAAKGADCCDCCBABCAACADAAAAAAAAAAFFCADAACDCBEAAADAAAAAAAAAAAAACCLHBAAACCCACCCEAAAAAAAAAAAAAHFCBACHDAAAABAAAAAAAAAAAAAAAFPHBAAABACCCBBAAAAAAAAAAAAAACQFACDGECAACABAAAAAAAAAAAAAAAFDAAAABACACAADAAAAAAAAAAAAAIMKAAGAFAACCEBDAAAAAAAAAAACAINCDAEADCAAACBBAAAAAAAAAAAACEGABBDAAACBFBCBCAAAAAAAAAAAHCLBEBCCBBCBCCBACDAAAAAAAAAEJHCEDAAABBAABAAAAABAAAAABAADLAAAECBCCAAADDBAADCACLAAKHIMEAAEFBAABBBAAAACCDBAACBAIAAAABCBBDDBDAABADCABDBABFACBDBBAAAABCBAEACDCBCAFCBBCDAACBEBADFAAACAABAAAAAAAACABAAABADEDCDBADAABBADGBCBFDDEAEDCAAAAAAADCECCGBAABAAACAAAAABBAAEFDBACAABBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAFAAAAAAAAAAAAAAAAAAAACBAAEQSPDGIAAAAAAAAAAAAAAAAAACIZfjnidTOFAAAAAAAAAAAAAAAAAHgoxyyuvtcQMDAAAAAAAAAAAAAAFXqvyxzyxwuhUNAAAAAAAAAAAAAGPlrwzzxxxzyviSAAAAAAAAAAAAAHUtvzxwuuyzwykWAAAAAAAAAAAAAIgvy0yuruxxsymXHAAEAAAAAAAAEOfxy0wstvsuvvucDAADAAAAAAAAAOeywxstprwuruoZAAABAAAAAAAAAGYxsrrpsutrrscRAAAAAAAAAAAAAGWirqtvtsusorcJAAAAAAAAAAAAAAOcjvvwvusvrkMBAAAAAAAAAAAAAABSfnxwqxstlRAAAAAAAAAAAAAAAAAAPegghtgbQBAAAAAAAAAAAAAAABAAAKQSTSMHDAAACAAAAAAAABAAAAAAAAAAFCAAAAACCAAAAAAAAAAAAAAAAAAAAAAAAAECAACAAAAAAAAAAAAAAAAAAAAAAABAABEAACAAAAAAABAAAAAAAAAAAAAAABBABAAAABAAABAAAAAAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAA",0.0,3.274],"a2":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACIKGAAAAAAAAACNUWTKAAAAAAAAHTXXWOCAAAAAAAJTWWWOCAAAAAAAGRWWUJAAAAAAAAAJONJAAAAAAAAAAACCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCCCCCCCCCCCCCDEEEEEEEEEEFEDDEEEEDEDDEDEEDDEEDCCBAAABDEDDEECECAAAAAAEDDEDDFAAAAAAAEDDEDFEAAAAAAAEDDEDFFAAAAAAAEDDEEFFAAAAAAAEDDEEGFDAAAAACEDDEDFFGEDBACDEDDEEEFFFDCDEEEDDEEEEEEEEEFFEECDDDDDDDEDDDDCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCBAAAAAAAAAAAADGDBAAAAAAACCAAAHDAAAAAABEAAAACBAAAAAABBAAAAABAAAAAAAAAAABAAAAAABDAAAABGAAAAAABGCAABFAAAAAAAADGEAAAAAAAAAAAACCBAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAACDDDDDDDDDDDDCDFFFFFFFFFFFFDDFFFEBCEEGFFFEDFFDAAAAAEFFFDDFEAAAAAABGFFEDFCAAAAAACHGFEDFBAAAAAABJHGEDFCAAAAAADKIGEDFEAAAAAAHJIGEDFFDBCACGJIHFDDFFEFHIJKKIGFDDFFFFGIJJIGFFDDFFFFFFFFFGGGECEEEEEEEEFEEEEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDECAAAAAAAAADFIJJGCAAAAAABCFGIKKGBAAAAABEHKLLMKDAAAAAAFKLLLNMFAAAAAAEKLLLLKFAAAAAADKLLLKIEAAAAAAAEHHGGFCAAAAAAAADDFGEBAAAAAAABEFFDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAABHFAAAAAAAAAAAGFAABBAAAAAAACEAAAAEAAAAAAAAAAAAAABAAAAAAAAAABAAAABAAAAAABDAAAAEEAAAAAAAAAAACHBAAAAAAAAAADJEAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBCCDCCCCCCDDDCBCCCDDEGFEDDDCCDCDDFIKKKGECCBCDCCFGIKMKGCCBCDABFGGHKMHDDBCBACGGFFINJDDBCBABGFFFGLHDCBCBAAEGGGIKFDCBDBAAAEFFGGECCBDDBAAAACFFEDCBCDDBCDFFFEDDCBDCDCCCDEDDDDCBCCCCCCBCCCCCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACBAAAAAAAAAABGGAAAAAAAAAAAFGAABAAAAAAAACFAAABEAAAAAAABAAAABBAAAAAAAAAAABAAAACAAAAAABFBAAABFAAAAAAAEBAAAJDAAAAAAAAAABJGAAAAAAAAAABFDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDFECAAAAAAAAFOWYUNFAAAAAAFSkvwpfQEAAAAANj4--7xdKAAAAEWu+-++5kOAAAAFZw+9884iNAAAADVq5787ycGAAAAAMet23yjOBAAAAADOajjdPEAAAAAAACIMMHCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBCBBBACCCCCCCCCCDCCACCCCDEEFECCCCBCCCDGIIKJIEDCBCCDGGFHIIKHFCBCCEFCDDDFFHGCBCCDDBDDDCEGHCBCCCBACDCCCEFDBCCBAACDDDCFDCBCCBAAACBABDCCBCCCAAAAAACCCCBCCCCAAAACCDCDBCCCCCCCCCCCCCBBCCCCCCCCCCCCBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGJEAAAAAAAAAANXYWMAAAAAAAAGUaaaRCAAAAAAAIVZZZRBAAAAAAAETZZXLAAAAAAAAAIPPKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCAAAAAAAAAAAGHAAAAAAAAAAAFIAABAAAAAAAABGAAAAECAAAAAABBAAAAAAAAAAAAAAAABAAAACAAAAAAAEAAAAAGAAAAAAAEBAAAIDAAAAAAAAAAAIIAAAAAAAAAABFEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,19.787],"a3":["DFHHGFDFLLCABEGNEAAACGGAAAAADBAAAAADAAAAAADCAAAAABDGIHEBCEGHMHEDEGFMKHDFEAFJHEIIFHGDDFFFECBBDFEBAADBBBEEDCBDIMIDCEJTUMEBHQicPCEJRZRIADGJNICACDDAAAAAEGGAAADTYXJEAGYhiUKCIYgicSJBKTciZNAEJSYTKAABJNLDACEEAAACKLJDBAELNLHDBFJKFIHFBEHJQNHABDGMJFAABFHGCAAAAAAAAAADJFBAAIZYOCABZvkSAAHXiRFAADOSGAAABDAAAAEGDABDCGEAAFFAEAAGRMBAAAZiVABCKcfMACBGROAADBAAAAABAAABCCAAAGIGDAAKXVNDAGYrfQBCLXgRHACGOQGAACDEAAAAAAABAAAAEJMGCAAJSYRHABOdndMAAKWgaMAAFKONCAAAACAAAAEGIFCADKPSOIDENVXVNGFNUSWPJCIPSVPHAEILNKDABDGHEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJSPIAAHUkfQAAMi-vXAAKaqeQAAGOVPGAAAAAAAAABABAAAAGLQIDABMZeUJACQgtkREAJWlhTFAELTUMCAAAFFCACBCBEDCBCFJMIDCGLXVOEBJWofSDDMVdTKBCGNRLGACCDCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABEGHFDBDFFAAABDDAAAAADAAAAABCAAAAACDAAAAACBCBCCCBACBABBAAFFIKEAADJTQHAAJZkaHAAKUcWAAAFIKCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACEGCAABKRUNGBESdhZOEGViliUKEPakjWKBIQYXPGABEJJGBABAAABAAFHLKEAAGMZTIAAKapbKAALVdSCAAEIKCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFGEBACILNKFBENTURKEGPTRRLHEMSSRKFBFJMLGDABEGFDAACGIEBACMTWQHCERcgbPFGScefTJDLVbdSIAEKQQLFABDIIFBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFHECACKPQLGDENTTRLGFMPMQMJDHLNSOHBCFILIEABDGGEBDAABFFDBADKPLFBDObcTHAHXrmXECKZiWMBDFPTMHADEFCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAABBACFJKGBBFOcXMAAJYqcNABMVdREABFIKBAABBAAAAACEFGGGEDKRNHIGDQSHAAEDLCAAADBCAAAAGDCAAAHHDDAAEGF",0.0,51.584],"nz":[0.655,0.341,0.553],"mx":[3.274,19.787,51.584],"conc":[0.588,0.713,0.485],"dead":[0,4,9]},"4":{"a1":["DCFFFFDDBCDFGDDDCDEEEFDFCBDEEFHCCCADDFHGDCCDDEFEBFABCFDCDDAAAEDECEFAABCEEEBBACACDBACCAGDEEDGBBABADDCBAECCFEDACDCFEECEDCDAADCGFCBCEECEDAADDDCEBCCACADEBDDDACEDBDABCCCDCDCFABBECGDCCDFLNONIBGEEDCDCEDEDFDECDCAEDFNOIHIBAECAFCDEEEEECBCDBECCGDAEAAAAAAFCDDCCEEDCCCFDCCEGAABFAAAAAGFBECECEAAFFDEBECEABCCGCAAAADCAGEEGADCFBAFBBIKOMNLJAAABAKPOIEADABDBBCDGCHKHHFAAAAAFEJHHAAABDBDFEDDBBBKAAAAAACAAAAAAAAECDCDDBABFDFGAAAAAAAAAACAAAADCECDFDCFCCAHAAAAAAAAAAAAAAADDDBDCAEDDAAAAAAAAAAAAAAAAAAECEDDGEFCDCAAAAAAEAAAAAAAAECEFEFCEDDHFEDADCDBIAAAAABAFECADCEBCBCBAAEDFEGEIAAABAHFDBCAEADBDDBBBDDDDCDAFAAAAABCAEDCBECBEEBCCAEACCDAAAAAAAAEBAFBBCEDEACCECBEBEEAAAAABAEBGCBCECECCEDECFGECACBDCCBCEFCCABFFCCDDCDGFGDABDECDBBDDEACBFDDFADCCDCFAADEFFCDDCEFCCFDEFAADAFCFDCBBCDBDECBDCFEBCEBBBBADECACACDBABBBCACDDBDACAEABCDCADAGGJIKJGFEGHJIHGHGHIHGHGGEFIIILJFDEFIHKMIFFGHIKJHFHEFHIGFHECDGHHGFHDABFFIIFEDEDDFFEDGHHJIJIIIGGEEHHGEEGIHIKJHFGHHJHFGGHEFEFGILJHGHIHGHEDEHHGGHFGFFEGIJHHGEDGIHFFEHGHHHGGHGFFHIJIFFFHORTTSKHKJGHGHHIIIJIIHGFFDGIKMJBBBABFDDHHHJIIIGEFGIHHHIHDAAAAAAAGHIHFGFIHGGGIIGGFKIFFHEAAAABKIFIHJHFDDKJGIGHHFEDGHFAAAACFEFIHHJGHHGDEFFGPRTTTOFAAAAHQTTKFDDDFHEFIKIGFGBAAAAAAACCDAAAAGFGGHKIGEFGKHAAAAAAAAAAAAAAAIHGGHFEFIHIHEAAAAAAAAABAAAAAGHIHHJHHIGEFCAAAAAAAAAAAAAAAHGGGHEDJGFDAAAAAAAAAAAAAAAACIHIIHJKIHGIFDCBDGEAAAAADDFJIIIIIGGFHJJGGFHHHHEAAAAAEDIGEDGFGFGFECAEHJJJLJEAAAABLKGFFFGGFGHIGGGGHGGEEDBAAAAABFEGIHHHGFJHFEGFGGFJJCAAAAAAGFEEHFGGIHGEGHHHHHGGFABEGFGHJHIHFHJHHGIIIHGKKHGGGGGFEEHJHFDEEJIGHHGFHKKIFDGIHHHHGHGGFFHJIHGDGGHHGEBCGJKIGGGGKJHGJHIFEDEGIHJHHHGGFDGHFHHHHGFHFFDEFHHHFEFEGFFFFGDDDHHHFFFGFGFFHHHFFGEFFFIGHFGFEHIIGEDDGFLILIIHHFEKJHJEJGFILNLKHGEGJHNJMJKIIFEJHIGDGFGKLLKGIJHIHGJHIHJIIEDJHGGFKHGKIGEEGHGKGFHIHGGHEEFIHJJHKGFHDGHHGFDIGIGHHGEFEEHKGHFHHJGFDFGGHFEIFGHHFDEEDDGFGGEIGIHHEOTWYWOJJHHFGEEEEDJGFFEHFIFHLagrsqZOIFJFFFGFHFHHGFFHEEHIJdnvywZPIEHFGDHILGGEHFGEFHIIKZltzvYPIGIGHGHIHGIGHHJEDHGHEZmuywbSJHIJHMJLFDJIHGFHOUWWYmpwusffaZZTKLJIGDHFFKHGTcplpwxwrukoottbQGHFFEHFGHIJbjssxvxxuwouvzzZREFEEDGGGHHJentswyzyzytwxzzZQDHEEDIFDIHLfovxxxz00yuxyzwXPDFEFDEHEIFIUZfffov0ywnjegcPKEFEEDGHIIGGLMLMKdozvvdZOMKKHJFJFFHJNNJIEFDDDdozwwaUFHILIKGLGGFHLLKJFGFGHgpywxdWLIKKHHFIHFEHJJGGGIFGHgrwxvbSLMMKHGFHFFGIGGEGGGGIKYadecQMHJFMHGEFFFFGGFEDGEEIHQONOLEEHLIJHIFFFEGEHFFGIGEHGHEGGGGHJHKHGKHJGEEEJJLLJHEFFGFFEDFIJHJIGNHKFFEDIJJMLIIHFGEEGFFHIIKIHKFKHFFEHIIHHHNJHFDDIFHGHIMHGFEIGGEFFFFFGEKFHDDDHEFEGGFFEDDHEEKIHHFIGLLJIGIHIIJIIKHKFJKJHHHEIGKLHGEFEFFHGGHGHGFGGHDEGJJLMHHFHKIIMLHIIHHILJJIIHJKIGIGCEGIFGFHHCGGHJKHFEGEDFIFHHIGLIIHJJJJIGGGHGGGKGILMJHIIIJIFHKIIEFFHJLLIIHJJJIGDHIJIIHKIHGEGHKIHCAAAAACDFEJIIIHHIHDFIJJLHGHFCHEEDFCKNIHHIGIGJKKIIGHEHGHKLDAAAAAHEFJGJJHHGHHFHHKJGIHFAAAAAAAGHHHHEHHLIGEHIIEIJLHJGDAAAAAJJHFIFHEDGKKIHKIBAAAAAAAAAAAAAAAAJJKIIIGGGDFJMHHGHAAAAAAFFEHAHFGHIFEHLKHAAAAAAAAAAAAAAAAAHHIIJLKJFFGFEAAAAAAAAAAAAAAAKHHHIFCIIKFFBAAAAAAAAAAAAAABHIKIIMJHJHIJJJKLCAAAAAAHIHDFHIFIIDDGHFFGAAAAAAAAAAAAAAAFEIFIGKKHEEGJJHIIECAAAAAKJHJIIJIIIHHILKIHFHFFCAAAAAAADFIGGGIHHIFGDEFIJJKLIDAAAACMKIDHHHHIHIIIIJIHJGFEDIHJKGDEEKHIHIJHHJKGHGIIHHJMJBAAAAFHHBGHFHGIJHFGJHGGGHIGFGJLKIGHJJKGFKFIGKKIGEFKJIIIHHGGGJJKEFEFGJGJIHHIKLKFDEHHIJIGHFHGGFJJJIFGGHGIGCEILHJEIHIILHIIJJGFHGHLHLJJJKJHGIKIJIIJHIJIGJHIJJJHHCCAAAACBDDBAABCCDCAAAABACCAADAAECDDCDAAADBBCBAACBABECAADCAEGDFAADAAGHCCAABDFDFEDACFEDDBABABACCFGBEBCECCDBAACEEACABACABBDEDEAAADFDAADABEFDADCABFCCFCCADDABEDACCECCEEBCDDCDCFBDAAABCCAAAAAAEAADBCCCCBBACABCBCHDAAAAAAAAIADFBBCAABABCDDBBEABAAAAAAACHEEABECCAADEDAACCDAAEGAAAAAFEAADBACACCGABBABECBDGAAAAAAABBEDAAAADFBADFDACAAAAAAAAAAAAAAAAFBCCDCFEAABBAAAAAABAAAAAAAABMEFBBCAABBCCAAAAAAAAAAAAAAADFBCDCCBEEDAAAAAAAAAAAAAAAAACFCCADDAEBAAEAAAAAAAAAAAAAAAFHDBCDCCFBAEEFIJKNGAAAAEMLMNKBBCDACCAABEAGNKMKAAAAADMIKHAABAAADAAAAABCEDCCAAAAACFBFAAEDBABDEDABFDCAAAAAAAAAACAACDDDEADCBCCFDBAACDBAAAAACGCABEABDCBEAAEEBECBFAABHNLMOGECADACDDCACDEBDBCCCAAIOIEJFAAADAECADCCBCAADAABDDECCBCDCAACCCGAADBECDBAAABFDCBBCEFCBACGAAAABDCCECBBCEDAAADCBDAAECAAAAEFFAACADBDFCBBAAFCDCAAECCACFEBFAAFCECCCEFECDECDCDFBDFDCFBCDDFCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFEAAAAAAADCDAAAAAAAAAAAAAAACCAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKTSSLDAAAAAAAAAAAAAAAAAAAAAPalpnWGAAAAAAAAAAAAAAAAAAAABTo375gIAAAAAAAAAAAAAAAAAAAAATp278hHAAAAAAAAAAAAAAAAAAAAAMm364hNAAAAAAADAAAAAAAAAKTQTl0541hXUWUTIAAAAAAAAAAAGRgiis55z1rnkpqbKAAAAAAAAAAASn3z486422wx3++iJAAAAAAAAAAASp2z178886138++jKAAAAAAAAAACXs248779-833697fHAAAAAAAAAAAQdhhhny-+7ytkjgNAAAAAAAAAAAAEOOOMcu+63pdRSLFAAAAAAAABDBAAAAAASs+54iPAAABAAAAAAAABDAAAAAAAXw954jSEACBAAAAAAAABDAAAAAAAVu865lNAABDAAAAAAAAAAAAAAAAAXihffPDADAAAAAAAAAAAAAAAAAAAIOOQQDAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAADAAAAAAAAAABAAAAAAAAAAAAABAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAABBDACCAAACAABBBBBAAAABAAABDAABCAAACEBADAADCDAABAADAADDAAAABEBCABAAAABAACAAAAACAAABDBABIBCAAFAAFHBCAAACGBBGEBAEDDAAAAAAABAACBDDBDAACAAAABCBCABCBBABAGEBBAAADDAADACEECBBDACACCDBBACDAAGFFKGAGDABCBBCCBCFBBAABABAAAAAAFGAAAACBABABAAABBDBFAAAAAAAAJNABFBBBAACCACBDCAAABBAAAAAAJOADCAEBDAAABECADDDAAACAAAAAJOAACABAAEDFAACABAACDJFAAAAAAHCGHJDAABCCADDACFAAAAAAAAAAAAAAACGDADDCBFCAABAAAAAAAAAAAAAAAIPCCACBAABABCAAAAAAAAAAAAAAAKPAACDBDGEAAAAAAAAAAAAAAAAAAHOBBABCABAAACAAAAAAAAAAAAAAABLCCBECAHBACECAIJJAAAAAILIMHHKACACDAAAAFCBBBDBAAAAAGKABAAAAAAADAAAAAACDCCAAAAAAEPAJCACGABAFCABBFEAAAAAAAAAAGJAACACEDACDABBABBACBCCAAAAAAJEACAADBAAEAAAEBDAAEAAAAJKKLJABAFAAEDABBDCBCABDDBAEDAAAABAAAABAACCCAAAAEBAACAABCDCDCAABCAGAAEACBCAAAAAGECCABBADDAAFAABAACCFDDAAEEAAABECBDAABBAAABCEBAACABAABBACAADBBCAADABADBDBBAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAABEAAAAAAABBEAAABAAAAAAAAAAABFBAAAAAAAAABAAAAAAAAAAAAAAABDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAKHIHDAABAAAAAAAAAAAAAAAAAAFPceeWLAAAAAAAAAAAAAAAAAAAADMbtyvkQAAAAAAAAAAAAAAAAAAABAKarvxlPAAAAAAABAAAAAAAAAAAAAEVswujSAAAAAAABAAAAAAAAAAJFHSjvvvhTHLJKKBBAAAAAAAAADKXccerwqrljbfhZPAAAAAAAAAAAHXtrrwyussppqz0lRAAAAAAAAAAAHZssquyxxwrquzzlSAAAAAACAAADLdusvyxy0yvutzykPAAAAAAAAAAAKakkjkmz0zttmljWEAAAAAAAAAAAAKOONUfzxuleNSLHBAAAAAAAAABAAAAAAGazwuiVAAAACAAAAAAACEEAAAAAAJezxujVBABABAAAAAAAADAAAAAAAKdyxunWCAAEAAAAAAAAAAAAAAAAAPelihYJAEBAAAAAAAAAAAAAAAAAAFKOMOJAAACABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAADAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAACBAAAABAAAAAAAAAABAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAA",0.0,3.32],"a2":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADFAAAAAAAAAAACMOIAAAAAAAAAEMSTPIAAAAAAAAIPTVSLAAAAAAAABJQSMDAAAAAAAAAAJMDAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACDDCCDCCCCDCCCDEEEEFEEEEEEEDDEEEEDDCCCEEEDDEEEDDDBAAEEEDDEEEEFEAAAEDDDDECEBBAAAABADDDECGCAAAAABACDDEEIBAAAAAAACDDEFIDABAAACADDDFEFCDDAAADCEDDFEEEIHCAAEEEDDEEEFHGDBCEEEDCEEEEFEEEEEEEDCDDDDDDDDDDDDCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABFCAAAAAAAAAAADIDAAAAAAAAAAABAAABBAAAAAAGGAAAGJBAAAAABDBAAAFEAAAAADCAAAEEAAAAAAFIAAACHEAAAAAACCAAABCAAAAAAAAABHGAAAAAAAAAAACGEAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAACEDDDDDDDDDDDCDFFFFGGGFFFFFEDGFFEBACGFGFFDDFFFDAAAHGFFFDDFFEBAADHFFFFEDFBAAAAAAAEGFEDFAAAAAAAAHIGEDFAABAAABCKKHDDFEFFAACIJLKGDCFFGEAACJIJHFEDFGFDCFKLIGFFDDFFFFFILKIFFFDDFFFFFGHHFFFFECEEFEEEEEEEEEDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADGFDAAAAAAAAAABFIGBAAAAAAABBBEKKGCBAAAABEGGIMPNIDAAAAACGIKMMKKGBAAAAAEIKLKHJIBAAAAACGJMKFGGBAAAABDFHMNIFCAAAAAAAAAEGDAAAAAAAAAACFFDAAAAAAAAAABCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAECAAAAAAAAAAACHEAAAAAAAAAAAABAAAAAAAAAAFGAAADLFAAAAAAEDAAADFAAAAAAAAAACDAAABEAAAAAABKEAAAKGAAAAAACDAAAADBAAAAAAAAAAHCAAAAAAAAAAAEHCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCBBBBCBBBBBBBBDDDDCDCCCCDDCBDDCDEGIIFDDCCBDCDCCFJLGDCCCBDDDDADJOIGFDCBDDDHFFILLMKECCDBAFGHIIIMMECCDAAEEEHGFKKECCDAAAABHHDFGECBDCCDAEJMJGFDCBCDCBAADGEDDDCBCDDBACEGEDDDCBCDDCDDEEDDDDCBBCCCCBBCCCCCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADDAAAAAAAAAAADGEAAAAAAAAAAAAAAAABAAAAAAEGAAAAKFAAAAAAEDAAADFAAAAAAAAAACFAAAAFCAAAAAAKGAAAHJAAAAAACFAAAAECAAAAAAAAAAGFAAAAAAAAAAADJDAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADHKHBAAAAAAAAAKVbSFAAAAAAAAHYsxgNDCAAAABIVm24pcULCAAAGVo1970xnUCAAAKfy6+-98rTBAAAIVit5-2rZKAAAADHOg07pXICAAAAAAEWorZIAAAAAAAACMVULDAAAAAAAAABCBAAAAAAAAAAAAAAAAAAAABCBBCBCBBCBBBBCCDCCBCCCCCCCBCCCCDGGGEDCCCACCCCEGHIIFCCCACCDEFECEIHEDDBCCFGIGDEJLIHDBCCFEFEEFHHGIDACCCABDDDDCCGDBCCAAABACBAADCBCCBACBADEECCCBBCCCCAAADDCCCABCCCBAAACCCCCBCCCDCCBCCDCCCBBCCCBCCCCCCCCBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFAAAAAAAAAAAALQGAAAAAAAAAALUWQHAAAAAAAAHPVXULAAAAAAAAAGQUNAAAAAAAAAAAINCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADEAAAAAAAAAAACHFAAAAAAAAAABBBAAABAAAAAACGAAAAJHAAAAAAEFAAACGCAAAAAAAAABEAAAAECAAAAAAIGAAAFJBAAAAABGBAAAEDAAAAAAAAAAEGAAAAAAAAAAACIEAAAAAAAAAAABBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,19.407],"a3":["EGIIGGEGMPHDGFIOHAAAEJLAAAABFDAAAAAEDAAAAADDBAAADBCHJHDBCHLQQIEDJMOSMHEMOKMOIEKNLMJEDFIKIDBADGFDBBECAACFDCBBAEDEBABEFACAADMIAACCEHFBAECAADCADDCAAACADJLDAADNZeULALbs2tdGOi3-8qSFYu53jPALZkfRGAAEOMGAACGHCAACIORLGAHPVaYPFJTaddWLEMXccTIAGMSQIDAADJGDAAAAAAABAAAAAAAAAACCAAAACLIAAAAELFAAAAAEDAABBAAAABFHFAADDIFAACABHAAAEAACAAGLAAAAAHNCADAACFAAEBAAAACCAAAADDAAAAAAEAAABAAAAAFLFAAAAEICAADAACBBADECAABEAABCBAAAAGKHCABHTZTHBCMcoeKBBLZjbJAAFLNKAAAABDAAAADIKGBACKSaULCHRdliVJIXimobNEPcigVIAHQWTKCAAFKHCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAADEGDAACMWWIAABTohJAAFTfXKAABIJJDAAAAAAAAABCDBAAABIQJEACKbicQCFRjzuWHCNhwpWFAFSXVKAAAAHEAADCBACEDCCDAFDDBCEJJDBABJRNDABEKNJGBDCFGHGCDDCADCDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABFHJGDBEIJKEFDFHEAACDEJAAABDDDAAABBDDBAABBBCDDBBBACCABBAAAADGAABAFRKAAAETZOAAAIPSLAAABDCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACGIEAABITbTKAGUlunYHKdw41hPHXr3xcMALajcPFAAHMKDAABAAABAAACCDAABBFPKAAACRYMAAAFNOFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACGHEBABIPTPGBFPZdZOFIVegcTJFQbcZOHBHPTOHCABGIGCAABHKFAACKVeWLBHUlupZHJbrzxgOFTktpYKAHTbWMDAAFLJDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACHJFBACKSYSKCHRbgdTIIVdhhYNFNYbcSIBGNSPIDABEIHDAEBAADGECABBEEGAACIIDCAAFPODAAAGNJGCEABGJICEECAEDEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACBAAACCBAAACABAADLJAAACNTLAAAEJJDAABAAAAAABBAAAABDFFHIGEFJPLJNIEOSJEJHFNGAABHEDAAABFEFAAAGGEEAADFE",0.0,43.796],"nz":[0.664,0.349,0.518],"mx":[3.32,19.407,43.796],"conc":[0.55,0.675,0.558],"dead":[0,4,9]},"5":{"a1":["DDDBCGEEDDECDFDADFECEDDFDCEDEBCDEDACHBDDDAEBGEECAFBAEEDFDDBDABCEBADCBBEDCACCDCEDCBBDCDCCDDDADCCECFFCADAFFFCBCEAEEEEEDGGFCDDDDFECDDCDBACCFGDEDDDCGHCBDDCDDAGDEEDBDCCDDEBCCECDCAABCDFEFDEFABDDCAGCACACDDDDABAAFCCEADAAAACBDCEEADFCDCFDCAFFCDAECFMDFCECDECDAEBCCFDADDCDBCCEBGIABDBEEDAEDCCCDDCCBCABDDDAIGKBADDDBEBDDDBDDCDAEFDCFBCGRGIDDECECDDDBECCEBDCEDBEBADHGCAHAADDECCDEEFCDCEEAECBEFKIIAAACADCCGDDDCBCEDEDAEDEFGJEAAAAGAAEDCBCCCFFDDBDCCECAHFGAAAAAEACCECCDCEEEDDCDEBEFOFAAAAAAFBCEBDCDDBFFDDDEEDELGAAAAAAAAGAAGDDEDDGDBCDDECHGEAAAAAAAAAEACADDBBDCEEDDCCDAAAAAAAAAAAAAACDFCAEDFGFDGCAAAAAAAAAAAAABAEEDDFDDCDACBBCEDEDAEGCACAEACCDFECAFCBFBDCDBEADCGABCCDCEFDCEABCDCCBDBCCEDDDCBCCFDDDDCACCEDGDCEAGCCDEDBDADADCBDDADCGEDECDFDBCEAEGJEDCECBEEFDDDECADADDAECDFCDICACFECEFGEACFBDDACCEBCDCABCAAADCDBCDAACDDBBCCCDHFFDHKIGGGHGHHFDHIHFFGHIGGHHIHGIHFEJJFGHHFGIKHHGGFEEIJIIGGFGFFHGECGGFHHGEDEHHJIHFEEFHHHIIHHFGIIHHLJGGHGJIGFFHIHHIIIIIKLIHHHHHHHFIHGFDDFHJJHIGGGHJHCEHHHGHEHIHIIIHGHFGFEGHHGGECBEHGJJIJGGDFGGFFJHDDEGIHHHFDFFHGFGDECBEEHGHHIGDIIGHIIGFGJKHFEIIOQKJIHGIJEEEHFEHIGEGHFFEGHFDFDADGGIGGDHJHGHHHGFFFGFHGGGPMKDFGGHGGGHGHGHHGFFKJIJIFFNPFAFGJHGHGHHGGGGIHHHGFFHFEHJFAAAAAHIGHGIJJIHHGJIGHGGJLQNEAAACDGGIJHHGEFGIIHGFHIHIHGDAAAAAABIGFFHHHKJHHHHHHGGFMJDAAAAACDGHHHGHHHGIHHHIIHHNNEAAAAAAADDGFGHHHHHJHHIIHHJLFAAAAAAAAAABKHIIHIHFEGHIHGMIAAAAAAAAAADCEDGGFEEHJJIGHGDAAAAAAAAAAAAAAIIHGGHHIKIJIGDEEHGDBEDCAACFHHHGIJHHFDDDFEHGHFFEJIGEGGFFGHGIGFEJIGJHGHHGHFFIGCDHHIGJJHGFCEHGFFDFEHGJIHHGFFJIHHHFFEHIIKJGIIGIHGIHGFHFFEFFGHGEGJJHGFFIHHFGFEHNLIHIIHHHJJHHHGFEGGFGEFHJIHIGBAGIHGIKIFDHJHGGFFGHGGGEDFFBBEHFFFGEDBGGFFGHHHHEIHHIGFGFJFFDJGHDIFGHHLHEEGEFHIFIHGKIIHFEIFHIKHGHGHJIFJFFEFFHGFIGIFEEEEFIHIFHJIGGFIEFEDFFEFHEEGEDHHGGDGHKLJIIEFDFFGFHLLHEEEFEKJJFDEHHLIHLIIEFFHHNONMHFEFFKKLLFFIGHGINMLFEGGINOMIIIHGHJNMLJGGEHIIMIJGEFFJKJFHJFLGJIILGHGGDELIKHIGEGIJIHGIKFJIKRPMHFFEHFLEHGIGDHIJIFHJIIHIGYUSKEHEHFJDGHGDDIHHFFFHFJGJPifWKEEFIEEDGGHEDHEGHGEHHHFPequjYIFFFFDDFFDEDFDDIFHGFGDXnz0tbRGGFEEEFHFDDDFFIFGFHIQkqyz0kWJFIGFEFGGFDDFEFEGGKLcqxzy0tcRFGGGFFEIGDEFDDEGEMUouwzyyylYMIGEEDELGDEDDEEFEQguyxyyyztjXKGFEDDLGGGDEFFEHapywxwzxzytaUIFGEEMHFFEEGGEQjrwxyzxwwwzjaLGHEFJEEFFFGGFQVccegjfeeijcSMEIFEGDDIKJKHFLLKPOONMOONSPIEFIGIFEDHJJLGGEFELGKJJHJFIGGFEIILGFFIHKKHEDEEIFJJJIEFHGIGGGHHGDGHFKHJFEEFFDKJIHFFGGJEGFIFHFFHGHIHHFFEFDIEGGEHGFHEGIHHJFFIGHIFGHOMIDGFEFDHIHEDGHJIHFEJFHLHEIRMLEHFHEILJGGFHGFGEDDEEGHGFHNHGDHEGEIHIDFFFFEEDDJJLLHHGIKIJIJJMIJIJHKKHGIJIKGHEEHKJFGGHHHJGFFHFHGGKKGGFHJKJJJHFJMIHKJIHJLLHJHGDEJLKKIGHHHGIJEGIGHGHEGFHFHHJIFFGGIIGIHFEEGIJIIIKHGJIJLIHFGHFHJJJIEIIHHGIIJJEGFGGHEEHHIIHIIGIGKJFFIIEHEGFFKHIJKIGIFIHHIJHGHEHHFJHLIKLHHHIHGIHJFEFHJIGIGHEFHFHGEAAABHGJHHHJHJKIIHKHGIJKKEHHLIPHIJIHHLIFFIEHJIIFJIIHGHJGAAAAAHIJIFIIJJIGJJJIFGFHHHICEDAAAAHIIIHJJHJJIIHIJLIJKIHFJAAAFDHHGJJIHGFHJJHIHGHIEFAAAAAAAACKHGGIKLKIIHJKJIHHFKGJAAAAACAFJKJHHGEIJIJGIIIKIBAAAAAAAAABHFGJJJILIIJIIIHGCCAAAAAAAAAACJIHIIHHIHHIIIIGEGAAAAAAAAAEAFFGIHGIKKJJIIHEGAAAAAAAAAAAAEJIKIKKHFHHIIIJPJHLJIHFHGEHMHFHGGIFJHHGDGGIAAAAAAAAACAAADIJIFIGIJLKJKHIIJJMIFFHIEFHIJIIGHJJHFEAHCHIIHIGEKJHIIIHDHFIJLGHKKJKJIHIHIGIHJDFGGJIILJIGEDHHGGFEIGGJJJIJIIKKIIHJGFHHIJKIGKIIJIIEDBHHGFHGGHFGIJLIGIFKJHHGEFHJNIJIJGIFIHKIHGFHJIIHIHILLJJKEFIJJIKKMHGILKJIHIIBBBDBABBBABDCAAFCAAEAAAACDABCBFBABEBACDACDEAAADAEEADBABBCCDDDFCADHCBDDDACFEABACBBDDDCDCCBCAEGABDBAAFEDCAAABDDBDEAABABAABCBBCBAADCBDCDFCBAACBCBBBAACCADDCBDCAABCBEBBBAABDDCBCAEHCAABABAAAAEACDDAAGECBBBCADHCEAACAECEHEDBDDBAAGDABCBAAECBAAGCBAAAADADBAADEDACFDAAFCACACDADBAAHECCBABGFABFCCACEBEEECABFAAAAEEBBCEBCBCCDCCEDAACBACEAAAAAACDCBCCCDEBDBDEBABEADGCAAAAAAJBBDBCCAACCCDAAEDAECAAAAAAAAACCBABCBCDCCBBCECABAAAABAAAAAICACECDEAACCDEBDCBCAAAAAAAAAAEBDCCCCAACCCCBBDEAAAAAAAAAAAADCCCDCBCACDBABCAAABAAAAAAAAAIABBADAACDDCBBDAAAAAAAAAAAAAAEFBBECEEAACCBCAGQKKMJMMHIHGHMAACCEFCAAABACHLGGGKJHGJILIGABACAADCCCCBDFBCBABEAABEGBCCDCCAADEACFAAGACDDDGAAFGACADBADCCEHBACDCCBDDABDCACFABCBBACECCCAAEAAFCAEBACDDDECCDDBCEFAAACACBBADCDDAAABCBCDDDAADCCBBEBCGCEEAACDAAAIDAADAAACECACFBDECDCEBBEDCGKCBCECCBDIDACDDDDCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAGHAAAAAAACAAAAAAAAADCBAAAAADHFBAAAAAAFGAAAAAAAAFBAAAAAADDAAAAAAAAACAAAAAAAABAAAAAAAAAAACAAAAHJMAAAAAADAAAAAAAAAAAAAAAAAAINKAAAAAAAAAAAAAAAAAAAAAAAACdnYHAAAAAAAAAAAAAAAAAAAAAAASsxhTEAAAAAAAAAAAAAAAAAAAAAJk69zcIAAAAAAAAAAAAAAAAAAAACe398-qVEAAAAAAAAAAAAAAAAAAAPm488-zcLAAAAAAAAAAAAAAAAAAJk677897pVGAAAAAAAAAAAAAAAACYy76587+2hSGAAAAAAAAAAAAAAANp86567787zbMAAAAAAAAAAAAAAAc1447885566oXHAAAAAAAAAAAAAHUefhiljiglpeMAAAAAAAAAAAAAABJLPSVROORPTSHAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAABCAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAECAAAAAAAAAAAAAAAAAAAAAAAAAHFAAAAAAAACAAAAAAAAAAAAAAAAAHDAAAAAAAAAAAAAAAAAAAAAAACDAAABCBAABBABDAABDBBAAADBDCAAACEAEDAAFBCAEDABAAFABAABAAAEAAABBBBABAAACBBCFBAAABCDBBDBBBGBCEADECDEACAABBDFBABCBAADEEAAACAADDBBAAABCACDDAAAAAAAADDBBAAADDDCBCDBBAAECBACAAABDACCDBAAABABAAAAEAABDBBAABAECACAAAAAACCACDCAAFADEAAACADBCCBCAFAENDFBCADAAEAAABAAAADAAABEAAAABBAACAACBDCBDBAADCADAACBBAAAQLBCABBEBAADCBAADAEFABCAAAAADLJCABCDBBADBCCBDAABAABDAAAAAJEBCACBBACDEBBACBAFBAEAAAAAADSGAACEBAAACBCAABAACAAAAAAAAALHDAABCBCAEBBBBEBAAAAAAAAAAAAQFBCFBABAACCBCBCCBAAAAAAAAAAEKFABDBCAAADCBAACAAAAAAAAAAAAKEDFBCDAAABBBABDAAAAAAAAAAAABQDAAACAABCEDAACAAAAAAAAAAAAADAEBBFBBBAAEBBEBAKGJMHGLFFCHKNAAABCDBAAAAAADAAAAAACCCBDADBBAACABCDCAGCFBBABADAAADBABBFDAAAAFAABAADCBBCBCAADECDAAAABABEEDAADFAEDCABBBAADAABBBCADABAAACAACAADAAFICBCFCCBAEECAAABCBAAACADFAAABBABCBAAABABDBCCADADBAAACAAAJCAACAAAAECAABBCCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAACIBAAAAAACAAAAAAAAABBDAAAAABGHEAAAAAABGCAAAAAAAEDBAAAAABFAAAAAAAAADBAAAAAAADAAAAAAAAAAAABAAAAAJBAAAAACAAAAAAAAAAAAAAAAAAFIOAAAAAAAAAAAAAAABAAAAAAAAALcYLAAAAAAAAAAAAAAAAAAAABAAEcndQFAAAAAAAAAAAAAAAAAAAAADStyueNAAAAAAAAAAAAAAAAAAAAAKlzx0nWGAAAAAAAAAAAAAAAAAAAJVrxx0ucNAAAAAAAAAAAAAAAAAACSpxxw0ymVHAAAAAAAAAAAAAAAAAIivyuxwyvfPIAAAAAAAAAAAAAAADXvxvwwxywucOAAAAAAAAAAAAAAAKnvuvxyxuxvlWJAAAAAAAAAAAAAEQehjlmllgjojVEAAAAAAAAAAAAAAFKMMTQOMQPSQMBAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAABADAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAADHEAAAAAAAEAAAAAAAAAAAAAAAAAEHBAAAAAAAAAAAAAAAAA",0.0,3.301],"a2":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGJBAAAAAAAAAAEQRIAAAAAAAAAAHRSMCAAAAAAAAACHIHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCCDDCDCDCCCCCDDEEDEEEEEEEEDCDEEDEEEDEEDEDCEFEDDEFDEEEEDCEEDECFDACEEEDDEEEDCGBAAEEEDDEEDBFCAAACDEDCEECEFAAAAADEDDEDCHBAAAAABEEDEEGJECABCABEDDEEGHEEDDDBCEDDFFEFEEEEEDDEDDEEDFEEEEEEEEDCDDDFDDDDDDDDCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAABAAAABAAAAAAAAAAAAADFBAAAAAAAAAAABFEAAAAAAAAAAFAAECAAAAAAAAFDAAAFBAAAAAABFAAAAECAAAAAEIBAAAAAAAAAABFFBAAAAAAAAAAAAABAAAAAAAAAAAAABAAAAAAAAAAAABAAAAAAAAACDDDDDDDDDDDDCDEEFFFFFFFFFFEDDEFFFEFFFFEFEDEFFFEEGGFEFFEDFFFFAAEGFFFFEDFFFCAABHFFFFEDFFEAAAAGHEFFDDFFAAAAABHGFFDDFEAAAAAAGIFFDDFECDGHGGJKHFDDFFFGJJJJKKHFEDFGFFHHHGHHGFDDFFFFFFFFFFFFECEEEFFEEEEEEEDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABFHDAAAAAAAAAACFLIBAAAAAAAABDGMOGAAAAAAABCEIMQMDAAAAAAABFKKMNHAAAAAAAABDDDGGBAAAAAABEFFEFFCAAAAAABCCDCCCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCAAAAAAAAAAADHCAAAAAAAAAAAHAABAAAAAAAAAFDAAEGAAAAAAAAEAAAAFAAAAAAAAAAAAABCCBAAAAAAAAAAAFGBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBCCDECDDDCDDCDBCCEDCCDEDDCDDBBBDDDDEECDCDCBCCDDCEKIECCCCBCCDDBENNHDDCCBCCDCAEJPKEDCCBCCDACGHMOIECCBCCBAFGGJNMFCCBCCAAABBBFJECCBDDBBCDDCEGEDCBDDDDEDEDEEDCCBDDDDEDDCDDDDCBCCBBCCCBCBCCBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAECAAAAAAAAAAACIAAAAAAAAAAAAHAAAAAAAAAAAAEFAACEAAAAAAAAGAAAAEAAAAAAAAAAAAACCDCAAAAAAAAAAADHCAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBAAAAAAAAAAAACCAACDCAAAAAAAAAADKOJBAAAAAAAABLbhVHAAAAAAAAFZw1lQCAAAAAABRp8+wbJAAAAAAId0+-4nSCAAAAALcsxxwkSDAAAAAHQXZZZUJBAAAAAACEEEEDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBCBBBBBCBBBACCDCCCCCCCCCCBCDCDDCCCDCCCCBCBBCCDECCCCCCBCBCCCFFHGDCCCBBCCCEHFIJFCCCBBCCDGDEGJIDCCBCCCFFBEEHKGCCABCCGBDDEGHIECACCCBAAAAABFDCACCCAAAAAAACDCBCCCCCCBBBCCDCBCCCDCDCCCCCCCBBCCCBCCCCCCCCBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADIAAAAAAAAAAAAQTIAAAAAAAAAAGTVNAAAAAAAAAAAGHFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADEAAAAAAAAAAABICAAAAAAAAAAAGEAAAAAAAAAAADHAABFAAAAAAAAFAAAAEDAAAAAAAAAAAABCDBAAAAAAAAAAADIDAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,19.731],"a3":["FHIIIHFHLQOKLGHPVIAGHIVSAAAHKRAAAAFIHAAAACEFAABCACDDDDCBCDLOMFBCGNWVKDBIPaZPEBMTXUPDBLOPKICBFHHDBAFGHHGGEGEDCHJFEAAAKIFBAAGQJEAABMPCACEJTOEADEFEAAAAAAAAAAAFLNAAABbquTGAKp6-kUBMfr0thNFINQYULAAAEMLHAAAAAAAAEIJBAABQYaKDAGYehSKBITWcZTIEFGGMLFABBDHGDAAAAAABAAAAABBAAAAFABAAAHRDAAAETPAAAAQYLAAACGDAAAGHIHHHDHLHABGEJJAAEECKAAAQGAGAAPdGADADUVCAECCBAAADEFFFFEFBAAEIGBAAAEFFAAAFOGDAAFPNBAAERYNEADGIFAAAAAAAAAAAAAAAAAAEKNIAABJVaSEABHTcWEAABINJAAAAAAAAAAAAAAAAAELOJCABPalZLAFVlzkUFFTgrlXICJOSTNEACEGIFBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAABAAAFHLFAABMTaKAAAKTWEAABJRNDAAAAAAAAAAAAAAAAAAAAAAAHPWKCADPhnaKAENcnjQDBCISTJBAAAAEBAEFGGGGEFDEDHIFDACALIFAADLULDAAITTHABEOYTJBCEGHCBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACEEEEDCDIMNJFCFLNMBCDGLLDAADFLEAADFFHAAACDDECBDDBAAAAAAAABAAAAAAFCAIAADDDILAABAGKEAAAADDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACILFAAAOenXIADaw9oUCFbu8weJDNWfdTHABEIKHDBABABBAAAAAABAACEAFBACBEJMAAAADIEAAAADEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJLGBAALWdSHACShqcOCDTgpdSEBKPVSLEADFIHEBAAAAAAAADLPIAABQgrbJAFZu+tWDFWm0tbHCJQXXQGACEIJGDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADKNJCABOaiVKBEVjtfSEFTakfWHDIKOQMFACEHHFCEHIIIHFHDCCLMHEAAAOMHAABRcPFAAIbcIAAERgaNCEHKKDCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACCDCDDCDBAAADCBAAAGDCBACHPDAAAEIHAAABGGAAACBAAAAADHHHHHFGLLPOMIGLWQKNKHTfGAILJRHAACNJIAAAJLFFBAEIH",0.0,33.998],"nz":[0.679,0.326,0.503],"mx":[3.301,19.731,33.998],"conc":[0.479,0.661,0.543],"dead":[0,4,9]}},"m2rows":[{"name":"conv1+relu","shape":[8,28,28],"nonzero":0.655,"mean":0.326,"max":3.274},{"name":"conv2+relu","shape":[16,14,14],"nonzero":0.341,"mean":0.67,"max":19.787},{"name":"conv3+relu","shape":[32,7,7],"nonzero":0.553,"mean":4.506,"max":51.584}],"brightW":0.169,"st":{"ch":[30,17,20,5,27,22,23,9],"w":[5e-05,-0.00336,0.00314,-0.00257,-0.00083,0.00621,0.0033,0.00447,0.0052,-0.004,-0.00244,0.00554,0.00167,0.00379,0.0025,-0.00286,-0.00307,0.00654,-0.00269,-0.00131,0.00626,-0.00046,-0.00484,-0.00474,-0.00281,-0.00202,-0.00054,-0.00564,0.00197,-0.0001,0.00828,0.00592],"act8":["BAAAACBBDGMOIBBHSlfQAAMg3lRACQcmWGACHLNBAABBAAAAAACBABCAAGGKNGAAEMaVJAALhwiKAAObldAAAHLNDAAAAAAAAAABAAABAAGKONGAAIQhaLAANj3kNAAPcmYCAAGKNDAAAAAAAAAAAAAAAAAAADMGBAALigSDABh-vXAAJetWGAAFTYIAAABEAAAAADHKGCADNTVPIEGSaZXOIHQTRVQMEKPSYSJBDHLOKFABEIIFBADHIFCACKPROGCFRZaXNFITZXXOJFQYZXNHBGMQOIEACFIHEAADIKGBADQZdVKDGWlqkUHIYlnpZNDPcknYLBGOVWPGABEKLHBAFILHDADNUXSLEFRcfcRIHSaYdTMDLUYcUJAFKPSNEABEIJFB",0.0,38.875],"grad8":["-------------------------------------------------333333333333333333333333333333333333333333333333322222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH",-0.00564,0.00828],"weighted":["HFCAEHIFDEKOLGDEMeaQECKf-sUAFPdsZGBHLRUHCDHHFBBDG",-0.146,1.533],"neg":0.408,"actmean":[2.008,3.867,5.945,10.567,4.318,5.819,4.794,6.171,6.338,7.607,0.0,8.83,8.392,7.055,0.0,0.0,1.19,4.987,0.0,10.799,5.498,0.0,6.642,9.616,0.0,0.0,0.0,6.437,7.975,0.0,5.797,3.544]},"cams":{"0":["CAAAACCAAAFJGBAAHbXLAAFc-qQAAKaqVAABGNQCAACBAAAAA",0.0,1.533],"1":["FEDFJJFBAAAQOGAAAYlbHAAQ-0aADOj3UAAHPdbAAAGGHAAAA",0.0,1.265],"2":["AIJIBAAFUgcKBAKi0qNEAJl3-rRHCPd2rTEACOcWMDAAAHGEA",0.0,0.834],"3":["AAFKAAAAMZgXIADbq4tbAJj3-5jHBZq53jKALYkiRGAAAJKGB",0.0,1.841],"4":["AACHAAAACSkVFACW0-yiEKl-460UEe367oQALkshPEAAFTMCA",0.0,0.864],"5":["ELNMKKELk77mXJSr-9ObKVvyGKYRZzAKiXWTXJdcONGNOLIKB",0.025,0.229]},"byclass":{"0":["CAAAACCAAAFJGBAAHbXLAAFc-qQAAKaqVAABGNQCAACBAAAAA",0.0,1.533],"1":["FAAADHFAAAAKKFAAAKYRCAAI-sSABIYnCAAFGPPAAAFFDAAAA",0.0,1.441],"2":["ANHDAAAIy-rAAAI87pAAAI011SAAACFf2KQAAAAMTTAAAASVL",0.0,0.337],"3":["AAk6AAAAYAAAAANCAAAAAtAAAAA6AAAAAA7AAAAAOfAAA-8iA",0.0,0.27],"4":["AAAKAAAAe3wAAAA49AAAAU4AAAAmAAAAArwAAAAq-dAAAtwfB",0.0,0.279],"5":["Po+-ueQoqeAAUeqZAAANlhAAAALcSAAAAJaSAAAABURRWMTUN",0.0,0.155]},"ccorr":[0.944,0.353,-0.381,-0.312,-0.615],"occ":{"5_1":{"v":["BBBBBCCDDCBAAABBCCCCCCCBBBCDEEEFDBAABABBBCCCCCBBBCFKKHFDBAAAAAAABBCDEDCCBEIMMJFCBAAAAAAAABBEEEDDBEIKLJDBAAAAAAAAAAACEFEDBDGKIEBAAAAAAABBBAABCDCCCDGICBAABAABBCFECBAABBBCDFDDBAAAAABBBCFGFCAAAABBDEDCBAAAABBBIJRPEBAAAAABBBAAAAAABBCLrifYEBBAAAAAAAAAAAAABCQx+85jDBAAAAAAAAAAAAAACPz+--+hDBBBAABBBBAAAAAAEe0+-+1RCBBBAABBBBAAAABBHXl6+0NDBAAAAAAABAAAAABDIXl00OCBBBAAAAABBBAAABCHLXYaPCABCDCBAAACCBBBABCEFIDLEBBCBBBAAABCBBBBAABCCEDEBABCBBAABBCCBBBCAAABBBBCBAACAAABDEDDCCDDCBBBAAABBAABAAADJJGDCCDEEDBBAAAAAAABAABHPNHDBCDEEDCBAAAAAAAAABDJLJFCBBCDDDCCBBAAAAAABCDFFECBBBCCCDCCBBAAAABBCDDCBBBB",-0.003,0.993],"n":24,"runs":576,"p":5,"s":1},"5_2":{"v":["BBBCDBABCCCCBFKFBAAAACECBILDAAAAAAEECGCAAAAFCABBDDBAABIREAAAAAAAAQ+5DAAABAAAE0-1CAABBAABIl0CBAAABBACFDEBBBABBBAABBBAAADDBDEBAAAAABPHBCDCBAAABDFC",-0.002,0.993],"n":12,"runs":144,"p":5,"s":2},"5_4":{"v":["BBDACCBLAAAEDBAIEABAE-CABAFEBABEAAAP",-0.002,0.993],"n":6,"runs":36,"p":5,"s":4},"7_1":{"v":["EIIHIECBBAAAAAABBBCCCDILKKKECBAAAAAAABCCCDEFGIJHGDBAAABBAAAABBBCDDFIJGFEBAAABCAAABBBAABCIKFFFFCAAAABAACHFBABBCGHDDDEFABBBBBDIWQGBBCCEEBBBBCABBBCIIPiOEBABABBAAAAABBBCGSJHQFBAAAABBAAAABBBEW25cLFBAAAAAAAAAAABBGk8--9nRFBAAAAAAAAAABBS6----nVFBAAAAAAAAABDHm+---9RFCBAAAAAAAAABGKl+--+hDBBAAAAAAAAAABFFNz86UDBBBABAAAAAAAADGEDTbaCBECAABAAABBABDNUNDMTJBBBBAAAAAABBBBDLPIBJJEBBAAABABCBCCBACHGCBCECBBAABCABGEBBAABCBAAABABBAAABABFFBCCBBCAAAAAAABBAABCEKJCCECBCBAAAAAAAAAADFIPMCCDCCCBAAAAAAAAABEIKMJ",-0.004,0.995],"n":22,"runs":484,"p":7,"s":1},"7_2":{"v":["EIICAAAABCCGJGBABAABBDHFFCAAACFABEBBCBBIPOABBAAABW5LBAAAAABS--nFAAAAAGl-+DBAAAAAGDbCEABABBDPBJBAAACBABBABBAAAFCDBBAAAAAFP",-0.003,0.995],"n":11,"runs":121,"p":7,"s":2},"7_4":{"v":["EIAABCIFAAFBBAB6BAAAl-BABDBBACCBAAAP",-0.003,0.986],"n":6,"runs":36,"p":7,"s":4},"9_1":{"v":["DDCBBAAABCEDBAAAAAAAEEDDCBAABDFEBAAAAAAACDDDDBAAADFHAABCDCAABCDGTGDAABEEABDMJFBABCDJbMKCCBCBBEOeLDAAAAABHCDBCCCCDLXcFBAAAAAACBDBEKORXbSPCBAAAAAACBCCIevsojULCAAAAAAABBDDd7++5mJDAAAABBCBABHP2---9uKBBCCBCEHHCBIb9---5eFBDHFDBBDCABNh9--7gJCBBBCCAAAABDMdz8zgIDBBAABBAAAADGIMVXNGDCBBAAAAAAABFJEFHGCCCBBBAAAAAABNVSHGECBBBBBBBAAAAADNSJDDBAEBABAABBAAAABEECBBABDBBBAABCBBAAABBBAAABDCCAAAABABAAAAAAAAACDEDAAAABBC",-0.004,0.994],"n":20,"runs":400,"p":9,"s":1},"9_2":{"v":["DCBABEAAAACDDAAFABDABDbKCCBOLAAACDEOXSCAAABCd+5JAACHCI9-5FDFAABMzzHBABAAFEHCCBAAADSDBEAABAAABAADCAAA",-0.003,0.994],"n":10,"runs":100,"p":9,"s":2},"9_4":{"v":["DBBAABeCBNABg-AAB5IAAUBAB",-0.002,0.895],"n":5,"runs":25,"p":9,"s":4},"11_1":{"v":["BBBAAAAEKXUGAAABCBBDKDJFCBDLRDABCLKDBEPFNNIBCJQBABESHBABEACDCBEHSBBCDMDAABHBKTXBCDEDKOLQCAABKEpx2ISRIb00jYEAAABBLLqMkuk46oMKBACBABBDNNlurvaGBABCNLHJCDWax50uUGHIVeWYPKCEbh5-61bIKMYgQQNGCDTey81tPGGJJOECAACLvftzogLGDBABAABCGkySQcTYKIEBAAAACBESWDFHFGECBBBAABCCCFIBNPFBBAAAAAAEIHEGFAMPGBAAABBABGKFCDBAVWGBAAAABBACCBAAACglMBAAAABB",-0.004,0.906],"n":18,"runs":324,"p":11,"s":1},"11_2":{"v":["BBAALWAACBQOJCRAEIAHKZCELMCABMuno-NBOHDY24WIXSOCV36QGKABG3RVLFAACCIOFBAABLCBXHAAB",-0.003,0.831],"n":9,"runs":81,"p":11,"s":2},"11_4":{"v":["BANACAMDNCQD-abAHUNABCbAB",-0.001,0.708],"n":5,"runs":25,"p":11,"s":4}},"occBase":0.995,"occ28":{"0":["HKLLMLKJHFECBAAAABBBCDDDDEEFKNOOONLKIGECBAAAABBCDDEEFFGGKMNNNMLJHFDCBAAABBBBCDDEEFFFJMNNNMKJHFDCBAAABBBBCDDDDEFFKMNNMLKJHFDCBAABBBBCCDDDDDEEKMMMLLJIGFDCBBBCDDDEEEEDDDEEJLLLKJJHGEDCBBCEFGGGGFEDDDDDJKJJJIHGFDDCCCDGHIHHHGECCCDDHIHHGGFFDDDFHIJMNNLIHFDCBBCCGGGFFFEDDEGKOSVYYVRMJGDBBBBBEFEDDDDDDGLRXdhkieXQLHDBBBBBDDCCCCCCEJQYiptvrlcTLGDBAAAABBBBBBBCFMWgs044xoeSJFCBAAAAAAAAAABCFPany6+8zocQHDBAAAAAAAAAAABCGQcp08-9znaPGDBAAAAAAAAAABCEHSepy474ujXOGCBAAAAAAAAABCDFJScmswwtkaRJECBBAAAABBBABCEFJQYgjlkhaSKFCBBBBBCBBBBBBCEFHMSYZZYWRLFCBBBCCCDDBBBBBDEFFIMQPONMJFCBCCCDDEFFCCCBCDEFFGIJIGGGECBCDEEFFHIHCCCCCDEFFFGGFEDDCBBCEFGHIJLKDDDCCDEEDDEEDCCCBBBCEGHIJLNLDDDDCDDDCCCCBBBBBBCDFHIJLMPNDDDDDDDCCBBBAAAAABCDFHJKMOQPDDEDDDDCCBBBAAAAABCEHJKMOQTRDEEEEEDDCBBBAAAAABDFIKMOQSUSEEEEDEDDCBBBAAAAABDFILMPQRSP",-0.002,0.595],"1":["35654430vpjeaXVWZehkosvwx03367765541xsmieaXYbhjnswyzz24367765431wrlhdYVWZehlqvxyy12156665431wsnjfaXYbfhlqvxyy01056665543zvrokgddfjkoswyzz011566655541yvsoliiknorvy00z111465545441zxurommnqrtwz00z01034333444210zwtqrsuuvxzzyxwww021012332221zwuvwxwwwxwvsrrrz1zy012334554211220yxvusomllxzwvxz1235887656663zwtqmieefturqsvxz04788777763ytolhbWVWopkjnrtwy3788766551vojgaTNLOiiedhmpsv168763332yrkfcVNFCGabWWbhlpt067640zzyvpiebUMEAFTURRYeiot17864zyyxupjgdXPHEKPROPWchou17863zxxxurmkicVOLSORPQXdipu17862ywwxvtppnjdXUaPTSTagkrv1662ztttuutsutqlhejTXXYejnsvz21wtonpqsuvyzxurptYcefkoquwxywqmhhkmpux2332103fkmmqtuwwvvrmiefhkouy4777789lqssuwxxwutpjfbcfinty5899+++quvuwxyxurpkeaVWZejqw489++--rvwvwxxwsnkfXSNOSXdmt279+---twwwwxxupkgaSMIJNTbks279+---twxwxxxupjfYQJFGKQYir169+--+vxxwwxwsnigaTNJKOTajr0589+++",0.107,0.736],"2":["xz24567998642zxwwwwwxvvvusrq0257889++752yusrstuvwwvvusrq24789++-952ytommopsuwwwwvuts368++-++72xsmgeefhknqsttuuts579---+84ysmgaYYabehmpqrtuut68+-+9850uoicXVVXYaejmnprtut68++9752wqlgbWUVXXZdhlmmpstt8+-9742xqjeaWSRSUTUXcgghkoqs89962zwqkdaXVSRSTRQRVZZadilo7862xtqkdZXXXWWWVRPOPSSTWbfi452wrnkeaXZbdegfdXSONONNQVZd10wpkgeZWWbgloqpkdWQMLJILOSYwvqjdaZVVXelsxzwqhYQKIEEFIMTsqkdYVVSUZhqz451tjZPHEBACEIPonhZVTTSUblu2773tjYOGDAABEIQmmgZVTVUXenv2550rhXPIGEEGJNVmmhaWVWWYdksxzytlcVOKJIJMOSammicXWXVWZflppokeXROLMNPSVYgnnkfaZZWVWZeggebXSPOORSVYbflopokfdcZWUVXXWVTRPPQSXZcgilpqrrokigcXTRRQNMMNOQTYdgjmoprrstrnljeZTPNKIIJMPTYdiloqrrrrrtromjeXQLJGEEHKPUagkoqssrqqqtspmkeYQKHECCGLRWcinqsttrppqttspmhaSLHECCHNTZflpsuusqnpqtutrpkeWPJFCDIOVciortutrpmpqsttsrnhZSMHDEJQXekprstrpnjrrtuutsojbVOKGINVbhmqrrrpnli",0.032,0.735],"3":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBAAAAAAAAAAAAAAAAAAAAAAABCCCBBBAAAAAAAAAAAAAAAAAAAADMNNNNNKAAAAAAAAAAAAAAAAAAACOgqvvuthPFAAAAAAAAAAAAAAAAACRt4++98tRFAAAAAAAAAAAAAAAAACRu6---9uRFAAAAAAAAAAAAAAAAACRu6---+uRFAAAAAAAAAAAAAAAAACRu5+-+9tRFAAAAAAAAAAAAAAAAACRt4++98tRFAAAAAAAAAAAAAAAAACPityyyxkQFAAAAAAAAAAAAAAAAAAEOQQRRQNDAAAAAAAAAAAAAAAAAAAABBBBBBBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,0.139],"4":["BBBBBBBBBBBBAAAAAAAAABBBBBBBBBBBBBBBBBBBAAAAAAAABBBBBBBBBBBBBBBBBBBBAAAAAAAABBBBBBBBBBBBBBBBBBBBAAAAAAAAABBBBBBBBBBCCBBBBBBAAAAAAAAAAAABBBBBBBBBBBBBBBBAAAAAAAAAAAABBBBBBBBBBBBBBBAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBBBBBAAAAAAAAABBBBBBBBBBBDEGGGGGEDBBBBBAAABBBBBBBBBBDHKNQQQOLHEBBBBAAAABBBBBBBACGLRWacaWRMHDBBBBAAABBBAAAAAEJRYflnkeYRKECCCBAAAAAAAAAAAFNWenvyuneWNFCCCBAAAAAAAAAAAGPakv472ukZPGCCCBAAAAAAAAAABGPbmy8-6xmbPGCCCBAAAAAAAAABBGPZjt260sjZPFCCCBAAAAAAAABBBGNVdmtwrkdVMECCBBAAAAAAAABBCFLSYekmidXQJDBBBBAAAAAAAABBCEINRWZaYUQLGCBBBBBBBBBBAABBCDFILNPPOMJGDBBBBBBBBBBBBBBBCCDEFGGGFFEDBBBBBBBBBBBBBBBBCCCCDCCCCBBBBBBBBBBBBBBBBBBBCCCCDCCCBBBBBBBBBBBBBBBBBBBBCCCCCCCCBBBBBBBBBBBBCBBBBBBBBBAAAAAAAAAABBBBBBCCBBBBBBBBBBAAAAAAAAAABBBBBCCBBBBBBBBBBBAAAAAAAAAABBBBBCCBBBBBBBBBBBAAAAAAAAAABBBBCCCCB",-0.004,0.688],"5":["nrttvy0233320yxwvuutrqppoopqrtuuxz134441zyxwwwwvtssrrqrsrrsuxz134541yxwvvvwvuttsrqqrpqrtxz135541ywvtuuwvuttsqppqprsvy0245540xutstuvvvuutrqrrqtuxz1356640wtsrstvwwvvusrsssuwy1245642xsommnpstuuutrqrruwy0345552ysniffhjmoqrsrqqsswz1345553zunhbYXacfilopopqttz24566651vpibVSRUWZchlmmorvw25676542xqjbUOLLOQTXchjkmrvw3665420wpibUOIFFHJMQVbcehmrs1320xvtohaTNIDAACDFIOTVXaflnxxvtqolgZTOLHDBCDDCEJOQRVagirroligeZTPNMLIGHHFDDHLMORVablkhebYWSOMNPQPPPOLHFIKKLNRVVffcYVTROMMPTXYYYWSMJKLLLMPTSaaXTRQPNNPUafghgeZSOOPOOPSVTXXVRPPPOPTahmonnkeYUVWWVWabZWXVSRSSSUYgmrssrojebcefefijhXZYWVWWWYcjosssrpmihjmnnorsqZbbZZaabcgloqqpoonlmptvvwzzxaddbcdeefimopommmmmpuz122563beedefgghilnmjhhikmpw2677997cdeefgggghjihdbbdfjow38++--9defgijjihhgebYWWZdjpx49++--9ddfgijjihfdZVSQRVahnv3799+98ccefhiihgfeaWSQQUYeks0466775",-0.021,0.828]},"agree":[0.836,0.188,-0.17,0.612,0.658,-0.085],"agreeMean":0.34,"sane":{"trained":{"0":["CAAAACCAAAFJGBAAHbXLAAFc-qQAAKaqVAABGNQCAACBAAAAA",0.0,1.533],"1":["FEDFJJFBAAAQOGAAAYlbHAAQ-0aADOj3UAAHPdbAAAGGHAAAA",0.0,1.265],"2":["AIJIBAAFUgcKBAKi0qNEAJl3-rRHCPd2rTEACOcWMDAAAHGEA",0.0,0.834],"3":["AAFKAAAAMZgXIADbq4tbAJj3-5jHBZq53jKALYkiRGAAAJKGB",0.0,1.841],"4":["AACHAAAACSkVFACW0-yiEKl-460UEe367oQALkshPEAAFTMCA",0.0,0.864],"5":["ELNMKKELk77mXJSr-9ObKVvyGKYRZzAKiXWTXJdcONGNOLIKB",0.025,0.229]},"head":{"0":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-",0.0,0.003],"1":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,0.0],"2":["jjnjn-jnczUAn7cnAAAAcYAAAAEAUAAAAUAzAAIMAAgnAAAAc",0.0,0.016],"3":["ADJNIDBDSglcQEIhv5wdILm2-5lNGas52kNCOakiVHADHLLHB",0.008,0.575],"4":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,0.0],"5":["AAAAAADAXLXADOGo5AAARg8lAAAR2RAAAA-oAAAAX8GAAAUxx",0.0,0.022]},"all":{"0":["VAAAAAAAAAAAAAA-VAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,0.003],"1":["----gAAAA-AAAAAggAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",0.0,0.002],"2":["AbASJSJAAAAAAAAAtAAJAJ-AAAJAbSAAAAAAAAAAAAAAAAAAA",0.0,0.007],"3":["FQFKaQaFAKaVgVFKFAV0lAAAllqlAAAAQ-aAAFAvaQAAAVgKA",0.0,0.012],"4":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAA",0.0,0.001],"5":["AAAAAAAAgA-AAAAgggAAAAAAggAAAAAAAAAAAAAAAgAAAAAAA",0.0,0.002]}},"saneH":[-0.116,null,-0.472,0.995,null,0.276],"saneA":[-0.128,-0.278,0.155,0.16,-0.136,0.559],"saneTwin":[0.959,0.56,0.461,0.943,0.46,0.125],"saneSt":{"head_mean":0.171,"all_mean":0.055,"twin_mean":0.584,"acc_head":0.167,"acc_all":0.167,"acc_b":0.997,"overlap_head":0.306,"overlap_all":0.153,"occ_head":-0.61,"occ_all":0.093},"edge":[{"kind":1,"center":[5,5],"pred":1,"prob":0.99,"ok":true,"img":["---574-+-o-AJAAGKAAJAAFAAAAAs--82--7--8AEDOAAAABHASKIFMA--p-8-6--0-AGAOIAIQWALGAAQAH-r7u---p4--FAEAAAFEAAAAPAARH--5t--13-18ACOAMAEAAKAHHRKNA225x4+-7n+-OHAAZKXbAFGHHCCAA2-5-----595FAHALAAAAEAAARAAAr-s--t-----CEAIAKAAFVMAJAABA-y2ssz----8ACGAEHAAAAAMWAJMJ-6---3---4-AGAAPEAIAAADICAGA----y2--8-5DADARAAAACAFuAEACAAGAVAClAAAALCADhQAAAIAYMLCAEQHAQCAAAAANHANFFAAHUXSAAHAMADAGAEGAEAKGAAWANFAABDIAAAUAFAFAFUEFFAHAAAAJAASMQIAAAMBAAACAABAAJbAXAAAAQGAAAAMAACNRAAGAAOVDAHAAAeJCAAJVAJJAMRDAKABNANAAAAEANAEAAPDAAPJADAAAEEAJKCNAAGAKASAAAIQOLAAAAOCAGAAAGEHOAACAANOOAAOAERAAAIGCHAACAAAAAADVAQEAAAKARHAKUAMADAGAAFdAKBAIVAHEAUYAWBATDETQLAAOACAAAVAAAPAAAHGADAGAAAFdAETAAAAfFPAAANCAOAOSAALALAKBAADAAAJAVAASVAAAAAUFCEALLABeFAaAAIAAEAAAAPAAaATRAAGIMBPSASCAAYMABAAAALAAAAJFAAAMBDAADAUAARDAAACPARAAGAJAAAAAAEAA",0.0,1.0],"cam":["aywgLLHt-uKHPKrqSAIPJbGAAIPKLJKJPPKKPQQQPKHKKLLKG",0.0,1.253],"camC":[10.6,10.6],"imgC":[8.3,8.5],"dist":3.1},{"kind":1,"center":[14,14],"pred":0,"prob":0.706,"ok":false,"img":["fAAQPAAAOAAAPAAAbXMAIADAAAAHJDAIAPAAAbGALGGABCAACMIGGhDNZBDNVEFBAOAAAAAAAOADHTMDBAPAHADAbADEIGFNAAADAAASHESAAAAQbAfULFfBACAGAEFARALAFABAAABIAAAAAALMKABAALBASKLPJAANABFSRMAMHARGAQAIAAAAAbADOAHADAGCAAAJFFAAAAAEAAACBAdABAAHHAFBAAdKAAARAALCJAeAADSANAASUTAAAAHGACABA9---2-+k-8-AADAAAXAAIFHKQElA-74--22----DADAAAAAAVJMAAADA9--z63-w9--AABGLAASEFEAADNBA8-------t--AHFAAADAHAAAAGAAB-x-s5-0--w+AAAARAVAYHGKLSWAAd6---738-p-AAAAAAAAfAAAAAAEA-w----2-5--AAIAAALAAJaWABGLAx--u6-----+AISZAASSEJAHAAAAA0-+6---1-70AAAbAAAXAAAAAOAAU490e+-5o---LAFAOCNNAAAAACAJB-1p--+6794mKAAADAPIJQAAEQPAADAAAUAUAAcAIVAANBAAAMAIVQSQAPEAAAAAAAAIAARAIAEBCAAAANLAIAGAANGAAAAAITARPAALIeSKVACAWHARAKADICASFAJAYDFFAADFRGAHLNEAPAHAKAOWPAAAJFCEHIVADAAAADNAAACAFEEKACWAKBAAAAAAPAODLAChKNDLAAFKAAAAAAAAAAADAAAAGEAECCUAFFAAIDAAAADA",0.0,1.0],"cam":["CAAAADDAAABJHCAAIcdQBADc-wSABLgyaAADFQSAAACCAAAAA",0.0,1.184],"camC":[14.2,14.1],"imgC":[13.6,13.6],"dist":0.8},{"kind":0,"center":[5,22],"pred":1,"prob":0.634,"ok":false,"img":["AAAIAAGAAATIFAHAFAYp--o7--AAAAAWBAAIIASAAFVADQ------+-lAREAENAJAAANAAIAAG+8-y-y5s5--HAWBAJAHBCBAAMADAlu-05s46792AADAVCBAMAAAHAPAA7-zu---6---aAQAGAAEAKAAAABN-v-8z-z9-l--AGDAOAHAAAAJAAATA-o-8-1mq--zKAAAOYACLZABHAEBI3-2--5s---1AUIAAAAAPGAAAAKAN-1bvr8--+v-DAAAHETNKPAAAAAAIAm--n1-t3-ADEAANAFHAMEAGKKAFRC--+-7-+AAAEFAAEGBhOAJREABAbAUAM7COBNAAAAARAAAVNRQACAAIAAADPhSAACOAAABAHOBKaAAHYDPAMAJGGSPAMAOkIICMAKAADBAcDAPBEKAAAFOAAHAAFAVACAAIOUJAMACIJAAWAAABQBQEHOAFAAJACAAAPCCWAAABGJEAXEAAGAADDAQAAECBABAAKAAJAjAABRAAPAALAAGAEAAAAWGMAAAAHAAANKFAAQADCATADAAEHBAGODWLKSAAHHTPCDAAAMAACAAAFADFAfCDAJGAESAASFAfEAFAEEAAGHJMFIAAPAGpAUAGWUAAAKABEGHCATAQAAAAAAALARAAGMAATAACAAAFJIFAJPAMADFATAAAGGBSEAAAAAAIOYPAEAKFAAAARoLOCAcAFAIAIAASAASGOACAAGQAAAAAdIAAedAFQAASAAAAJAAAXCACGCAEALANAARAFAOOOJAACAGCAAAAAJR",0.0,1.0],"cam":["LQEAAg-QYFAAR0QZUTjLIQYWRWAAQYYWUFAQXXXYYQMQQPQRL",0.0,0.804],"camC":[13.4,13.7],"imgC":[8.8,18.6],"dist":6.7},{"kind":4,"center":[22,5],"pred":2,"prob":0.539,"ok":false,"img":["AAULDAACAZBDAAAAAFDNADDUAEAFFAAAHALAYTAAfIHAAKIAQEANAKAFAFACAAJGPAUVAAAACAHAAMAOHAPKAAAIAWDCFAAAAAJAAAAKBATAAPAHAAABBECSVJKAAHALAiAANAAAAABEAQSAAAARDAAHAEARPAAJAKEIAEHAAAVEFCAALAUCBAAATeADJAAAAIAABDdCLAFAAAAGKGAEAMAEPAMAHAETAAAEjAAAAAAAAADAOOAABKAAYADAANECKKAHACAANAAACAAAAKSAZCHAATAAQXAABYgAGMQAMAAAELAABAIOALATFADNECAICZBBALAAWYAAQAmAOABQHAhLAAATACASANJALOALvAKAIAMBAQAADAHBAKAOAWEAAJAAPAAHQAECLVAABJVCFQAAACFAYAAQMCHMCKADAAASAGAAAANAKkACABAKAAAAAMAx1-h-GAQAAQAAAAAAAAAAFAAYAKA----1lGAAfWALSCAAMBALAAREECO-n-YmVOAACOAAADEALAAAARAABAJ--y+-ARVARLMXHCJAHAXAIFCC-r5-zy------IAAAAVAAEBHAAXAA15--y-3-w--uCCAANDAAGRKKUAAA-i--t38-s---CQDAAIAIBOABEFOF---yt-6-9--xDAAIAGfROAAQAAAB-78--wp481yzAAAAEAAAAJAIACIAAAJ4t2--AAAAAACBAAAANSEUAAACABG8w++-IAAVNAAAEKeACABAANBQADIou--oAAATAZAAUMRYNQAAGDJA",0.0,1.0],"cam":["AAAAAAAAAAAAAADDAAAAAWTFAAAAtlOAAAA--qQLAApdRKIAA",0.0,0.608],"camC":[20.6,5.7],"imgC":[18.0,9.2],"dist":4.3}],"res":{"cam_c2":["BCCCCCCCCCCCCBCEDDEEEDDEEEEDCEEEDAAAACEEEDCEEAAAAAAAACEDCEDAAAACAAAAEDCEAAAOy3cMAAECCEAAAq-+6ZAAEDCDAAHs377dAAEDCEBAAX47yIAAEDCEDAAAZaHAAADDCDDAAAAAAAADDCCEEEBAAAAAEEEDCEEEEEEEEDEEEDCDDDDDDDDDDDDC",0.0,0.353],"corr":0.85,"c2occ":0.923,"c3occ":0.836}};
+
+/* ═══════════ Інтерактив 1 · ядра першого шару ═══════════ */
+(function(){
+  var cv=I('cKern'); if(!cv) return;
+  var sel=0, trained=1, img=0;
+  var SOBX=[-1,0,1,-2,0,2,-1,0,1], UNI=[1,1,1,1,1,1,1,1,1];
+
+  function kern(k){
+    var src = trained ? D.k1 : D.k1f;
+    return src.slice(k*9,k*9+9);
+  }
+  function rows(){ return trained ? D.k1rows : D.k1rowsF; }
+  /* відгук ядра: кроскореляція з нульовим доповненням, далі ReLU */
+  function response(k){
+    var im=dec(D.probes[img]), kk=kern(k), out=new Array(784), y,x,dy,dx,s;
+    var lo=amin(im), hi=amax(im), rng=(hi-lo)>1e-9?(hi-lo):1;
+    for(y=0;y<28;y++) for(x=0;x<28;x++){
+      s=0;
+      for(dy=-1;dy<=1;dy++) for(dx=-1;dx<=1;dx++){
+        var yy=y+dy, xx=x+dx;
+        if(yy<0||yy>27||xx<0||xx>27) continue;
+        s+=kk[(dy+1)*3+(dx+1)]*((im[yy*28+xx]-lo)/rng);
+      }
+      out[y*28+x]= s>0 ? s : 0;
+    }
+    return out;
+  }
+
+  function draw(){
+    palette();
+    var g=dpr(cv), W=LW(cv), k;
+    var TW=84, GAP=10, X0=14, Y0=30;
+
+    capt(g,'ВІСІМ ЯДЕР ПЕРШОГО ШАРУ 3×3 — КЛІКНИ ПО БУДЬ-ЯКОМУ',X0,20,css('--soft'),11.5,true);
+    for(k=0;k<8;k++){
+      var x=X0+k*(TW+GAP);
+      gridmap(g,nrms(kern(k)),3,3,x,Y0,TW,sgn);
+      frame(g,x,Y0,TW,TW, k===sel?css('--rose'):css('--hair'), k===sel?2.5:1);
+      ctxt(g,'k'+k,x+TW/2,Y0+TW+15, k===sel?css('--rose'):css('--soft'),11,k===sel);
+    }
+    /* два класичні ядра для ока — праворуч від ряду */
+    var RX=W-160;
+    capt(g,'для порівняння',RX,20,css('--soft'),10.5,false);
+    gridmap(g,nrms(SOBX),3,3,RX,Y0,58,sgn);      frame(g,RX,Y0,58,58,css('--hair'));
+    ctxt(g,'Собель-X',RX+29,Y0+72,css('--soft'),10);
+    gridmap(g,nrms(UNI),3,3,RX+76,Y0,58,sgn);    frame(g,RX+76,Y0,58,58,css('--hair'));
+    ctxt(g,'рівномірне',RX+105,Y0+72,css('--soft'),10);
+
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(14,152.5); g.lineTo(W-14,152.5); g.stroke();
+
+    /* нижні панелі */
+    var PY=192, PS=205;
+    var kk=kern(sel), nk=nrms(kk), r=rows()[sel];
+
+    capt(g,'ЯДРО k'+sel+' КРУПНО',14,PY-10,css('--rose'),11,true);
+    gridmap(g,nk,3,3,14,PY,PS,sgn); frame(g,14,PY,PS,PS,css('--hair'));
+    var c,rw;
+    for(rw=0;rw<3;rw++) for(c=0;c<3;c++){
+      var v=kk[rw*3+c];
+      ctxt(g,v.toFixed(2),14+PS/6+c*PS/3,PY+PS/6+rw*PS/3+5,
+           Math.abs(nk[rw*3+c])>0.55?css('--raise'):css('--ink'),12,true);
+    }
+
+    capt(g,'ВХІД 28×28',240,PY-10,css('--soft'),11,true);
+    gridmap(g,nrm(dec(D.probes[img])),28,28,240,PY,PS,gray);
+    frame(g,240,PY,PS,PS,css('--hair'));
+
+    capt(g,'ВІДГУК ЦЬОГО ЯДРА',466,PY-10,css('--soft'),11,true);
+    var rp=response(sel);
+    gridmap(g,nrm(rp),28,28,466,PY,PS,hot);
+    frame(g,466,PY,PS,PS,css('--hair'));
+
+    /* смуги схожості */
+    var BX=692, BW=W-BX-14, CXz=BX+BW/2;
+    capt(g,'СХОЖІСТЬ ЯДРА (cos)',BX,PY-10,css('--soft'),11,true);
+    var items=[['Собель-X',r['Собель-X']],['Собель-Y',r['Собель-Y']],['рівномірне',r['пляма']]];
+    var i;
+    for(i=0;i<3;i++){
+      var by=PY+22+i*58;
+      capt(g,items[i][0],BX,by-2,css('--soft'),10.5,false);
+      g.fillStyle=css('--paper'); rr(g,BX,by+4,BW,18,4); g.fill();
+      frame(g,BX,by+4,BW,18,css('--hair'));
+      var v=items[i][1], wpx=Math.abs(v)*BW/2;
+      g.fillStyle = v>=0 ? css('--rose') : css('--teal');
+      if(v>=0) rr(g,CXz,by+4,wpx,18,3); else rr(g,CXz-wpx,by+4,wpx,18,3);
+      g.fill();
+      g.fillStyle=css('--ink'); g.font=mono(11.5,true); g.textAlign= v>=0?'left':'right';
+      g.fillText(v.toFixed(3), v>=0? CXz+wpx+6 : CXz-wpx-6, by+18);
+      g.textAlign='left';
+    }
+    g.strokeStyle=css('--soft'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(CXz+0.5,PY+24); g.lineTo(CXz+0.5,PY+24+3*58-18); g.stroke();
+    var LY=PY+22+3*58+4;
+    capt(g,'−1',BX,LY,css('--soft'),10);
+    ctxt(g,'0',CXz,LY,css('--soft'),10);
+    g.textAlign='right'; g.fillStyle=css('--soft'); g.font=mono(10,false);
+    g.fillText('+1',BX+BW,LY); g.textAlign='left';
+
+    capt(g,'орієнтир: 200 випадкових ядер дають cos із Собелем 0.398 у середньому '+
+           'і 0.808 у найкращому',14,PY+PS+32,css('--soft'),11,false);
+
+    /* табло */
+    var edge=Math.max(Math.abs(r['Собель-X']),Math.abs(r['Собель-Y']));
+    I('kSob').textContent='|'+edge.toFixed(3)+'|';
+    I('kBlob').textContent=sig(r['пляма'],3);
+    I('kSum').textContent=(r.sum>=0?'+':'−')+Math.abs(r.sum).toFixed(2);
+    I('kNo').textContent='k'+sel+(trained?' · навчене':' · сире');
+
+    var stt=D.k1st;
+    if(!trained){
+      verd('kVd','t-mid','ЯК ВИГЛЯДАЮТЬ ВАГИ ДО НАВЧАННЯ',
+        'Це випадковий шум із рівномірного розподілу. Найкращий збіг із Собелем серед '+
+        'усіх восьми сирих ядер — <b>'+stt.fresh_edge.toFixed(3)+'</b>. Жодне ядро не має '+
+        'суми ваг за модулем більшої за 1.5. Запамʼятай ці числа й перемкнись на «після навчання».');
+    } else if(Math.abs(r['пляма'])>0.6){
+      verd('kVd','t-ok','ДЕТЕКТОР ЗАПОВНЕНОСТІ',
+        'cos із рівномірним ядром <b>'+r['пляма'].toFixed(3)+'</b>, сума ваг '+
+        (r.sum>=0?'+':'−')+Math.abs(r.sum).toFixed(2)+'. Це ядро просто питає «скільки тут '+
+        'загалом світлого». Таких ядер після навчання <b>'+stt.n_big_sum+' з 8</b>, '+
+        'до навчання було '+stt.n_big_sum_fresh+'. Оце мережа й вивчила.');
+    } else if(edge>0.5){
+      verd('kVd','t-mid','НА МЕЖУ СХОЖЕ, АЛЕ НЕ БІЛЬШЕ',
+        'Найбільший збіг із Собелем тут <b>'+edge.toFixed(3)+'</b>. Випадкове ядро дає '+
+        'у середньому '+stt.rand_mean.toFixed(3)+', а найкраще з двохсот випадкових — '+
+        stt.rand_best.toFixed(3)+'. Тобто це «схоже» нічим не краще за шум.');
+    } else {
+      verd('kVd','t-no','НІ НА ЩО ВПІЗНАВАНЕ НЕ СХОЖЕ',
+        'Збіг із Собелем <b>'+edge.toFixed(3)+'</b>, із рівномірним '+
+        r['пляма'].toFixed(3)+'. Це ядро не є ані детектором меж, ані детектором '+
+        'заповненості — просто набір ваг, корисний мережі й нечитабельний для ока. '+
+        'Так виглядає більшість ядер у більшості мереж.');
+    }
+  }
+
+  cv.addEventListener('click', function(ev){
+    var rect=cv.getBoundingClientRect();
+    var x=(ev.clientX-rect.left)*LW(cv)/rect.width;
+    var y=(ev.clientY-rect.top)*LH(cv)/rect.height;
+    if(y<30||y>114) return;
+    var k=Math.floor((x-14)/94);
+    if(k>=0 && k<8 && x-14-k*94<84){ sel=k; draw(); }
+  });
+  segment('kernSeg', function(i){ trained = i===0?1:0; draw(); });
+  segment('kernImg', function(i){ img=i; draw(); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════ Інтерактив 2 · карти активацій по шарах ═══════════ */
+(function(){
+  var cv=I('cAct'); if(!cv) return;
+  var layer=0, img=0;
+  var SHAPE=[[8,28],[16,14],[32,7]];
+  var LNAME=['conv1 + ReLU','conv2 + ReLU','conv3 + ReLU'];
+
+  function draw(){
+    palette();
+    var g=dpr(cv), W=LW(cv), blk=D.act[String(img)];
+    var raw=dec([blk.a1,blk.a2,blk.a3][layer]);
+    var n=SHAPE[layer][0], sz=SHAPE[layer][1], len=sz*sz;
+    var hi=amax(raw)||1;
+
+    capt(g,'ВХІД',14,20,css('--soft'),11,true);
+    gridmap(g,nrm(dec(D.probes[img])),28,28,14,30,112,gray);
+    frame(g,14,30,112,112,css('--hair'));
+    capt(g,D.names[img],14,160,css('--ink'),12,true);
+    capt(g,LNAME[layer],14,182,css('--rose'),11.5,true);
+    capt(g,n+' × '+sz+' × '+sz,14,200,css('--soft'),11,false);
+    capt(g,'максимум '+hi.toFixed(2),14,218,css('--soft'),11,false);
+    /* шкала кольору */
+    var li;
+    for(li=0;li<100;li++){ g.fillStyle=hot(li/99); g.fillRect(14+li*1.1,240,1.6,12); }
+    frame(g,14,240,110,12,css('--hair'));
+    capt(g,'0',14,268,css('--soft'),10);
+    g.textAlign='right'; g.fillStyle=css('--soft'); g.font=mono(10,false);
+    g.fillText(hi.toFixed(1),124,268); g.textAlign='left';
+    capt(g,'чорна рамка —',14,296,css('--soft'),10.5,false);
+    capt(g,'карта мовчить цілком',14,311,css('--soft'),10.5,false);
+
+    var AX=150, AW=W-AX-14;
+    var cols = n<=8 ? 4 : (n<=16 ? 6 : 8);
+    var rowsN=Math.ceil(n/cols), k, dead=0;
+    var AH=LH(cv)-30-14;
+    var tile = Math.min(168, (AW-(cols-1)*8)/cols, (AH-(rowsN-1)*20)/rowsN);
+    for(k=0;k<n;k++){
+      var cx=AX+(k%cols)*(tile+8), cy=30+Math.floor(k/cols)*(tile+20);
+      var m=slice(raw,k,len), mx=amax(m);
+      var norm=new Array(len), q;
+      for(q=0;q<len;q++) norm[q]= hi>1e-9 ? m[q]/hi : 0;
+      gridmap(g,norm,sz,sz,cx,cy,tile,hot);
+      if(mx<=1e-6){ dead++; frame(g,cx,cy,tile,tile,css('--ink'),2); }
+      else frame(g,cx,cy,tile,tile,css('--hair'),1);
+      ctxt(g,'#'+k+(mx<=1e-6?' · 0':' · '+mx.toFixed(1)),cx+tile/2,cy+tile+13,
+           mx<=1e-6?css('--ink'):css('--soft'),10);
+    }
+
+    I('aNz').textContent=blk.nz[layer].toFixed(3);
+    I('aMx').textContent=hi.toFixed(2);
+    I('aDead').textContent=blk.dead[layer]+' з '+n;
+    I('aConc').textContent=blk.conc[layer].toFixed(3);
+
+    var nz=blk.nz[layer];
+    if(layer===0)
+      verd('aVd','t-mid','ПЕРШИЙ ШАР ГОВОРИТЬ УВЕСЬ',
+        'Ненульових <b>'+nz.toFixed(3)+'</b>, мертвих карт <b>'+blk.dead[0]+' з 8</b>. '+
+        'Карти схожі одна на одну й на сам вхід: шар ще нічого не абстрагував, '+
+        'він лише перефарбував зображення вісьмома способами.');
+    else if(layer===1)
+      verd('aVd','t-ok','ТУТ РОЗРІДЖЕННЯ Є',
+        'Ненульових упало до <b>'+nz.toFixed(3)+'</b>, мертвих карт уже '+
+        '<b>'+blk.dead[1]+' з 16</b>, а маса зібралась у 10 % клітинок на '+
+        blk.conc[1].toFixed(3)+'. Це найтихіший шар мережі.');
+    else
+      verd('aVd','t-no','А ТУТ ЗНОВУ ГУЧНО',
+        'Ненульових <b>'+nz.toFixed(3)+'</b> — більше, ніж у conv2 ('+blk.nz[1].toFixed(3)+'). '+
+        'Правило «що глибше, то розрідженіше» на нашій мережі не справдилось. '+
+        'Зате мертвих карт найбільше: <b>'+blk.dead[2]+' з 32</b>, і максимум виріс до '+
+        hi.toFixed(1)+' проти '+blk.mx[0].toFixed(1)+' у першому шарі.');
+    if(dead!==blk.dead[layer]) I('aDead').textContent=dead+' з '+n;
+  }
+  segment('actSeg', function(i){ layer=i; draw(); });
+  segment('actImg', function(i){ img=i; draw(); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════ Інтерактив 3 · Grad-CAM крок за кроком ═══════════ */
+(function(){
+  var cv=I('cStep'); if(!cv) return;
+  var step=0;
+  var A8=dec(D.st.act8), G8=dec(D.st.grad8), CH=D.st.ch, WW=D.st.w;
+  var S=dec(D.st.weighted), CAM=dec(D.cams['0']), IMG=dec(D.probes[0]);
+  var STEPN=['карти ознак a','градієнти g','ваги w','зважена сума S','relu(S)','накладення'];
+
+  function eight(g,src,signed,title){
+    var W=LW(cv), t=Math.min(112,(W-40-3*10)/4), k;
+    capt(g,title,14,22,css('--rose'),11.5,true);
+    var norm = signed ? nrms(src) : nrm(src);
+    for(k=0;k<8;k++){
+      var cx=14+(k%4)*(t+14), cy=44+Math.floor(k/4)*(t+34);
+      gridmap(g,norm.slice(k*49,k*49+49),7,7,cx,cy,t, signed?sgn:hot);
+      frame(g,cx,cy,t,t,css('--hair'));
+      ctxt(g,'канал #'+CH[k],cx+t/2,cy+t+14,css('--soft'),10.5);
+      ctxt(g,'w = '+WW[CH[k]].toFixed(4),cx+t/2,cy+t+27,
+           WW[CH[k]]>=0?css('--rose'):css('--teal'),10.5,true);
+    }
+    /* пояснення праворуч */
+    var TX=14+4*(t+14)+14;
+    return TX;
+  }
+
+  function bignum(g,vals,x,y,size,mode,dp){
+    var norm = mode==='sgn' ? nrms(vals) : nrm(vals);
+    gridmap(g,norm,7,7,x,y,size, mode==='sgn'?sgn:hot);
+    frame(g,x,y,size,size,css('--hair'));
+    var i,j, c=size/7;
+    for(j=0;j<7;j++) for(i=0;i<7;i++){
+      var v=vals[j*7+i];
+      ctxt(g, Math.abs(v)<0.005? '0' : v.toFixed(dp===undefined?1:dp),
+           x+c/2+i*c, y+c/2+j*c+4,
+           Math.abs(norm[j*7+i])>0.55?css('--raise'):css('--ink'), 10.5);
+    }
+  }
+
+  function draw(){
+    palette();
+    var g=dpr(cv), W=LW(cv), k;
+    if(step===0){
+      var TX=eight(g,A8,false,'КРОК 1 · КАРТИ ОЗНАК a — ЩО ШАР ПОБАЧИВ (8 КАНАЛІВ ІЗ 32)');
+      capt(g,'Це вихід останнього згорткового шару після ReLU.',TX,60,css('--ink'),12);
+      capt(g,'Усі значення невідʼємні. 32 карти 7×7 —',TX,80,css('--soft'),11.5);
+      capt(g,'останнє місце в мережі, де ще є «де».',TX,98,css('--soft'),11.5);
+      capt(g,'Тут показано 4 канали з найбільшою вагою',TX,126,css('--soft'),11.5);
+      capt(g,'і 4 з найменшою — саму вагу порахуємо',TX,144,css('--soft'),11.5);
+      capt(g,'на кроці 3.',TX,162,css('--soft'),11.5);
+    } else if(step===1){
+      var TX1=eight(g,G8,true,'КРОК 2 · ГРАДІЄНТИ g — ЩО ЗМІНИТЬ ВІДПОВІДЬ');
+      capt(g,'Рожеве: підняти цю клітинку — оцінка класу',TX1,60,css('--ink'),12);
+      capt(g,'зросте. Бірюзове: оцінка впаде.',TX1,80,css('--ink'),12);
+      capt(g,'Це ті самі числа, які мережа рахує на',TX1,108,css('--soft'),11.5);
+      capt(g,'кожному кроці навчання. Ми лише',TX1,126,css('--soft'),11.5);
+      capt(g,'перехопили їх по дорозі.',TX1,144,css('--soft'),11.5);
+      capt(g,'Придивись: усередині кожної карти',TX1,172,css('--amber'),11.5,true);
+      capt(g,'градієнт майже сталий. Це не збіг —',TX1,190,css('--amber'),11.5,true);
+      capt(g,'так працює глобальне усереднення.',TX1,208,css('--amber'),11.5,true);
+    } else if(step===2){
+      capt(g,'КРОК 3 · ВАГИ w = СЕРЕДНЄ ГРАДІЄНТА ПО 49 КЛІТИНКАХ · УСІ 32 КАНАЛИ',
+           14,22,css('--rose'),11.5,true);
+      var bx=20, bw=(W-40)/32, zy=180, mx=0;
+      for(k=0;k<32;k++) if(Math.abs(WW[k])>mx) mx=Math.abs(WW[k]);
+      g.strokeStyle=css('--hair'); g.lineWidth=1;
+      g.beginPath(); g.moveTo(14,zy+0.5); g.lineTo(W-14,zy+0.5); g.stroke();
+      for(k=0;k<32;k++){
+        var h=Math.abs(WW[k])/mx*108, x=bx+k*bw;
+        var isSel=CH.indexOf(k)>=0;
+        g.fillStyle = WW[k]>=0 ? css('--rose') : css('--teal');
+        g.globalAlpha = isSel?1:0.35;
+        if(WW[k]>=0) g.fillRect(x,zy-h,bw-3,h); else g.fillRect(x,zy,bw-3,h);
+        g.globalAlpha=1;
+        ctxt(g,String(k),x+(bw-3)/2, WW[k]>=0? zy+13 : zy-5, css('--soft'),9);
+      }
+      capt(g,'найбільша вага +'+amax(WW).toFixed(4),14,zy-114,css('--rose'),11,true);
+      capt(g,'найменша вага '+amin(WW).toFixed(4),14,zy+126,css('--teal'),11,true);
+      var npos=0; for(k=0;k<32;k++) if(WW[k]>0) npos++;
+      capt(g,'додатних ваг '+npos+' із 32, відʼємних '+(32-npos)+
+             '. Насичені стовпчики — ті вісім каналів, які ми дивились на кроках 1-2.',
+           14,zy+164,css('--soft'),11.5);
+      capt(g,'Вага одна на всю карту: «де» ми вже стерли, лишилось тільки «наскільки корисна».',
+           14,zy+184,css('--soft'),11.5);
+    } else if(step===3){
+      capt(g,'КРОК 4 · ЗВАЖЕНА СУМА S = w[0]·a[0] + … + w[31]·a[31]',14,22,css('--rose'),11.5,true);
+      bignum(g,S,90,50,290,'sgn',2);
+      capt(g,'Рожеві клітинки — докази ЗА клас «коло».',420,90,css('--ink'),12.5);
+      capt(g,'Бірюзові — докази ПРОТИ: там переважили',420,112,css('--ink'),12.5);
+      capt(g,'карти з відʼємною вагою.',420,134,css('--ink'),12.5);
+      var neg=0; for(k=0;k<49;k++) if(S[k]<0) neg++;
+      capt(g,'Відʼємних клітинок: '+neg+' із 49.',420,168,css('--teal'),12.5,true);
+      capt(g,'Це вже одна карта замість тридцяти двох,',420,202,css('--soft'),11.5);
+      capt(g,'але в ній ще є знак. Наступний крок його',420,220,css('--soft'),11.5);
+      capt(g,'прибере.',420,238,css('--soft'),11.5);
+    } else if(step===4){
+      capt(g,'КРОК 5 · cam = relu(S) — ВІДʼЄМНЕ СТАЄ НУЛЕМ',14,22,css('--rose'),11.5,true);
+      bignum(g,CAM,90,50,290,'hot',2);
+      var zeros=0; for(k=0;k<49;k++) if(CAM[k]<=1e-6) zeros++;
+      capt(g,'Обнулено '+zeros+' клітинок із 49 — це '+
+             (zeros/49*100).toFixed(1)+' %.',420,96,css('--ink'),12.5,true);
+      capt(g,'Ми питали «де докази ЗА клас», а не «де',420,130,css('--soft'),11.5);
+      capt(g,'докази проти» — тому відʼємну половину',420,148,css('--soft'),11.5);
+      capt(g,'карти просто викидаємо.',420,166,css('--soft'),11.5);
+      capt(g,'Ціна: карта тепер не має нуля як опорної',420,200,css('--amber'),11.5,true);
+      capt(g,'точки. Максимум тут '+amax(CAM).toFixed(2)+', і після',420,218,css('--amber'),11.5,true);
+      capt(g,'нормалізації він стане яскраво-червоним',420,236,css('--amber'),11.5,true);
+      capt(g,'незалежно від того, великий він чи ні.',420,254,css('--amber'),11.5,true);
+    } else {
+      capt(g,'КРОК 6 · КАРТУ 7×7 РОЗТЯГУЄМО ДО 28×28 І НАКЛАДАЄМО',14,22,css('--rose'),11.5,true);
+      var im=nrm(IMG), cm=nrm(up28(CAM,7)), i;
+      gridmap(g,im,28,28,60,50,290,gray); frame(g,60,50,290,290,css('--hair'));
+      ctxt(g,'ВХІД',205,364,css('--soft'),11,true);
+      /* накладення */
+      gridmap(g,im,28,28,400,50,290,graydim);
+      var cw=290/28, r2,c2;
+      for(r2=0;r2<28;r2++) for(c2=0;c2<28;c2++){
+        var t=cm[r2*28+c2];
+        g.globalAlpha=0.78*t;
+        g.fillStyle=hot(t);
+        g.fillRect(400+c2*cw,50+r2*cw,cw+0.6,cw+0.6);
+      }
+      g.globalAlpha=1;
+      frame(g,400,50,290,290,css('--hair'));
+      ctxt(g,'ВХІД + КАРТА',545,364,css('--rose'),11,true);
+      capt(g,'Розтягування — чиста косметика:',720,110,css('--soft'),11.5);
+      capt(g,'уся змістовна робота скінчилась',720,128,css('--soft'),11.5);
+      capt(g,'на кроці 5. Карта, яку ти бачиш,',720,146,css('--soft'),11.5);
+      capt(g,'має рівно 49 різних значень,',720,164,css('--soft'),11.5);
+      capt(g,'розмазаних по 784 пікселях.',720,182,css('--soft'),11.5);
+    }
+
+    /* підсвітка рядка коду */
+    var lines=I('stepCode').querySelectorAll('div');
+    for(k=0;k<lines.length;k++){
+      lines[k].className = k<step ? 'done' : (k===step ? 'on' : '');
+    }
+    I('sNo').textContent=(step+1)+' / 6';
+    I('sWhat').textContent=STEPN[step];
+    I('stepPrev').disabled = step===0;
+    I('stepNext').disabled = step===5;
+
+    var rangeTxt;
+    if(step===0) rangeTxt='0 … '+amax(A8).toFixed(1);
+    else if(step===1) rangeTxt=amin(G8).toFixed(4)+' … '+amax(G8).toFixed(4);
+    else if(step===2) rangeTxt=amin(WW).toFixed(4)+' … '+amax(WW).toFixed(4);
+    else if(step===3) rangeTxt=amin(S).toFixed(2)+' … '+amax(S).toFixed(2);
+    else rangeTxt='0 … '+amax(CAM).toFixed(2);
+    I('sRange').textContent=rangeTxt;
+
+    var VD=[
+      ['t-mid','ПОКИ ЩО ЦЕ ПРОСТО ЧИСЛА',
+       'Тридцять дві карти 7×7. Дивитись на них очима марно: жодна не є «увагою», '+
+       'кожна — свій візерунок відгуку. Потрібна вага, яка скаже, котрі з них важать.'],
+      ['t-mid','ГРАДІЄНТ ВСЕРЕДИНІ КАРТИ ПОСТІЙНИЙ',
+       'Придивись до кожної плитки: усередині вона однорідна. Причина в тому, що після '+
+       'цього шару стоїть глобальне усереднення — воно розмазує вплив клітинки рівно '+
+       'по всіх 49 позиціях. Тому усереднення на кроці 3 нічого не втратить.'],
+      ['t-ok','ОСЬ ВОНИ, ТРИДЦЯТЬ ДВА ЧИСЛА',
+       'Ваги лежать від '+amin(WW).toFixed(4)+' до '+amax(WW).toFixed(4)+'. '+
+       'Майже половина відʼємна — ці карти працюють ПРОТИ класу й будуть відняті.'],
+      ['t-mid','ЗНАК ЩЕ ТУТ',
+       'Одна карта замість тридцяти двох, але зі знаком: у ній '+
+       (function(){var n=0,q;for(q=0;q<49;q++) if(S[q]<0) n++; return n;})()+
+       ' відʼємних клітинок із 49. Саме їх зараз відріже relu.'],
+      ['t-ok','КАРТА ГОТОВА',
+       'relu обнулила '+(D.st.neg*100).toFixed(1)+' % клітинок. Те, що лишилось, — '+
+       'і є Grad-CAM. Максимум '+amax(CAM).toFixed(2)+', і саме він стане '+
+       'найяскравішою точкою на картинці.'],
+      ['t-ok','І ОСЬ ЩО ПОКАЗУЮТЬ У ПРЕЗЕНТАЦІЯХ',
+       'Гарна пляма поверх зображення. За нею — 49 чисел, два прогони мережі й '+
+       'жодної перевірки. Чи можна їй вірити, зʼясуємо в розділах 07 і 08.']
+    ];
+    verd('sVd',VD[step][0],VD[step][1],VD[step][2]);
+  }
+  on('stepNext','click',function(){ if(step<5){step++; draw();} });
+  on('stepPrev','click',function(){ if(step>0){step--; draw();} });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════ Інтерактив 4 · Grad-CAM для різних класів ═══════════ */
+(function(){
+  var cv=I('cCls'); if(!cv) return;
+  var cls=0;
+  var IMG=dec(D.probes[0]);
+
+  function draw(){
+    palette();
+    var g=dpr(cv), W=LW(cv), k;
+    var cam=dec(D.byclass[String(cls)]);
+    var im=nrm(IMG), cm=nrm(up28(cam,7));
+
+    capt(g,'ВХІД + КАРТА КЛАСУ «'+D.names[cls].toUpperCase()+'»',14,22,css('--rose'),11.5,true);
+    var S1=250;
+    gridmap(g,im,28,28,14,36,S1,graydim);
+    var cw=S1/28,r,c;
+    for(r=0;r<28;r++) for(c=0;c<28;c++){
+      g.globalAlpha=0.78*cm[r*28+c]; g.fillStyle=hot(cm[r*28+c]);
+      g.fillRect(14+c*cw,36+r*cw,cw+0.6,cw+0.6);
+    }
+    g.globalAlpha=1; frame(g,14,36,S1,S1,css('--hair'));
+
+    capt(g,'СИРА КАРТА 7×7',288,22,css('--soft'),11.5,true);
+    gridmap(g,nrm(cam),7,7,288,36,S1,hot); frame(g,288,36,S1,S1,css('--hair'));
+    var cc=S1/7,i,j, nn=nrm(cam);
+    for(j=0;j<7;j++) for(i=0;i<7;i++)
+      ctxt(g, cam[j*7+i]<=1e-6?'0':cam[j*7+i].toFixed(2), 288+cc/2+i*cc, 36+cc/2+j*cc+4,
+           nn[j*7+i]>0.55?css('--raise'):css('--ink'),10);
+
+    /* шість мініатюр */
+    var MX=566, t=100;
+    capt(g,'УСІ ШІСТЬ КАРТ ДЛЯ ЦЬОГО ЗОБРАЖЕННЯ',MX,22,css('--soft'),11.5,true);
+    for(k=0;k<6;k++){
+      var mx0=MX+(k%3)*(t+16), my=36+Math.floor(k/3)*(t+40);
+      gridmap(g,nrm(dec(D.byclass[String(k)])),7,7,mx0,my,t,hot);
+      frame(g,mx0,my,t,t, k===cls?css('--rose'):css('--hair'), k===cls?2.5:1);
+      ctxt(g,D.names[k],mx0+t/2,my+t+14, k===cls?css('--rose'):css('--soft'),10.5,k===cls);
+      var rr2 = k===0 ? 1.0 : D.ccorr[k-1];
+      ctxt(g,'r = '+sig(rr2,2),mx0+t/2,my+t+28,
+           rr2>0.8?css('--rose'):(rr2<0?css('--teal'):css('--soft')),10.5,true);
+    }
+
+    var p=D.prob[0][cls], mxc=amax(cam);
+    I('clP').textContent=p.toFixed(3);
+    I('clM').textContent=mxc.toFixed(3);
+    I('clR').textContent= cls===0 ? '1.000 (сама з собою)' : sig(D.ccorr[cls-1],3);
+
+    if(cls===0)
+      verd('clVd','t-ok','КАРТА ПРАВИЛЬНОГО КЛАСУ',
+        'Мережа впевнена на <b>'+p.toFixed(3)+'</b>, максимум карти '+mxc.toFixed(2)+'. '+
+        'З цією картою ми й порівнюємо решту пʼять. Перемкни на «квадрат».');
+    else if(D.ccorr[cls-1]>0.8)
+      verd('clVd','t-no','КАРТА ПРАКТИЧНО ТА САМА',
+        'Кореляція з картою правильного класу <b>'+sig(D.ccorr[cls-1],3)+'</b>, '+
+        'а мережа дає цьому класу лише '+p.toFixed(3)+' упевненості. Карта не змогла '+
+        'розрізнити два зовсім різні запитання: ваги для «кола» і «квадрата» в матриці '+
+        '<code>fc</code> надто схожі.');
+    else if(D.ccorr[cls-1]>0)
+      verd('clVd','t-mid','КАРТА ЧАСТКОВО ІНША',
+        'Кореляція <b>'+sig(D.ccorr[cls-1],3)+'</b>: щось спільне лишилось, щось змінилось. '+
+        'Максимум карти '+mxc.toFixed(3)+' проти '+amax(dec(D.byclass['0'])).toFixed(3)+
+        ' у правильного класу — сигнал слабший у '+
+        (amax(dec(D.byclass['0']))/Math.max(mxc,1e-6)).toFixed(1)+' раза.');
+    else
+      verd('clVd','t-ok','ОСЬ ТУТ КАРТА СПРАВДІ ІНША',
+        'Кореляція <b>'+sig(D.ccorr[cls-1],3)+'</b> — карти майже дзеркальні: де в однієї '+
+        'яскраво, у другої темно. Так і має поводитись класова карта, коли класи '+
+        'справді різні. Але, як видно на «квадраті», так буває не завжди.');
+  }
+  segment('clsSeg', function(i){ cls=i; draw(); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════ Інтерактив 5 · заслін ═══════════ */
+(function(){
+  var cv=I('cOcc'); if(!cv) return;
+  var patch=7, stride=1, shown=0, timer=null;
+  var IMG=dec(D.probes[0]);
+
+  function blk(){ return D.occ[patch+'_'+stride]; }
+  function draw(){
+    palette();
+    var g=dpr(cv), W=LW(cv);
+    var b=blk(), vals=dec(b.v), n=b.n, total=n*n;
+    var lo=amin(vals), hi=amax(vals), rng=Math.max(Math.abs(lo),Math.abs(hi))||1;
+    var im=nrm(IMG), S1=270;
+
+    /* ліворуч: зображення з квадратом */
+    capt(g,'ВХІД І ЗАСЛІН '+patch+'×'+patch,14,22,css('--soft'),11.5,true);
+    gridmap(g,im,28,28,14,36,S1,gray); frame(g,14,36,S1,S1,css('--hair'));
+    var px=S1/28;
+    if(shown<total){
+      var r=Math.floor(shown/n), c=shown%n;
+      var rr0=r*stride, cc0=c*stride;
+      g.fillStyle=gray(0.5);
+      g.fillRect(14+cc0*px,36+rr0*px,patch*px,patch*px);
+      g.strokeStyle=css('--rose'); g.lineWidth=2;
+      g.strokeRect(14+cc0*px,36+rr0*px,patch*px,patch*px);
+    }
+    ctxt(g,'сірий квадрат = 0.5',14+S1/2,36+S1+18,css('--soft'),11);
+
+    /* посередині: карта падіння */
+    capt(g,'КАРТА ПАДІННЯ '+n+'×'+n,306,22,css('--soft'),11.5,true);
+    var part=new Array(n*n), k;
+    for(k=0;k<n*n;k++) part[k]= k<shown ? vals[k]/rng : null;
+    var cw=S1/n, i,j;
+    for(j=0;j<n;j++) for(i=0;i<n;i++){
+      var v=part[j*n+i];
+      g.fillStyle = v===null ? css('--paper') : (v>=0? hot(v) : sgn(v));
+      g.fillRect(306+i*cw,36+j*cw,cw+0.6,cw+0.6);
+    }
+    frame(g,306,36,S1,S1,css('--hair'));
+    ctxt(g,shown>=total?'готово':'заповнено '+shown+' із '+total,
+         306+S1/2,36+S1+18, shown>=total?css('--teal'):css('--soft'),11,true);
+
+    /* праворуч: накладення готової карти + шкала */
+    capt(g,'ГОТОВА КАРТА ПОВЕРХ ВХОДУ',598,22,css('--soft'),11.5,true);
+    gridmap(g,im,28,28,598,36,S1,graydim);
+    if(shown>=total){
+      var full=up28(vals,n), nf=nrm(full), r2,c2;
+      for(r2=0;r2<28;r2++) for(c2=0;c2<28;c2++){
+        g.globalAlpha=0.78*nf[r2*28+c2]; g.fillStyle=hot(nf[r2*28+c2]);
+        g.fillRect(598+c2*px,36+r2*px,px+0.6,px+0.6);
+      }
+      g.globalAlpha=1;
+    } else {
+      g.fillStyle=css('--paper'); g.globalAlpha=0.72;
+      g.fillRect(598,36,S1,S1); g.globalAlpha=1;
+      ctxt(g,'ще будується',598+S1/2,36+S1/2,css('--soft'),13,true);
+    }
+    frame(g,598,36,S1,S1,css('--hair'));
+    var li;
+    for(li=0;li<120;li++){ g.fillStyle=hot(li/119); g.fillRect(598+li*1.5,36+S1+8,2,10); }
+    frame(g,598,36+S1+8,180,10,css('--hair'));
+    capt(g,'0',598,36+S1+32,css('--soft'),10);
+    g.textAlign='right'; g.fillStyle=css('--soft'); g.font=mono(10,false);
+    g.fillText('падіння '+hi.toFixed(3),778,36+S1+32); g.textAlign='left';
+
+    I('oRuns').textContent=String(b.runs);
+    I('oMax').textContent=hi.toFixed(3);
+    I('oCells').textContent=n+' × '+n;
+    I('oCost').textContent=Math.round(b.runs/2)+'×';
+
+    var vd;
+    if(stride>=4)
+      verd('oVd','t-no','ДЕШЕВО Й МАРНО',
+        'Крок '+stride+' дає всього <b>'+b.runs+'</b> '+прогонів(b.runs)+' — але й карту '+
+        n+'×'+n+', грубішу за саму Grad-CAM (7×7). Економія зʼїла те, заради чого '+
+        'метод і брали.');
+    else if(patch>=11)
+      verd('oVd','t-mid','ВЕЛИКИЙ КВАДРАТ РОЗМАЗУЄ',
+        'Квадрат '+patch+'×'+patch+' закриває '+((patch*patch)/784*100).toFixed(0)+
+        ' % зображення й майже завжди зачіпає фігуру. Максимальне падіння '+
+        hi.toFixed(3)+' — нижче, ніж у квадрата 7×7 (0.995), бо різниці між позиціями '+
+        'майже не лишилось.');
+    else if(stride===1)
+      verd('oVd','t-ok','НАЙЧЕСНІШИЙ І НАЙДОРОЖЧИЙ РЕЖИМ',
+        '<b>'+b.runs+'</b> '+прогонів(b.runs)+' мережі проти <b>двох</b> у Grad-CAM — '+
+        'дорожче в '+Math.round(b.runs/2)+' '+разів(Math.round(b.runs/2))+
+        '. Зате жодних градієнтів: мережа лишається чорною скринькою. '+
+        'Максимальне падіння '+hi.toFixed(3)+' при базовій упевненості '+D.occBase.toFixed(3)+'.');
+    else {
+      var cheaper = D.occ[patch+'_1'].runs / b.runs;
+      verd('oVd','t-mid','КОМПРОМІС',
+        'Крок '+stride+' здешевив метод у <b>'+cheaper.toFixed(1)+'</b> раза ('+b.runs+' '+
+        прогонів(b.runs)+' замість '+D.occ[patch+'_1'].runs+') — крок діє в обох вимірах '+
+        'одразу. Карта стала '+n+'×'+n+', а максимальне падіння '+hi.toFixed(3)+
+        ' майже не змінилось: на цій задачі проміжний крок платить мало.');
+    }
+    return vd;
+  }
+  function run(){
+    if(timer){ clearInterval(timer); timer=null; }
+    var b=blk(), total=b.n*b.n;
+    shown=0; draw();
+    var perTick=Math.max(1,Math.round(total/60));
+    timer=setInterval(function(){
+      shown+=perTick;
+      if(shown>=total){ shown=total; clearInterval(timer); timer=null; }
+      draw();
+    },30);
+  }
+  segment('occP', function(i){ patch=i; shown=blk().n*blk().n; if(timer){clearInterval(timer);timer=null;} draw(); });
+  segment('occS', function(i){ stride=i; shown=blk().n*blk().n; if(timer){clearInterval(timer);timer=null;} draw(); });
+  on('occRun','click',run);
+  on('occAll','click',function(){
+    if(timer){ clearInterval(timer); timer=null; }
+    shown=blk().n*blk().n; draw();
+  });
+  shown=blk().n*blk().n;
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════ Інтерактив 6 · два методи поруч ═══════════ */
+(function(){
+  var cv=I('cTwo'); if(!cv) return;
+  var img=0;
+
+  function draw(){
+    palette();
+    var g=dpr(cv), W=LW(cv), k;
+    var cam=up28(dec(D.cams[String(img)]),7);
+    var occ=dec(D.occ28[String(img)]);
+    var im=nrm(dec(D.probes[img]));
+    var nc=nrm(cam), no=nrm(occ), S1=250, px=S1/28, r,c;
+
+    capt(g,'GRAD-CAM (2 ПРОГОНИ)',14,22,css('--rose'),11.5,true);
+    gridmap(g,im,28,28,14,36,S1,graydim);
+    for(r=0;r<28;r++) for(c=0;c<28;c++){
+      g.globalAlpha=0.78*nc[r*28+c]; g.fillStyle=hot(nc[r*28+c]);
+      g.fillRect(14+c*px,36+r*px,px+0.6,px+0.6);
+    }
+    g.globalAlpha=1; frame(g,14,36,S1,S1,css('--hair'));
+
+    capt(g,'ЗАСЛІН (484 ПРОГОНИ)',676,22,css('--teal'),11.5,true);
+    gridmap(g,im,28,28,676,36,S1,graydim);
+    for(r=0;r<28;r++) for(c=0;c<28;c++){
+      g.globalAlpha=0.78*no[r*28+c]; g.fillStyle=hot(no[r*28+c]);
+      g.fillRect(676+c*px,36+r*px,px+0.6,px+0.6);
+    }
+    g.globalAlpha=1; frame(g,676,36,S1,S1,css('--hair'));
+
+    /* діаграма розсіяння */
+    var SX=330, SY=36, SS=250;
+    capt(g,'784 ПІКСЕЛІ: X — GRAD-CAM, Y — ЗАСЛІН',SX,22,css('--soft'),11.5,true);
+    g.fillStyle=css('--paper'); g.fillRect(SX,SY,SS,SS);
+    frame(g,SX,SY,SS,SS,css('--hair'));
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(SX,SY+SS); g.lineTo(SX+SS,SY); g.stroke();
+    g.fillStyle=css('--rose');
+    for(k=0;k<784;k++){
+      g.globalAlpha=0.42;
+      g.beginPath();
+      g.arc(SX+nc[k]*(SS-10)+5, SY+SS-5-no[k]*(SS-10), 2.1, 0, 6.2832);
+      g.fill();
+    }
+    g.globalAlpha=1;
+    capt(g,'Grad-CAM →',SX+2,SY+SS+16,css('--rose'),10.5);
+    g.save(); g.translate(SX-6,SY+SS); g.rotate(-Math.PI/2);
+    capt(g,'заслін →',0,-3,css('--teal'),10.5); g.restore();
+
+    var r0=D.agree[img];
+    ctxt(g,'r = '+sig(r0,3), SX+SS/2, SY+SS+34,
+         r0>0.5?css('--teal'):(r0<0.2?css('--rose'):css('--amber')),15,true);
+
+    I('twR').textContent=sig(r0,3);
+    I('twP').textContent=D.prob[img][D.pred[img]].toFixed(3);
+    I('twA').textContent=D.names[D.pred[img]]+(D.pred[img]===img?' ✅':' ❌');
+
+    if(r0>0.6)
+      verd('twVd','t-ok','МЕТОДИ ЗГОДНІ',
+        'Кореляція <b>'+sig(r0,3)+'</b>, хмара точок витягнута вздовж діагоналі. '+
+        'Два незалежні способи показали на те саме місце — гіпотеза про те, куди '+
+        'дивилась мережа, підкріплена.');
+    else if(r0>0.15)
+      verd('twVd','t-mid','ЗГОДА СЛАБКА',
+        'Кореляція <b>'+sig(r0,3)+'</b>. Щось спільне є, але хмара розсипана. '+
+        'Показувати таку карту як пояснення вже ризиковано: другий метод її '+
+        'не підтвердив.');
+    else if(r0>-0.12)
+      verd('twVd','t-no','МЕТОДИ НЕ ПОВʼЯЗАНІ',
+        'Кореляція <b>'+sig(r0,3)+'</b> — це практично нуль: хмара точок розсипана '+
+        'без будь-якої форми. Дві карти не мають нічого спільного, хоча мережа '+
+        'відповіла правильно з упевненістю '+
+        D.prob[img][D.pred[img]].toFixed(3)+'. Обирати між ними нема за чим.');
+    else
+      verd('twVd','t-no','МЕТОДИ СУПЕРЕЧАТЬ',
+        'Кореляція <b>'+sig(r0,3)+'</b> — відʼємна. Там, де Grad-CAM бачить важливе, '+
+        'заслін бачить неважливе, і навпаки. Мережа при цьому відповіла правильно '+
+        'з упевненістю '+D.prob[img][D.pred[img]].toFixed(3)+'. Це найгірший можливий '+
+        'результат для того, хто збирався показати карту замовникові.');
+  }
+  segment('twoSeg', function(i){ img=i; draw(); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* ═══════════ Інтерактив 7 · перевірка на осудність ═══════════ */
+(function(){
+  var cv=I('cSane'); if(!cv) return;
+  var img=0, which=0;
+  var KEY=['trained','head','all'];
+  var TITLE=['НАВЧЕНА МЕРЕЖА (0.968)','ВИПАДКОВА ГОЛОВА (0.167)','ВИПАДКОВЕ ТІЛО (0.167)'];
+  var SHORT=['навчена','вип. голова','вип. тіло'];
+
+  function corr(i,w){
+    if(w===0) return 1;
+    var a = w===1 ? D.saneH[img] : D.saneA[img];
+    return a;
+  }
+  function draw(){
+    palette();
+    var g=dpr(cv), W=LW(cv), k;
+    var im=nrm(dec(D.probes[img])), S0=150, px0=S0/28;
+
+    capt(g,'ВХІД',14,22,css('--soft'),11.5,true);
+    gridmap(g,im,28,28,14,36,S0,gray); frame(g,14,36,S0,S0,css('--hair'));
+    capt(g,D.names[img],14,S0+56,css('--ink'),13,true);
+    capt(g,'мережа каже: '+D.names[D.pred[img]],14,S0+76,css('--soft'),11);
+    capt(g,'упевненість '+D.prob[img][D.pred[img]].toFixed(3),14,S0+94,css('--soft'),11);
+
+    /* велика панель обраного варіанта */
+    var cam=dec(D.sane[KEY[which]][String(img)]);
+    var empty = amax(cam)<=1e-9;
+    var S1=250, BX=190;
+    capt(g,TITLE[which],BX,22, which===0?css('--teal'):css('--rose'),11.5,true);
+    gridmap(g,im,28,28,BX,36,S1,graydim);
+    if(!empty){
+      var nc=nrm(up28(cam,7)), px=S1/28, r,c;
+      for(r=0;r<28;r++) for(c=0;c<28;c++){
+        g.globalAlpha=0.78*nc[r*28+c]; g.fillStyle=hot(nc[r*28+c]);
+        g.fillRect(BX+c*px,36+r*px,px+0.6,px+0.6);
+      }
+      g.globalAlpha=1;
+    } else {
+      g.fillStyle=css('--paper'); g.globalAlpha=0.82;
+      g.fillRect(BX,36,S1,S1); g.globalAlpha=1;
+      ctxt(g,'ПОРОЖНЯ КАРТА',BX+S1/2,36+S1/2-6,css('--rose'),15,true);
+      ctxt(g,'усі 49 клітинок = 0',BX+S1/2,36+S1/2+16,css('--soft'),12);
+    }
+    frame(g,BX,36,S1,S1,css('--hair'));
+    ctxt(g,'максимум карти: '+(empty?'0':amax(cam).toFixed(3)),BX+S1/2,36+S1+20,
+         empty?css('--rose'):css('--soft'),11.5,true);
+
+    /* три мініатюри й кореляції */
+    var TX=470, t=140;
+    capt(g,'ТРИ ВЕРСІЇ ОДНІЄЇ МЕРЕЖІ — КАРТА БУДУЄТЬСЯ ТИМ САМИМ КОДОМ',TX,22,css('--soft'),11.5,true);
+    for(k=0;k<3;k++){
+      var mx0=TX+k*(t+16);
+      var cm=dec(D.sane[KEY[k]][String(img)]);
+      var ee=amax(cm)<=1e-9;
+      if(ee){
+        g.fillStyle=css('--paper'); g.fillRect(mx0,36,t,t);
+        ctxt(g,'порожня',mx0+t/2,36+t/2+4,css('--rose'),12,true);
+      } else gridmap(g,nrm(cm),7,7,mx0,36,t,hot);
+      frame(g,mx0,36,t,t, k===which?css('--rose'):css('--hair'), k===which?2.5:1);
+      ctxt(g,SHORT[k],mx0+t/2,36+t+16, k===which?css('--rose'):css('--soft'),11,k===which);
+      var cr = k===0 ? null : (k===1?D.saneH[img]:D.saneA[img]);
+      ctxt(g, k===0 ? 'орієнтир' : (cr===null? 'r не визначена' : 'r = '+sig(cr,3)),
+           mx0+t/2,36+t+32,
+           cr!==null && cr>0.8 ? css('--rose') : css('--soft'),11,true);
+    }
+
+    /* шкала: де ми на відрізку від «дві навчені» до нуля */
+    var GX=TX, GW=3*t+32, GY=254;
+    capt(g,'кореляція з картою навченої мережі · зображення «'+D.names[img]+'»',
+         GX,GY-10,css('--soft'),11);
+    g.fillStyle=css('--paper'); rr(g,GX,GY,GW,24,5); g.fill();
+    frame(g,GX,GY,GW,24,css('--hair'));
+    /* підписи розводимо по трьох рівнях: інакше два близькі значення злипаються */
+    function tick(v,color,label,level){
+      if(v===null || v===undefined) return;
+      var x=GX+(v+1)/2*GW;
+      g.strokeStyle=color; g.lineWidth=2.5;
+      g.beginPath(); g.moveTo(x,GY); g.lineTo(x,GY+24); g.stroke();
+      var ly=GY+38+level*15, lx=Math.max(GX+26,Math.min(GX+GW-30,x));
+      g.strokeStyle=color; g.lineWidth=1;
+      g.beginPath(); g.moveTo(x,GY+24); g.lineTo(lx,ly-9); g.stroke();
+      ctxt(g,label,lx,ly,color,10.5,true);
+    }
+    g.strokeStyle=css('--soft'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(GX+GW/2,GY); g.lineTo(GX+GW/2,GY+24); g.stroke();
+    capt(g,'−1',GX,GY+17,css('--soft'),10);
+    g.textAlign='right'; g.fillStyle=css('--soft'); g.font=mono(10,false);
+    g.fillText('+1',GX+GW-3,GY+17); g.textAlign='left';
+    tick(D.saneTwin[img],css('--teal'),'інша навчена',0);
+    tick(D.saneH[img],css('--rose'),'вип. голова',1);
+    tick(D.saneA[img],css('--amber'),'вип. тіло',2);
+    capt(g,'середнє по шести зображеннях:',GX,GY+100,css('--soft'),11);
+    capt(g,'інша навчена +'+D.saneSt.twin_mean.toFixed(3)+
+           ' · голова +'+D.saneSt.head_mean.toFixed(3)+
+           ' · тіло +'+D.saneSt.all_mean.toFixed(3),
+         GX,GY+117,css('--ink'),11,true);
+
+    var cr2 = which===0 ? null : (which===1?D.saneH[img]:D.saneA[img]);
+    var twin = D.saneTwin[img];
+    I('snR').textContent = which===0 ? '1.000' : (cr2===null ? 'немає' : sig(cr2,3));
+    I('snT').textContent = D.saneTwin[img]===null?'—':sig(D.saneTwin[img],3);
+    I('snA').textContent = which===0 ? '0.968 — вивчила задачу'
+                                     : '0.167 — рівень вгадування';
+
+    if(which===0)
+      verd('snVd','t-ok','ЦЕ ЕТАЛОН',
+        'Мережа з точністю 0.968. Її карта — те, з чим порівнюємо решту. Орієнтир зверху: '+
+        'друга незалежно навчена мережа дає на цьому зображенні '+
+        (D.saneTwin[img]===null?'—':sig(D.saneTwin[img],3))+
+        '. Тепер перемкни на «вип. голова».');
+    else if(cr2===null)
+      verd('snVd','t-no','МЕТОД ВІДМОВИВ',
+        'Зіпсована мережа дала <b>порожню карту</b>: зважена сума виявилась відʼємною '+
+        'скрізь, і relu стерла все. Кореляцію з порожньою картою порахувати не можна — '+
+        'у неї немає розкиду. Формально це «карта змінилась», практично — метод просто '+
+        'нічого не сказав.');
+    else if(twin!==null && cr2>=twin-0.02)
+      verd('snVd','t-no','ПЕРЕВІРКУ ПРОВАЛЕНО',
+        'Кореляція <b>'+sig(cr2,3)+'</b> — а дві <b>навчені</b> мережі дають на цьому '+
+        'зображенні лише '+sig(twin,3)+'. Тобто мережа з точністю 0.167 намалювала карту, '+
+        'схожу на початкову <b>не менше</b>, ніж друга мережа, яка задачу вивчила. '+
+        'Псування ваг тут майже нічого не змінило: карта показує не знання мережі, '+
+        'а властивості зображення й архітектури.');
+    else if(cr2<0.35)
+      verd('snVd','t-ok','ПЕРЕВІРКУ ПРОЙДЕНО',
+        'Кореляція <b>'+sig(cr2,3)+'</b> — карта змінилась майже до непізнаваності, '+
+        'тоді як дві навчені мережі дають на цьому зображенні '+sig(twin,3)+
+        '. Псування ваг зруйнувало карту, а отже карта таки залежала від того, '+
+        'що мережа вивчила.');
+    else
+      verd('snVd','t-mid','ЗМІНИЛАСЬ, АЛЕ НЕ ДО КІНЦЯ',
+        'Кореляція <b>'+sig(cr2,3)+'</b>. Це менше за орієнтир двох навчених '+
+        'мереж ('+sig(twin,3)+'), але й далеко не нуль: частина карти пережила '+
+        'псування ваг. На такому зображенні висновок про надійність карти зробити '+
+        'не можна.');
+  }
+  segment('saneImg', function(i){ img=i; draw(); });
+  segment('saneWhich', function(i){ which=i; draw(); });
+  draw();
+  window.addEventListener('resize',draw);
+})();
+
+/* перемалювати все при зміні теми системи */
+(function(){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change',function(){
+    window.dispatchEvent(new Event('resize'));
+  });
+})();
+
+})();
+</script>
+</body>
+</html>

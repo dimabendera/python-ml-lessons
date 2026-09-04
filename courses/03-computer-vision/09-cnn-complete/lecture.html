@@ -1,0 +1,2061 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CNN цілком: як із згортки, ReLU і пулінгу збирається мережа</title>
+<meta name="description" content="Як із згортки, нелінійності й пулінгу збирається робоча згорткова мережа: типовий блок Conv-ReLU-Pool, стос блоків із правилом подвоєння, наскрізний рахунок форм і параметрів. Порахований факт: 74.7 % ваг сидять у першому повнозвʼязному шарі, а памʼять їдять перші згортки. Голова Flatten проти глобального усереднення, рецептивне поле цілої мережі, LeNet-5 і VGG-16 по шарах.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+/* рядок голови мережі — підсвічуємо, бо саме він і є відкриттям теми */
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* блок коду мережі в тексті: моноширинний, зі збереженням відступів */
+pre.arch{font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.6;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 18px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow)}
+pre.arch b{color:var(--rose); font-weight:700}
+pre.arch i{color:var(--soft); font-style:normal}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 2 · Тема 09</p>
+    <h1>CNN цілком</h1>
+    <p class="stand">Три деталі вже знайомі. Лишилось найцікавіше: у якому порядку їх
+      складають, скільки разів повторюють — і чому ваги мережі живуть в одному її кінці,
+      а памʼять у протилежному.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Три деталі, одна мережа</a></li>
+        <li><a href="#s2">Типовий блок</a></li>
+        <li><a href="#s3">Стос блоків і правило подвоєння</a></li>
+        <li><a href="#s4">Наскрізний рахунок форм</a></li>
+        <li><a href="#s5">Де живуть параметри</a></li>
+        <li><a href="#s6">Де живе памʼять</a></li>
+        <li><a href="#s7">Голова: Flatten проти GAP</a></li>
+        <li><a href="#s8">Рецептивне поле цілої мережі</a></li>
+        <li><a href="#s9">LeNet-5, 1998</a></li>
+        <li><a href="#s10">VGG і однорідність</a></li>
+        <li><a href="#s11">Що вирішує глибина</a></li>
+        <li><a href="#s12">Підсумок</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../08-pooling/lecture.html">← 08. Пулінг і зменшення розмірності</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../10-augmentation/lecture.html">10. Аугментація даних →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Три попередні теми розібрали мережу на деталі. Тема 06 пояснила, чому
+повнозвʼязна мережа не годиться для зображень; тема 07 дала <a
+href="../07-conv-layer/lecture.html">згортковий шар</a> — ядро, канали, <code>stride</code>,
+<code>padding</code>; тема 08 дала <a href="../08-pooling/lecture.html">пулінг</a>. Питання
+цієї теми одне: <strong>як із цих деталей складається мережа, яка справді працює</strong> —
+що йде за чим, скільки разів, і що відбувається з числами всередині.</p>
+
+<p>Відповідь буде неочікуваною двічі. У класичній згортковій мережі <strong>більшість
+ваг сидить зовсім не в згортках</strong>, а памʼять під час навчання їдять зовсім не ті
+шари, у яких ці ваги лежать. Обидва факти ми порахуємо руками на маленькій мережі, а
+потім перевіримо на VGG-16 — і числа збіжаться до частки відсотка.</p>
+
+<div class="note"><b>Наскрізний приклад теми.</b> Одна мережа на всю лекцію: вхід —
+зображення 28×28 у відтінках сірого, шість класів фігур (коло, квадрат, ромб, кільце,
+хрест, трикутник). Датасет ми не завантажуємо, а <strong>малюємо формулами</strong> прямо
+в зошиті. Усі числа нижче ти повториш у <code>practice.ipynb</code> і звіриш із фактичними
+<code>.shape</code>.</div>
+
+<h2 id="s1"><span class="num">01 / Зведення</span>Три деталі, одна мережа</h2>
+
+<p>Коротко — за що відповідає кожна деталь.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Деталь</th><th>Що вона робить у мережі</th></tr></thead>
+  <tbody>
+    <tr><td>Згортка</td><td>Шукає одну й ту саму дрібну прикмету в кожній точці зображення. Ядро — це кілька десятків ваг, які <em>вивчаються</em>; кожен вихідний канал відповідає одній вивченій прикметі.</td></tr>
+    <tr><td>Нелінійність</td><td>Розриває ланцюг: без неї дві згортки поспіль — це знову одна згортка.</td></tr>
+    <tr><td>Зменшення</td><td>Скорочує карту вдвічі по кожній стороні. Дає дві речі одразу: наступна згортка бачить учетверо більшу ділянку оригіналу, і рахувати її вчетверо дешевше.</td></tr>
+  </tbody>
+</table></div>
+
+<p>Друга деталь варта окремого слова, бо без неї конструкція розсипається. Дві згортки
+поспіль <strong>математично дорівнюють одній згортці</strong> з іншим ядром — стос
+глибиною десять шарів мав би рівно стільки ж сили, скільки один. Саме <code>ReLU</code>
+між ними робить кожен наступний шар справді новим.</p>
+
+<h2 id="s2"><span class="num">02 / Блок</span>Типовий блок</h2>
+
+<p>Одиниця, з якої збирають згорткову мережу, зветься <strong>блоком</strong> і складається
+з трьох кроків:</p>
+
+<div class="eq">Conv → ReLU → Pool</div>
+
+<p>Спершу шукаємо прикмети згорткою, потім прибираємо відʼємні відгуки нелінійністю,
+потім удвічі зменшуємо карту. На виході — менша за розміром, але глибша за каналами карта
+ознак, і такий самий блок можна поставити ще раз. Порядок усередині блока не
+випадковий.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Чому Conv стоїть першим</span>
+    <p>Це єдиний крок із вагами, і він мусить дивитись на найдетальнішу картинку, яка є на
+    цьому рівні: після пулінгу половина деталей уже викинута. Спершу міряємо, потім
+    спрощуємо.</p>
+  </div>
+  <div class="step"><span class="lbl">Чому Pool стоїть останнім</span>
+    <p>Пулінг вибирає з кожного квадрата 2×2 одне число. Робити це має сенс тоді, коли в
+    квадраті вже лежать <em>відгуки прикмет</em>, а не сира яскравість: тоді «взяти
+    максимум» означає «прикмета в цій околиці десь є» — і саме це дає часткову терпимість
+    до зсуву з теми 08.</p>
+  </div>
+</div>
+
+<p>Лишається питання, яке зазвичай оминають: а <strong>що буде, якщо переставити ReLU і
+Pool</strong>? Відповідь залежить від того, який саме пулінг стоїть у блоці, і різниця тут
+не в смаку, а в арифметиці.</p>
+
+<p>Візьми квадрат 2×2 зі значеннями <code>-5, 3, -1, 4</code>.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Максимум: порядок не важить</span>
+    <p>Спершу <code>ReLU</code>, потім максимум: числа стають <code>0, 3, 0, 4</code>,
+    максимум — <b>4</b>. Навпаки: максимум сирих чисел <b>4</b>, і <code>ReLU(4)</code> —
+    знову <b>4</b>.</p>
+    <div class="eq">max( ReLU(x) ) = ReLU( max(x) )</div>
+    <p>Це не збіг, а властивість: <code>ReLU</code> ніколи не переставляє числа за
+    величиною. Хто був більшим — лишається більшим (або обидва стають нулями).</p>
+  </div>
+  <div class="step"><span class="lbl">Середнє: порядок важить</span>
+    <p>Спершу <code>ReLU</code>, потім середнє: <code>(0 + 3 + 0 + 4) / 4</code> =
+    <b>1.75</b>. Навпаки: <code>(−5 + 3 − 1 + 4) / 4</code> = <b>0.25</b>. Різниця в сім
+    разів.</p>
+    <div class="eq">avg( ReLU(x) ) ≥ ReLU( avg(x) )</div>
+    <p>Причина: у другому варіанті відʼємні числа встигають <em>погасити</em> додатні ще
+    до обнулення. Сильний відгук прикмети в одному кутку квадрата гине, бо в сусідньому
+    відгук був відʼємним. У першому варіанті гасити нічим — там уже нулі.</p>
+  </div>
+</div>
+
+<p>Висновок: <strong>для max-пулінгу порядок вільний, для avg-пулінгу — ні</strong>, і
+правильний порядок саме <code>Conv → ReLU → Pool</code>. Одна схема на обидва випадки
+зручніша за дві — тому в бібліотеках закріпилась саме вона.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Чи можна переставити ReLU і Pool</p>
+  <p class="fig-sub">Ліворуч — карта ознак 6×6 одразу після згортки, з відʼємними числами. Далі два ланцюжки в різному порядку й карта різниці між ними.</p>
+  <div class="panel">
+    <div><canvas id="cOrd" width="940" height="430" aria-label="Карта ознак шість на шість, два ланцюжки обробки в різному порядку та карта різниці між їхніми результатами"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">пулінг у блоці</span>
+        <div class="seg" id="ordSeg">
+          <button type="button" data-i="0" aria-pressed="true">максимум</button>
+          <button type="button" data-i="1" aria-pressed="false">середнє</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>клітинок розійшлось</b><i id="ordDiff">—</i></div>
+        <div class="cellv"><b>з них усього</b><i id="ordAll">9</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найбільше розходження</b><i id="ordMax">—</i></div>
+      </div>
+      <div class="verdict" id="ordVd"></div>
+    </div>
+  </div>
+  <figcaption><b>З максимумом карта різниці порожня: 0 клітинок із 9.</b> З середнім
+    розходяться майже всі, і завжди в один бік — <code>ReLU</code> перед пулінгом дає
+    більше або стільки ж.</figcaption>
+</figure>
+
+<div class="note"><b>Що ще буває в блоці.</b> У сучасних мережах між <code>Conv</code> і
+<code>ReLU</code> зазвичай стоїть ще один шар — <strong>батчнорм</strong> (batch
+normalization). Він належить не до конструкції мережі, а до її навчання, тому розбирається
+в темі «Навчання CNN»; поки просто знай, що повний сучасний блок виглядає як
+<code>Conv → BatchNorm → ReLU → Pool</code>. Наша мережа обходиться без нього свідомо —
+щоб рахунок параметрів лишався прозорим.</div>
+
+<h2 id="s3"><span class="num">03 / Стос</span>Стос блоків і правило подвоєння</h2>
+
+<p>Один блок бачить дуже мало: після нього один нейрон охоплює квадрат 4×4 пікселі
+оригіналу — цього вистачить на «тут є коротка риска», але не на «тут коло». Тому блоки
+ставлять один за одним, і з кожним блоком дві речі змінюються одночасно.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Що</th><th>Куди йде</th><th>Чому</th></tr></thead>
+  <tbody>
+    <tr><td>Просторовий розмір</td><td>падає вдвічі по стороні</td><td>це робить пулінг; заразом росте ділянка оригіналу, яку бачить один нейрон</td></tr>
+    <tr><td>Кількість каналів</td><td>росте вдвічі</td><td>різних складних прикмет буває більше, ніж різних простих</td></tr>
+  </tbody>
+</table></div>
+
+<p>Друга сходинка не автоматична — її ставить інженер, обираючи кількість вихідних
+каналів у кожній згортці. У першому блоці мережа шукає найпростіші речі: риску під одним
+кутом, під іншим, світлу пляму — таких прикмет мало. У третьому блоці прикмети складніші
+(«кут», «дуга», «перехрестя»), і комбінацій із простих деталей значно більше. Щоб було де
+їх тримати, каналів дають більше.</p>
+
+<div class="note warn"><b>Це емпіричне правило, а не закон.</b> Ніхто не довів, що
+подвоєння оптимальне; воно закріпилось, бо дає передбачуваний розподіл роботи між шарами й
+описує мережу одним рядком чисел (<code>64, 128, 256, 512</code> — це вся згорткова
+частина VGG). Сучасні архітектури його часто порушують. Але як стартова конструкція
+подвоєння працює добре.</div>
+
+<p>Тепер порахуємо, що саме подвоєння тримає сталим. Це найцікавіша його властивість, і
+її зазвичай формулюють неточно.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1 — що відбувається з кількістю чисел</span>
+    <p>Карта ознак після першої згортки нашої мережі — 8 каналів по 28×28, тобто
+    8 × 28 × 28 = <b>6 272</b> числа. Після другої — 16 каналів по 14×14, тобто <b>3 136</b>.
+    Після третьої — 32 канали по 7×7, тобто <b>1 568</b>.</p>
+    <p>Чисел стає <strong>удвічі менше</strong> з кожним блоком, а не стільки ж: сторона
+    ділиться на два <em>двічі</em> (вчетверо менше клітинок), а каналів більшає лише
+    вдвічі.</p>
+  </div>
+  <div class="step"><span class="lbl">Крок 2 — що відбувається з обсягом обчислень</span>
+    <p>А ось скільки множень робить згортка. На кожну клітинку виходу вона перемножує
+    ядро <span class="raw">k</span> × <span class="raw">k</span> на всі вхідні канали:</p>
+    <div class="eq">множень = H<span class="sub">вих</span> × W<span class="sub">вих</span> × C<span class="sub">вих</span> × C<span class="sub">вх</span> × k × k</div>
+    <p>Тут <span class="raw">H</span> і <span class="raw">W</span> — висота й ширина карти
+    на виході, <span class="raw">C</span> — кількість каналів на вході та виході,
+    <span class="raw">k</span> — сторона ядра.</p>
+  </div>
+  <div class="step"><span class="lbl">Крок 3 — підставляємо числа</span>
+    <p>Друга згортка: 14 × 14 × 16 × 8 × 3 × 3 = <b>225 792</b> множення.<br>
+    Третя згортка: 7 × 7 × 32 × 16 × 3 × 3 = <b>225 792</b> множення.</p>
+    <p>Однаково, до останньої одиниці. Причина видна з формули:
+    <span class="raw">H</span> і <span class="raw">W</span> поділились на два кожен (разом
+    на чотири), обидва <span class="raw">C</span> помножились на два кожен (теж на
+    чотири).</p>
+  </div>
+</div>
+
+<p>Ось точне формулювання: <strong>правило подвоєння тримає сталим не кількість чисел, а
+обсяг роботи на шар</strong>. Кожен наступний шар коштує стільки ж, скільки попередній,
+зате памʼяті просить удвічі менше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Конструктор мережі</p>
+  <p class="fig-sub">Задай кількість блоків і скільки каналів дає перший із них. Схема перерахує форми наскрізь — і скаже, чи мережа взагалі збереться.</p>
+  <div class="panel">
+    <div><canvas id="cBld" width="940" height="400" aria-label="Схема стосу згорткових блоків: розмір карти падає, кількість каналів росте, під схемою стовпчики параметрів"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="bldN">блоків <output id="bldNv">3</output></label>
+        <input type="range" id="bldN" min="1" max="5" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <label for="bldC">каналів у першому <output id="bldCv">8</output></label>
+        <input type="range" id="bldC" min="4" max="32" step="4" value="8">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>карта на виході</b><i id="bldOut">—</i></div>
+        <div class="cellv"><b>каналів на виході</b><i id="bldCh">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>чисел у голову</b><i id="bldFlat">—</i></div>
+        <div class="cellv"><b>параметрів усього</b><i id="bldP">—</i></div>
+      </div>
+      <div class="verdict" id="bldVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Вхід 28×28, і саме він ставить межу.</b> Після четвертого блока карта
+    сходить до 1×1, після пʼятого — до нуля, і мережа вже не збирається: пулінгу немає що
+    ділити (28 → 14 → 7 → 3 → 1 → 0).
+    Другий повзунок показує іншу межу — ширина не безкоштовна: параметри ростуть від неї
+    квадратично, бо кожна згортка звʼязує всі вхідні канали з усіма вихідними.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Форми</span>Наскрізний рахунок форм</h2>
+
+<p>Тепер проведемо крізь конкретну мережу одне зображення. Це головна навичка теми:
+взяти опис мережі й порахувати рукою, що буде на виході кожного шару. Помилка тут не
+прощається — мережа просто не запуститься.</p>
+
+<pre class="arch"><b>body</b>  = Conv(1→8,  3×3, padding=1) → ReLU → MaxPool(2)
+       Conv(8→16, 3×3, padding=1) → ReLU → MaxPool(2)
+       Conv(16→32,3×3, padding=1) → ReLU → MaxPool(2)
+<b>head</b>  = Flatten → Linear(288→64) → ReLU → Linear(64→6)</pre>
+
+<p>Два правила, за якими рахують форми, ми вже маємо з тем 07 і 08. Обидва — на одну
+дію.</p>
+
+<div class="eq">згортка з padding=1 і stride=1: розмір <strong>не міняється</strong><br>пулінг 2×2 з кроком 2: розмір <strong>ділиться на два</strong> (дробову частину відкидаємо)</div>
+
+<p><code>padding=1</code> означає, що навколо карти дописується рамка в один піксель
+нулів. Ядро 3×3 без рамки зʼїдає по одному пікселю з кожного боку (з 28 виходить 26);
+рамка ці два пікселі повертає, і на виході знову 28. Тому звʼязка «ядро 3×3 плюс
+<code>padding=1</code>» зустрічається всюди: весь рахунок форм зводиться до пулінгів.</p>
+
+<p>Друге: 28 ділиться на 2 — виходить 14, ще раз 7, ще раз 3 з половиною, і половина
+відкидається. Ось звідки береться <strong>288</strong> на вході голови:
+32 канали × 3 × 3.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>шар</th><th>вхід</th><th>вихід</th><th>чисел</th><th>параметрів</th></tr></thead>
+  <tbody>
+    <tr><td>вхід</td><td>—</td><td>1×28×28</td><td>784</td><td>0</td></tr>
+    <tr><td>Conv 1→8</td><td>1×28×28</td><td>8×28×28</td><td>6 272</td><td>80</td></tr>
+    <tr><td>ReLU</td><td>8×28×28</td><td>8×28×28</td><td>6 272</td><td>0</td></tr>
+    <tr><td>MaxPool 2</td><td>8×28×28</td><td>8×14×14</td><td>1 568</td><td>0</td></tr>
+    <tr><td>Conv 8→16</td><td>8×14×14</td><td>16×14×14</td><td>3 136</td><td>1 168</td></tr>
+    <tr><td>ReLU</td><td>16×14×14</td><td>16×14×14</td><td>3 136</td><td>0</td></tr>
+    <tr><td>MaxPool 2</td><td>16×14×14</td><td>16×7×7</td><td>784</td><td>0</td></tr>
+    <tr><td>Conv 16→32</td><td>16×7×7</td><td>32×7×7</td><td>1 568</td><td>4 640</td></tr>
+    <tr><td>ReLU</td><td>32×7×7</td><td>32×7×7</td><td>1 568</td><td>0</td></tr>
+    <tr><td>MaxPool 2</td><td>32×7×7</td><td>32×3×3</td><td>288</td><td>0</td></tr>
+    <tr><td>Flatten</td><td>32×3×3</td><td>288</td><td>288</td><td>0</td></tr>
+    <tr class="hot"><td>Linear 288→64</td><td>288</td><td>64</td><td>64</td><td>18 496</td></tr>
+    <tr><td>ReLU</td><td>64</td><td>64</td><td>64</td><td>0</td></tr>
+    <tr><td>Linear 64→6</td><td>64</td><td>6</td><td>6</td><td>390</td></tr>
+    <tr class="sumrow"><td>усього</td><td>—</td><td>—</td><td>—</td><td>24 774</td></tr>
+  </tbody>
+</table></div>
+
+<p>Звідки беруться числа в колонці «параметрів» — розберемо в наступному розділі. А зараз
+подивись на колонку форм: висота й ширина падають (28 → 14 → 7 → 3), глибина росте
+(1 → 8 → 16 → 32). Карта ознак стає все меншою на площі й усе товщою в каналах. Це і є
+геометричний портрет будь-якої згорткової мережі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Одне зображення крізь усю мережу</p>
+  <p class="fig-sub">Повзунок веде по шарах. Карта ознак намальована в масштабі — видно, як вона худне на площі й товстішає в каналах. Перемикач бере другу мережу, справжню, 1998 року.</p>
+  <div class="panel">
+    <div><canvas id="cFwd" width="940" height="410" aria-label="Обʼєми карт ознак від входу до виходу мережі, поточний шар підсвічено, під ними стовпчики кількості чисел"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">мережа</span>
+        <div class="seg" id="fwdSeg">
+          <button type="button" data-i="0" aria-pressed="true">наша, 28×28</button>
+          <button type="button" data-i="1" aria-pressed="false">LeNet-5, 32×32</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="fwdL">шар <output id="fwdLv">0</output></label>
+        <input type="range" id="fwdL" min="0" max="9" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вихід шару</b><i id="fwdSh">—</i></div>
+        <div class="cellv"><b>чисел</b><i id="fwdN">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>параметрів</b><i id="fwdP">—</i></div>
+        <div class="cellv"><b>частка ваг</b><i id="fwdPct">—</i></div>
+      </div>
+      <div class="verdict" id="fwdVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Прожени повзунок обома мережами.</b> Найтовстіший стовпчик чисел стоїть
+    на початку — це вихід першої згортки; найбільша частка ваг майже в кінці — це перший
+    шар голови. Дві мережі, розділені двадцятьма роками, поводяться однаково.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Ваги</span>Де живуть параметри</h2>
+
+<p>Тепер головне відкриття теми. Ядро згортки має розмір
+<span class="raw">k</span> × <span class="raw">k</span> і повторюється для кожної пари
+«вхідний канал → вихідний канал», плюс кожен вихідний канал має власний зсув (bias):</p>
+
+<div class="eq">параметрів згортки = C<span class="sub">вх</span> × C<span class="sub">вих</span> × k × k + C<span class="sub">вих</span></div>
+
+<p>Підставимо для трьох наших згорток:</p>
+
+<div class="eq left">Conv 1→8  : 1 × 8  × 3 × 3 + 8  =    72 +  8 =     80
+Conv 8→16 : 8 × 16 × 3 × 3 + 16 =  1152 + 16 =  1 168
+Conv 16→32: 16 × 32 × 3 × 3 + 32 =  4608 + 32 =  4 640</div>
+
+<p>Разом згорткова частина — <strong>5 888</strong> параметрів. Повнозвʼязний шар звʼязує
+<em>кожне</em> вхідне число з <em>кожним</em> вихідним, тож параметрів у нього стільки,
+скільки пар, плюс зсув на кожен вихід:</p>
+
+<div class="eq left">Linear 288→64: 288 × 64 + 64 = 18 432 + 64 = 18 496
+Linear 64→6  :  64 ×  6 +  6 =   384 +  6 =    390</div>
+
+<p>Разом голова — <strong>18 886</strong>. І ось співвідношення, заради якого писався цей
+розділ:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>частина</th><th>параметрів</th><th>частка</th></tr></thead>
+  <tbody>
+    <tr><td>три згортки</td><td>5 888</td><td>23.8 %</td></tr>
+    <tr class="hot"><td>перший Linear</td><td>18 496</td><td>74.7 %</td></tr>
+    <tr><td>останній Linear</td><td>390</td><td>1.6 %</td></tr>
+    <tr class="sumrow"><td>усього</td><td>24 774</td><td>100 %</td></tr>
+  </tbody>
+</table></div>
+
+<p><strong>Три чверті всіх ваг сидять в одному шарі — першому повнозвʼязному.</strong> Не
+в згортках, які власне й роблять роботу зі зображенням, а в шарі, що приймає розпластаний
+стовпчик і множить його на матрицю. Це не особливість нашого прикладу: далі ми побачимо ту
+саму картину в LeNet-5 і у VGG-16.</p>
+
+<p>Причина видна з двох формул. Згортка <strong>перевикористовує</strong> те саме ядро в
+кожній точці карти: 4 608 ваг третьої згортки працюють на всіх 49 клітинках виходу.
+Повнозвʼязний шар не перевикористовує нічого — у нього окрема вага на кожну пару чисел, і
+кожна працює рівно один раз.</p>
+
+<p>Тепер поверни цей факт іншим боком. Друга й третя згортки роблять по 225 792 множення
+кожна, а перший <code>Linear</code> — 288 × 64 = <strong>18 432</strong>.</p>
+
+<div class="note warn"><b>Найважливіше речення теми.</b> Шар, у якому лежить 74.7 % ваг,
+робить 3.5 % усієї роботи мережі. Згортки — навпаки: 23.8 % ваг і 96 % множень. Це і є
+причина, чому «кількість параметрів» — поганий вимір складності згорткової мережі. Модель
+із мільярдом ваг у голові може рахуватись швидше за модель зі ста мільйонами у згортках.</div>
+
+<p>Звідси прямо росте ідея, яку ти вже бачив у <a href="../08-pooling/lecture.html">темі
+08</a>: <strong>глобальне усереднення</strong> (global average pooling, GAP). Замість
+розпластувати карту 32×3×3 у 288 чисел — узяти від кожного каналу середнє по всій його
+площі й отримати 32. Тоді голова — це один <code>Linear(32→6)</code> на 198 параметрів
+замість 18 886, і вся мережа схудне з 24 774 до <strong>6 086</strong>. У розділі 7
+побачимо, що дешевизна — не єдина вигода.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Де живуть ваги</p>
+  <p class="fig-sub">Кожен стовпчик — один шар, довжина — його частка в загальній кількості параметрів. Перемикач бере три мережі: нашу з <code>Flatten</code>, нашу з глобальним усередненням і VGG-16.</p>
+  <div class="panel">
+    <div><canvas id="cWgt" width="940" height="380" aria-label="Стовпчики частки параметрів по шарах для трьох мереж, шари голови виділені кольором"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">мережа</span>
+        <div class="seg wrap" id="wgtSeg">
+          <button type="button" data-i="0" aria-pressed="true">наша, Flatten</button>
+          <button type="button" data-i="1" aria-pressed="false">наша, GAP</button>
+          <button type="button" data-i="2" aria-pressed="false">VGG-16</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>параметрів усього</b><i id="wgtTot">—</i></div>
+        <div class="cellv"><b>у згортках</b><i id="wgtConv">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>у першому Linear</b><i id="wgtFc">—</i></div>
+      </div>
+      <div class="verdict" id="wgtVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Наша мережа — 74.7 % у першому Linear, VGG-16 — 74.3 %.</b> Мережі
+    відрізняються в 5 600 разів за кількістю ваг, а частка збігається до половини відсотка.
+    Варіант із GAP прибирає цей стовпчик узагалі: там найбільший шар — остання
+    згортка.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Памʼять</span>Де живе памʼять</h2>
+
+<p>Тепер про другий кінець мережі: коли модель навчається, що саме займає відеопамʼять?
+Інтуїція каже «ваги» — і помиляється.</p>
+
+<p>Щоб порахувати градієнти, зворотне поширення мусить <strong>памʼятати вихід кожного
+шару</strong> на прямому проході — усі числа, які він видав, для кожного зображення в
+батчі. Ці числа звуться <strong>активаціями</strong>, і саме вони головний споживач
+памʼяті. Візьмемо колонку «чисел» із таблиці розділу 4 окремо:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>після шару</th><th>чисел на 1 зображення</th><th>параметрів у цього шару</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>Conv 1→8</td><td>6 272</td><td>80</td></tr>
+    <tr><td>MaxPool</td><td>1 568</td><td>0</td></tr>
+    <tr><td>Conv 8→16</td><td>3 136</td><td>1 168</td></tr>
+    <tr><td>MaxPool</td><td>784</td><td>0</td></tr>
+    <tr><td>Conv 16→32</td><td>1 568</td><td>4 640</td></tr>
+    <tr><td>MaxPool</td><td>288</td><td>0</td></tr>
+    <tr class="hot"><td>Linear 288→64</td><td>64</td><td>18 496</td></tr>
+    <tr><td>Linear 64→6</td><td>6</td><td>390</td></tr>
+  </tbody>
+</table></div>
+
+<p>Прочитай два підсвічені рядки поруч. Перша згортка тримає <strong>6 272 числа</strong>
+й має <strong>80 параметрів</strong>. Перший повнозвʼязний шар — <strong>64 числа</strong>
+й <strong>18 496 параметрів</strong>. Різниця в сотні разів, і в протилежних напрямках.</p>
+
+<div class="eq">параметри збираються в <strong>кінці</strong> мережі<br>активації збираються на <strong>початку</strong></div>
+
+<p>Логіка симетрична. На початку мережі карта величезна за площею (28×28) і тонка за
+каналами — багато чисел, мало ваг, бо ядро одне на всю площу. У кінці карта розпластана в
+короткий стовпчик — мало чисел, багато ваг, бо кожна пара має свою.</p>
+
+<p>Переведемо це в мегабайти. Одне число типу <code>float32</code> — це 4 байти. Уся наша
+мережа на одне зображення тримає 13 686 активацій, тобто близько <b>53 КБ</b>; батч на 64
+зображення — <b>3.3 МБ</b>. Дрібниця. А тепер те саме для VGG-16 на зображенні 224×224:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>що</th><th>чисел</th><th>у float32</th></tr></thead>
+  <tbody>
+    <tr><td>ваги моделі</td><td>138 357 544</td><td>528 МБ</td></tr>
+    <tr><td>активації, 1 зображення</td><td>15 087 080</td><td>58 МБ</td></tr>
+    <tr class="hot"><td>активації, батч 64</td><td>965 573 120</td><td>3 683 МБ</td></tr>
+    <tr><td>з них — дві перші згортки</td><td>411 041 792</td><td>1 568 МБ</td></tr>
+  </tbody>
+</table></div>
+
+<p>Ось і відповідь на питання, чому батч не влазить у відеокарту. Ваги важать пів
+гігабайта і <strong>не залежать від батча зовсім</strong>; активації важать у сім разів
+більше й ростуть строго пропорційно. І 43 % цієї памʼяті зʼїдають дві перші згортки, у
+яких лежить <b>0.03 %</b> ваг моделі.</p>
+
+<div class="note"><b>Практичний наслідок.</b> Коли навчання падає з «out of memory»,
+перше, що роблять, — зменшують батч удвічі, і це майже завжди спрацьовує. Зменшувати
+модель безглуздо: її ваги — мала й фіксована частина. А от зменшити вхідне зображення з
+224 до 160 пікселів скорочує активації вдвічі, бо вони ростуть як площа.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Параметри проти памʼяті</p>
+  <p class="fig-sub">Два ряди стовпчиків по тих самих шарах: угорі ваги, унизу активації. Повзунок множить батч; перемикач бере нашу мережу або VGG-16 на 224×224.</p>
+  <div class="panel">
+    <div><canvas id="cMem" width="940" height="420" aria-label="Два ряди стовпчиків по шарах мережі: угорі частка параметрів, унизу памʼять під активації, максимуми в різних кінцях"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">мережа</span>
+        <div class="seg" id="memSeg">
+          <button type="button" data-i="0" aria-pressed="true">наша, 28×28</button>
+          <button type="button" data-i="1" aria-pressed="false">VGG-16, 224×224</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="memB">батч <output id="memBv">64</output></label>
+        <input type="range" id="memB" min="0" max="8" step="1" value="6">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ваги</b><i id="memW">—</i></div>
+        <div class="cellv"><b>активації</b><i id="memA">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пік ваг</b><i id="memPw" class="sm">—</i></div>
+        <div class="cellv"><b>пік активацій</b><i id="memPa" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="memVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Два максимуми ніколи не збігаються.</b> Верхній ряд має пік у голові,
+    нижній — у перших згортках. Прожени повзунок батча: верхній ряд не ворухнеться,
+    нижній зросте рівно в стільки ж разів. Це і є вся арифметика «out of
+    memory».</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Голова</span>Голова: Flatten проти GAP</h2>
+
+<p>Згорткова частина мережі зветься <strong>тілом</strong> (backbone), а те, що
+перетворює її вихід на відповідь, — <strong>головою</strong> (head). Тіло видає карту
+ознак 32×3×3; голова мусить видати шість чисел — по одному на клас. Способів два.</p>
+
+<h3>Спосіб перший: розпластати</h3>
+
+<p><code>Flatten</code> виписує всі числа карти 32×3×3 в один рядок завдовжки 288: спершу
+весь перший канал по рядках, потім весь другий, і так далі. Далі — звичайний
+повнозвʼязний шар.</p>
+
+<p>Плюс: голова бачить, <em>де саме</em> лежала кожна ознака — число з лівого верхнього
+кута має власну вагу, відмінну від ваги числа з правого нижнього. Мінус ми вже порахували:
+18 496 параметрів, три чверті мережі. Другий мінус, принциповіший, — далі.</p>
+
+<h3>Спосіб другий: усереднити</h3>
+
+<p>Глобальне усереднення замінює всю площу кожного каналу одним числом — середнім. Було
+32 канали по 3×3 = 288 чисел, стало 32 числа, а голова — це <code>Linear(32→6)</code> на
+198 параметрів.</p>
+
+<p>Мінус: голова більше не знає, <em>де</em> була ознака, лише «наскільки сильно вона
+присутня в кадрі». Плюс — той самий: не знаючи положення, вона на нього й не
+переучується.</p>
+
+<h3>І тепер найцікавіше: розмір входу</h3>
+
+<p>Подай на нашу мережу зображення не 28×28, а 40×40, і подивись, що станеться з формами.</p>
+
+<div class="eq left">вхід 28×28 → блоки → 32×3×3 → Flatten → 288 чисел  → Linear(288→64)  ✓
+вхід 40×40 → блоки → 32×5×5 → Flatten → 800 чисел  → Linear(288→64)  ✗</div>
+
+<p>Згорткова частина відпрацювала бездоганно: їй байдуже, якого розміру карта, бо ядро
+просто їде по ній. А от матриця <code>Linear</code> має жорсткий розмір 288 × 64,
+зафіксований при створенні мережі. Подати в неї 800 чисел так само неможливо, як
+помножити матрицю 5×3 на матрицю 4×2. PyTorch падає з такою помилкою:</p>
+
+<div class="eq left">RuntimeError: mat1 and mat2 shapes cannot be multiplied
+(1x800 and 288x64)</div>
+
+<p>А тепер те саме з глобальним усередненням. Вхід 40×40 → карта 32×5×5 → усереднюємо
+кожен канал по площі → <strong>32 числа</strong>. Вхід 64×64 → карта 32×8×8 → знову
+<strong>32 числа</strong>. Скільки б не було клітинок у каналі, середнє від них — одне
+число.</p>
+
+<div class="note"><b>Ось у чому суть.</b> <code>Flatten</code> перетворює <em>усі</em>
+клітинки на окремі входи, тому їхня кількість входить у форму матриці. Глобальне
+усереднення перетворює кожен <strong>канал</strong> на один вхід, а кількість каналів
+задається архітектурою й від розміру зображення не залежить взагалі. Тому мережа з GAP
+приймає вхід будь-якого розміру, а мережа з <code>Flatten</code> — рівно того, під який її
+зібрали.</div>
+
+<p>Саме на цій властивості стоять повнозгорткові мережі для сегментації і детектори, що
+працюють на кадрах різної роздільності. Вона ж пояснює, чому мережу з <code>Flatten</code>
+доводиться годувати зображеннями, заздалегідь приведеними до одного розміру, — а
+перетворення розміру завжди щось спотворює.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Голова й розмір входу</p>
+  <p class="fig-sub">Повзунок міняє розмір вхідного зображення, перемикач — тип голови. Схема веде форми наскрізь і показує, у якому саме місці ланцюг рветься.</p>
+  <div class="panel">
+    <div><canvas id="cHead" width="940" height="330" aria-label="Ланцюжок форм від входу до виходу для двох типів голови, місце розриву позначено червоним"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">голова</span>
+        <div class="seg" id="headSeg">
+          <button type="button" data-i="0" aria-pressed="true">Flatten</button>
+          <button type="button" data-i="1" aria-pressed="false">GAP</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="headS">сторона входу <output id="headSv">28</output></label>
+        <input type="range" id="headS" min="20" max="68" step="4" value="28">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>карта після тіла</b><i id="headMap">—</i></div>
+        <div class="cellv"><b>чисел у Linear</b><i id="headIn">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>Linear очікує</b><i id="headExp">—</i></div>
+        <div class="cellv"><b>параметрів голови</b><i id="headP">—</i></div>
+      </div>
+      <div class="verdict" id="headVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Із <code>Flatten</code> працюють лише сторони від 24 до 31</b> — тільки
+    вони після трьох поділів навпіл дають карту 3×3. Уже 32 дає 512 чисел замість 288, і
+    мережа падає. Перемкни на GAP: на вхід у Linear завжди йдуть ті самі 32 числа, від 20
+    до 68.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Огляд</span>Рецептивне поле цілої мережі</h2>
+
+<p>У <a href="../07-conv-layer/lecture.html">темі 07</a> ми ввели <strong>рецептивне
+поле</strong> — ділянку вхідного зображення, від якої залежить одне число на виході шару.
+Для однієї згортки 3×3 це 3×3 пікселі. Тепер порахуємо його для цілої мережі: саме воно
+відповідає на питання, чи здатна мережа побачити предмет цілком. Рахунок ведеться двома
+числами одночасно, і про друге зазвичай забувають.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Позначення</th><th>Що це</th></tr></thead>
+  <tbody>
+    <tr><td>r — рецептивне поле</td><td>сторона квадрата на вході, яку бачить один нейрон цього шару</td></tr>
+    <tr><td>j — крок (jump)</td><td>на скільки пікселів <em>входу</em> зсувається вікно, коли переходимо до сусіднього нейрона цього шару</td></tr>
+  </tbody>
+</table></div>
+
+<p>Крок потрібен ось для чого. Після одного пулінгу сусідні клітинки карти відповідають
+ділянкам оригіналу, віддаленим на два пікселі, після двох — на чотири. Тому ядро 3×3 у
+третьому блоці, зачіпаючи трьох сусідів, розтягується на вчетверо більшу ділянку
+оригіналу. Формула це враховує:</p>
+
+<div class="eq">r<span class="sub">нове</span> = r<span class="sub">старе</span> + (k − 1) × j<span class="sub">старе</span> &nbsp;&nbsp;·&nbsp;&nbsp; j<span class="sub">нове</span> = j<span class="sub">старе</span> × s</div>
+
+<p>Тут <span class="raw">k</span> — сторона ядра шару, <span class="raw">s</span> — його
+крок (<code>stride</code>). Читається так: нове рецептивне поле — це старе плюс те, що
+додали <span class="raw">k</span> − 1 сусідів, кожен вартістю <span class="raw">j</span>
+пікселів. Починаємо з <span class="raw">r</span> = 1 і <span class="raw">j</span> = 1.
+Пулінг 2×2 з кроком 2 — це <span class="raw">k</span> = 2, <span class="raw">s</span> = 2.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>шар</th><th>k</th><th>s</th><th>рахунок r</th><th>r</th><th>j</th></tr></thead>
+  <tbody>
+    <tr><td>вхід</td><td>—</td><td>—</td><td>—</td><td>1</td><td>1</td></tr>
+    <tr><td>Conv 3×3</td><td>3</td><td>1</td><td>1 + 2×1</td><td>3</td><td>1</td></tr>
+    <tr><td>MaxPool 2</td><td>2</td><td>2</td><td>3 + 1×1</td><td>4</td><td>2</td></tr>
+    <tr><td>Conv 3×3</td><td>3</td><td>1</td><td>4 + 2×2</td><td>8</td><td>2</td></tr>
+    <tr><td>MaxPool 2</td><td>2</td><td>2</td><td>8 + 1×2</td><td>10</td><td>4</td></tr>
+    <tr class="hot"><td>Conv 3×3</td><td>3</td><td>1</td><td>10 + 2×4</td><td>18</td><td>4</td></tr>
+    <tr><td>MaxPool 2</td><td>2</td><td>2</td><td>18 + 1×4</td><td>22</td><td>8</td></tr>
+  </tbody>
+</table></div>
+
+<p>Один нейрон останньої згортки бачить квадрат <strong>18×18</strong> на вхідному
+зображенні 28×28. Фігури в нашому датасеті мають діаметр від 14 до 18 пікселів — тобто
+рецептивне поле <strong>щойно-щойно їх покриває</strong>. Це умова, за якої мережа взагалі
+здатна відрізнити коло від кільця: якщо нейрон бачить лише шматок дуги, обидві фігури
+виглядають для нього однаково.</p>
+
+<div class="note warn"><b>Що буває, коли рецептивне поле замале.</b> Мережа не
+помиляється «трохи» — вона систематично плутає класи, які відрізняються великомасштабною
+будовою. Коло й кільце локально однакові: дуга і дуга. Розрізняє їх тільки те, що видно
+цілком. Тому коли мережа впевнено бере одні класи й безнадійно плутає інші — перше, що
+варто порахувати, це рецептивне поле, а не докидати епох.</div>
+
+<p>Зворотний бік теж варто бачити. Останній пулінг доводить <span class="raw">r</span> до
+22, а четвертий блок дав би 38 — більше за все зображення. Це не помилка: нейрон із
+рецептивним полем, більшим за кадр, просто бачить кадр цілком. Але й користі від
+подальшого росту <span class="raw">r</span> немає — дивитись більше нема на що.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Рецептивне поле наскрізь</p>
+  <p class="fig-sub">Квадрат показує, що бачить один нейрон обраного шару на вхідному зображенні 28×28. Другий повзунок міняє розмір фігури — стеж, коли квадрат перестає її покривати.</p>
+  <div class="panel">
+    <div><canvas id="cRf" width="940" height="360" aria-label="Вхідне зображення з фігурою і підсвіченим квадратом рецептивного поля, поруч графік росту рецептивного поля по шарах"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="rfL">шар <output id="rfLv">6</output></label>
+        <input type="range" id="rfL" min="0" max="6" step="1" value="6">
+      </div>
+      <div class="ctl">
+        <label for="rfO">діаметр фігури <output id="rfOv">16</output></label>
+        <input type="range" id="rfO" min="6" max="26" step="2" value="16">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рецептивне поле</b><i id="rfR">—</i></div>
+        <div class="cellv"><b>крок j</b><i id="rfJ">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>покриття фігури</b><i id="rfCov">—</i></div>
+      </div>
+      <div class="verdict" id="rfVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Після першої згортки нейрон бачить квадрат 3×3.</b> До останньої згортки
+    поле виростає до 18×18 і фігуру діаметром 16 покриває повністю. Постав діаметр 26 — і
+    навіть найглибший шар бачить лише частину: класи, що відрізняються загальною формою,
+    така мережа не розділить.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Історія</span>LeNet-5, 1998</h2>
+
+<p>Усе, що ми зібрали, придумали не вчора. Перша згорткова мережа, яка справді працювала
+в продакшені, зветься <strong>LeNet-5</strong>: опублікована 1998 року, читала суми на
+банківських чеках. Розберемо її по шарах — це найкращий спосіб перевірити, чи вмієш ти
+читати опис архітектури.</p>
+
+<p>Вхід — 32×32 в одному каналі: рукописна цифра. Далі:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>шар</th><th>що робить</th><th>вихід</th><th>параметрів</th></tr></thead>
+  <tbody>
+    <tr><td>вхід</td><td>цифра 32×32</td><td>1×32×32</td><td>0</td></tr>
+    <tr><td>C1</td><td>згортка 5×5, 6 карт</td><td>6×28×28</td><td>156</td></tr>
+    <tr><td>S2</td><td>усереднення 2×2</td><td>6×14×14</td><td>12</td></tr>
+    <tr><td>C3</td><td>згортка 5×5, 16 карт</td><td>16×10×10</td><td>1 516</td></tr>
+    <tr><td>S4</td><td>усереднення 2×2</td><td>16×5×5</td><td>32</td></tr>
+    <tr class="hot"><td>C5</td><td>згортка 5×5, 120 карт</td><td>120×1×1</td><td>48 120</td></tr>
+    <tr><td>F6</td><td>повнозвʼязний</td><td>84</td><td>10 164</td></tr>
+    <tr><td>вихід</td><td>10 класів</td><td>10</td><td>840</td></tr>
+    <tr class="sumrow"><td>усього</td><td>—</td><td>—</td><td>60 840</td></tr>
+  </tbody>
+</table></div>
+
+<p>Придивись до рядка C5. Формально це згортка 5×5, але вхідна карта теж 5×5: ядро
+вміщується в ній рівно один раз, і на виході кожної зі 120 карт лишається одне число.
+<strong>Згортка, яка бачить усю карту цілком, — це і є повнозвʼязний шар</strong>, просто
+записаний іншими словами. І він тримає 48 120 із 60 840 параметрів, тобто
+<strong>79.1 %</strong>.</p>
+
+<p>Порівняй із нашими 74.7 % і з 74.3 % у VGG-16. Три мережі різних епох і різних порядків
+розміру дають ту саму частку в тому самому місці — прямий наслідок того, що згортка ділить
+ваги між точками, а повнозвʼязний шар ні.</p>
+
+<h3>Що з LeNet лишилось, а що зникло</h3>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Ідея LeNet</th><th>Доля</th></tr></thead>
+  <tbody>
+    <tr><td>Чергування «згортка — зменшення»</td><td><strong>Живе.</strong> Це і є типовий блок із розділу 2. Змінилось лише те, що перед пулінгом тепер буває стос із двох-трьох згорток.</td></tr>
+    <tr><td>Зростання каналів із глибиною</td><td><strong>Живе.</strong> 6 → 16 → 120 — те саме правило подвоєння, тільки з іншими числами.</td></tr>
+    <tr><td>Сигмоїда й гіперболічний тангенс</td><td><strong>Зникли.</strong> На глибоких мережах вони гасять градієнт: похідна сигмоїди майже нульова скрізь, крім вузької смуги біля нуля, і через десять шарів сигнал для навчання не доходить.</td></tr>
+    <tr><td>Усереднювальний пулінг</td><td><strong>Майже зник</strong> із середини мережі: максимум зберігає сильний відгук, а середнє його розмиває. Але вижив у голові — це і є глобальне усереднення.</td></tr>
+    <tr><td>Часткова звʼязність каналів</td><td><strong>Зникла.</strong> Про неї окремо.</td></tr>
+  </tbody>
+</table></div>
+
+<p>Часткова звʼязність пояснює дивне число 1 516 у рядку C3. За нашою формулою
+повнозвʼязна за каналами згортка 6→16 з ядром 5×5 мала б 6 × 16 × 25 + 16 =
+<strong>2 416</strong> параметрів. У LeNet їх 1 516, бо кожна з 16 вихідних карт була
+підключена <em>не до всіх</em> шести вхідних, а лише до трьох-чотирьох за наперед
+намальованою таблицею.</p>
+
+<p>Мотивів було два: у 1998 році зайвих множень собі не дозволяли, а ще автори хотіли,
+щоб різні вихідні карти дивились на різні набори вхідних і тому <strong>вивчали різні
+речі</strong>. Другий мотив не витримав перевірки часом: мережа й так вивчає різне,
+достатньо випадкової ініціалізації. Сьогодні згортка звʼязує всі канали з усіма — хоч ідея
+й повернулась з іншого боку у вигляді <strong>групової згортки</strong>, де групи
+регулярні й задані одним числом, а не таблицею.</p>
+
+<h2 id="s10"><span class="num">10 / VGG</span>VGG і однорідність</h2>
+
+<p>Тепер стрибнемо на сімнадцять років уперед. VGG — архітектура 2014 року, цікава не
+рекордами, а тим, що довела до крайності <strong>однорідність</strong>: уся мережа складена
+з деталей одного типу й описується одним рядком чисел.</p>
+
+<div class="eq left">64, 64, <b>M</b>, 128, 128, <b>M</b>, 256, 256, 256, <b>M</b>, 512, 512, 512, <b>M</b>, 512, 512, 512, <b>M</b></div>
+
+<p>Число — це згортка 3×3 з такою кількістю вихідних каналів, <span class="raw">M</span>
+— max-пулінг 2×2. Жодних інших розмірів ядра. Тринадцять згорток, пʼять пулінгів, потім
+голова з трьох повнозвʼязних шарів: разом шістнадцять шарів із вагами.</p>
+
+<p>Зверни увагу на дві речі. Канали подвоюються рівно за нашим правилом
+(64 → 128 → 256 → 512) і на останніх двох блоках зупиняються — далі росли б параметри, а
+користі вже мало. І в блоці стоїть не одна згортка, а дві або три поспіль, і лише потім
+пулінг.</p>
+
+<h3>Чому дві згортки 3×3 краще за одну 5×5</h3>
+
+<p>Дві згортки 3×3 поспіль дають те саме рецептивне поле, що одна 5×5: за формулою з
+розділу 8 після першої <span class="raw">r</span> = 3, після другої
+<span class="raw">r</span> = 5. А тепер ціна:</p>
+
+<div class="eq left">одна згортка 5×5, 64→64: 64 × 64 × 5 × 5 = 102 400 ваг
+дві згортки 3×3, 64→64: 64 × 64 × 3 × 3 × 2 =  73 728 ваг</div>
+
+<p>На <strong>28 % менше</strong> ваг при тому самому полі огляду. Але головне інше: між
+двома згортками стоїть <code>ReLU</code>, тобто мережа отримує зайву нелінійність задарма.
+Одна згортка 5×5 — одне лінійне перетворення; дві 3×3 з нелінійністю посередині — уже
+композиція, здатна на складнішу форму відгуку. Детально цей рахунок вела <a
+href="../07-conv-layer/lecture.html">тема 07</a>.</p>
+
+<h3>І чесно про голову</h3>
+
+<p>А тепер зворотний бік однорідності, який зазвичай ховають за словами про
+елегантність.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>частина</th><th>параметрів</th><th>частка</th></tr></thead>
+  <tbody>
+    <tr><td>тринадцять згорток</td><td>14 714 688</td><td>10.6 %</td></tr>
+    <tr class="hot"><td>Linear 25088→4096</td><td>102 764 544</td><td>74.3 %</td></tr>
+    <tr><td>Linear 4096→4096</td><td>16 781 312</td><td>12.1 %</td></tr>
+    <tr><td>Linear 4096→1000</td><td>4 097 000</td><td>3.0 %</td></tr>
+    <tr class="sumrow"><td>усього</td><td>138 357 544</td><td>100 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Уся згорткова частина — тринадцять шарів, які власне й дивляться на зображення, — це
+<strong>10.6 %</strong> моделі. Решта 89.4 % лежить у трьох повнозвʼязних шарах, а три
+чверті всієї моделі — в одному, першому з них. Мережа, відома як приклад глибокої
+згорткової архітектури, на девʼять десятих складається з повнозвʼязних ваг.</p>
+
+<p>Звідки береться 25 088: після пʼяти пулінгів зображення 224×224 стає 7×7 при 512
+каналах, а 512 × 7 × 7 = 25 088. Помножити на 4 096 виходів — і виходить сто мільйонів
+ваг. Той самий <code>Flatten</code>, що в нашій маленькій мережі, просто в іншому
+масштабі.</p>
+
+<div class="note"><b>Чим це скінчилось.</b> Наступні архітектури цю голову викинули: у
+ResNet та в усьому, що після нього, замість <code>Flatten</code> стоїть глобальне
+усереднення, і класифікатор — це один <code>Linear</code>. Наслідок видно на числах:
+ResNet-50 глибший за VGG-16 утричі, а важить 25.6 мільйона параметрів проти 138 —
+у пʼять разів менше. Прибрали не глибину, а голову.</div>
+
+<h2 id="s11"><span class="num">11 / Глибина</span>Що вирішує глибина</h2>
+
+<p>Лишилось питання, яке напрошується весь час: якщо кожен наступний блок дає більше
+рецептивне поле й складніші ознаки — чому б не поставити сто блоків?</p>
+
+<p>Глибина дає <strong>ієрархію</strong>: перший блок навчається бачити краї й плями — те
+саме, що ми рахували руками в <a href="../04-convolution-by-hand/lecture.html">темі 04</a>
+фільтром Собеля; другий складає з країв кути й дуги; третій збирає частини предметів;
+четвертий — цілі предмети. Кожен рівень працює не з пікселями, а з тим, що знайшов
+попередній, — і саме тому десять шарів по 3×3 сильніші за один шар із ядром 21×21, хоч
+рецептивне поле однакове.</p>
+
+<p>А тепер межа. Просто додавати шари <strong>перестає працювати</strong>, і не через
+переучування. Виміряний факт, який свого часу здивував усіх: мережа з 56 шарів давала
+гіршу помилку <em>і на навчальній вибірці теж</em>, ніж мережа з 20 шарів — тобто не
+змогла навчитись навіть тому, що вміла мілкіша.</p>
+
+<p>Причина й ліки — тема 14 у наступному блоці. Запамʼятай форму проблеми:
+<strong>глибина корисна, але сама по собі не безкоштовна</strong>, і щоб мережі глибші за
+два десятки шарів узагалі навчались, знадобився окремий винахід. До нього класична схема
+«блок за блоком» упирається в стелю приблизно на глибині VGG.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Мережа зібрана</h2>
+
+<p>Три деталі перетворились на конструкцію. Що варто винести з теми:</p>
+
+<ul>
+  <li><strong>Блок — це <code>Conv → ReLU → Pool</code>.</strong> Порядок не довільний:
+    згортка мусить бачити повну карту, <code>ReLU</code> — стояти до avg-пулінгу
+    (з max-пулінгом порядок не важить).</li>
+  <li><strong>Стос блоків: розмір навпіл, канали вдвічі.</strong> Емпіричне правило, яке
+    тримає сталим не кількість чисел, а обсяг обчислень на шар.</li>
+  <li><strong>Форми рахуються за двома правилами:</strong> згортка 3×3 з
+    <code>padding=1</code> розмір не міняє, пулінг 2×2 ділить його навпіл із відкиданням
+    дробової частини.</li>
+  <li><strong>Параметри й памʼять живуть у різних кінцях.</strong> 74.7 % ваг — у першому
+    повнозвʼязному шарі; найбільше активацій — після першої згортки, у якої ваг 0.3 %.</li>
+  <li><strong>GAP приймає будь-який розмір входу, <code>Flatten</code> — ні</strong>, бо
+    кількість каналів задана архітектурою, а кількість клітинок — зображенням.</li>
+  <li><strong>Рецептивне поле рахується наскрізь</strong> двома числами, і воно мусить
+    покривати предмет, інакше жодне навчання не допоможе.</li>
+</ul>
+
+<p>І тепер про те, чого ми не зробили. Мережа зібрана, форми зійшлись — але як тільки ми
+почнемо її навчати, зʼявиться проблема, якої в наших розрахунках немає взагалі.</p>
+
+<p>Наша мережа має 24 774 параметри, а датасет фігур — близько тисячі зображень по 784
+пікселі. Параметрів у мережі стільки ж, скільки пікселів у тридцяти картинках. Мережа з
+такою місткістю не мусить <em>розуміти</em>, що таке коло, — їй значно простіше
+<strong>запамʼятати</strong> конкретні картинки разом із відповідями. І вона це зробить:
+точність на навчальній вибірці піде до одиниці, а на новому зображенні мережа
+помилиться.</p>
+
+<p>Даних більше не буде. Але зображення має властивість, якої немає в таблиці з цінами:
+<strong>його можна зсунути, повернути, віддзеркалити — і воно лишиться тим самим
+предметом</strong>. Коло, зсунуте на три пікселі вправо, — це досі коло, і мережа має
+право побачити його як новий приклад. Наступна тема — про те, як із одного зображення
+зробити багато.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти згенеруєш
+датасет фігур формулами, збереш мережу з блоків і навчиш її; побудуєш наскрізну таблицю
+форм рукою й звіриш кожен рядок із фактичним <code>.shape</code> через хуки; порахуєш
+розподіл параметрів по шарах у відсотках і памʼять активацій; подаси на мережу зображення
+іншого розміру й побачиш справжню помилку PyTorch — а потім переконаєшся, що мережа з
+глобальним усередненням ту саму картинку приймає; і порахуєш рецептивне поле руками,
+звіривши з формулою.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../08-pooling/lecture.html"><span class="dir">попередня</span><span class="ttl">08. Пулінг і зменшення розмірності</span></a>
+    <a class="next" href="../10-augmentation/lecture.html"><span class="dir">наступна</span><span class="ttl">10. Аугментація даних</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function sans(px){return '600 '+px+'px Unbounded,system-ui,sans-serif';}
+/* 20480 → «20 480»: нерозривний пробіл між тисячами */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* «1 шар», «2 шари», «5 шарів» */
+function шарів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'шар';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'шари';
+  return 'шарів';
+}
+/* «1 клітинка», «2 клітинки», «5 клітинок» */
+function клітинок(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'клітинка';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'клітинки';
+  return 'клітинок';
+}
+/* «у 1 раз», «у 3 рази», «у 12 разів» */
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+/* «у 2.2 раза»: при дробовому числі українська вимагає родовий однини */
+function крат(v){
+  if(Math.abs(v - Math.round(v)) < 1e-9) return v.toFixed(0) + ' ' + разів(Math.round(v));
+  return v.toFixed(1) + ' раза';
+}
+/* «1 число», «2 числа», «5 чисел» */
+function чисел(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'число';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'числа';
+  return 'чисел';
+}
+/* «1 канал», «2 канали», «8 каналів» */
+function каналів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'канал';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'канали';
+  return 'каналів';
+}
+/* «1 піксель», «2 пікселі», «8 пікселів» */
+function пікселів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'піксель';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'пікселі';
+  return 'пікселів';
+}
+/* сегментний перемикач: кнопки з data-i, повертає обраний індекс через fn */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* підпис над елементом схеми */
+function capt(g, txt, x, y, color, px){
+  g.fillStyle = color || css('--soft'); g.font = mono(px||11, false);
+  g.textAlign = 'left'; g.fillText(txt, x, y);
+}
+function frame(g,x,y,w,h,color){
+  g.strokeStyle=color; g.lineWidth=1; g.strokeRect(x+0.5,y+0.5,w-1,h-1);
+}
+/* МБ із кількості чисел типу float32 */
+function mb(n){ return n*4/1048576; }
+function fmtMb(v){
+  if(v >= 1024) return (v/1024).toFixed(1) + ' ГБ';
+  if(v >= 10)   return v.toFixed(0) + ' МБ';
+  if(v >= 1)    return v.toFixed(1) + ' МБ';
+  return (v*1024).toFixed(0) + ' КБ';
+}
+
+/* ═════ Інтерактив 1 · чи можна переставити ReLU і Pool ═════ */
+(function(){
+  var cv = I('cOrd'); if(!cv) return;
+  var N = 6, K = 3;                    /* карта 6×6 → результат 3×3 */
+  /* детерміновані «відгуки згортки»: є і додатні, і відʼємні */
+  var MAP = [
+    [ 4, -3,  1,  6, -2,  0],
+    [-5,  2,  7, -1,  3, -4],
+    [ 1,  8, -6,  2, -3,  5],
+    [ 3, -2,  0,  9, -7,  1],
+    [-1,  5,  4, -3,  2,  6],
+    [ 2, -4,  3,  1,  8, -5]
+  ];
+  var cur = 0;                          /* 0 — максимум, 1 — середнє */
+
+  function relu(v){ return v > 0 ? v : 0; }
+  /* pool2 по квадратах 2×2: fn застосовується до чотирьох чисел */
+  function pool(src, avg){
+    var out = [], r, c, a, b, cc, d;
+    for(r = 0; r < K; r++){
+      out.push([]);
+      for(c = 0; c < K; c++){
+        a = src[2*r][2*c]; b = src[2*r][2*c+1];
+        cc = src[2*r+1][2*c]; d = src[2*r+1][2*c+1];
+        out[r].push(avg ? (a+b+cc+d)/4 : Math.max(a,b,cc,d));
+      }
+    }
+    return out;
+  }
+  function applyRelu(src){
+    var out = [], r, c;
+    for(r = 0; r < src.length; r++){
+      out.push([]);
+      for(c = 0; c < src[r].length; c++) out[r].push(relu(src[r][c]));
+    }
+    return out;
+  }
+  function fmt(v){
+    if(Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
+    return v.toFixed(2);
+  }
+  /* сітка чисел; hl — функція розфарбування клітинки або null */
+  function grid(g, m, x, y, cell, title, hl){
+    var r, c, v, w = m[0].length * cell, h = m.length * cell;
+    capt(g, title, x, y - 9);
+    for(r = 0; r < m.length; r++) for(c = 0; c < m[r].length; c++){
+      v = m[r][c];
+      g.fillStyle = hl ? hl(v, r, c) : (v > 0 ? css('--teal-w') : (v < 0 ? css('--rose-w') : css('--paper')));
+      g.fillRect(x + c*cell, y + r*cell, cell - 1, cell - 1);
+      g.fillStyle = css('--ink'); g.font = mono(cell > 34 ? 13 : 11, false);
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(fmt(v), x + c*cell + cell/2 - 0.5, y + r*cell + cell/2 - 0.5);
+    }
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    frame(g, x, y, w, h, css('--hair'));
+    return w;
+  }
+
+  function draw(){
+    var g = dpr(cv), avg = cur === 1;
+    /* ланцюжок А: ReLU → Pool.  ланцюжок Б: Pool → ReLU */
+    var A = pool(applyRelu(MAP), avg);
+    var B = applyRelu(pool(MAP, avg));
+    var r, c, diff = 0, maxd = 0, d;
+    for(r = 0; r < K; r++) for(c = 0; c < K; c++){
+      d = Math.abs(A[r][c] - B[r][c]);
+      if(d > 1e-9) diff++;
+      if(d > maxd) maxd = d;
+    }
+    var D = [];
+    for(r = 0; r < K; r++){ D.push([]); for(c = 0; c < K; c++) D[r].push(A[r][c] - B[r][c]); }
+
+    var x0 = 24, y0 = 46, cell = 46;
+    grid(g, MAP, x0, y0, cell, 'карта ознак після згортки, 6×6', null);
+    var xs = x0 + 6*cell + 70;
+
+    /* два ланцюжки */
+    g.fillStyle = css('--soft'); g.font = mono(11, false); g.textAlign = 'left';
+    var lblA = avg ? 'ReLU → avg-пулінг' : 'ReLU → max-пулінг';
+    var lblB = avg ? 'avg-пулінг → ReLU' : 'max-пулінг → ReLU';
+    grid(g, A, xs, y0, cell, lblA, function(v){ return v > 0 ? css('--teal-w') : css('--paper'); });
+    grid(g, B, xs, y0 + 3*cell + 46, cell, lblB, function(v){ return v > 0 ? css('--teal-w') : css('--paper'); });
+
+    /* стрілка й карта різниці */
+    var xd = xs + 3*cell + 70;
+    grid(g, D, xd, y0 + 1.5*cell + 23, cell, 'різниця між ними', function(v){
+      return Math.abs(v) > 1e-9 ? css('--rose-w') : css('--paper');
+    });
+
+    /* підпис-висновок під картою різниці, порізаний на короткі рядки (грабля №12) */
+    g.font = mono(11.5, true); g.textAlign = 'left';
+    g.fillStyle = diff ? css('--rose') : css('--teal');
+    g.fillText(diff ? 'порядок важить' : 'порядок не важить', xd, y0 + 1.5*cell + 23 + 3*cell + 24);
+    g.fillStyle = css('--soft'); g.font = mono(11, false);
+    g.fillText(diff ? 'відʼємні гасять додатні' : 'ReLU не міняє порядок чисел',
+               xd, y0 + 1.5*cell + 23 + 3*cell + 42);
+
+    I('ordDiff').textContent = diff;
+    I('ordMax').textContent = maxd < 1e-9 ? '0' : maxd.toFixed(2);
+    if(diff === 0)
+      verd('ordVd','t-ok','ОДНЕ Й ТЕ САМЕ',
+        'Карта різниці порожня: 0 клітинок із 9. <code>ReLU</code> ніколи не переставляє '+
+        'числа за величиною, тому найбільший після обнулення — це той самий, що обнулений '+
+        'найбільший.');
+    else
+      verd('ordVd','t-no','РЕЗУЛЬТАТИ РІЗНІ',
+        'Розійшлось ' + diff + ' ' + клітинок(diff) + ' із 9, найбільше на ' + maxd.toFixed(2) +
+        '. І завжди в один бік: середнє від обнулених чисел не менше за обнулене середнє, '+
+        'бо в другому випадку відʼємні встигають погасити додатні.');
+  }
+  segment('ordSeg', function(i){ cur = i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 2 · конструктор мережі ═════ */
+(function(){
+  var cv = I('cBld'); if(!cv) return;
+  var IN = 28, CLASSES = 6, HID = 64;
+
+  /* повертає опис мережі: список блоків і параметри голови */
+  function build(nBlocks, c0){
+    var size = IN, cin = 1, cout, k, blocks = [], convP = 0;
+    for(k = 0; k < nBlocks; k++){
+      cout = c0 * Math.pow(2, k);
+      convP += cin * cout * 9 + cout;
+      blocks.push({ inSize:size, cin:cin, cout:cout, mid:size, out:Math.floor(size/2) });
+      size = Math.floor(size / 2);
+      cin = cout;
+    }
+    var flat = size * size * cin;
+    var headP = flat > 0 ? flat * HID + HID + HID * CLASSES + CLASSES : 0;
+    return { blocks:blocks, size:size, ch:cin, flat:flat, convP:convP, headP:headP,
+             total:convP + headP };
+  }
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), H = LH(cv);
+    var n = +I('bldN').value, c0 = +I('bldC').value;
+    I('bldNv').textContent = n; I('bldCv').textContent = c0;
+    var net = build(n, c0);
+
+    /* схема: кожен блок — прямокутник, ширина ∝ розміру карти, висота ∝ log каналів.
+       Блоки розкладаємо рівномірно між входом і головою, щоб схема не тулилась ліворуч. */
+    var yMid = 150, k, b, w, h;
+    var iw = 46, ih = 46, x0 = 30, hx = W - 118;
+    g.font = mono(11, false);
+    g.fillStyle = css('--amber-w'); g.fillRect(x0, yMid - ih/2, iw, ih);
+    frame(g, x0, yMid - ih/2, iw, ih, css('--amber'));
+    g.fillStyle = css('--soft'); g.textAlign = 'center';
+    g.fillText('вхід', x0 + iw/2, yMid - ih/2 - 22);
+    g.fillStyle = css('--ink'); g.font = mono(11.5, true);
+    g.fillText('1×28×28', x0 + iw/2, yMid - ih/2 - 8);
+
+    var zoneL = x0 + iw + 24, zoneR = hx - 24, slot = (zoneR - zoneL) / n;
+    for(k = 0; k < n; k++){
+      b = net.blocks[k];
+      var cx = zoneL + slot*k + slot/2;
+      w = Math.max(16, b.out * 1.7);
+      h = Math.max(26, 26 + 26 * Math.log(b.cout / 4) / Math.LN2);
+      if(h > 108) h = 108;
+      var alive = b.out > 0;
+      g.fillStyle = alive ? css('--teal-w') : css('--rose-w');
+      g.fillRect(cx - w/2, yMid - h/2, w, h);
+      frame(g, cx - w/2, yMid - h/2, w, h, alive ? css('--teal') : css('--rose'));
+      g.textAlign = 'center';
+      g.fillStyle = css('--soft'); g.font = mono(10.5, false);
+      g.fillText('блок ' + (k+1), cx, yMid - h/2 - 24);
+      g.fillStyle = alive ? css('--ink') : css('--rose'); g.font = mono(11.5, true);
+      g.fillText(b.cout + '×' + b.out + '×' + b.out, cx, yMid - h/2 - 10);
+      g.fillStyle = css('--soft'); g.font = mono(10, false);
+      g.fillText(gr(b.cin * b.cout * 9 + b.cout) + ' ваг', cx, yMid + h/2 + 16);
+    }
+    /* голова */
+    g.fillStyle = net.flat > 0 ? css('--rose-w') : css('--paper');
+    g.fillRect(hx, yMid - 30, 88, 60);
+    frame(g, hx, yMid - 30, 88, 60, css('--rose'));
+    g.textAlign = 'center'; g.fillStyle = css('--soft'); g.font = mono(10.5, false);
+    g.fillText('голова', hx + 44, yMid - 52);
+    g.fillStyle = css('--ink'); g.font = mono(11.5, true);
+    g.fillText(net.flat > 0 ? gr(net.flat) + '→64→6' : 'не збереться', hx + 44, yMid - 38);
+    g.fillStyle = css('--soft'); g.font = mono(10, false);
+    g.fillText(net.flat > 0 ? gr(net.headP) + ' ваг' : '—', hx + 44, yMid + 46);
+
+    /* стовпчики: частка ваг тіла й голови */
+    var by = 250, bh = 74, bw = W - 60;
+    g.textAlign = 'left'; g.fillStyle = css('--soft'); g.font = mono(11, false);
+    g.fillText('розподіл ваг: тіло проти голови', 30, by - 10);
+    var tot = Math.max(net.total, 1);
+    var wConv = bw * net.convP / tot;
+    g.fillStyle = css('--teal'); g.fillRect(30, by, wConv, 26);
+    g.fillStyle = css('--rose'); g.fillRect(30 + wConv, by, bw - wConv, 26);
+    g.font = mono(11, true); g.textAlign = 'left';
+    g.fillStyle = css('--teal'); g.fillRect(30, by + 42, 20, 3);
+    g.fillText('згортки: ' + gr(net.convP) + ' (' + (100*net.convP/tot).toFixed(1) + ' %)', 58, by + 46);
+    g.fillStyle = css('--rose'); g.fillRect(30, by + 62, 20, 3);
+    g.fillText('голова: ' + gr(net.headP) + ' (' + (100*net.headP/tot).toFixed(1) + ' %)', 58, by + 66);
+
+    I('bldOut').textContent = net.size + '×' + net.size;
+    I('bldCh').textContent = net.ch;
+    I('bldFlat').textContent = gr(net.flat);
+    I('bldP').textContent = gr(net.total);
+
+    if(net.size === 0)
+      verd('bldVd','t-no','МЕРЕЖА НЕ ЗБЕРЕТЬСЯ',
+        'Після ' + n + ' ' + шарів(n) + ' пулінгу від карти 28×28 не лишилось нічого: '+
+        '28 → 14 → 7 → 3 → 1 → 0. Ділити далі нема чого, і PyTorch впаде ще при першому проході.');
+    else if(net.size === 1)
+      verd('bldVd','t-mid','РІВНО НА МЕЖІ',
+        'Карта зійшлась до 1×1: у голову йде ' + net.ch + ' ' + чисел(net.ch) + ', по одному на канал. '+
+        'Це вже фактично глобальне усереднення, тільки випадкове — ще один блок, і мережа зламається.');
+    else if(net.headP > net.convP)
+      verd('bldVd','t-mid','ГОЛОВА ВАЖЧА ЗА ТІЛО',
+        'У голові ' + (100*net.headP/tot).toFixed(1) + ' % ваг: карта ' + net.size + '×' + net.size +
+        ' на ' + net.ch + ' ' + каналів(net.ch) + ' дає ' + gr(net.flat) + ' ' + чисел(net.flat) +
+        ' у перший Linear. Це типовий стан класичної мережі — і причина, чому далі придумали '+
+        'глобальне усереднення.');
+    else
+      verd('bldVd','t-ok','ТІЛО ВАЖЧЕ ЗА ГОЛОВУ',
+        'Згортки тримають ' + (100*net.convP/tot).toFixed(1) + ' % ваг. Такого стану досягають, '+
+        'коли карта перед головою вже мала (' + net.size + '×' + net.size + '), а каналів багато — '+
+        'тоді Flatten дає лише ' + gr(net.flat) + ' ' + чисел(net.flat) + '.');
+  }
+  on('bldN','input',draw); on('bldC','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 3 · одне зображення крізь усю мережу ═════ */
+(function(){
+  var cv = I('cFwd'); if(!cv) return;
+  /* шар: імʼя, канали, сторона карти, параметри, що робить */
+  var OURS = [
+    {n:'вхід',        c:1,  s:28, p:0,     kind:'in',   d:'зображення 28×28 в одному каналі'},
+    {n:'Conv 1→8',    c:8,  s:28, p:80,    kind:'conv', d:'вісім ядер 3×3 шукають найпростіші прикмети'},
+    {n:'MaxPool',     c:8,  s:14, p:0,     kind:'pool', d:'бере максимум із кожного квадрата 2×2'},
+    {n:'Conv 8→16',   c:16, s:14, p:1168,  kind:'conv', d:'складає прості прикмети в кути й дуги'},
+    {n:'MaxPool',     c:16, s:7,  p:0,     kind:'pool', d:'ще раз навпіл: 14 стає 7'},
+    {n:'Conv 16→32',  c:32, s:7,  p:4640,  kind:'conv', d:'найскладніші прикмети: частини фігур'},
+    {n:'MaxPool',     c:32, s:3,  p:0,     kind:'pool', d:'7 ділиться навпіл із відкиданням: 3'},
+    {n:'Flatten',     c:288,s:1,  p:0,     kind:'pool', d:'32×3×3 виписані в один рядок на 288 чисел'},
+    {n:'Lin 288→64',  c:64, s:1,  p:18496, kind:'fc',   d:'тут лежать три чверті всіх ваг мережі'},
+    {n:'Lin 64→6',    c:6,  s:1,  p:390,   kind:'fc',   d:'шість чисел — по одному на клас фігури'}
+  ];
+  var LENET = [
+    {n:'вхід',      c:1,  s:32, p:0,     kind:'in',   d:'рукописна цифра 32×32'},
+    {n:'C1 5×5',    c:6,  s:28, p:156,   kind:'conv', d:'шість карт ознак; без padding сторона падає на 4'},
+    {n:'S2',        c:6,  s:14, p:12,    kind:'pool', d:'усереднення 2×2 з власним коефіцієнтом на карту'},
+    {n:'C3 5×5',    c:16, s:10, p:1516,  kind:'conv', d:'часткова звʼязність: не всі входи до всіх виходів'},
+    {n:'S4',        c:16, s:5,  p:32,    kind:'pool', d:'ще одне усереднення: 10 стає 5'},
+    {n:'C5 5×5',    c:120,s:1,  p:48120, kind:'fc',   d:'ядро дорівнює карті — це вже повнозвʼязний шар'},
+    {n:'F6',        c:84, s:1,  p:10164, kind:'fc',   d:'повнозвʼязний шар на 84 виходи'},
+    {n:'вихід',     c:10, s:1,  p:840,   kind:'fc',   d:'десять цифр'}
+  ];
+  var cur = 0;
+
+  function net(){ return cur === 0 ? OURS : LENET; }
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), L = net(), sl = I('fwdL');
+    if(+sl.max !== L.length - 1){ sl.max = L.length - 1; if(+sl.value > L.length-1) sl.value = L.length-1; }
+    var idx = +sl.value, k, tot = 0;
+    I('fwdLv').textContent = idx;
+    for(k = 0; k < L.length; k++) tot += L[k].p;
+
+    /* верхній ряд: обʼєми карт у масштабі */
+    var slot = (W - 44) / L.length, yMid = 118, maxS = L[0].s;
+    for(k = 0; k < L.length; k++){
+      var lay = L[k], x = 22 + k*slot + slot/2;
+      var w = Math.max(9, lay.s / maxS * 92);
+      var h = Math.max(24, 18 + 24 * Math.log(Math.max(lay.c,1)) / Math.LN2 / 2);
+      if(h > 116) h = 116;
+      var act = k === idx;
+      g.fillStyle = act ? css('--rose-w') : css('--teal-w');
+      g.fillRect(x - w/2, yMid - h/2, w, h);
+      frame(g, x - w/2, yMid - h/2, w, h, act ? css('--rose') : css('--hair'));
+      g.textAlign = 'center';
+      g.fillStyle = act ? css('--rose') : css('--soft'); g.font = mono(act?10.5:9.5, act);
+      /* довгі імена ріжемо самі: fillText не переносить (грабля №12) */
+      var nm = lay.n.length > 12 ? lay.n.slice(0, 11) + '…' : lay.n;
+      g.fillText(nm, x, yMid - h/2 - 10);
+    }
+    /* стовпчики: скільки чисел тримає кожен шар */
+    var by = 220, bh = 96, maxN = 0;
+    for(k = 0; k < L.length; k++) maxN = Math.max(maxN, L[k].c * L[k].s * L[k].s);
+    g.textAlign = 'left'; g.fillStyle = css('--soft'); g.font = mono(11, false);
+    g.fillText('чисел у карті ознак після шару', 22, by - 10);
+    for(k = 0; k < L.length; k++){
+      var lay2 = L[k], n2 = lay2.c * lay2.s * lay2.s;
+      var xx = 22 + k*slot + slot/2, hh = n2 / maxN * bh;
+      g.fillStyle = k === idx ? css('--rose') : css('--teal');
+      g.fillRect(xx - slot*0.3, by + bh - hh, slot*0.6, hh);
+      g.textAlign = 'center'; g.fillStyle = css('--soft'); g.font = mono(9.5, false);
+      g.fillText(gr(n2), xx, by + bh + 14);
+    }
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(22, by + bh + 0.5); g.lineTo(W - 22, by + bh + 0.5); g.stroke();
+
+    /* опис поточного шару, порізаний на рядки вручну */
+    var lay3 = L[idx];
+    g.textAlign = 'left'; g.fillStyle = css('--ink'); g.font = mono(13, true);
+    g.fillText(lay3.n, 22, by + bh + 46);
+    g.fillStyle = css('--soft'); g.font = mono(11.5, false);
+    g.fillText(lay3.d, 22, by + bh + 66);
+
+    var shp = lay3.s > 1 ? (lay3.c + '×' + lay3.s + '×' + lay3.s) : String(lay3.c);
+    I('fwdSh').textContent = shp;
+    I('fwdN').textContent = gr(lay3.c * lay3.s * lay3.s);
+    I('fwdP').textContent = gr(lay3.p);
+    I('fwdPct').textContent = (100 * lay3.p / tot).toFixed(1) + ' %';
+
+    var share = 100 * lay3.p / tot, num = lay3.c * lay3.s * lay3.s;
+    if(lay3.kind === 'in')
+      verd('fwdVd','t-ok','ЩЕ НЕ МЕРЕЖА',
+        'Це саме зображення: ' + gr(num) + ' ' + чисел(num) + ', жодної ваги. Далі кожен шар '+
+        'мінятиме форму цього набору — і саме за формами ми стежимо повзунком.');
+    else if(share > 60)
+      verd('fwdVd','t-no','ТУТ ЛЕЖИТЬ БІЛЬШІСТЬ ВАГ',
+        'Один шар тримає ' + share.toFixed(1) + ' % усіх параметрів мережі, а чисел у ньому лише ' +
+        gr(num) + '. Це і є перший шар голови: він не перевикористовує жодної ваги.');
+    else if(num === maxN)
+      verd('fwdVd','t-mid','ТУТ ЖИВЕ ПАМʼЯТЬ',
+        'Найтовстіша карта в мережі: ' + gr(num) + ' ' + чисел(num) + '. А ваг у цьому шарі ' +
+        gr(lay3.p) + ' — ' + share.toFixed(1) + ' %. Памʼять і параметри справді сидять у різних кінцях.');
+    else if(lay3.kind === 'pool')
+      verd('fwdVd','t-ok','ШАР, ЩО МІНЯЄ ФОРМУ',
+        'Пулінг і Flatten майже не вчаться: ваг тут ' + gr(lay3.p) + ', тобто ' +
+        share.toFixed(1) + ' %. Уся їхня робота — перекласти ' + gr(num) + ' ' + чисел(num) +
+        ' в іншу форму.');
+    else if(lay3.kind === 'fc')
+      verd('fwdVd','t-ok','ПОВНОЗВʼЯЗНИЙ ШАР',
+        'Ваг ' + gr(lay3.p) + ' (' + share.toFixed(1) + ' %) на ' + gr(num) + ' ' + чисел(num) +
+        ' виходу: кожна вага працює рівно один раз, перевикористання немає.');
+    else
+      verd('fwdVd','t-ok','ЗГОРТКА ПРАЦЮЄ',
+        'Ваг ' + gr(lay3.p) + ' (' + share.toFixed(1) + ' %), а обслуговують вони ' + gr(num) +
+        ' ' + чисел(num) + ' на виході: те саме ядро проїхало по всій карті.');
+  }
+  segment('fwdSeg', function(i){ cur = i; I('fwdL').value = 0; draw(); });
+  on('fwdL','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 4 · де живуть ваги ═════ */
+(function(){
+  var cv = I('cWgt'); if(!cv) return;
+  /* head:true — шар голови (повнозвʼязний або той, що його замінює) */
+  var NETS = [
+    { name:'наша мережа з Flatten', layers:[
+      {n:'Conv 1→8',    p:80,    head:false},
+      {n:'Conv 8→16',   p:1168,  head:false},
+      {n:'Conv 16→32',  p:4640,  head:false},
+      {n:'Linear 288→64',p:18496, head:true},
+      {n:'Linear 64→6', p:390,   head:true}
+    ]},
+    { name:'наша мережа з GAP', layers:[
+      {n:'Conv 1→8',    p:80,    head:false},
+      {n:'Conv 8→16',   p:1168,  head:false},
+      {n:'Conv 16→32',  p:4640,  head:false},
+      {n:'Linear 32→6', p:198,   head:true}
+    ]},
+    { name:'VGG-16', layers:[
+      {n:'conv-блок 1', p:38720,     head:false},
+      {n:'conv-блок 2', p:221440,    head:false},
+      {n:'conv-блок 3', p:1475328,   head:false},
+      {n:'conv-блок 4', p:5899776,   head:false},
+      {n:'conv-блок 5', p:7079424,   head:false},
+      {n:'Linear 25088→4096', p:102764544, head:true},
+      {n:'Linear 4096→4096',  p:16781312,  head:true},
+      {n:'Linear 4096→1000',  p:4097000,   head:true}
+    ]}
+  ];
+  var cur = 0;
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), net = NETS[cur], L = net.layers, k;
+    var tot = 0, convP = 0, fc1 = 0;
+    for(k = 0; k < L.length; k++){
+      tot += L[k].p;
+      if(!L[k].head) convP += L[k].p;
+      if(L[k].head && !fc1) fc1 = L[k].p;
+    }
+    var maxP = 0;
+    for(k = 0; k < L.length; k++) maxP = Math.max(maxP, L[k].p);
+
+    var x0 = 130, y0 = 40, rowH = 34, bw = W - x0 - 130;
+    g.textAlign = 'left'; g.fillStyle = css('--soft'); g.font = mono(11, false);
+    g.fillText(net.name + ' — частка кожного шару в загальних ' + gr(tot) + ' ваг', 22, 24);
+    for(k = 0; k < L.length; k++){
+      var lay = L[k], y = y0 + k*rowH, w = lay.p / maxP * bw;
+      g.textAlign = 'right'; g.fillStyle = lay.head ? css('--rose') : css('--teal');
+      g.font = mono(11, lay.head);
+      g.fillText(lay.n, x0 - 10, y + 16);
+      g.fillStyle = lay.head ? css('--rose') : css('--teal');
+      g.fillRect(x0, y + 4, Math.max(w, 1.5), 18);
+      g.textAlign = 'left'; g.fillStyle = css('--ink'); g.font = mono(11, lay.head);
+      g.fillText((100*lay.p/tot).toFixed(1) + ' %', x0 + Math.max(w, 1.5) + 8, y + 18);
+      g.fillStyle = css('--soft'); g.font = mono(9.5, false);
+      g.fillText(gr(lay.p), x0 + Math.max(w, 1.5) + 62, y + 18);
+    }
+    /* легенда під стовпчиками */
+    var ly = y0 + L.length*rowH + 22;
+    g.font = mono(11, true); g.textAlign = 'left';
+    g.fillStyle = css('--teal'); g.fillRect(22, ly, 20, 3);
+    g.fillText('тіло: згортки', 50, ly + 4);
+    g.fillStyle = css('--rose'); g.fillRect(200, ly, 20, 3);
+    g.fillText('голова: повнозвʼязні шари', 228, ly + 4);
+
+    I('wgtTot').textContent = gr(tot);
+    I('wgtConv').textContent = (100*convP/tot).toFixed(1) + ' %';
+    I('wgtFc').textContent = gr(fc1) + '  ·  ' + (100*fc1/tot).toFixed(1) + ' %';
+
+    if(cur === 1)
+      verd('wgtVd','t-ok','ГОЛОВИ ПРАКТИЧНО НЕМАЄ',
+        'Глобальне усереднення звело голову до ' + gr(fc1) + ' ваг — ' + (100*fc1/tot).toFixed(1) +
+        ' % мережі. Найбільший шар тепер остання згортка, як і має бути. Уся мережа схудла '+
+        'з 24 774 до ' + gr(tot) + ' параметрів.');
+    else if(cur === 0)
+      verd('wgtVd','t-no','ТРИ ЧВЕРТІ В ОДНОМУ ШАРІ',
+        'Перший Linear тримає ' + (100*fc1/tot).toFixed(1) + ' % ваг, усі три згортки разом — ' +
+        (100*convP/tot).toFixed(1) + ' %. І при цьому саме згортки роблять 96 % множень.');
+    else
+      verd('wgtVd','t-no','ТА САМА ЧАСТКА, ІНШИЙ МАСШТАБ',
+        'VGG-16 більша за нашу мережу в 5 585 ' + разів(5585) + ', а перший Linear тримає ті самі ' +
+        (100*fc1/tot).toFixed(1) + ' %. Тринадцять згорток разом — лише ' +
+        (100*convP/tot).toFixed(1) + ' % моделі.');
+  }
+  segment('wgtSeg', function(i){ cur = i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 5 · параметри проти памʼяті ═════ */
+(function(){
+  var cv = I('cMem'); if(!cv) return;
+  /* шар: імʼя, параметрів, активацій на одне зображення */
+  var NETS = [
+    { name:'наша мережа, вхід 28×28', limitGb:8, layers:[
+      {n:'Conv 1→8',     p:80,    a:6272},
+      {n:'MaxPool 1',    p:0,     a:1568},
+      {n:'Conv 8→16',    p:1168,  a:3136},
+      {n:'MaxPool 2',    p:0,     a:784},
+      {n:'Conv 16→32',   p:4640,  a:1568},
+      {n:'MaxPool 3',    p:0,     a:288},
+      {n:'Linear 288→64',p:18496, a:64},
+      {n:'Linear 64→6',  p:390,   a:6}
+    ]},
+    { name:'VGG-16, вхід 224×224', limitGb:8, layers:[
+      {n:'conv 1_1',  p:1792,      a:3211264},
+      {n:'conv 1_2',  p:36928,     a:3211264},
+      {n:'блок 2',    p:221440,    a:4014080},
+      {n:'блок 3',    p:1475328,   a:2809856},
+      {n:'блок 4',    p:5899776,   a:1404928},
+      {n:'блок 5',    p:7079424,   a:426496},
+      {n:'Linear 25088→4096', p:102764544, a:4096},
+      {n:'Linear 4096→4096',  p:16781312,  a:4096},
+      {n:'Linear 4096→1000',  p:4097000,   a:1000}
+    ]}
+  ];
+  var cur = 0;
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), net = NETS[cur], L = net.layers, k;
+    var bi = +I('memB').value, batch = Math.pow(2, bi);
+    I('memBv').textContent = batch;
+    var totP = 0, totA = 0, maxP = 0, maxA = 0, argP = 0, argA = 0;
+    for(k = 0; k < L.length; k++){
+      totP += L[k].p; totA += L[k].a;
+      if(L[k].p > maxP){ maxP = L[k].p; argP = k; }
+      if(L[k].a > maxA){ maxA = L[k].a; argA = k; }
+    }
+    var slot = (W - 60) / L.length, x0 = 30;
+    var topY = 46, topH = 96, botY = 232, botH = 96;
+
+    g.textAlign = 'left'; g.fillStyle = css('--soft'); g.font = mono(11, false);
+    g.fillText('ваги шару — не залежать від батча', x0, topY - 12);
+    g.fillText('активації шару × батч ' + batch + ' — ростуть пропорційно', x0, botY - 12);
+
+    for(k = 0; k < L.length; k++){
+      var lay = L[k], xx = x0 + k*slot + slot/2;
+      var hp = maxP ? lay.p / maxP * topH : 0;
+      var ha = maxA ? lay.a / maxA * botH : 0;
+      g.fillStyle = k === argP ? css('--rose') : css('--rose-w');
+      g.fillRect(xx - slot*0.32, topY + topH - hp, slot*0.64, hp);
+      g.fillStyle = k === argA ? css('--teal') : css('--teal-w');
+      g.fillRect(xx - slot*0.32, botY, slot*0.64, ha);
+      /* підпис шару між рядами, повернутий не потрібен: ріжемо рядок самі */
+      g.textAlign = 'center'; g.fillStyle = css('--soft'); g.font = mono(9, false);
+      var nm = lay.n.length > 11 ? lay.n.slice(0, 10) + '…' : lay.n;
+      g.fillText(nm, xx, topY + topH + 18);
+    }
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x0, topY + topH + 0.5); g.lineTo(W - 30, topY + topH + 0.5); g.stroke();
+    g.beginPath(); g.moveTo(x0, botY + 0.5); g.lineTo(W - 30, botY + 0.5); g.stroke();
+
+    /* дві позначки максимумів, короткими рядками */
+    g.textAlign = 'left'; g.font = mono(11, true);
+    g.fillStyle = css('--rose');
+    g.fillText('пік ваг: ' + L[argP].n, x0, topY - 28);
+    g.fillStyle = css('--teal');
+    g.fillText('пік активацій: ' + L[argA].n, x0 + 300, topY - 28);
+
+    var wMb = mb(totP), aMb = mb(totA * batch);
+    I('memW').textContent = fmtMb(wMb);
+    I('memA').textContent = fmtMb(aMb);
+    I('memPw').textContent = L[argP].n;
+    I('memPa').textContent = L[argA].n;
+
+    var limit = net.limitGb * 1024;
+    var ratio = aMb / wMb;
+    if(aMb + wMb > limit)
+      verd('memVd','t-no','У 8 ГБ НЕ ВЛІЗЕ',
+        'Активації при батчі ' + batch + ' просять ' + fmtMb(aMb) + ', ваги — ' + fmtMb(wMb) +
+        '. Разом більше за 8 ГБ, і це ще без градієнтів. Ліки одні: зменшити батч удвічі — '+
+        'нижній ряд одразу впаде вдвічі, верхній не ворухнеться.');
+    else if(ratio > 1)
+      verd('memVd','t-mid','АКТИВАЦІЇ ВАЖЧІ ЗА ВАГИ',
+        'Батч ' + batch + ': активації ' + fmtMb(aMb) + ' проти ' + fmtMb(wMb) + ' ваг — у ' +
+        крат(ratio) + ' більше. Саме нижній ряд і вирішує, який батч ти можеш собі дозволити.');
+    else
+      verd('memVd','t-ok','ВАГИ ПОКИ ВАЖЧІ',
+        'Батч ' + batch + ' дає лише ' + fmtMb(aMb) + ' активацій проти ' + fmtMb(wMb) +
+        ' ваг. Посунь повзунок далі: ваги не змінюються взагалі, активації подвоюються з кожним кроком.');
+  }
+  segment('memSeg', function(i){ cur = i; draw(); });
+  on('memB','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 6 · голова й розмір входу ═════ */
+(function(){
+  var cv = I('cHead'); if(!cv) return;
+  var cur = 0;                                  /* 0 — Flatten, 1 — GAP */
+  var EXPECT = 288, CH = 32, HID = 64, CLASSES = 6;
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), s = +I('headS').value;
+    I('headSv').textContent = s;
+    var s1 = Math.floor(s/2), s2 = Math.floor(s1/2), s3 = Math.floor(s2/2);
+    var flat = CH * s3 * s3;
+    var into = cur === 0 ? flat : CH;
+    var expect = cur === 0 ? EXPECT : CH;
+    var ok = into === expect;
+    var headP = cur === 0 ? EXPECT*HID + HID + HID*CLASSES + CLASSES : CH*CLASSES + CLASSES;
+
+    /* ланцюжок прямокутників */
+    var steps = [
+      {t:'вхід',        v:'1×'+s+'×'+s},
+      {t:'блок 1',      v:'8×'+s1+'×'+s1},
+      {t:'блок 2',      v:'16×'+s2+'×'+s2},
+      {t:'блок 3',      v:'32×'+s3+'×'+s3},
+      {t:cur===0?'Flatten':'GAP', v:cur===0 ? gr(flat) : String(CH)},
+      {t:'Linear',      v:cur===0 ? '288→64' : '32→6'},
+      {t:'вихід',       v:'6'}
+    ];
+    var slot = (W - 44) / steps.length, y = 92, bh = 56, k;
+    for(k = 0; k < steps.length; k++){
+      var x = 22 + k*slot + slot/2, bw = slot*0.74;
+      var bad = (!ok && k >= 5) || (s3 === 0 && k >= 3);
+      g.fillStyle = bad ? css('--rose-w') : (k >= 4 ? css('--amber-w') : css('--teal-w'));
+      g.fillRect(x - bw/2, y, bw, bh);
+      frame(g, x - bw/2, y, bw, bh, bad ? css('--rose') : css('--hair'));
+      g.textAlign = 'center';
+      g.fillStyle = css('--soft'); g.font = mono(10, false);
+      g.fillText(steps[k].t, x, y - 10);
+      g.fillStyle = bad ? css('--rose') : css('--ink'); g.font = mono(11.5, true);
+      g.fillText(steps[k].v, x, y + bh/2 + 4);
+      if(k < steps.length - 1){
+        g.strokeStyle = css('--hair'); g.lineWidth = 1.4;
+        g.beginPath(); g.moveTo(x + bw/2 + 2, y + bh/2); g.lineTo(x + slot - bw/2 - 2, y + bh/2); g.stroke();
+      }
+    }
+    /* повідомлення про розрив — двома короткими рядками (грабля №12) */
+    g.textAlign = 'left';
+    if(!ok){
+      g.fillStyle = css('--rose'); g.font = mono(13, true);
+      g.fillText('RuntimeError: mat1 and mat2 shapes', 22, 210);
+      g.fillText('cannot be multiplied (1x' + into + ' and 288x64)', 22, 232);
+      g.fillStyle = css('--soft'); g.font = mono(11.5, false);
+      g.fillText('Flatten дав ' + gr(into) + ' чисел, а матриця Linear чекає рівно 288.', 22, 260);
+      g.fillText('Форму матриці зафіксовано при створенні мережі й змінити її нема як.', 22, 280);
+    } else {
+      g.fillStyle = css('--teal'); g.font = mono(13, true);
+      g.fillText('прямий прохід виконується: на виході 6 чисел', 22, 210);
+      g.fillStyle = css('--soft'); g.font = mono(11.5, false);
+      if(cur === 1){
+        g.fillText('GAP усереднює кожен канал по його площі ' + s3 + '×' + s3 + ' → ' + CH + ' чисел.', 22, 238);
+        g.fillText('Клітинок може бути скільки завгодно — каналів завжди 32.', 22, 258);
+      } else {
+        g.fillText('Flatten дав рівно 288 чисел — стільки й чекає матриця Linear.', 22, 238);
+        g.fillText('Це єдиний розмір входу, з яким така мережа працює.', 22, 258);
+      }
+    }
+
+    I('headMap').textContent = CH + '×' + s3 + '×' + s3;
+    I('headIn').textContent = gr(into);
+    I('headExp').textContent = gr(expect);
+    I('headP').textContent = gr(headP);
+
+    if(s3 === 0)
+      verd('headVd','t-no','ТІЛО НЕ ПРОПУСКАЄ',
+        'Вхід ' + s + '×' + s + ' після трьох пулінгів сходить до нуля: ' + s + ' → ' + s1 + ' → ' +
+        s2 + ' → 0. Тут ламається не голова, а саме тіло — ділити нема чого.');
+    else if(cur === 0 && !ok)
+      verd('headVd','t-no','FLATTEN ЗЛАМАВСЯ',
+        'Карта ' + CH + '×' + s3 + '×' + s3 + ' дає ' + gr(flat) + ' чисел, а Linear чекає 288. '+
+        'Згортки відпрацювали бездоганно — упав саме повнозвʼязний шар, бо форма його матриці стала.');
+    else if(cur === 0)
+      verd('headVd','t-mid','ЦЕЙ РОЗМІР ПІДХОДИТЬ',
+        'Вхід ' + s + '×' + s + ' дає карту 32×3×3 і рівно 288 чисел. Підходять лише сторони від '+
+        '24 до 31: тільки вони після трьох поділів навпіл дають 3. Ваг у голові ' + gr(headP) + '.');
+    else
+      verd('headVd','t-ok','GAP ПРИЙМАЄ БУДЬ-ЩО',
+        'Вхід ' + s + '×' + s + ' → карта ' + CH + '×' + s3 + '×' + s3 + ' → усереднення по площі → '+
+        'завжди ' + CH + ' ' + чисел(CH) + '. Ваг у голові ' + gr(headP) + ' замість 18 886.');
+  }
+  segment('headSeg', function(i){ cur = i; draw(); });
+  on('headS','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 7 · рецептивне поле наскрізь ═════ */
+(function(){
+  var cv = I('cRf'); if(!cv) return;
+  /* шари нашої мережі: імʼя, ядро, крок */
+  var LAY = [
+    {n:'вхід',       k:1, s:1},
+    {n:'Conv 3×3',   k:3, s:1},
+    {n:'MaxPool 2',  k:2, s:2},
+    {n:'Conv 3×3',   k:3, s:1},
+    {n:'MaxPool 2',  k:2, s:2},
+    {n:'Conv 3×3',   k:3, s:1},
+    {n:'MaxPool 2',  k:2, s:2}
+  ];
+  /* наростаючий рахунок r і j */
+  var RF = [];
+  (function(){
+    var r = 1, j = 1, i;
+    for(i = 0; i < LAY.length; i++){
+      if(i > 0){ r = r + (LAY[i].k - 1) * j; j = j * LAY[i].s; }
+      RF.push({n:LAY[i].n, r:r, j:j});
+    }
+  })();
+  var SCALE = 26;                       /* спільна шкала: найбільше з r і діаметра */
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), i;
+    var li = +I('rfL').value, dia = +I('rfO').value;
+    I('rfLv').textContent = li; I('rfOv').textContent = dia;
+    var cur = RF[li];
+
+    /* ліворуч: зображення 28×28 із кільцем заданого діаметра */
+    var SC = 8, x0 = 24, y0 = 46, side = 28*SC;
+    g.fillStyle = css('--paper'); g.fillRect(x0, y0, side, side);
+    var cx = x0 + side/2, cy = y0 + side/2, R = dia*SC/2;
+    g.strokeStyle = css('--ink'); g.lineWidth = Math.max(3, SC*0.55);
+    g.globalAlpha = 0.55;
+    g.beginPath(); g.arc(cx, cy, Math.max(R - SC*0.3, 2), 0, 6.284); g.stroke();
+    g.globalAlpha = 1;
+    /* сітка пікселів дає відчуття масштабу */
+    g.strokeStyle = css('--hair'); g.lineWidth = 0.5; g.globalAlpha = 0.55;
+    for(i = 0; i <= 28; i += 4){
+      g.beginPath(); g.moveTo(x0 + i*SC, y0); g.lineTo(x0 + i*SC, y0 + side); g.stroke();
+      g.beginPath(); g.moveTo(x0, y0 + i*SC); g.lineTo(x0 + side, y0 + i*SC); g.stroke();
+    }
+    g.globalAlpha = 1;
+    /* квадрат рецептивного поля, обрізаний за краєм зображення */
+    var rx = cx - cur.r*SC/2, ry = cy - cur.r*SC/2;
+    g.save(); g.beginPath(); g.rect(x0, y0, side, side); g.clip();
+    g.fillStyle = css('--rose-w');
+    g.fillRect(rx, ry, cur.r*SC, cur.r*SC);
+    g.strokeStyle = css('--rose'); g.lineWidth = 2;
+    g.strokeRect(rx, ry, cur.r*SC, cur.r*SC);
+    g.restore();
+    frame(g, x0, y0, side, side, css('--hair'));
+    capt(g, 'вхідне зображення 28×28', x0, y0 - 12);
+    g.fillStyle = css('--rose'); g.font = mono(11, true); g.textAlign = 'left';
+    g.fillText('поле ' + cur.r + '×' + cur.r + ' пікселів', x0, y0 + side + 20);
+    g.fillStyle = css('--soft'); g.font = mono(11, false);
+    g.fillText('фігура: діаметр ' + dia, x0 + 170, y0 + side + 20);
+
+    /* праворуч: сходинки росту r по шарах */
+    var px = x0 + side + 60, pw = W - px - 30, py = y0, ph = side - 40;
+    capt(g, 'рецептивне поле по шарах', px, py - 12);
+    for(i = 0; i < RF.length; i++){
+      var yy = py + i*(ph/RF.length), hh = ph/RF.length - 6;
+      var wwid = RF[i].r / SCALE * (pw - 190);
+      g.fillStyle = i === li ? css('--rose') : css('--rose-w');
+      g.fillRect(px + 110, yy, Math.max(wwid, 2), hh);
+      g.textAlign = 'right'; g.fillStyle = i === li ? css('--ink') : css('--soft');
+      g.font = mono(11, i === li);
+      g.fillText(RF[i].n, px + 102, yy + hh/2 + 4);
+      g.textAlign = 'left'; g.fillStyle = css('--ink'); g.font = mono(11, i === li);
+      g.fillText('r=' + RF[i].r + '  j=' + RF[i].j, px + 110 + Math.max(wwid, 2) + 8, yy + hh/2 + 4);
+    }
+    /* лінія розміру фігури для порівняння */
+    var fx = px + 110 + dia / SCALE * (pw - 190);
+    g.strokeStyle = css('--teal'); g.lineWidth = 1.6; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(fx, py - 4); g.lineTo(fx, py + ph); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = css('--teal'); g.font = mono(10.5, true); g.textAlign = 'left';
+    g.fillText('розмір фігури', fx + 6, py + ph + 18);
+
+    var cov = Math.min(100, 100 * cur.r / dia);
+    I('rfR').textContent = cur.r + '×' + cur.r;
+    I('rfJ').textContent = cur.j;
+    I('rfCov').textContent = cov.toFixed(0) + ' %';
+
+    if(li === 0)
+      verd('rfVd','t-no','ЩЕ НІЧОГО НЕ ВИДНО',
+        'На вході кожне число — це один піксель, r = 1. Він не бачить навіть сусіда, '+
+        'не те що фігуру діаметром ' + dia + '.');
+    else if(cur.r >= dia)
+      verd('rfVd','t-ok','ФІГУРА ПОКРИТА ЦІЛКОМ',
+        'Поле ' + cur.r + '×' + cur.r + ' проти діаметра ' + dia + ': один нейрон цього шару бачить '+
+        'фігуру повністю й може відрізнити коло від кільця. Крок j = ' + cur.j +
+        ' — сусідній нейрон дивиться на ділянку, зсунуту на ' + cur.j + ' ' + пікселів(cur.j) + '.');
+    else if(cur.r >= dia * 0.6)
+      verd('rfVd','t-mid','ВИДНО БІЛЬШУ ЧАСТИНУ',
+        'Поле ' + cur.r + '×' + cur.r + ' покриває ' + cov.toFixed(0) + ' % діаметра. Цього досить '+
+        'на «тут дуга», але замало, щоб сказати, чи вона замкнена в коло.');
+    else
+      verd('rfVd','t-no','ВИДНО ЛИШЕ ШМАТОК',
+        'Поле ' + cur.r + '×' + cur.r + ' проти діаметра ' + dia + ' — ' + cov.toFixed(0) +
+        ' %. Класи, що відрізняються загальною формою, для цього шару виглядають однаково.');
+  }
+  on('rfL','input',draw); on('rfO','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+})();
+</script>
+</body>
+</html>

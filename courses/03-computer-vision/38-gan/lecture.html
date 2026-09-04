@@ -1,0 +1,1712 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GAN</title>
+<meta name="description" content="Гра двох мереж без явної втрати відновлення: криві втрат нічого не кажуть про якість, і це головна відмінність GAN від усього попереднього в курсі. Метрику генерації доводиться калібрувати перед використанням — вісім завідомо поганих наборів. Колапс мод вимірний: базовий DCGAN покриває 3.00 класи з шести на трьох зернах, прискорений генератор — 4.67, а найпоширеніша порада «послаб дискримінатора» дає 2.33 і повний колапс на одному зерні. Впевненість судді при цьому найвища саме там, де покриття найгірше.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* грабля №3: під uppercase латинська N і грецькі літери псуються.
+   Правило .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw{text-transform:none}
+
+/* сітка з двох канв поруч у деяких фігурах */
+.twin{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+@media(max-width:620px){.twin{grid-template-columns:1fr}}
+/* перемикачі рівнів у фігурі «прибрати скіп» */
+.seg.three button{flex:1 1 30%}
+</style>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 8 · Тема 38</p>
+    <h1>GAN</h1>
+    <p class="stand">Дві мережі грають одна проти одної, і в цієї гри немає числа,
+      яке можна було б мінімізувати. Через це GAN малює різкіше за все, що ми бачили
+      досі, — і через це ж <b>за кривими втрат неможливо зрозуміти, чи він працює</b>.
+      Ця тема про те, як міряти генерацію, коли дивитись на втрату марно.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Втрата, якої немає</a></li>
+        <li><a href="#s2">Гра двох мереж</a></li>
+        <li><a href="#s3">Чому втрату генератора переписали</a></li>
+        <li><a href="#s4">Криві втрат нічого не кажуть</a></li>
+        <li><a href="#s5">Суддя, якому не можна вірити</a></li>
+        <li><a href="#s6">Метрику калібрують перед роботою</a></li>
+        <li><a href="#s7">Крихітний DCGAN</a></li>
+        <li><a href="#s8">Колапс мод: перший замір</a></li>
+        <li><a href="#s9">Колапс чи недонавчання</a></li>
+        <li><a href="#s10">Співвідношення сил: рецепт, що зашкодив</a></li>
+        <li><a href="#s11">Яка фігура гине першою</a></li>
+        <li><a href="#s12">Різкість проти покриття</a></li>
+        <li><a href="#s13">Що з цього забрати</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../37-autoencoders/lecture.html">← 37. Автоенкодери й VAE</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../39-diffusion/lecture.html">39. Дифузійні моделі →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Уяви фальшивомонетника й слідчого. Фальшивомонетник друкує банкноти,
+слідчий вчиться їх відрізняти від справжніх. Щоразу, коли слідчий ловить підробку,
+фальшивомонетник дізнається, за чим саме його спіймали, і виправляє це. Щоразу, коли
+підробка проходить, слідчий вчиться на своїй помилці. Ніхто з двох не бачив
+інструкції «як має виглядати справжня банкнота» — вони обидва здобувають її одне з
+одного.</p>
+
+<p>Це і є <a href="../glossary.html#t-gan">GAN</a> (generative adversarial network,
+породжувальна змагальна мережа). Аналогія з фальшивомонетником стоїть у самій статті
+2014 року, і вона гарна. Але вона ховає найважче: у цій парі <b>немає числа, яке
+падає, коли справи йдуть добре</b>. І це руйнує всі звички, набуті за попередні
+тридцять сім тем курсу.</p>
+
+<h2 id="s1"><span class="num">01 / Розрив</span>Втрата, якої немає</h2>
+
+<p>У <a href="../37-autoencoders/lecture.html">попередній темі</a> ми зібрали
+автоенкодер і VAE. Обидва вчаться на одному й тому самому: подай картинку, віддай ту
+саму картинку, а різницю між входом і виходом мінімізуй. Ця різниця зветься
+<b>похибкою відновлення</b>, і вона зручна аж до нахабства — за нею видно, коли
+модель навчилась, коли перестала вчитись і коли зламалась.</p>
+
+<p>За зручність платять розмиттям, і причина цілком арифметична. Уяви, що по одному
+короткому опису однаково правдоподібні дві картинки: коло радіуса 6 і коло радіуса 8.
+Модель мусить видати одну. Похибка відновлення — це середній квадрат різниці, і
+середній квадрат мінімізується не вибором однієї з двох, а <b>їхнім середнім</b>.
+Середнє двох різних кіл — це не коло, а розмита пляма з нечіткою межею. Мережа не
+помилилась: вона зробила рівно те, що ми в неї попросили.</p>
+
+<div class="note"><b>Звідки береться розмиття, одним реченням.</b> Мінімум середнього
+квадрата — це середнє, а середнє кількох однаково правдоподібних відповідей рідко саме
+є правдоподібною відповіддю. Хочеш чіткої відповіді — не проси мінімізувати квадрат
+різниці.</div>
+
+<p>Ідея GAN полягає в тому, щоб <b>не мінімізувати нічого схожого</b>. Ми не кажемо
+генераторові, якою має бути картинка. Ми ставимо поруч другу мережу, чия єдина робота —
+відрізняти справжнє від підробленого, і кажемо генераторові: обдури її. Розмита пляма
+дискримінатора не обдурить, бо в справжніх даних розмитих плям немає. Отже усереднювати
+відповіді стає невигідно, і генератор мусить вибрати одну.</p>
+
+<p>Ціна цього — уся решта теми. Прибравши явну ціль, ми прибрали й прилад, за яким
+стежили. Далі доведеться будувати прилад окремо, і виявиться, що це важче, ніж
+навчити саму мережу.</p>
+
+<h2 id="s2"><span class="num">02 / Правила</span>Гра двох мереж</h2>
+
+<p>Розберемо гру точно. Учасників двоє.</p>
+
+<p><b>Генератор</b> <code>G</code> бере вектор випадкових чисел
+<span class="raw">z</span> — у нас їх шістнадцять, узятих із нормального розподілу —
+і робить із них картинку. Простір цих векторів ми вже називали
+<a href="../glossary.html#t-latent">латентним</a>. Генератор нічого не бачить: до
+справжніх даних у нього немає доступу взагалі, жодного разу за все навчання.</p>
+
+<p><b>Дискримінатор</b> <code>D</code> бере картинку й видає одне число — наскільки він
+вірить, що вона справжня. Він бачить і справжні картинки, і підробки, і знає, де що.
+Це звичайна бінарна класифікація, точнісінько така, як у
+<a href="../11-training-cnn/lecture.html">темі 11</a>.</p>
+
+<p>Тепер цілі. Дискримінатор хоче ставити високу ймовірність справжнім і низьку
+підробкам:</p>
+
+<div class="eq">D мінімізує: −log D(x) − log(1 − D(G(z)))</div>
+
+<p>Прочитаймо це словами, символ за символом. <code>x</code> — справжня картинка,
+<code>G(z)</code> — підробка. <code>D(·)</code> — ймовірність від нуля до одиниці,
+яку дискримінатор ставить події «це справжнє». Знак <code>log</code> — логарифм:
+функція, яка близько до одиниці дає майже нуль, а близько до нуля прямує до мінус
+нескінченності. Отже <code>−log D(x)</code> — це штраф, який дорівнює нулю, коли
+дискримінатор поставив справжній картинці одиницю, і стає величезним, коли він
+поставив їй нуль. Другий доданок робить те саме дзеркально для підробки. Разом це
+звичайна крос-ентропія на двох класах.</p>
+
+<p>Генератор хоче протилежного — щоб <code>D(G(z))</code> було високим. Формально
+пара утворює <b>гру з нульовою сумою</b>: що виграє один, те програє другий.
+Рівновага, до якої гра нібито мусить прийти, описується коротко: генератор малює
+рівно той самий розподіл, що й дані, і дискримінатор не може зробити нічого кращого,
+ніж казати «половина на половину» скрізь.</p>
+
+<div class="note warn"><b>Чому цієї рівноваги майже ніколи не досягають.</b> Доведення
+збіжності в оригінальній статті стосується випадку, коли ми оптимізуємо
+<em>розподіли</em> напряму й дискримінатор щоразу доводять до оптимуму. Насправді ми
+робимо по одному кроку градієнта в кожній мережі по черзі, а параметризовані вони
+скінченним числом ваг. Це вже інша задача, і гарантій для неї немає жодних. Тому все,
+що буде далі в темі, — не патологія й не наслідок нашого маленького масштабу, а
+звичайна поведінка GAN.</div>
+
+<h2 id="s3"><span class="num">03 / Перший рядок коду</span>Чому втрату генератора переписали</h2>
+
+<p>Перше, з чим стикається кожен, хто пише GAN, — те, що формула зі статті в лоб не
+працює. І це не легенда: різницю можна порахувати руками за хвилину.</p>
+
+<p>Дискримінатор насправді видає не ймовірність, а одне довільне число — його звуть
+<b>логіт</b> і позначають <span class="raw">s</span>. Ймовірність із нього дістають
+сигмоїдою: <code>D = 1 / (1 + e</code><span class="sup">−s</span><code>)</code>. Це та
+сама сигмоїда, що в логістичній регресії: вона бере будь-яке число й притискає його у
+відрізок від нуля до одиниці.</p>
+
+<p>За статтею генератор має мінімізувати <code>log(1 − D)</code>. Похідна цього виразу
+по <span class="raw">s</span> дорівнює <code>−D</code>, тобто модуль градієнта — це
+саме <code>D</code>. А тепер згадай, що на початку навчання генератор малює сміття, і
+дискримінатор упевнено ставить йому <code>D</code> близьке до нуля. Отже градієнт теж
+близький до нуля: <b>генератор стоїть саме тоді, коли йому найбільше треба
+вчитись</b>.</p>
+
+<p>Лікування коротке. Замість мінімізувати <code>log(1 − D)</code> генератор
+мінімізує <code>−log D</code>. Точка, де обом добре, та сама — <code>D = 1</code>, —
+а похідна тепер дорівнює <code>D − 1</code>, тобто модуль градієнта становить
+<code>1 − D</code>. Це рівно те, чого хотілося: коли дискримінатор упевнений, що перед
+ним підробка, генератор отримує <b>найбільший</b> поштовх.</p>
+
+<p>Цей обхід не є пізнішим винаходом — його описали вже в первісній статті, поруч із
+самою формулою, і відтоді він стоїть за замовчуванням у кожній реалізації. Але за
+нього є й ціна, яку варто назвати: <b>гра перестає бути строго нульовою за сумою</b>.
+Виграш генератора більше не дорівнює програшу дискримінатора, а отже акуратне
+доведення збіжності з попереднього розділу перестає стосуватися того, що ми справді
+запускаємо. Ми свідомо міняємо теорему на працездатність.</p>
+<figure>
+  <p class="fig-head">Інтерактив 1 · Де насичена втрата зупиняє генератора</p>
+  <p class="fig-sub">Модуль градієнта обох втрат як функція від упевненості
+    дискримінатора. Ліворуч — криві, праворуч — два стовпчики в поточній точці.</p>
+  <div class="panel">
+    <div><canvas id="cSat" width="940" height="340" aria-label="Дві криві модуля градієнта залежно від логіта дискримінатора і два стовпчики порівняння в поточній точці"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label>логіт <span class="raw">s</span> дискримінатора <output id="satSo">-4.0</output></label>
+        <input type="range" id="satS" min="-60" max="30" step="5" value="-40">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>D = <span class="raw">σ(s)</span></b><i id="satD">—</i></div>
+        <div class="cellv"><b>у скільки разів</b><i id="satR">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>насичена</b><i id="satA">—</i></div>
+        <div class="cellv"><b>ненасичена</b><i id="satB">—</i></div>
+      </div>
+      <div class="verdict" id="satVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Читай так.</b> Ліва частина осі — те, що діється на початку
+    навчання: дискримінатор упевнений, що бачить підробку. Насичена крива там
+    притиснута до нуля, ненасичена — до одиниці. Праворуч від нуля картина
+    перевертається, але туди GAN потрапляє тільки тоді, коли генератор уже виграє.</figcaption>
+</figure>
+
+<p>Зошит друкує сім точок цієї кривої й перевіряє виведення через
+<code>torch.autograd</code>. Найважливіша точка — перша: при
+<span class="raw">s</span> = −4 дискримінатор дає <b>0.0180</b>, насичена втрата має
+градієнт <b>0.0180</b>, ненасичена — <b>0.9820</b>, тобто у <b>54.6 раза</b> більший.
+Це не тонке налаштування, а різниця між «вчиться» й «не вчиться».</p>
+
+<div class="note"><b>Що з цього забрати, навіть якщо GAN тобі не знадобиться.</b>
+Дві функції втрат із однаковим мінімумом можуть мати цілком різні градієнти дорогою
+до нього. Оптимум описує, куди прийти; градієнт вирішує, чи дійдеш. Це стосується
+будь-якої задачі, а не лише змагальної.</div>
+
+<h2 id="s4"><span class="num">04 / Прилад зламано</span>Криві втрат нічого не кажуть</h2>
+
+<p>Тепер найважливіша відмінність GAN від усього, що було в курсі досі — і найлегша
+для перевірки.</p>
+
+<p>У звичайному навчанні крива втрат — головний прилад. Спадає — вчиться. Стоїть —
+застрягло. Стрибнула вгору — швидкість навчання завелика. За тридцять сім тем ця
+звичка встигла стати рефлексом.</p>
+
+<p>У GAN вона не працює, і причина не в поганій реалізації. Втрата дискримінатора
+міряє, наскільки добре він розрізняє <b>проти поточного генератора</b>. Втрата
+генератора міряє, наскільки добре він обманює <b>поточного дискримінатора</b>. Обидві
+величини рахуються відносно суперника, який змінюється щокроку. Це як міряти свій
+зріст лінійкою, яку тримає той, з ким змагаєшся.</p>
+
+<p>Далі — заміряна ілюстрація. Три конфігурації GAN, які відрізняються лише
+швидкістю навчання й дають дуже різну якість, поставлені поруч зі своїми кривими.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Ті самі криві, різна якість</p>
+  <p class="fig-sub">Втрати обох мереж по епохах для трьох конфігурацій. Унизу —
+    скільки класів із шести накрив генератор на кінець навчання.</p>
+  <div class="panel">
+    <div><canvas id="cLoss" width="940" height="392" aria-label="Криві втрат дискримінатора й генератора по двадцяти епохах для трьох конфігурацій і стовпчик покриття класів"></canvas></div>
+    <div>
+      <div class="seg wrap" id="lossM" role="group" aria-label="конфігурація">
+        <button data-i="0" aria-pressed="true">D повільніший</button>
+        <button data-i="1" aria-pressed="false">однакові кроки</button>
+        <button data-i="2" aria-pressed="false">G швидший</button>
+      </div>
+      <div class="ctl">
+        <label>епоха <output id="losEo">20</output></label>
+        <input type="range" id="losE" min="1" max="20" step="1" value="20">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>втрата D</b><i id="losD">—</i></div>
+        <div class="cellv"><b>втрата G</b><i id="losG">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>класів із 6</b><i id="losK">—</i></div>
+        <div class="cellv"><b>розкид втрати G між конфігураціями</b><i id="losSp" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="losVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Числа заміряні</b> в зошиті, зерно 0. Дві конфігурації з найнижчою
+    й найвищою якістю мають майже однакові криві генератора, а конфігурація
+    посередині — найдраматичнішу криву з усіх трьох. Порядок кривих і порядок якості
+    між собою не повʼязані.</figcaption>
+</figure>
+
+<p>Найпростіше зведення тих самих даних у таблицю. Остання колонка — покриття класів,
+яке ми пояснимо через два розділи; поки досить знати, що більше означає краще.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>конфігурація</th><th>втрата D наприкінці</th><th>втрата G наприкінці</th><th>розмах кривої G</th><th>класів із 6</th></tr></thead>
+<tbody>
+<tr><td>дискримінатор повільніший</td><td>1.2782</td><td>0.7071</td><td>0.2251</td><td>2.33</td></tr>
+<tr><td>однакові кроки</td><td>1.0049</td><td>1.1751</td><td>1.0466</td><td>3.00</td></tr>
+<tr class="hot"><td>генератор швидший</td><td>1.3716</td><td>0.7106</td><td>0.2563</td><td><b>4.67</b></td></tr>
+</tbody></table></div>
+
+<p>Дивись на перший і третій рядки. Втрата генератора наприкінці — <b>0.7071</b>
+і <b>0.7106</b>, різниця в третьому знаку. Розмах кривої — 0.2251 і 0.2563, теж
+майже однаково. А покриття — <b>2.33</b> проти <b>4.67</b>, тобто вдвічі. Якби ми
+судили за втратами, ми б назвали ці дві конфігурації однаковими.</p>
+
+<div class="note warn"><b>Практичний наслідок.</b> «Рівна крива» в GAN не означає
+«добре навчається» — вона однаково буває ознакою здорової рівноваги й ознакою того,
+що генератор здався й малює одну картинку, яку дискримінатор чомусь пропускає.
+Єдиний спосіб дізнатись, який із двох випадків перед тобою, — подивитись на самі
+згенеровані картинки. Не на криву.</div>
+
+<h2 id="s5"><span class="num">05 / Прилад</span>Суддя, якому не можна вірити</h2>
+
+<p>Отже дивитись треба на картинки. Але лекція, у якій усі числа друкує зошит, не може
+спиратись на «подивись очима». Потрібен прилад, який дивиться замість нас.</p>
+
+<p>Прилад блоку 8 називається <b>суддя</b> — це окремий класифікатор наших шести
+фігур, навчений на справжніх даних і більше ні на чому. Ми проганяємо крізь нього
+шістсот згенерованих картинок і питаємо, що він у них бачить. На справжніх фігурах
+суддя дає <b>0.9950</b>, тобто задача для нього тривіальна.</p>
+
+<p>З відповідей судді ми беремо два різні числа, і брати треба саме два.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">перше · покриття класів</span>
+    <p>Скільки з шести фігур дістали хоч <b>5 %</b> вибірки. Максимум — 6. Це число
+      ловить рівно те, чого боїться GAN: генератор, який малює лише кола, дістане
+      одиницю, хоч би якими гарними були ті кола.</p>
+  </div>
+  <div class="step"><span class="lbl">друге · FID</span>
+    <p><a href="../glossary.html#t-fid">Відстань Фреше</a> між купою справжніх
+      картинок і купою згенерованих — але не між самими пікселями, а між
+      <b>64 числами ознак</b>, які видає передостанній шар судді. Формула порівнює
+      два хмарні описи: середнє й розкид. Окремій картинці FID не ставлять — він має
+      сенс лише для набору.</p>
+  </div>
+</div>
+
+<div class="eq">FID = |μ<span class="sub">1</span> − μ<span class="sub">2</span>|<span class="sup">2</span> + tr(Σ<span class="sub">1</span> + Σ<span class="sub">2</span> − 2·(Σ<span class="sub">1</span>Σ<span class="sub">2</span>)<span class="sup">1/2</span>)</div>
+
+<p>Розберемо запис. <span class="raw">μ</span> (грецька «мю») — середнє по всій купі:
+шістдесят чотири числа, по одному на ознаку. <span class="raw">Σ</span> (велика
+«сигма») — коваріаційна матриця: таблиця 64 × 64, у якій записано, наскільки ознаки
+розкидані й наскільки повʼязані між собою. <code>tr</code> — слід матриці, сума чисел
+на її діагоналі. Перший доданок каже, наскільки далеко одна від одної стоять дві
+хмари; другий — наскільки різні вони за формою. Якщо хмари збіглися, обидва доданки
+нулі.</p>
+
+<div class="note warn"><b>Наше число FID не порівнюване з опублікованими.</b>
+Справжній FID рахують на ознаках мережі Inception, навченої на ImageNet із тисячею
+класів. Ми беремо ознаки власного судді, який знає рівно шість фігур. Наші числа
+годяться, щоб порівнювати наші моделі між собою, і не годяться, щоб ставити їх поруч
+із числами зі статей.</div>
+
+<h2 id="s6"><span class="num">06 / Головне правило</span>Метрику калібрують перед роботою</h2>
+
+<p>А тепер найважливіше правило всього блоку, і воно неочевидне настільки, що його
+варто сформулювати як окремий крок роботи.</p>
+
+<p><b>Метрику генерації не можна брати й міряти. Її спершу перевіряють на завідомо
+поганому.</b></p>
+
+<p>Причина в тому, що метрика генерації — не термометр. Термометр міряє температуру
+однозначно, і його правильність можна припустити. Метрика генерації міряє щось
+опосередковано, через ознаки чужої мережі, і вона легко буває сліпою саме до тієї
+поломки, яку ти шукаєш. Такий випадок у блоці вже траплявся: слабша версія метрики
+поставила повний колапс мод <em>краще</em> за робочу модель, і всі числа, поміряні
+нею, довелося викинути.</p>
+
+<p>Калібрування виглядає так: береш вісім наборів, про які заздалегідь знаєш, наскільки
+вони погані, і дивишся, чи впорядкує їх метрика правильно.</p>
+<figure>
+  <p class="fig-head">Інтерактив 3 · Вісім завідомо поганих наборів</p>
+  <p class="fig-sub">Обери набір і подивись, як його бачить метрика. Шкала FID
+    логарифмічна, інакше базова лінія зникає під сотнями.</p>
+  <div class="panel">
+    <div><canvas id="cCal" width="940" height="352" aria-label="Дванадцять зразків обраного набору і два стовпчики: FID у логарифмічній шкалі та кількість покритих класів"></canvas></div>
+    <div>
+      <div class="seg wrap" id="calM" role="group" aria-label="набір">
+        <button data-i="0" aria-pressed="true">справжні</button>
+        <button data-i="1" aria-pressed="false">лише кола</button>
+        <button data-i="2" aria-pressed="false">кола + квадрати</button>
+        <button data-i="3" aria-pressed="false">розмита каша</button>
+        <button data-i="4" aria-pressed="false">середнє фігур</button>
+        <button data-i="5" aria-pressed="false">усе чорне</button>
+        <button data-i="6" aria-pressed="false">чистий шум</button>
+        <button data-i="7" aria-pressed="false">усе біле</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>FID</b><i id="calF">—</i></div>
+        <div class="cellv"><b>класів із 6</b><i id="calK">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>впевненість судді</b><i id="calC">—</i></div>
+        <div class="cellv"><b>відносно базової лінії</b><i id="calR">—</i></div>
+      </div>
+      <div class="verdict" id="calVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Порогом слугує робоча модель:</b> найкращий GAN теми має FID
+    <b>249.33</b>. Кожен рядок калібрування мусить опинитись гірше за це число —
+    інакше метриці не можна вірити. Пунктирна лінія на стовпчику й показує цей поріг.</figcaption>
+</figure>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>що подаємо</th><th>класів</th><th>FID</th><th>впевненість судді</th></tr></thead>
+<tbody>
+<tr><td>справжні, інша вибірка</td><td>6</td><td><b>1.1582</b></td><td>0.9899</td></tr>
+<tr class="hot"><td>лише кола</td><td>1</td><td>483.8364</td><td>0.9771</td></tr>
+<tr><td>кола + квадрати</td><td>2</td><td>466.8041</td><td>0.9806</td></tr>
+<tr><td>розмита каша</td><td>2</td><td>918.3200</td><td>0.8103</td></tr>
+<tr><td>середнє всіх фігур</td><td>1</td><td>1035.5173</td><td>0.5218</td></tr>
+<tr><td>усе чорне</td><td>1</td><td>1133.5891</td><td>0.9957</td></tr>
+<tr><td>чистий шум</td><td>2</td><td>1089.8743</td><td>0.8004</td></tr>
+<tr><td>усе біле</td><td>1</td><td>1311.2006</td><td>0.5554</td></tr>
+</tbody></table></div>
+
+<p>Три речі варто прочитати вголос.</p>
+
+<p><b>Перший рядок — базова лінія, а не нуль.</b> Дві різні вибірки справжніх фігур
+дають FID <b>1.1582</b>, а не нуль, бо шістсот картинок — це скінченна вибірка, і
+її середнє з розкидом трохи гуляють. Цю величину треба друкувати поруч завжди,
+інакше читач сприйме її за відстань.</p>
+
+<p><b>Другий рядок — той, заради якого все затівалось.</b> «Лише кола» — це повний
+колапс мод: одна фігура з шести. Метрика ставить йому <b>483.8364</b>, тобто у
+<b>418 разів</b> гірше за базову лінію й майже вдвічі гірше за наш найкращий GAN.
+Метрика впоралась, і тепер їй можна вірити.</p>
+
+<p><b>Останній стовпчик — уже перша пастка теми.</b> На «всьому чорному» суддя
+впевнений на <b>0.9957</b> — сильніше, ніж на справжніх фігурах (0.9899). Порожній
+кадр він з повною певністю називає квадратом. Тримай це в голові: до цієї пастки ми
+повернемось із заміром, і вона там зіграє проти інтуїції ще різкіше.</p>
+
+<div class="note"><b>Чому одного числа мало.</b> Подивись на рядки «лише кола» й
+«кола + квадрати»: FID у них практично однаковий (483.8364 і 466.8041), хоча в
+другому вдвічі більше класів. Сам по собі FID цієї різниці не бачить. А покриття
+бачить: 1 проти 2. Пара «FID + покриття» працює там, де кожне число окремо
+помиляється, — і це рівно та сама лінія, що йде крізь увесь курс.</div>
+
+<h2 id="s7"><span class="num">07 / Модель</span>Крихітний DCGAN</h2>
+
+<p>Тепер самі мережі. Ми беремо <b>DCGAN</b> — найпростішу згорткову форму GAN,
+описану 2015 року й досі використовувану як відправна точка. Її рецепт
+короткий: жодних повнозвʼязних шарів усередині, у генератора —
+<code>ConvTranspose2d</code>, які подвоюють сторону, у дискримінатора — звичайні
+згортки з кроком 2, які її вдвічі зменшують.</p>
+
+<div class="eq left">генератор       16 чисел → 24×7×7 → 12×14×14 → 1×28×28   (24 877 ваг)
+дискримінатор   1×28×28 → 12×14×14 → 24×7×7 → одне число  (6 013 ваг)</div>
+
+<p>Дві деталі в цьому рецепті не косметичні, і обидві варто назвати.</p>
+
+<p><b><code>Tanh</code> на виході генератора.</b> Картинки живуть у відрізку від −1 до
+1, а не від 0 до 1, тому справжні дані ми туди ж і переносимо. Причина проста:
+<code>tanh</code> симетричний навколо нуля, і генераторові не треба зсувати весь
+вихід угору, перш ніж почати вчитись.</p>
+
+<p><b><code>Adam</code> із <code>betas=(0.5, 0.999)</code>.</b> Перше число — це
+інерція градієнта: оптимізатор памʼятає, куди йшов, і продовжує рухатись туди ж. За
+замовчуванням воно 0.9, тобто памʼять довга. У грі двох мереж «куди йшов» застаріває
+щокроку, бо суперник за цей крок змінився. Значення 0.5 скорочує памʼять удвічі, і це
+не примха автора DCGAN, а те, без чого навчання розвалюється.</p>
+
+<h2 id="s8"><span class="num">08 / Хвороба</span>Колапс мод: перший замір</h2>
+
+<p>Тепер про головну хворобу GAN. Вона зветься
+<a href="../glossary.html#t-modecollapse">колапс мод (mode collapse)</a>, і механізм
+у неї цілком логічний.</p>
+
+<p>Генераторові платять рівно за одне: обдурити дискримінатора. Йому <b>ніхто не
+платить за різноманіття</b> — у втраті немає жодного доданка, який би цього вимагав.
+Отже, знайшовши дві-три картинки, які надійно проходять, генератор має всі підстави
+малювати тільки їх. З погляду його власної цільової функції це не поразка, а
+оптимум.</p>
+
+<p>Дискримінатор, узагалі кажучи, мав би це помітити: він бачить, що всі підробки
+однакові. Але дивиться він на <b>кожну картинку окремо</b>, а «всі однакові» — це
+властивість набору, а не картинки. Тому колапс мод — не збій реалізації, а дірка в
+самій постановці задачі.</p>
+
+<p>Заміряймо. Базова конфігурація: обидві мережі мають однакову швидкість навчання
+<code>2e-4</code>, двадцять епох, 1800 фігур, три зерна.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Куди поділись три фігури з шести</p>
+  <p class="fig-sub">Частка кожного класу у вибірці з шестисот згенерованих картинок.
+    Пунктир — поріг 5 %, за яким клас вважається покритим.</p>
+  <div class="panel">
+    <div><canvas id="cCol" width="940" height="368" aria-label="Шість стовпчиків часток класів із порогом пʼять відсотків для обраної конфігурації та зерна"></canvas></div>
+    <div>
+      <div class="seg wrap" id="colM" role="group" aria-label="конфігурація">
+        <button data-i="0" aria-pressed="false">D повільніший</button>
+        <button data-i="1" aria-pressed="true">однакові кроки</button>
+        <button data-i="2" aria-pressed="false">G швидший</button>
+      </div>
+      <div class="ctl">
+        <label>показ <output id="colWo">зерно 0</output></label>
+        <input type="range" id="colW" min="0" max="2" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>класів ≥ 5 %</b><i id="colK">—</i></div>
+        <div class="cellv"><b>найбільша частка</b><i id="colMx">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кільце</b><i id="colRi">—</i></div>
+        <div class="cellv"><b>хрест</b><i id="colCr">—</i></div>
+      </div>
+      <div class="verdict" id="colVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Що впадає в око.</b> Хоч би яку конфігурацію взяти, кільце й хрест
+    стоять біля нуля, а трикутник, коло й квадрат ділять між собою майже всю вибірку.
+    Порядок вимирання класів той самий у всіх трьох конфігураціях і на всіх трьох
+    зернах — це вже не випадковість одного прогону.</figcaption>
+</figure>
+
+<p>Базова конфігурація покриває <b>3.00</b> класи з шести, і купа по зернах —
+<b>[3, 3, 3]</b>, тобто всі три прогони дали однакове число. Половину датасету
+генератор просто не малює.</p>
+<h2 id="s9"><span class="num">09 / Перевірка</span>Колапс чи просто недонавчання</h2>
+
+<p>Перш ніж називати те, що ми побачили, колапсом мод, треба закрити нудне пояснення:
+а може, генератор просто не встиг навчитись? Двадцять епох — небагато, і кільце може
+бути не «загубленим», а «ще не досягнутим».</p>
+
+<p>Перевірка проста: збережімо знімки генератора на трьох епохах і подивімось, куди
+рухається покриття.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Покриття вздовж навчання</p>
+  <p class="fig-sub">Скільки класів накрито на восьмій, чотирнадцятій і двадцятій
+    епосі. Три лінії — три конфігурації, три зерна на кожну точку.</p>
+  <div class="panel">
+    <div><canvas id="cEpo" width="940" height="360" aria-label="Три ламані покриття класів по епохах вісім чотирнадцять двадцять і стовпчики FID на обраній епосі"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label>епоха <output id="epoEo">20</output></label>
+        <input type="range" id="epoE" min="0" max="2" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>D повільніший</b><i id="epoA">—</i></div>
+        <div class="cellv"><b>однакові кроки</b><i id="epoB">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>G швидший</b><i id="epoC">—</i></div>
+        <div class="cellv"><b>розрив найкраща − найгірша</b><i id="epoD" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="epoVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Головне тут — восьма епоха.</b> На ній усі три конфігурації дають
+    рівно 2.33, тобто розрізнити їх неможливо взагалі. Розходяться вони пізніше, і
+    розходяться в різні боки. Обирати конфігурацію за коротким прогоном — те саме, що
+    кидати монету.</figcaption>
+</figure>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>конфігурація</th><th>епоха 8</th><th>епоха 14</th><th>епоха 20</th><th>FID на 20-й</th></tr></thead>
+<tbody>
+<tr><td>дискримінатор повільніший</td><td>2.33</td><td>1.67</td><td>2.33</td><td>724.94</td></tr>
+<tr><td>однакові кроки</td><td>2.33</td><td>2.67</td><td>3.00</td><td>569.69</td></tr>
+<tr class="hot"><td>генератор швидший</td><td>2.33</td><td>3.33</td><td><b>4.67</b></td><td><b>249.33</b></td></tr>
+</tbody></table></div>
+
+<p>Відповідь на питання розділу — <b>і те, і те, і це важливо розрізняти</b>. Базова
+конфігурація справді трохи росте: 2.33 → 2.67 → 3.00. Частина втрачених класів — це
+недонавчання, і з часом вони повертаються. Але кільце не повертається ні на якій
+епосі, а конфігурація з повільним дискримінатором <b>падає</b> посередині (2.33 →
+1.67) і не відіграє це до кінця. Її FID при цьому росте всі двадцять епох: 417.5 →
+491.4 → 724.9. Це вже не «ще не навчився», це «навчився не тому».</p>
+
+<div class="note warn"><b>Правило, яке варто винести з цього розділу.</b> Перш ніж
+називати щось колапсом мод, перевір коротшим і довшим прогоном. Недонавчання й колапс
+на одному знімку виглядають однаково, а лікуються протилежно: перше — ще епохами,
+друге — зміною постановки.</div>
+
+<h2 id="s10"><span class="num">10 / Рецепти</span>Співвідношення сил і рецепт, що зашкодив</h2>
+
+<p>Найпоширеніша порада в GAN звучить так: «дискримінатор надто сильний, послаб
+його». Логіка за нею начебто бездоганна. Якщо дискримінатор навчився розрізняти
+ідеально, то <code>D(G(z))</code> притиснуте до нуля, генератор дістає слабкий
+сигнал і не рухається. Отже треба сповільнити дискримінатора, щоб він не відривався.</p>
+
+<p>Ми поставили три точки на осі «хто швидший» і поміряли всі три однаково.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>конфігурація</th><th>lr генератора</th><th>lr дискримінатора</th><th>відношення</th><th>класів</th><th>по зернах</th></tr></thead>
+<tbody>
+<tr><td>дискримінатор повільніший</td><td>2e-4</td><td>5e-5</td><td>4.0</td><td>2.33</td><td>[3, 3, 1]</td></tr>
+<tr><td>однакові кроки</td><td>2e-4</td><td>2e-4</td><td>1.0</td><td>3.00</td><td>[3, 3, 3]</td></tr>
+<tr class="hot"><td>генератор швидший</td><td>5e-4</td><td>2e-4</td><td>2.5</td><td><b>4.67</b></td><td><b>[5, 5, 4]</b></td></tr>
+</tbody></table></div>
+
+<p>Три висновки, і кожен вартий окремої уваги.</p>
+
+<p><b>Перший: різниця справжня.</b> Купи по зернах — [3, 3, 3] проти [5, 5, 4] — не
+перетинаються. За критерієм курсу, введеним у
+<a href="../26-one-stage/lecture.html">темі 26</a>, це сильніший доказ, ніж різниця
+середніх: жоден прогін базової конфігурації не дотягнув до найгіршого прогону
+прискореного генератора.</p>
+
+<p><b>Другий: канонічний рецепт зашкодив.</b> Сповільнення дискримінатора дало
+<b>2.33</b> замість 3.00, тобто <em>гірше</em> за те, з чого починали. І на одному
+зерні з трьох воно дало повний колапс: генератор малює саму лише одну фігуру, а
+покриття падає до одиниці. Порада, яку повторюють у кожному другому туторіалі, на
+нашому масштабі не працює.</p>
+
+<p><b>Третій, і найцікавіший: справа не у відношенні.</b> Подивись на колонку
+«відношення». Обидві крайні конфігурації роблять генератора відносно швидшим за
+дискримінатора — 4.0 і 2.5 проти 1.0 у середньої. Якби вирішувало відношення, обидві
+мали б бути кращими за середню. Насправді одна краща, а друга гірша. Отже
+<b>«послабити дискримінатора» і «прискорити генератора» — це різні дії, а не одна</b>,
+хоч у народному переказі вони й зливаються в одну пораду про «баланс».</p>
+
+<div class="note"><b>Чому так, обережна гіпотеза.</b> <code>Adam</code> нормує крок на
+власну оцінку розкиду градієнта, тож абсолютна швидкість навчання задає, наскільки
+далеко мережа рухається за крок, майже незалежно від суперника. Прискорення
+генератора дає йому змогу за ту саму кількість кроків обійти більше різних варіантів.
+Сповільнення дискримінатора нічого генераторові не додає — воно лише робить сигнал,
+який той отримує, застарілим. Але це <em>гіпотеза</em>, а не результат: ми поміряли
+наслідок, а не механізм.</div>
+
+<p>І окремо про рецепти взагалі. Проти колапсу мод існує канонічний прийом —
+<b>minibatch std</b>: у дискримінатор додають канал, у якому лежить розкид активацій
+<em>по пакету</em>. Пакет із однакових картинок дає в цьому каналі нуль, і
+дискримінатор дістає змогу побачити те, чого не бачив: не картинку, а набір. Коштує
+це <b>384</b> ваги з шести тисяч. Прийом розумний, і в зошиті він реалізований — але
+перевіряти його ми залишаємо тобі в домашньому завданні, бо на нашому масштабі
+кожна така перевірка коштує трьох повних навчань.</p>
+
+<h2 id="s11"><span class="num">11 / Порядок вимирання</span>Яка фігура гине першою</h2>
+
+<p>Колапс зʼїдає класи не навмання. Ось усереднені по трьох зернах частки — і порядок
+у них той самий у всіх трьох конфігураціях.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>фігура</th><th>D повільніший</th><th>однакові кроки</th><th>G швидший</th><th>яскравих пікселів</th></tr></thead>
+<tbody>
+<tr><td>трикутник</td><td>0.578</td><td>0.346</td><td>0.122</td><td>0.0868</td></tr>
+<tr><td>коло</td><td>0.057</td><td>0.317</td><td>0.403</td><td>0.1756</td></tr>
+<tr><td>квадрат</td><td>0.352</td><td>0.309</td><td>0.212</td><td>0.1544</td></tr>
+<tr><td>ромб</td><td>0.006</td><td>0.026</td><td>0.108</td><td>0.1310</td></tr>
+<tr><td>хрест</td><td>0.007</td><td>0.002</td><td>0.136</td><td>0.1479</td></tr>
+<tr class="hot"><td>кільце</td><td><b>0.000</b></td><td><b>0.001</b></td><td>0.019</td><td>0.1237</td></tr>
+</tbody></table></div>
+
+<p><b>Кільце гине першим у всіх трьох конфігураціях</b> — 0.000, 0.001 і 0.019 при
+рівномірних 0.167. Хрест другий із кінця. А виживають трикутник, коло й квадрат —
+три суцільні опуклі плями.</p>
+
+<p>Природна гіпотеза: гине найтонша фігура, бо її найважче намалювати. Перевірмо її
+числом, і бажано без жодного GAN — інакше ми пояснюватимемо один незрозумілий
+результат іншим.</p>
+
+<p>Перевірка така: візьмемо <b>справжні</b> фігури й зіпсуємо їх однаково для всіх
+класів — просто розмиємо. Далі спитаємо суддю, яку частку кожного класу він ще
+впізнає. Якщо гіпотеза правильна, кільце обвалиться першим.</p>
+<figure>
+  <p class="fig-head">Інтерактив 6 · Що витримує неохайність</p>
+  <p class="fig-sub">Справжні фігури, розмиті однаковим вікном. Стовпчики — частка,
+    яку суддя ще впізнає правильно.</p>
+  <div class="panel">
+    <div><canvas id="cFrag" width="940" height="368" aria-label="Шість фігур, розмитих обраним вікном, і шість стовпчиків частки правильного впізнання"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label>радіус розмиття <output id="frgRo">1</output></label>
+        <input type="range" id="frgR" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкраще тримається</b><i id="frgBest" class="sm">—</i></div>
+        <div class="cellv"><b>гине першим</b><i id="frgWorst" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кільце</b><i id="frgRing">—</i></div>
+        <div class="cellv"><b>у середньому</b><i id="frgAvg">—</i></div>
+      </div>
+      <div class="verdict" id="frgVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Три фігури, що вижили в GAN, — це рівно три фігури, що тримаються
+    тут:</b> квадрат, трикутник і коло. Але порядок серед трьох приречених інший:
+    розмиття першим убиває ромб, а GAN першим кидає кільце. Проста перевірка вгадує
+    поділ, але не порядок усередині нижньої половини.</figcaption>
+</figure>
+
+<p>Отже гіпотеза підтвердилась <b>наполовину</b>, і половину, яка не підтвердилась,
+ховати не варто. На розмитті радіуса 1 суддя ще впізнає трикутник у <b>0.990</b>
+випадків, квадрат у <b>0.950</b>, коло в <b>0.320</b>, кільце в <b>0.100</b>, хрест
+у <b>0.010</b>, а ромб — у <b>0.000</b>. Поділ на «трійку, що тримається» і «трійку,
+що гине» збігається з тим, що робить GAN, ідеально. Порядок усередині нижньої трійки
+не збігається зовсім.</p>
+
+<p>А ось що гіпотезу просто спростовує: <b>трикутник має найменше яскравих пікселів
+з усіх шести</b> — 0.0868 проти 0.1756 у кола. Найменша фігура виявилась найживучішою.
+Отже справа не в «тонкості» в сенсі площі. Радше в тому, наскільки фігура <em>терпить
+неточність</em>: суцільній опуклій плямі можна помилитись на піксель по краю й лишитись
+собою, а кільце з такою помилкою перестає бути кільцем — у нього закривається отвір.</p>
+
+<div class="note warn"><b>Чесний облік.</b> Ми показали, що порядок вимирання не
+випадковий і що він частково передбачуваний простою перевіркою на розмиття. Ми
+<em>не</em> показали, чому кільце гине раніше за ромб. Правдоподібне пояснення в нас
+є — отвір усередині, — але воно не перевірене заміром, і тому лишається здогадом.</div>
+
+<h2 id="s12"><span class="num">12 / Ціна</span>Різкість проти покриття</h2>
+
+<p>Настав час поставити GAN поруч із VAE з <a href="../37-autoencoders/lecture.html">теми
+37</a> й поміряти обох <b>однією метрикою</b>. Умови однакові: той самий датасет, той
+самий латентний простір на 16 чисел, двадцять епох, три зерна.</p>
+
+<p>Третє число в таблиці — <b>різкість</b>. Міряємо її найпростіше з можливого:
+частка пікселів, які ані чорні, ані білі, тобто значення між 0.25 і 0.75. У справжніх
+фігур із нашим шумом таких пікселів <b>0.0000</b> — межа різка. У розмитої картинки їх
+багато. Менше — різкіше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Дві моделі, три числа</p>
+  <p class="fig-sub">Перемикай модель і дивись, за що вона платить. Зразки намальовані
+    схематично; числа заміряні в зошиті.</p>
+  <div class="panel">
+    <div><canvas id="cCmp" width="940" height="368" aria-label="Зразки обраної моделі і три стовпчики: покриття класів, FID і частка напівтонів"></canvas></div>
+    <div>
+      <div class="seg wrap" id="cmpM" role="group" aria-label="модель">
+        <button data-i="0" aria-pressed="false">справжні</button>
+        <button data-i="1" aria-pressed="true">VAE</button>
+        <button data-i="2" aria-pressed="false">GAN базовий</button>
+        <button data-i="3" aria-pressed="false">GAN швидший</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>класів із 6</b><i id="cmpK">—</i></div>
+        <div class="cellv"><b>FID</b><i id="cmpF">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>напівтонів</b><i id="cmpM2">—</i></div>
+        <div class="cellv"><b>по зернах</b><i id="cmpS" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="cmpVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Компроміс у двох стовпчиках.</b> VAE накриває більше класів, але в
+    півтора раза розмитіший. Найкращий GAN різкіший і має кращий FID, але губить від
+    однієї до двох фігур. Жодне з двох чисел окремо переможця не називає.</figcaption>
+</figure>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>модель</th><th>класів із 6</th><th>по зернах</th><th>FID</th><th>напівтонів</th></tr></thead>
+<tbody>
+<tr><td>справжні фігури</td><td>6.00</td><td>—</td><td>1.1582</td><td>0.0000</td></tr>
+<tr><td>VAE</td><td><b>5.67</b></td><td>[6, 6, 5]</td><td>329.12</td><td>0.0925</td></tr>
+<tr class="hot"><td>GAN, генератор швидший</td><td>4.67</td><td>[5, 5, 4]</td><td><b>249.33</b></td><td><b>0.0578</b></td></tr>
+<tr><td>GAN, однакові кроки</td><td>3.00</td><td>[3, 3, 3]</td><td>569.69</td><td>0.0595</td></tr>
+</tbody></table></div>
+
+<p><b>Різкість.</b> Найкращий GAN дає <b>0.0578</b> напівтонів проти <b>0.0925</b> у
+VAE — у 1.6 раза різкіше. І тут купи по зернах <b>не перетинаються</b>:
+[0.0454, 0.0469, 0.0811] у GAN проти [0.0878, 0.0890, 0.1006] у VAE, найгірше зерно
+GAN різкіше за найкраще зерно VAE. Це те, за чим по GAN і приходять, і воно вимірне
+без жодного «на око».</p>
+
+<p><b>Покриття.</b> VAE дає 5.67, GAN — 4.67. Але купи по зернах — [6, 6, 5] і
+[5, 5, 4] — <b>перетинаються на пʼятірці</b>. За правилом курсу це означає, що
+перевагу VAE в покритті над <em>найкращим</em> GAN ми <b>не довели</b>. Над базовим
+GAN — довели впевнено: [6, 6, 5] проти [3, 3, 3] не перетинаються ніяк.</p>
+
+<p><b>FID.</b> А ось тут упорядкування протилежне покриттю: у GAN 249.33, у VAE
+329.12. FID дивиться і на різноманіття, і на схожість окремих зразків, і різкість
+переважила втрачений клас. Дві чесні метрики дали різні відповіді — і це вже
+пʼята тема курсу, де таке трапляється.</p>
+
+<div class="note"><b>Так що ж краще?</b> Питання поставлене неправильно, і в цьому
+головна думка розділу. VAE платить різкістю за повноту, GAN платить повнотою за
+різкість, і жодна пара чисел не скаже, що з цього дорожче — це вирішує задача. Але
+питання «а чи можна не платити взагалі?» поставлене правильно, і відповідь на нього
+є в наступній темі.</div>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Що з цього забрати</h2>
+
+<p>Сім речей, які варто винести з теми.</p>
+
+<ul>
+  <li><b>GAN викидає явну втрату — і разом із нею прилад.</b> Розмиття, яким платить
+    VAE, береться з мінімізації квадрата різниці. Прибравши її, ми дістали різкість
+    і втратили число, за яким можна стежити.</li>
+  <li><b>Криві втрат у GAN не говорять про якість.</b> Дві конфігурації з покриттям
+    2.33 і 4.67 мають криві генератора, що збігаються в третьому знаку: 0.7071 і
+    0.7106. Це не збіг, а наслідок того, що обидві втрати міряються відносно
+    суперника, який змінюється щокроку.</li>
+  <li><b>Метрику генерації калібрують перед першим використанням.</b> Вісім завідомо
+    поганих наборів, і повний колапс мод мусить опинитись гірше за робочу модель.
+    Наша метрика ставить «лише кола» у 418 разів гірше за базову лінію — тільки
+    після цього їй можна вірити.</li>
+  <li><b>Одного числа мало.</b> «Лише кола» і «кола + квадрати» мають майже однаковий
+    FID (483.8364 і 466.8041) при різному покритті. Пара «FID + покриття» працює там,
+    де кожне число окремо помиляється.</li>
+  <li><b>Колапс мод вимірний і систематичний.</b> Базовий DCGAN покриває 3.00 класи з
+    шести на всіх трьох зернах, а порядок вимирання класів той самий у всіх
+    конфігураціях: кільце гине першим, хрест другим.</li>
+  <li><b>Рецепти з підручника не є законами.</b> Найпоширеніша порада «послаб
+    дискримінатора» дала 2.33 замість 3.00, а на одному зерні — повний колапс.
+    Прискорення генератора дало 4.67 із непересічними купами. Обидві зміни рухають
+    відношення швидкостей в один бік, а результат дають протилежний.</li>
+  <li><b>Впевненість класифікатора — не міра якості генерації.</b> Найвища
+    впевненість судді, <b>0.9129</b>, дісталась найгіршій конфігурації; найкраща
+    конфігурація має найнижчу — <b>0.8116</b>. На порожньому чорному кадрі суддя
+    впевнений на 0.9957, тобто сильніше, ніж на справжніх фігурах.</li>
+</ul>
+
+<p>Останній пункт варто сказати ще раз іншими словами, бо він виглядає як дрібниця, а
+насправді ламає найпоширенішу звичку. Класифікатор навчений відповідати на питання
+«яка це з шести фігур», а не «чи це взагалі фігура». Він і відповідає — на що завгодно,
+включно зі сміттям, і відповідає впевнено. Саме тому для генерації довелося вигадати
+окрему метрику, яка дивиться на <b>розподіл</b>, а не на окремий знімок.</p>
+
+<p>І місток уперед. Ми маємо дві моделі, кожна з яких платить своїм: VAE —
+різкістю, GAN — повнотою й стабільністю. <a href="../39-diffusion/lecture.html">Тема
+39</a> уводить третю — <b>дифузійні моделі</b>. Їхня обіцянка звучить надто добре:
+різкість GAN без його нестабільності, бо навчання там знову має явну ціль —
+передбачити шум, який ми самі й додали, — і ця ціль не залежить від жодного суперника.
+Обіцянку доведеться перевірити тією самою метрикою, яку ми щойно відкалібрували, і
+там теж знайдеться пастка, де число не бреше, а просто міряє не те. А
+<a href="../40-limits-ethics/lecture.html">тема 40</a> закриє курс питанням, якого не
+уникнути після теми про породження підробок: що інженер робить з тим, що вміє
+робити.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../37-autoencoders/lecture.html"><span class="dir">попередня</span><span class="ttl">37. Автоенкодери й VAE</span></a>
+    <a class="next" href="../39-diffusion/lecture.html"><span class="dir">наступна</span><span class="ttl">39. Дифузійні моделі</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function grp(n){
+  var s=String(n), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0&&k>0) out=' '+out; }
+  return out;
+}
+/* українське відмінювання після числа: 1 копія, 2 копії, 5 копій */
+function plural(n, one, few, many){
+  var a=n%10, b=n%100;
+  if(a===1 && b!==11) return one;
+  if(a>=2 && a<=4 && (b<12 || b>14)) return few;
+  return many;
+}
+/* детермінований генератор: та сама картинка у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)>>>0; return s/4294967296; };
+}
+
+/* ═══════ заміряні числа теми (усі друкує зошит) ═══════ */
+var SH=['коло','квадрат','ромб','кільце','хрест','трикутник'];
+var CFG=['дискримінатор повільніший','однакові кроки','генератор швидший'];
+var CFGS=['D повільніший','однакові кроки','G швидший'];
+/* криві втрат, зерно 0, двадцять епох */
+var LD=[[1.3946,1.3171,1.2902,1.2930,1.2964,1.2894,1.2778,1.2741,1.2933,1.3366,1.3552,1.3308,1.3170,1.3419,1.3322,1.2917,1.2765,1.2915,1.2781,1.2531],
+        [1.2113,0.8469,0.7144,0.5249,0.4091,0.3852,0.3935,0.4861,0.5084,0.5205,0.5783,0.6230,0.6736,0.7410,0.8336,0.9275,0.9990,1.0284,1.0309,1.0390],
+        [1.2732,1.1879,1.1321,1.1199,1.1581,1.1444,1.2472,1.3419,1.2667,1.2968,1.3336,1.3377,1.3100,1.3620,1.3424,1.3878,1.3762,1.3670,1.3664,1.3606]];
+var LG=[[0.6914,0.6579,0.5981,0.5531,0.5385,0.5435,0.5535,0.5552,0.5449,0.5244,0.5256,0.5626,0.6021,0.6394,0.7044,0.7494,0.7380,0.6937,0.6654,0.6892],
+        [0.7081,0.7862,0.9364,1.3186,1.6509,1.7518,1.7547,1.5750,1.5281,1.5946,1.5990,1.5562,1.5111,1.4469,1.3927,1.3217,1.2342,1.1545,1.1055,1.0596],
+        [0.6602,0.5748,0.6320,0.6902,0.7980,0.8311,0.7986,0.6983,0.7365,0.7345,0.7339,0.7311,0.7448,0.6887,0.7201,0.7005,0.7115,0.7126,0.7174,0.7112]];
+var KSEED0=[3,3,5];                       /* класів на зерні 0 */
+var KMEAN=[2.33,3.00,4.67];               /* середнє по трьох зернах */
+var KPILE=[[3,3,1],[3,3,3],[5,5,4]];
+/* калібрування: назва, класів, FID, впевненість */
+var CAL=[['справжні, інша вибірка',6,1.1582,0.9899],
+         ['лише кола',1,483.8364,0.9771],
+         ['кола + квадрати',2,466.8041,0.9806],
+         ['розмита каша',2,918.3200,0.8103],
+         ['середнє всіх фігур',1,1035.5173,0.5218],
+         ['усе чорне',1,1133.5891,0.9957],
+         ['чистий шум',2,1089.8743,0.8004],
+         ['усе біле',1,1311.2006,0.5554]];
+var WORKFID=249.33;                       /* FID найкращого GAN — поріг калібрування */
+/* частки класів по зернах на двадцятій епосі */
+var SHARES=[[[0.112,0.493,0.017,0.000,0.020,0.358],[0.060,0.562,0.002,0.000,0.002,0.375],[0.000,0.000,0.000,0.000,0.000,1.000]],
+            [[0.220,0.377,0.017,0.000,0.002,0.385],[0.152,0.377,0.018,0.002,0.005,0.447],[0.580,0.173,0.042,0.000,0.000,0.205]],
+            [[0.328,0.145,0.163,0.038,0.188,0.137],[0.387,0.167,0.097,0.020,0.190,0.140],[0.493,0.325,0.063,0.000,0.028,0.090]]];
+/* впевненість судді по зернах на двадцятій епосі */
+var CONFID=[[0.8660,0.8729,0.9998],[0.8579,0.8205,0.7857],[0.8100,0.7951,0.8296]];
+var EPO=[8,14,20];
+var EPOK=[[2.33,1.67,2.33],[2.33,2.67,3.00],[2.33,3.33,4.67]];
+var EPOF=[[417.5,491.4,724.9],[816.7,715.0,569.7],[703.4,480.3,249.3]];
+/* впізнання після розмиття радіуса 0..3 */
+var FRAG=[[0.970,1.000,1.000,1.000,1.000,1.000],
+          [0.320,0.950,0.000,0.100,0.010,0.990],
+          [0.000,0.890,0.000,0.000,0.000,0.910],
+          [0.000,0.870,0.000,0.000,0.000,0.860]];
+var BRIGHT=[0.1756,0.1544,0.1310,0.1237,0.1479,0.0868];
+/* порівняння: назва, класів, FID, напівтони, купа по зернах */
+var CMP=[['справжні',6.00,1.1582,0.0000,'—'],
+         ['VAE',5.67,329.12,0.0925,'[6, 6, 5]'],
+         ['GAN базовий',3.00,569.69,0.0595,'[3, 3, 3]'],
+         ['GAN швидший',4.67,249.33,0.0578,'[5, 5, 4]']];
+
+/* ═══════ чиста логіка вердиктів — її ганяє Node ═══════ */
+/* 1 · насичення */
+function satCalc(s){
+  var D=1/(1+Math.exp(-s));
+  return {D:D, sat:D, non:1-D, ratio:(1-D)/D};
+}
+function satVerdict(s){
+  var c=satCalc(s), t, txt;
+  if(c.ratio>=3){ t='t-no';
+    txt='Дискримінатор упевнений, що бачить підробку: D = '+f4(c.D)+'. Насичена втрата дає '+
+        f4(c.sat)+', ненасичена '+f4(c.non)+' — у '+f2(c.ratio)+' раза більше. Генератор із насиченою втратою тут майже стоїть.';
+    return {tag:t,cap:'насичена гальмує',txt:txt}; }
+  if(c.ratio>=1.2){ t='t-mid';
+    txt='D = '+f4(c.D)+'. Насичена '+f4(c.sat)+' проти ненасиченої '+f4(c.non)+
+        ': різниця в '+f2(c.ratio)+' раза ще помітна, але вже не вирішальна.';
+    return {tag:t,cap:'різниця помітна',txt:txt}; }
+  t='t-ok';
+  txt='D = '+f4(c.D)+'. Градієнти майже зрівнялись: '+f4(c.sat)+' і '+f4(c.non)+
+      '. Сюди GAN потрапляє лише тоді, коли генератор уже обманює дискримінатора.';
+  return {tag:t,cap:'різниці немає',txt:txt};
+}
+
+/* 2 · криві втрат: кого обрали б, дивлячись лише на втрату генератора */
+function lossVerdict(cfg, ep){
+  var e=ep-1, k, best=0;
+  var vals=[LG[0][e],LG[1][e],LG[2][e]];
+  for(k=1;k<3;k++) if(vals[k]<vals[best]) best=k;
+  var spread=Math.max(vals[0],vals[1],vals[2])-Math.min(vals[0],vals[1],vals[2]);
+  var txt='Епоха '+ep+'. Втрата G: '+f4(vals[0])+' / '+f4(vals[1])+' / '+f4(vals[2])+
+          ', розкид '+f4(spread)+'. Найнижча — у «'+CFGS[best]+'», а покриття в неї '+
+          f2(KMEAN[best])+'. Найкраща насправді «G швидший» із 4.67.';
+  if(best===2) return {tag:'t-ok',cap:'цього разу збіглося',
+    txt:txt+' Тут вибір за втратою випадково збігся з правильним.',spread:spread,best:best};
+  if(best===1) return {tag:'t-mid',cap:'вибір дав середню',
+    txt:txt+' Вибір за втратою дав би середню конфігурацію.',spread:spread,best:best};
+  return {tag:'t-no',cap:'вибір за втратою хибний',
+    txt:txt+' Вибір за втратою дав би найгіршу з трьох.',spread:spread,best:best};
+}
+
+/* 3 · калібрування */
+function calVerdict(i){
+  var r=CAL[i];
+  if(i===0) return {tag:'t-ok',cap:'базова лінія',
+    txt:'Дві різні вибірки справжніх фігур дають FID '+f4(r[2])+
+        '. Це не нуль, а шум оцінки на шестистах картинках — і саме з цим числом треба порівнювати все решта.'};
+  var times=r[2]/CAL[0][2];
+  if(r[2]<=WORKFID) return {tag:'t-no',cap:'метрика провалилась',
+    txt:'FID '+f4(r[2])+' — не гірше за робочу модель ('+f2(WORKFID)+'). Такою метрикою міряти не можна.'};
+  if(r[3]>=0.9) return {tag:'t-mid',cap:'метрика впоралась, суддя ні',
+    txt:'FID '+f4(r[2])+' — у '+Math.round(times)+' '+plural(Math.round(times),'раз','рази','разів')+' гірше за базову лінію, класів '+r[1]+
+        '. Метрика впоралась. А от суддя впевнений на '+f4(r[3])+', тобто сильніше, ніж на розмитій каші, — впевненості вірити не можна.'};
+  return {tag:'t-ok',cap:'метрика впоралась',
+    txt:'FID '+f4(r[2])+' — у '+Math.round(times)+' '+plural(Math.round(times),'раз','рази','разів')+' гірше за базову лінію, класів '+r[1]+
+        '. Гірше за робочу модель ('+f2(WORKFID)+'), як і має бути.'};
+}
+
+/* 4 · колапс */
+function colStats(c,s){
+  var sh=SHARES[c][s], k, cov=0, mx=0, mi=0;
+  for(k=0;k<6;k++){ if(sh[k]>=0.05) cov++; if(sh[k]>mx){mx=sh[k]; mi=k;} }
+  return {sh:sh, cov:cov, mx:mx, mi:mi};
+}
+function colVerdict(c,s){
+  var st=colStats(c,s);
+  var txt='Класів із часткою ≥ 5 %: '+st.cov+' із шести. Найбільший — '+SH[st.mi]+', '+
+          f3(st.mx)+' замість рівномірних 0.167. Кільце: '+f3(st.sh[3])+', хрест: '+f3(st.sh[4])+'.';
+  if(st.cov>=5) return {tag:'t-ok',cap:'майже все на місці',txt:txt};
+  if(st.cov===4) return {tag:'t-mid',cap:'бракує двох',txt:txt};
+  if(st.cov===3) return {tag:'t-mid',cap:'половина зникла',txt:txt};
+  if(st.cov===2) return {tag:'t-no',cap:'лишилось двоє',txt:txt};
+  return {tag:'t-no',cap:'повний колапс',txt:txt};
+}
+
+/* 5 · епохи */
+function epoVerdict(e){
+  var v=[EPOK[0][e],EPOK[1][e],EPOK[2][e]];
+  var gap=Math.max(v[0],v[1],v[2])-Math.min(v[0],v[1],v[2]);
+  var txt='Епоха '+EPO[e]+'. Покриття: '+f2(v[0])+' / '+f2(v[1])+' / '+f2(v[2])+
+          ', розрив '+f2(gap)+'. FID: '+EPOF[0][e].toFixed(1)+' / '+EPOF[1][e].toFixed(1)+' / '+EPOF[2][e].toFixed(1)+'.';
+  if(gap<0.5) return {tag:'t-no',cap:'конфігурації нерозрізненні',
+    txt:txt+' Обрати щось за таким прогоном неможливо.',gap:gap};
+  if(gap<=2.0) return {tag:'t-mid',cap:'розходяться',txt:txt+' Різниця зʼявилась, але купи ще перетинаються.',gap:gap};
+  return {tag:'t-ok',cap:'купи не перетинаються',
+    txt:txt+' Купи по зернах [3, 3, 3] проти [5, 5, 4] — різниця справжня.',gap:gap};
+}
+
+/* 6 · крихкість. Поріг 0.2 відділяє «ще впізнається» від «зникло» */
+function frgStats(r){
+  var v=FRAG[r], k, sum=0, bi=0, alive=[], dead=[];
+  for(k=0;k<6;k++){
+    sum+=v[k];
+    if(v[k]>v[bi]) bi=k;
+    if(v[k]>=0.2) alive.push(SH[k]); else dead.push(SH[k]);
+  }
+  return {v:v, avg:sum/6, bi:bi, alive:alive, dead:dead};
+}
+function frgVerdict(r){
+  var st=frgStats(r);
+  var txt='Радіус '+r+'. Найкраще тримається '+SH[st.bi]+' ('+f3(st.v[st.bi])+
+          '). Кільце: '+f3(st.v[3])+', хрест: '+f3(st.v[4])+', ромб: '+f3(st.v[2])+
+          '. У середньому '+f3(st.avg)+'.';
+  if(st.alive.length===6) return {tag:'t-ok',cap:'усі шість цілі',
+    txt:txt+' Суддя ще впізнає все.',st:st};
+  if(st.alive.length>=3) return {tag:'t-mid',cap:'тримаються троє',
+    txt:txt+' Лишились '+st.alive.join(', ')+' — рівно ті три, що вижили й у GAN. Зникли '+st.dead.join(', ')+'.',st:st};
+  return {tag:'t-no',cap:'лишилось двоє',
+    txt:txt+' Лишились '+st.alive.join(', ')+'. Зникли '+st.dead.join(', ')+'.',st:st};
+}
+
+/* 7 · порівняння */
+function cmpVerdict(m){
+  var r=CMP[m];
+  var txt='Класів '+f2(r[1])+' із шести, FID '+f2(r[2])+', напівтонів '+f4(r[3])+'.';
+  if(m===0) return {tag:'t-ok',cap:'еталон',
+    txt:txt+' Напівтонів рівно нуль: у справжніх фігурах межа різка, проміжних пікселів немає.'};
+  if(m===1) return {tag:'t-mid',cap:'повно, але розмито',
+    txt:txt+' Найбільше покриття з трьох моделей — і в 1.6 раза більше напівтонів, ніж у найкращого GAN (0.0925 проти 0.0578). Купи по зернах не перетинаються: [0.0878, 0.0890, 0.1006] проти [0.0454, 0.0469, 0.0811].'};
+  if(m===2) return {tag:'t-no',cap:'половина класів зникла',
+    txt:txt+' Купа по зернах [3, 3, 3]: половину датасету генератор не малює взагалі.'};
+  return {tag:'t-ok',cap:'різкіше, але неповно',
+    txt:txt+' Найкращий FID із усіх моделей і найрізкіші картинки — але одного-двох класів бракує на кожному зерні.'};
+}
+
+/* ═══════ спільне малювання фігур ═══════ */
+function rgbOf(name){
+  var h=css(name), k;
+  if(h.charAt(0)!=='#') return [128,128,128];
+  if(h.length===4) h='#'+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2)+h.charAt(3)+h.charAt(3);
+  return [parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)];
+}
+function shapeGrid(kind,cy,cx,r,noise,rnd){
+  var g=new Float32Array(784), y,x,dy,dx,d,on,k;
+  for(y=0;y<28;y++)for(x=0;x<28;x++){
+    dy=y-cy; dx=x-cx; on=false;
+    if(kind===0){ on = dy*dy+dx*dx<=r*r; }
+    else if(kind===1){ on = Math.abs(dy)<=r*0.85 && Math.abs(dx)<=r*0.85; }
+    else if(kind===2){ on = Math.abs(dy)+Math.abs(dx)<=r; }
+    else if(kind===3){ d=dy*dy+dx*dx; on = d<=r*r && d>=(r-3)*(r-3); }
+    else if(kind===4){ on = (Math.abs(dy)<=2 && Math.abs(dx)<=r) || (Math.abs(dx)<=2 && Math.abs(dy)<=r); }
+    else { on = dy>=-r*0.8 && dy<=r*0.8 && Math.abs(dx)<=(dy+r*0.8)*0.6; }
+    g[y*28+x]= on?1:0;
+  }
+  if(noise>0&&rnd) for(k=0;k<784;k++){
+    var v=g[k]+noise*(rnd()*2-1);
+    g[k]= v<0?0:(v>1?1:v);
+  }
+  return g;
+}
+function blurGrid(g,rad){
+  if(rad<=0) return g;
+  var out=new Float32Array(784), y,x,i,j,s,n,yy,xx;
+  for(y=0;y<28;y++)for(x=0;x<28;x++){
+    s=0; n=0;
+    for(i=-rad;i<=rad;i++)for(j=-rad;j<=rad;j++){
+      yy=y+i; xx=x+j; n++;
+      if(yy<0||yy>27||xx<0||xx>27) continue;
+      s+=g[yy*28+xx];
+    }
+    out[y*28+x]=s/n;
+  }
+  return out;
+}
+var OFFC=null, OFFG=null;
+function tile(g2d,grid,px,py,size){
+  if(!OFFC){ OFFC=document.createElement('canvas'); OFFC.width=28; OFFC.height=28;
+             OFFG=OFFC.getContext('2d'); }
+  var img=OFFG.createImageData(28,28), k, v, a=rgbOf('--raise'), b=rgbOf('--ink');
+  for(k=0;k<784;k++){
+    v=grid[k]; if(v<0)v=0; if(v>1)v=1;
+    img.data[4*k]  =Math.round(a[0]+(b[0]-a[0])*v);
+    img.data[4*k+1]=Math.round(a[1]+(b[1]-a[1])*v);
+    img.data[4*k+2]=Math.round(a[2]+(b[2]-a[2])*v);
+    img.data[4*k+3]=255;
+  }
+  OFFG.putImageData(img,0,0);
+  g2d.imageSmoothingEnabled=false;
+  g2d.drawImage(OFFC,px,py,size,size);
+  g2d.imageSmoothingEnabled=true;
+  g2d.strokeStyle=css('--hair'); g2d.lineWidth=1;
+  g2d.strokeRect(px+0.5,py+0.5,size-1,size-1);
+}
+function axisBox(g,x0,y0,w,h){
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x0,y0+h); g.lineTo(x0+w,y0+h); g.stroke();
+}
+function dash(g,x1,y1,x2,y2,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke(); g.restore();
+}
+
+/* ═════════════ 1 · насичення ═════════════ */
+function drawSat(){
+  var cv=I('cSat'); if(!cv) return;
+  var g=dpr(cv), s=(+I('satS').value)/10, c=satCalc(s), k;
+  var X0=64, Y0=44, W=520, H=228;
+  axisBox(g,X0,Y0,W,H);
+  capt(g,'МОДУЛЬ ГРАДІЄНТА',X0,Y0-14,css('--soft'),11,true);
+  capt(g,'логіт s дискримінатора',X0+W/2,Y0+H+34,css('--soft'),11,false,'center');
+  for(k=0;k<=4;k++){
+    var yy=Y0+H-H*k/4;
+    capt(g,(k/4).toFixed(2),X0-8,yy+4,css('--soft'),10,false,'right');
+    if(k>0){ g.strokeStyle=css('--hair'); g.globalAlpha=.45; g.beginPath();
+             g.moveTo(X0,yy); g.lineTo(X0+W,yy); g.stroke(); g.globalAlpha=1; }
+  }
+  for(k=-6;k<=3;k++){
+    var xx=X0+W*(k+6)/9;
+    capt(g,String(k),xx,Y0+H+18,css('--soft'),10,false,'center');
+  }
+  var curves=[[css('--rose'),function(v){return 1/(1+Math.exp(-v));}],
+              [css('--teal'),function(v){return 1-1/(1+Math.exp(-v));}]];
+  for(k=0;k<2;k++){
+    g.strokeStyle=curves[k][0]; g.lineWidth=2.4; g.beginPath();
+    for(var t=0;t<=180;t++){
+      var v=-6+9*t/180, xx=X0+W*(v+6)/9, yy=Y0+H-H*curves[k][1](v);
+      if(t===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+    }
+    g.stroke();
+  }
+  capt(g,'насичена  log(1−D)',X0+14,Y0+H*0.45,css('--rose'),11,true);
+  capt(g,'ненасичена  −log D',X0+14,Y0+H*0.45+17,css('--teal'),11,true);
+  var mx=X0+W*(s+6)/9;
+  dash(g,mx,Y0,mx,Y0+H,css('--amber'));
+  g.fillStyle=css('--rose'); g.beginPath(); g.arc(mx,Y0+H-H*c.sat,5,0,2*Math.PI); g.fill();
+  g.fillStyle=css('--teal'); g.beginPath(); g.arc(mx,Y0+H-H*c.non,5,0,2*Math.PI); g.fill();
+  var BX=660, BW=100, BY=Y0, BH=H;
+  capt(g,'У ЦІЙ ТОЧЦІ',BX,Y0-14,css('--soft'),11,true);
+  var bars=[[c.sat,css('--rose'),'насич.'],[c.non,css('--teal'),'ненасич.']];
+  for(k=0;k<2;k++){
+    var bx=BX+k*(BW+58), bh=BH*bars[k][0];
+    g.fillStyle=bars[k][1]; g.fillRect(bx,BY+BH-bh,BW,bh);
+    capt(g,f4(bars[k][0]),bx+BW/2,BY+BH-bh-8,bars[k][1],12,true,'center');
+    capt(g,bars[k][2],bx+BW/2,BY+BH+18,css('--soft'),11,false,'center');
+  }
+  g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(BX-10,BY+BH); g.lineTo(BX+2*BW+68,BY+BH); g.stroke();
+  I('satSo').textContent=s.toFixed(1);
+  I('satD').textContent=f4(c.D);
+  I('satR').textContent=f2(c.ratio)+'×';
+  I('satA').textContent=f4(c.sat);
+  I('satB').textContent=f4(c.non);
+  var vd=satVerdict(s); verd('satVd',vd.tag,vd.cap,vd.txt);
+}
+
+/* ═════════════ 2 · криві втрат ═════════════ */
+var losC=0;
+function drawLoss(){
+  var cv=I('cLoss'); if(!cv) return;
+  var g=dpr(cv), ep=+I('losE').value, k, t;
+  var X0=64, Y0=44, W=560, H=252, MAXL=2.0;
+  axisBox(g,X0,Y0,W,H);
+  capt(g,'ВТРАТА ЗА ЕПОХАМИ · '+CFGS[losC].toUpperCase(),X0,Y0-14,css('--soft'),11,true);
+  capt(g,'епоха',X0+W/2,Y0+H+34,css('--soft'),11,false,'center');
+  for(k=0;k<=4;k++){
+    var yy=Y0+H-H*k/4;
+    capt(g,(MAXL*k/4).toFixed(1),X0-8,yy+4,css('--soft'),10,false,'right');
+    if(k>0){ g.strokeStyle=css('--hair'); g.globalAlpha=.45; g.beginPath();
+             g.moveTo(X0,yy); g.lineTo(X0+W,yy); g.stroke(); g.globalAlpha=1; }
+  }
+  for(k=1;k<=20;k+=Math.max(1,3)){
+    capt(g,String(k),X0+W*(k-1)/19,Y0+H+18,css('--soft'),10,false,'center');
+  }
+  /* бліді криві G інших конфігурацій — щоб видно було, що вони схожі */
+  for(t=0;t<3;t++){
+    if(t===losC) continue;
+    g.strokeStyle=css('--soft'); g.globalAlpha=.28; g.lineWidth=1.5; g.beginPath();
+    for(k=0;k<20;k++){
+      var xx=X0+W*k/19, yy=Y0+H-H*Math.min(LG[t][k],MAXL)/MAXL;
+      if(k===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+    }
+    g.stroke(); g.globalAlpha=1;
+  }
+  var series=[[LD[losC],css('--rose'),'втрата D'],[LG[losC],css('--teal'),'втрата G']];
+  for(t=0;t<2;t++){
+    g.strokeStyle=series[t][1]; g.lineWidth=2.4; g.beginPath();
+    for(k=0;k<20;k++){
+      var xx=X0+W*k/19, yy=Y0+H-H*Math.min(series[t][0][k],MAXL)/MAXL;
+      if(k===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+    }
+    g.stroke();
+    capt(g,series[t][2],X0+14,Y0+18+16*t,series[t][1],11,true);
+  }
+  var mx=X0+W*(ep-1)/19;
+  dash(g,mx,Y0,mx,Y0+H,css('--amber'));
+  for(t=0;t<2;t++){
+    g.fillStyle=series[t][1]; g.beginPath();
+    g.arc(mx,Y0+H-H*Math.min(series[t][0][ep-1],MAXL)/MAXL,5,0,2*Math.PI); g.fill();
+  }
+  var BX=690, BW=62, BY=Y0, BH=H;
+  capt(g,'КЛАСІВ ІЗ 6',BX,Y0-14,css('--soft'),11,true);
+  for(t=0;t<3;t++){
+    var bx=BX+t*(BW+22), bh=BH*KMEAN[t]/6;
+    g.fillStyle= t===losC?css('--rose'):css('--hair');
+    g.fillRect(bx,BY+BH-bh,BW,bh);
+    capt(g,f2(KMEAN[t]),bx+BW/2,BY+BH-bh-8,t===losC?css('--rose'):css('--soft'),12,true,'center');
+    capt(g,['D пов.','однак.','G швид.'][t],bx+BW/2,BY+BH+18,css('--soft'),10,false,'center');
+  }
+  g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(BX-10,BY+BH); g.lineTo(BX+3*BW+50,BY+BH); g.stroke();
+  I('losEo').textContent=String(ep);
+  I('losD').textContent=f4(LD[losC][ep-1]);
+  I('losG').textContent=f4(LG[losC][ep-1]);
+  I('losK').textContent=f2(KMEAN[losC]);
+  var vd=lossVerdict(losC,ep);
+  I('losSp').textContent=f4(vd.spread);
+  verd('losVd',vd.tag,vd.cap,vd.txt);
+}
+
+/* ═════════════ 3 · калібрування ═════════════ */
+var calI=0;
+function calSample(setIndex,n,rnd){
+  var kind, cy, cx, r, grid;
+  if(setIndex===5) return new Float32Array(784);
+  if(setIndex===7){ var w=new Float32Array(784); for(var k=0;k<784;k++) w[k]=1; return w; }
+  if(setIndex===6){ var q=new Float32Array(784); for(var k2=0;k2<784;k2++) q[k2]=rnd(); return q; }
+  if(setIndex===4){
+    var m=new Float32Array(784), t, j;
+    for(t=0;t<6;t++){ var gg=shapeGrid(t,13.5,13.5,7,0,null);
+      for(j=0;j<784;j++) m[j]+=gg[j]/6; }
+    return blurGrid(m,2);
+  }
+  if(setIndex===1) kind=0;
+  else if(setIndex===2) kind=n%2;
+  else kind=n%6;
+  cy=14+Math.round((rnd()*2-1)*4); cx=14+Math.round((rnd()*2-1)*4); r=5+Math.floor(rnd()*4);
+  grid=shapeGrid(kind,cy,cx,r,0.06,rnd);
+  if(setIndex===3) grid=blurGrid(grid,3);
+  return grid;
+}
+function drawCal(){
+  var cv=I('cCal'); if(!cv) return;
+  var g=dpr(cv), k, row=CAL[calI], rnd=LCG(11+calI*7);
+  var TX=44, TY=44, TS=62;
+  capt(g,'ЗРАЗКИ НАБОРУ · '+row[0].toUpperCase(),TX,TY-14,css('--soft'),11,true);
+  for(k=0;k<12;k++) tile(g,calSample(calI,k,rnd),TX+k*(TS+9),TY,TS);
+  var BX=TX, BY=TY+TS+52, BW=560, BH=22;
+  capt(g,'FID · ЛОГАРИФМІЧНА ШКАЛА',BX,BY-12,css('--soft'),11,true);
+  function lg(v){ return Math.log(Math.max(v,0.5))/Math.log(2000); }
+  g.fillStyle=css('--hair'); g.fillRect(BX,BY,BW,BH);
+  g.fillStyle= row[2]>WORKFID?css('--teal'):css('--rose');
+  g.fillRect(BX,BY,BW*lg(row[2]),BH);
+  var wx=BX+BW*lg(WORKFID);
+  dash(g,wx,BY-6,wx,BY+BH+6,css('--amber'));
+  capt(g,'робоча модель 249.33',wx+6,BY+BH+20,css('--amber'),10,true);
+  capt(g,f4(row[2]),BX+BW+12,BY+16,css('--ink'),13,true);
+  var CY=BY+70;
+  capt(g,'КЛАСІВ ІЗ ШЕСТИ',BX,CY-12,css('--soft'),11,true);
+  for(k=0;k<6;k++){
+    g.fillStyle= k<row[1]?css('--teal'):css('--hair');
+    g.fillRect(BX+k*46,CY,38,BH);
+  }
+  capt(g,row[1]+' із 6',BX+6*46+8,CY+16,css('--ink'),13,true);
+  var vd=calVerdict(calI);
+  I('calF').textContent=f4(row[2]);
+  I('calK').textContent=row[1]+' / 6';
+  I('calC').textContent=f4(row[3]);
+  I('calR').textContent= calI===0?'—':(Math.round(row[2]/CAL[0][2])+'×');
+  verd('calVd',vd.tag,vd.cap,vd.txt);
+}
+
+/* ═════════════ 4 · колапс ═════════════ */
+var colC=1;
+function drawCol(){
+  var cv=I('cCol'); if(!cv) return;
+  var g=dpr(cv), sd=+I('colW').value, st=colStats(colC,sd), k;
+  var X0=70, Y0=112, W=800, H=200, BW=88;
+  capt(g,'ЧАСТКА КЛАСУ У ВИБІРЦІ · '+CFGS[colC].toUpperCase()+' · ЗЕРНО '+sd,X0,34,css('--soft'),11,true);
+  axisBox(g,X0,Y0,W,H);
+  for(k=0;k<=4;k++){
+    var yy=Y0+H-H*k/4;
+    capt(g,(k/4).toFixed(2),X0-8,yy+4,css('--soft'),10,false,'right');
+  }
+  var step=W/6;
+  for(k=0;k<6;k++){
+    var bx=X0+step*k+(step-BW)/2, bh=H*st.sh[k];
+    tile(g,shapeGrid(k,13.5,13.5,7,0,null),bx+(BW-40)/2,52,40);
+    g.fillStyle= st.sh[k]>=0.05?css('--teal'):css('--rose');
+    g.fillRect(bx,Y0+H-bh,BW,Math.max(bh,1.5));
+    capt(g,f3(st.sh[k]),bx+BW/2,Y0+H-Math.max(bh,18)-8,st.sh[k]>=0.05?css('--teal'):css('--rose'),12,true,'center');
+    capt(g,SH[k],bx+BW/2,Y0+H+20,css('--soft'),11,false,'center');
+  }
+  var y5=Y0+H-H*0.05, y17=Y0+H-H/6;
+  dash(g,X0,y5,X0+W,y5,css('--amber'));
+  capt(g,'поріг 5 %',X0+W+6,y5+4,css('--amber'),10,true);
+  dash(g,X0,y17,X0+W,y17,css('--soft'));
+  capt(g,'рівномірно',X0+W+6,y17+4,css('--soft'),10,true);
+  I('colWo').textContent='зерно '+sd;
+  I('colK').textContent=st.cov+' / 6';
+  I('colMx').textContent=f3(st.mx);
+  I('colRi').textContent=f3(st.sh[3]);
+  I('colCr').textContent=f3(st.sh[4]);
+  var vd=colVerdict(colC,sd); verd('colVd',vd.tag,vd.cap,vd.txt);
+}
+
+/* ═════════════ 5 · епохи ═════════════ */
+function drawEpo(){
+  var cv=I('cEpo'); if(!cv) return;
+  var g=dpr(cv), e=+I('epoE').value, k, t;
+  var X0=70, Y0=48, W=470, H=232;
+  axisBox(g,X0,Y0,W,H);
+  capt(g,'КЛАСІВ ІЗ ШЕСТИ',X0,Y0-14,css('--soft'),11,true);
+  capt(g,'епоха',X0+W/2,Y0+H+34,css('--soft'),11,false,'center');
+  for(k=0;k<=6;k++){
+    var yy=Y0+H-H*k/6;
+    capt(g,String(k),X0-8,yy+4,css('--soft'),10,false,'right');
+    if(k>0){ g.strokeStyle=css('--hair'); g.globalAlpha=.4; g.beginPath();
+             g.moveTo(X0,yy); g.lineTo(X0+W,yy); g.stroke(); g.globalAlpha=1; }
+  }
+  for(k=0;k<3;k++) capt(g,String(EPO[k]),X0+W*k/2,Y0+H+18,css('--soft'),10,false,'center');
+  var CO=[css('--rose'),css('--soft'),css('--teal')];
+  for(t=0;t<3;t++){
+    g.strokeStyle=CO[t]; g.lineWidth=2.4; g.beginPath();
+    for(k=0;k<3;k++){
+      var xx=X0+W*k/2, yy=Y0+H-H*EPOK[t][k]/6;
+      if(k===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+    }
+    g.stroke();
+    for(k=0;k<3;k++){
+      g.fillStyle=CO[t]; g.beginPath();
+      g.arc(X0+W*k/2,Y0+H-H*EPOK[t][k]/6,k===+e?6:3.5,0,2*Math.PI); g.fill();
+    }
+    capt(g,CFGS[t],X0+14,Y0+18+16*t,CO[t],11,true);
+  }
+  var mx=X0+W*e/2;
+  dash(g,mx,Y0,mx,Y0+H,css('--amber'));
+  var BX=640, BW=70, BY=Y0, BH=H, MAXF=900;
+  capt(g,'FID НА ЦІЙ ЕПОСІ',BX,Y0-14,css('--soft'),11,true);
+  for(t=0;t<3;t++){
+    var bx=BX+t*(BW+26), bh=BH*Math.min(EPOF[t][e],MAXF)/MAXF;
+    g.fillStyle=CO[t]; g.fillRect(bx,BY+BH-bh,BW,bh);
+    capt(g,EPOF[t][e].toFixed(1),bx+BW/2,BY+BH-bh-8,CO[t],12,true,'center');
+    capt(g,['D пов.','однак.','G швид.'][t],bx+BW/2,BY+BH+18,css('--soft'),10,false,'center');
+  }
+  g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(BX-10,BY+BH); g.lineTo(BX+3*BW+62,BY+BH); g.stroke();
+  I('epoEo').textContent=String(EPO[e]);
+  I('epoA').textContent=f2(EPOK[0][e]);
+  I('epoB').textContent=f2(EPOK[1][e]);
+  I('epoC').textContent=f2(EPOK[2][e]);
+  var vd=epoVerdict(e);
+  I('epoD').textContent=f2(vd.gap);
+  verd('epoVd',vd.tag,vd.cap,vd.txt);
+}
+
+/* ═════════════ 6 · крихкість ═════════════ */
+function drawFrag(){
+  var cv=I('cFrag'); if(!cv) return;
+  var g=dpr(cv), r=+I('frgR').value, st=frgStats(r), k;
+  var X0=70, Y0=132, W=800, H=180, BW=88, step=W/6;
+  capt(g,'СПРАВЖНІ ФІГУРИ, РОЗМИТІ ВІКНОМ РАДІУСА '+r,X0,34,css('--soft'),11,true);
+  axisBox(g,X0,Y0,W,H);
+  for(k=0;k<=4;k++) capt(g,(k/4).toFixed(2),X0-8,Y0+H-H*k/4+4,css('--soft'),10,false,'right');
+  for(k=0;k<6;k++){
+    var bx=X0+step*k+(step-BW)/2, bh=H*st.v[k];
+    tile(g,blurGrid(shapeGrid(k,13.5,13.5,7,0,null),r),bx+(BW-56)/2,50,56);
+    g.fillStyle= st.v[k]>=0.2?css('--teal'):css('--rose');
+    g.fillRect(bx,Y0+H-bh,BW,Math.max(bh,1.5));
+    capt(g,f3(st.v[k]),bx+BW/2,Y0+H-Math.max(bh,18)-8,st.v[k]>=0.2?css('--teal'):css('--rose'),12,true,'center');
+    capt(g,SH[k],bx+BW/2,Y0+H+20,css('--soft'),11,false,'center');
+  }
+  var y2=Y0+H-H*0.2;
+  dash(g,X0,y2,X0+W,y2,css('--amber'));
+  capt(g,'поріг 0.20',X0+W+6,y2+4,css('--amber'),10,true);
+  I('frgRo').textContent=String(r);
+  I('frgBest').textContent=SH[st.bi];
+  I('frgWorst').textContent= st.dead.length? st.dead.join(', ') : '—';
+  I('frgRing').textContent=f3(st.v[3]);
+  I('frgAvg').textContent=f3(st.avg);
+  var vd=frgVerdict(r); verd('frgVd',vd.tag,vd.cap,vd.txt);
+}
+
+/* ═════════════ 7 · порівняння ═════════════ */
+var cmpM=1;
+var CMPKINDS=[[0,1,2,3,4,5],[0,1,2,3,4,5],[0,1,5],[0,1,2,4,5]];
+var CMPBLUR=[0,2,1,1];
+function drawCmp(){
+  var cv=I('cCmp'); if(!cv) return;
+  var g=dpr(cv), k, row=CMP[cmpM], rnd=LCG(23+cmpM*13);
+  var TX=44, TY=44, TS=62, kinds=CMPKINDS[cmpM];
+  capt(g,'ЗРАЗКИ · '+row[0].toUpperCase()+' · СХЕМАТИЧНО',TX,TY-14,css('--soft'),11,true);
+  for(k=0;k<12;k++){
+    var kind=kinds[k%kinds.length];
+    var cy=14+Math.round((rnd()*2-1)*3), cx=14+Math.round((rnd()*2-1)*3), rr=5+Math.floor(rnd()*4);
+    tile(g,blurGrid(shapeGrid(kind,cy,cx,rr,0.06,rnd),CMPBLUR[cmpM]),TX+k*(TS+9),TY,TS);
+  }
+  var BY=TY+TS+58, BW=210, BH=20;
+  var metrics=[['класів із 6',row[1]/6,f2(row[1]),css('--teal')],
+               ['FID (менше — краще)',Math.min(row[2],700)/700,f2(row[2]),css('--rose')],
+               ['напівтонів',row[3]/0.12,f4(row[3]),css('--amber')]];
+  for(k=0;k<3;k++){
+    var bx=TX+k*(BW+90);
+    capt(g,metrics[k][0].toUpperCase(),bx,BY-12,css('--soft'),10,true);
+    g.fillStyle=css('--hair'); g.fillRect(bx,BY,BW,BH);
+    g.fillStyle=metrics[k][3]; g.fillRect(bx,BY,BW*Math.max(0.004,Math.min(1,metrics[k][1])),BH);
+    capt(g,metrics[k][2],bx+BW+10,BY+15,metrics[k][3],13,true);
+  }
+  capt(g,'купа по зернах: '+row[4],TX,BY+58,css('--soft'),12,false);
+  I('cmpK').textContent=f2(row[1]);
+  I('cmpF').textContent=f2(row[2]);
+  I('cmpM2').textContent=f4(row[3]);
+  I('cmpS').textContent=row[4];
+  var vd=cmpVerdict(cmpM); verd('cmpVd',vd.tag,vd.cap,vd.txt);
+}
+
+/* ═════════════ звʼязування ═════════════ */
+function redrawAll(){ drawSat(); drawLoss(); drawCal(); drawCol(); drawEpo(); drawFrag(); drawCmp(); }
+on('satS','input',drawSat);
+on('losE','input',drawLoss);
+segment('lossM',function(i){ losC=i; drawLoss(); });
+segment('calM',function(i){ calI=i; drawCal(); });
+segment('colM',function(i){ colC=i; drawCol(); });
+on('colW','input',drawCol);
+on('epoE','input',drawEpo);
+on('frgR','input',drawFrag);
+segment('cmpM',function(i){ cmpM=i; drawCmp(); });
+window.addEventListener('resize',redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change',redrawAll);
+}
+redrawAll();
+
+})();
+</script>
+</body>
+</html>

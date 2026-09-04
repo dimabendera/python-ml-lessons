@@ -1,0 +1,1717 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Детекція на практиці: що насправді вирішує результат</title>
+<meta name="description" content="Останнє слово блоку про детекцію: результат вирішує не архітектура, а рецепт. Заміряно на тому самому детекторі без жодної зміни архітектури: зсув рамок на 4 пікселі коштує 0.1749 mAP — більше, ніж дав focal loss (+0.1061) і anchor-free (+0.0577) разом узяті; неправильний клас у 30 % рамок — 0.1095. Пропущена рамка робить предмет негативним прикладом: mAP цього не бачить (0.8076 проти 0.8068), а повнота на робочому порозі падає з 0.8057 до 0.6775. Своя аугментація з рамками зі звіркою через маску: забута строчка зʼїдає 0.1438 із 0.4429 виграшу. Три політики для рамки на межі кадру. Витік через поділ вибірки: 0.8173 проти чесних 0.7279. Сітка порогів упевненості й NMS: чужий оптимум дорожчий у 9.9 раза. Метрики, зрозумілі замовникові, і підсумок усього блоку детекції.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.hot td{background:var(--rose-w)}
+.nums tr.good td{background:var(--teal-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* під uppercase у .cap і кнопках не піднімаємо регістр там, де стоїть .raw */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw{text-transform:none}
+
+/* перемикачі цієї теми довгі словами — даємо їм два рядки замість трьох */
+.seg.wrap button{flex:1 1 46%}
+
+/* чек-лист рішень проєкту */
+.deck{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  gap:12px; margin:26px 0}
+.deck div{border:1px solid var(--hair); background:var(--raise); border-radius:11px;
+  padding:14px 16px; font-size:15px; line-height:1.5}
+.deck b{display:block; font-family:Unbounded,sans-serif; font-size:13px;
+  margin-bottom:5px; color:var(--rose)}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 5 · Тема 28</p>
+    <h1>Детекція на практиці</h1>
+    <p class="stand">Пʼять тем ми розбирали, як улаштовані детектори. Ця тема про те,
+      що вирішує результат насправді — і це майже ніколи не архітектура. Усі числа
+      нижче здобуті на <b>одному й тому самому</b> детекторі: змінювались тільки
+      дані й рішення навколо них.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Проєкт, а не модель</a></li>
+        <li><a href="#s2">Розмітка: правила важливіші за виконавців</a></li>
+        <li><a href="#s3">Скільки коштує помилка розмітки</a></li>
+        <li><a href="#s4">Пропущена рамка проти відсутнього зображення</a></li>
+        <li><a href="#s5">Скільки даних треба</a></li>
+        <li><a href="#s6">Аугментація з рамками</a></li>
+        <li><a href="#s7">Поділ вибірки</a></li>
+        <li><a href="#s8">Пороги — це рішення</a></li>
+        <li><a href="#s9">Оцінка, зрозуміла замовникові</a></li>
+        <li><a href="#s10">Типові пастки</a></li>
+        <li><a href="#s11">Що обирати</a></li>
+        <li><a href="#s12">Підсумок блоку 5</a></li>
+        <li><a href="#s13">Місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../27-detr/lecture.html">← 27. DETR</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../29-semantic-segmentation/lecture.html">29. Семантична сегментація: FCN і DeepLab →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Блок закінчується не новою архітектурою. <a href="../27-detr/lecture.html">Тема
+27</a> прибрала з детектора останню рукотворну деталь, і на цьому історія конструкцій
+вичерпалась: далі йдуть варіації. Тепер уяви, що тобі треба зробити детектор для
+реальної задачі — порахувати ящики на складі, знайти дефекти на платі, помітити
+людей на камері. Ти обираєш архітектуру за пів години, а потім три місяці займаєшся
+чимось геть іншим. Ця тема про ті три місяці. І головне її число таке: <b>помилка
+в розмітці коштувала нам 0.1749 mAP, а найкращий архітектурний винахід усього
+блоку — 0.1061</b>. Обидва числа зміряні на тій самій задачі, тим самим зошитом.</p>
+
+<h2 id="s1"><span class="num">01 / Постановка</span>Проєкт, а не модель</h2>
+
+<p>У попередніх пʼяти темах задача була вже поставлена: є сцени 64×64, у них кола,
+квадрати й трикутники, рамки рахуються з масок. Це зручно для навчання й безчесно
+щодо реальності. У реальній задачі рамок немає ніде. Їх треба спершу <b>придумати</b>,
+потім намалювати, і обидва кроки коштують дорожче за всю решту.</p>
+
+<p><a href="../02-cv-task-map/lecture.html">Тема 02</a> вже називала ціну другого кроку:
+близько <b>15 секунд на одну рамку</b> при уважній роботі. Десять тисяч зображень по
+три предмети — це 125 годин чистого часу розмітника, тобто місяць роботи однієї людини.
+Але дорожчий не цей крок, а перший, бо помилки в ньому не видно.</p>
+
+<p>Перше рішення — <b>що вважати предметом</b>. Питання звучить безглуздо, поки не
+візьмеш конкретну задачу. Рахуємо ящики на складі: ящик, який видно на чверть із-за
+іншого ящика, — це предмет? А намальований ящик на плакаті? А ящик у дзеркалі? А
+відкритий ящик без кришки — це той самий клас чи інший? Кожна відповідь має бути
+записана <b>до</b> того, як перша людина почне розмічати. Інакше відповідей буде
+стільки, скільки розмітників.</p>
+
+<p>Друге рішення — <b>що робити з частково видимими</b>. Тут теж немає правильної
+відповіді, є вибір із наслідками. Розмічаєш усе, що видно хоч трохи, — детектор
+навчиться реагувати на маленькі шматки й даватиме багато хибних спрацювань.
+Розмічаєш лише те, що видно повністю, — детектор мовчатиме на половині реальних
+кадрів, бо в житті предмети постійно перекриваються.</p>
+
+<p>Третє — <b>що робити з групами</b>. Двадцять яблук у ящику: двадцять рамок чи одна?
+<a href="../25-yolo/lecture.html">Тема 25</a> показувала, що сітка 7×7 при двадцяти
+предметах у кадрі втрачає <b>98.9 %</b> сцен через конфлікт клітинок — тобто відповідь
+«двадцять рамок» дорого коштує самій моделі, а не лише розмітникові.</p>
+
+<p>Ці три питання не про машинне навчання. Вони про домовленість між тобою, замовником
+і розмітниками. І кожне з них міняє те, що модель узагалі вважатиме правдою.</p>
+
+<h2 id="s2"><span class="num">02 / Правила</span>Розмітка: правила важливіші за виконавців</h2>
+
+<p>Типова помилка — думати, що якість розмітки залежить від сумлінності розмітників.
+Насправді вона залежить від того, чи є в них <b>однозначна інструкція</b>. Двоє
+однаково сумлінних людей без інструкції розмітять один кадр по-різному, і різниця
+буде більшою, ніж різниця між двома архітектурами.</p>
+
+<p>Подивись на одну картинку й покрути правила.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Та сама картинка, різні правила — різна істина</p>
+  <p class="fig-sub">Три складні випадки в одній сцені: два предмети, з яких один
+    перекрито; предмет, що наполовину вийшов за кадр; купка дрібних предметів.
+    Перемикачі задають правила розмітки. Праворуч — скільки рамок вийде в
+    еталонній розмітці.</p>
+  <div class="panel">
+    <div><canvas id="cRule" width="940" height="430" aria-label="Сцена зі складними випадками розмітки: перекриті предмети, предмет на межі кадру й група дрібних предметів; підсвічені рамки, що потрапляють в еталонну розмітку"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">перекриті предмети</span>
+        <div class="seg" id="rOver">
+          <button type="button" data-i="0" aria-pressed="true">розмічати всі</button>
+          <button type="button" data-i="1" aria-pressed="false">видно &gt; 50 %</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">предмет на межі кадру</span>
+        <div class="seg" id="rEdge">
+          <button type="button" data-i="0" aria-pressed="true">лишати</button>
+          <button type="button" data-i="1" aria-pressed="false">викидати</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">група дрібних</span>
+        <div class="seg" id="rGroup">
+          <button type="button" data-i="0" aria-pressed="true">кожен окремо</button>
+          <button type="button" data-i="1" aria-pressed="false">одна рамка</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рамок в істині</b><i id="oCount">—</i></div>
+        <div class="cellv"><b>предметів на сцені</b><i id="oReal">8</i></div>
+      </div>
+      <div class="verdict" id="vRule"></div>
+    </div>
+  </div>
+  <figcaption><b>Вісім однакових предметів дають від 2 до 8 рамок — залежно від трьох
+    рядків інструкції.</b> Це вчетверо. Жодна архітектура в цьому курсі не давала
+    різниці в чотири рази. Найгірше не те, що варіантів багато, а те, що <b>кожен із
+    них правильний</b> — доти, доки не записаний один.</figcaption>
+</figure>
+
+<p>Мінімальна інструкція для детекції — це пʼять відповідей, і всі вони мають бути
+однозначними до початку роботи.</p>
+
+<div class="deck">
+  <div><b>Перекриття</b>Від якої частки видимості предмет розмічається. Число, а не
+    «на око»: «видно менше третини — не розмічаємо».</div>
+  <div><b>Тіснота рамки</b>Рамка по видимих пікселях чи по всьому предмету, включно
+    з тим, що за перешкодою. Два різні датасети.</div>
+  <div><b>Межа кадру</b>Обрізаний предмет розмічається чи ні, і якщо так — до краю
+    кадру чи до уявного продовження.</div>
+  <div><b>Відображення й екрани</b>Предмет у дзеркалі, на плакаті, на екрані
+    монітора. Майже завжди «ні», але це треба написати.</div>
+  <div><b>Групи</b>Коли предметів багато й вони дрібні: кожен окремо, одна рамка на
+    групу, чи окремий клас «група».</div>
+</div>
+
+<p>Перевірка інструкції теж проста й коштує пів дня: дай двом людям розмітити ті самі
+50 зображень і порахуй, у скількох рамках вони збіглися за <code>IoU</code> вище 0.7.
+Ця частка — <b>стеля</b> твоєї моделі. Модель не може бути точнішою за розмітку, на
+якій її вчили: у <a href="../23-detection-setup/lecture.html">темі 23</a> ми бачили, що
+рамка зі стороною 40 пікселів утримує <code>IoU</code> 0.9 лише при зсуві до
+<b>2.1 пікселя</b> — тобто розбіжність у два пікселі між двома розмітниками вже
+зʼїдає весь запас між <code>mAP@0.5</code> і <code>mAP@0.5:0.95</code>.</p>
+
+<h2 id="s3"><span class="num">03 / Ціна</span>Скільки коштує помилка розмітки</h2>
+
+<p>Досі це були міркування. Тепер замір, і це головний замір теми.</p>
+
+<p>Беремо наш звичний набір — <b>240 навчальних сцен, 501 істинна рамка</b> — і псуємо
+<b>тільки навчальну</b> розмітку. Перевірна лишається ідеальною: ми хочемо знати, як
+зіпсована розмітка впливає на модель, а не як зіпсована метрика впливає на число.
+Три способи псування, кожен відповідає реальній помилці людини:</p>
+
+<ol>
+  <li><b>зсув рамок</b> на 2 і 4 пікселі у випадковому напрямку — рамку вели поспіхом;</li>
+  <li><b>пропущені рамки</b> (5, 15 і 30 %) — предмет на картинці є, підпису немає;</li>
+  <li><b>неправильний клас</b> (15 і 30 %) — рамка правильна, підпис ні.</li>
+</ol>
+
+<p>Кожна настройка навчається <b>три рази</b> з різними зернами. Це не формальність:
+на чистій розмітці три зерна дали <code>mAP</code> 0.8427, 0.8445 і 0.8749, тобто
+розкид <b>0.0321</b> без жодної зміни в даних. Це наша одиниця виміру. Різниця, менша
+за 0.0321, нічого не доводить — про це докладно
+<a href="../18-architecture-comparison/lecture.html">тема 18</a>.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>що зіпсували</th><th>mAP@0.5</th><th>втрата</th><th>у розкидах</th></tr>
+  <tr class="good"><td>нічого</td><td>0.8540</td><td>—</td><td>—</td></tr>
+  <tr><td>зсув 2 px</td><td>0.8294</td><td>−0.0246</td><td>0.8×</td></tr>
+  <tr class="hot"><td>зсув 4 px</td><td>0.6791</td><td><b>−0.1749</b></td><td>5.4×</td></tr>
+  <tr><td>пропуск 5 %</td><td>0.8441</td><td>−0.0099</td><td>0.3×</td></tr>
+  <tr><td>пропуск 15 %</td><td>0.8314</td><td>−0.0227</td><td>0.7×</td></tr>
+  <tr><td>пропуск 30 %</td><td>0.8076</td><td>−0.0464</td><td>1.4×</td></tr>
+  <tr><td>клас 15 %</td><td>0.8364</td><td>−0.0176</td><td>0.5×</td></tr>
+  <tr class="hot"><td>клас 30 %</td><td>0.7445</td><td><b>−0.1095</b></td><td>3.4×</td></tr>
+</table></div>
+
+<p>Два числа тут головні, і обидва — у виділених рядках.</p>
+
+<p><b>Зсув на 4 пікселі коштує 0.1749.</b> Чотири пікселі — це менше за товщину
+пальця на екрані. Наші фігури мають рамку близько 17 пікселів завширшки, тож зсунута
+рамка перекривається з істинною на <code>IoU</code> <b>0.6111</b> — вона все ще
+«приблизно там», але вже не там. Для порівняння, при зсуві на 2 пікселі
+<code>IoU</code> дорівнює 0.7841, і втрата всемеро менша.</p>
+
+<p><b>Неправильний клас у 30 % рамок коштує 0.1095.</b> Цікаво, що при 15 % втрата лише
+0.0176 — утричі менша, ніж вийшло б за простою пропорцією. Мережа певною мірою
+терпить рідкісний шум у мітках — доти, доки правильних більше. Але після якоїсь межі
+терпіння закінчується різко.</p>
+
+<div class="note warn">
+  <b>А тепер порівняння, заради якого все затівалось.</b><br>
+  Найбільший виграш від зміни <b>архітектури</b> в усьому блоці 5 —
+  focal loss проти звичайної крос-ентропії, <b>+0.1061</b>
+  (<a href="../26-one-stage/lecture.html">тема 26</a>). Другий за величиною —
+  anchor-free голова замість якірної, <b>+0.0577</b>. Зсув рамок на чотири пікселі
+  коштує <b>0.1749</b>, тобто більше за обидва разом. Один недбалий розмітник зʼїдає
+  результат двох винаходів, на які пішли роки.
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Розмітка проти архітектури</p>
+  <p class="fig-sub">Перемикач обирає вид помилки розмітки, повзунок — її силу.
+    Червона смуга — втрата від цієї помилки. Бірюзові — виграші від двох
+    архітектурних винаходів блоку. Сіра — розкид від зерна, тобто межа значущості.</p>
+  <div class="panel">
+    <div><canvas id="cCost" width="940" height="400" aria-label="Стовпчики: втрата від помилки розмітки проти виграшів від зміни архітектури й розкиду від зерна"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">вид помилки</span>
+        <div class="seg wrap" id="kCost">
+          <button type="button" data-i="0" aria-pressed="true">зсув рамки</button>
+          <button type="button" data-i="1" aria-pressed="false">пропуск рамки</button>
+          <button type="button" data-i="2" aria-pressed="false">хибний клас</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="lCost">сила помилки <output id="lCostv">4 px</output></label>
+        <input type="range" id="lCost" min="0" max="1" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>mAP настройки</b><i id="oCostMap">—</i></div>
+        <div class="cellv"><b>втрата</b><i id="oCostDrop">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>проти найкращої архітектури</b><i id="oCostRatio">—</i></div>
+      </div>
+      <div class="verdict" id="vCost"></div>
+    </div>
+  </div>
+  <figcaption><b>Усі сім червоних значень — це та сама мережа на тих самих 240 сценах.</b>
+    Архітектура не змінювалась жодного разу. Бірюзові смуги взяті з теми 26, де їх
+    міряли так само — трьома зернами на кожну точку.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Пропуск</span>Пропущена рамка проти відсутнього зображення</h2>
+
+<p>Серед трьох помилок розмітки пропущена рамка стоїть окремо, і механізм тут інший.
+Згадай, як улаштоване навчання детектора з <a href="../26-one-stage/lecture.html">теми
+26</a>: кожен якір або відповідає за якийсь предмет, або є <b>фоном</b>. Якщо предмет
+на картинці є, а рамки в файлі немає, то всі якорі на ньому оголошуються фоном. Мережу
+штрафують саме за те, що вона правильно побачила предмет.</p>
+
+<p>Просто менша вибірка так не робить. Вона забирає приклади, але нічого не стверджує
+неправильно. Порівняймо це прямо: «видалили 15 % <b>рамок</b>» проти «видалили 15 %
+<b>зображень</b>», і те саме на 30 %. Кількість рамок, що лишилась, у цих парах
+близька, тож порівняння чесне.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>що видалили</th><th>mAP@0.5</th><th>впевненість на істині</th><th>знайдено при 0.30</th></tr>
+  <tr class="good"><td>нічого</td><td>0.8540</td><td>0.5702</td><td>0.8596</td></tr>
+  <tr><td>15 % рамок</td><td>0.8314</td><td>0.4587</td><td>0.8030</td></tr>
+  <tr><td>15 % сцен</td><td>0.8499</td><td>0.5272</td><td>0.8394</td></tr>
+  <tr class="hot"><td>30 % рамок</td><td>0.8076</td><td><b>0.3649</b></td><td><b>0.6775</b></td></tr>
+  <tr><td>30 % сцен</td><td>0.8068</td><td>0.4753</td><td>0.8057</td></tr>
+</table></div>
+
+<p>Подивись на другий стовпчик і здивуйся разом зі мною. При 30 % <code>mAP</code>
+однаковий: 0.8076 проти 0.8068, різниця в четвертому знаку. Якби ми дивились лише на
+<code>mAP</code>, довелося б сказати «різниці немає» — і це була б неправда.</p>
+
+<p>Різниця є, просто <code>mAP</code> її не бачить. Дивись на передостанній
+стовпчик: середня впевненість, яку модель дає справжньому предмету, впала з 0.4753 до
+<b>0.3649</b>. І це не гра середніх — тут виконується найсильніша умова, яку взагалі
+можна перевірити на трьох прогонах: <b>усі три зерна</b> «видалили рамки» (0.2840,
+0.4042, 0.4064) лежать <b>нижче за всі три</b> зерна «видалили сцени» (0.4308, 0.4910,
+0.5040). Купи не перетинаються — так само, як у
+<a href="../26-one-stage/lecture.html">темі 26</a> для focal loss.</p>
+
+<div class="note warn">
+  <b>А ось повноту ми чесно не зміряли.</b><br>
+  В останньому стовпчику різниця виглядає велетенською: 0.6775 проти 0.8057, тобто
+  12.8 пункту. Але розкид усередині «видалили рамки» дорівнює <b>0.3198</b> — одне
+  зерно з трьох просто розвалилось (0.4656 проти 0.7854 і 0.7814). Середнє тягне вниз
+  саме воно. Тож напрямок ми показали, а <b>ціну в пунктах повноти на 240 сценах не
+  встановили</b>: для цього потрібно більше зерен або більший набір.
+</div>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · що сталося з даними</span>
+    <p>З 501 рамки прибрали приблизно 150. Предмети на картинках лишились — зникли
+    тільки їхні підписи.</p></div>
+  <div class="step"><span class="lbl">крок 2 · що побачила мережа</span>
+    <p>150 разів вона бачила чітку фігуру й отримувала вказівку «тут фон». Це не
+    відсутність сигналу, а сигнал протилежного знаку.</p></div>
+  <div class="step"><span class="lbl">крок 3 · чого вона навчилась</span>
+    <p>Знижувати впевненість скрізь, де бачить фігуру. Не «не бачити» — саме
+    <b>стишувати</b>: рамка досі на місці, оцінка нижча. Це й видно в замірі
+    впевненості, де всі три зерна впорядковані однаково.</p></div>
+  <div class="step"><span class="lbl">крок 4 · чому mAP мовчить</span>
+    <p><code>mAP</code> — площа під кривою точність-повнота, а крива будується
+    <b>перебором усіх порогів</b>. Якщо всі оцінки впали приблизно однаково, порядок
+    передбачень майже не змінився, і площа лишилась тією самою. Впаде тільки той, хто
+    працює з <b>фіксованим</b> порогом. Тобто ти, у продуктиві.</p></div>
+</div>
+
+<p>Це, до речі, найкраща ілюстрація до розділу 9 цієї теми: <code>mAP</code> — чесна
+метрика для порівняння моделей і погана для передбачення того, що відчує користувач.
+І водночас урок про самі заміри: одна метрика тут нічого не показала, а друга
+показала занадто багато. Довіряти можна тій, у якої купи зерен не перетинаються.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Пропущена рамка проти відсутнього зображення</p>
+  <p class="fig-sub">Дві криві: скільки коштує видалити частку рамок і скільки —
+    видалити стільки ж зображень. Перемикач міняє метрику. За <code>mAP</code>
+    криві майже збігаються, за впевненістю на істинних предметах — розходяться,
+    і саме там висновок витримує перевірку зернами.</p>
+  <div class="panel">
+    <div><canvas id="cMiss" width="940" height="410" aria-label="Дві криві залежності метрики від частки видалених рамок або зображень"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">метрика</span>
+        <div class="seg wrap" id="mMetric">
+          <button type="button" data-i="0" aria-pressed="true">mAP@0.5</button>
+          <button type="button" data-i="1" aria-pressed="false">повнота при 0.30</button>
+          <button type="button" data-i="2" aria-pressed="false">впевненість на істині</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="shMiss">видалено <output id="shMissv">30 %</output></label>
+        <input type="range" id="shMiss" min="0" max="2" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>видалили рамки</b><i id="oMissA">—</i></div>
+        <div class="cellv"><b>видалили сцени</b><i id="oMissB">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>різниця</b><i id="oMissD">—</i></div>
+      </div>
+      <div class="verdict" id="vMiss"></div>
+    </div>
+  </div>
+  <figcaption><b>Та сама пара моделей, три різні погляди на неї.</b> За
+    <code>mAP</code> на 30 % різниця дорівнює 0.0008 — усередині будь-якого шуму.
+    За впевненістю на істинних предметах — 0.1104, і там купи зерен не перетинаються.
+    Крива повноти показує той самий напрямок, але з розкидом 0.3198 усередині однієї
+    настройки, тож за нею робити висновок не можна. Метрика вирішує, чи побачиш ти
+    проблему — і чи не побачиш зайвого.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Обсяг</span>Скільки даних треба</h2>
+
+<p>Найчастіше запитання й найгірша відповідь на нього — число. «Тисяча зображень на
+клас» гуляє форумами років десять і не означає нічого, бо кількість — не та величина,
+від якої залежить результат. Залежить від <b>різноманіття</b>.</p>
+
+<p>Тисяча кадрів з однієї камери, знятих за одну годину при одному освітленні, — це
+приблизно одне зображення, повторене тисячу разів. Сто кадрів із десяти різних камер
+у різну погоду навчать більшого. Правило, яке справді працює, звучить так:
+<b>додавай не кількість, а різновид</b>. Нова камера, нове освітлення, новий ракурс,
+новий фон, нова відстань до предмета.</p>
+
+<p>Перевірити, чи вистачає даних, можна без здогадів — <b>кривою навчання</b>. Навчи
+модель на чверті даних, на половині, на трьох чвертях і на всіх, по три зерна на
+кожну точку, і подивись на приріст. Якщо остання чверть даних дала приріст, менший за
+розкид від зерна, — нові дані <b>того самого типу</b> вже нічого не додадуть. Техніку
+побудови таких кривих ми розбирали в <a href="../11-training-cnn/lecture.html">темі
+11</a>; тут вона застосовується без змін, просто по осі стоїть <code>mAP</code>.</p>
+
+<p>Практичні орієнтири, з якими не соромно починати: <b>сотні</b> зображень достатньо,
+щоб побачити, чи задача взагалі розвʼязна; <b>тисячі</b> — щоб отримати робочу якість
+на вузькій задачі з одного джерела; <b>десятки тисяч</b> потрібні там, де багато
+класів або дуже різні умови зйомки. Але жоден із цих орієнтирів не замінює криву
+навчання на твоїх даних, бо між «ящики на одному складі» й «ящики взагалі» різниця
+в кілька порядків.</p>
+
+<p>І ще одне, що добре видно з розділу 3: <b>менше й акуратніше краще, ніж більше й
+недбало</b>. Скорочення набору на 30 % опустило <code>mAP</code> з 0.8540 до
+0.8068, а зсув рамок на чотири пікселі — аж до 0.6791. Якщо вибір стоїть між «розмітити вдвічі більше сяк-так» і
+«розмітити стільки ж уважно», числа однозначно за друге.</p>
+
+<h2 id="s6"><span class="num">06 / Аугментація</span>Аугментація з рамками</h2>
+
+<p>Аугментацію ми проходили в <a href="../10-augmentation/lecture.html">темі 10</a>, але
+там задачею була класифікація, і мітка при перетворенні не мінялась: перевернув
+картинку — це все ще кіт. У детекції мітка <b>геометрична</b>, і її треба перетворювати
+разом із зображенням. Помилитись тут легко, а помітити помилку майже неможливо: код не
+падає, картинки виглядають нормально, модель просто гірша.</p>
+
+<p>Тому кожне перетворення пишеться парою «зображення + рамки» і звіряється з
+<b>маскою</b>. Ідея звірки проста. У синтетичних даних ми знаємо маску фігури; отже,
+можна перетворити саму маску тим самим перетворенням і порахувати рамку з неї заново.
+Якщо формула правильна, два числа збігаються точно. Для горизонтального дзеркала
+формула така:</p>
+
+<div class="eq">рамка′ = [ W − x<span class="sub">2</span>, &nbsp; y<span class="sub">1</span>, &nbsp; W − x<span class="sub">1</span>, &nbsp; y<span class="sub">2</span> ]</div>
+
+<p>Тут <code>W</code> — ширина зображення, а <code>x₁, y₁, x₂, y₂</code> — ліва,
+верхня, права й нижня координати рамки. Зверни увагу, що <code>x₁</code> і
+<code>x₂</code> <b>міняються місцями</b>: після дзеркала лівий край стає правим. Це і є
+та помилка, яку роблять найчастіше — переставити координати забувають, і рамка стає
+«вивернутою», з відʼємною шириною. Зошит перевіряє формулу <code>assert</code>-ом
+проти рамки, порахованої з дзеркальної маски, і робить те саме для зсуву.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Рамка їде разом із предметом — або не їде</p>
+  <p class="fig-sub">Ліворуч оригінал, праворуч перетворена сцена. Перемикач обирає
+    перетворення, другий — чи перетворили рамки. Пунктир показує, де рамка мала б
+    бути насправді.</p>
+  <div class="panel">
+    <div><canvas id="cAug" width="940" height="400" aria-label="Оригінальна й перетворена сцена з рамками: рамка або їде разом із предметом, або лишається на старому місці"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">перетворення</span>
+        <div class="seg wrap" id="tAug">
+          <button type="button" data-i="0" aria-pressed="true">дзеркало</button>
+          <button type="button" data-i="1" aria-pressed="false">зсув</button>
+          <button type="button" data-i="2" aria-pressed="false">масштаб</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">рамки</span>
+        <div class="seg" id="bAug">
+          <button type="button" data-i="0" aria-pressed="true">перетворили</button>
+          <button type="button" data-i="1" aria-pressed="false">забули</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>IoU рамки з предметом</b><i id="oAugIou">—</i></div>
+        <div class="cellv"><b>mAP такого набору</b><i id="oAugMap">—</i></div>
+      </div>
+      <div class="verdict" id="vAug"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно на маленькій базі з 80 сцен, куди додали два аугментовані
+    проходи.</b> Без аугментації — 0.3589. З аугментацією й правильними рамками —
+    0.8018. З тими самими картинками, але забутими рамками — 0.6580. Забута строчка
+    зʼїдає <b>0.1438 із 0.4429</b> виграшу, тобто третину.</figcaption>
+</figure>
+
+<p>Найпідступніше тут те, що варіант із забутими рамками <b>усе одно кращий</b> за
+відсутність аугментації: 0.6580 проти 0.3589. Метрика виросла, ти зрадів і пішов далі.
+Помилка, яка робить гірше, знаходиться за годину; помилка, яка робить краще, ніж було,
+живе в проєкті роками.</p>
+
+<h3>Що безпечно, а що ні</h3>
+
+<p>Перетворення діляться на три купи, і критерій простий: <b>чи буває таке в
+реальних даних</b>.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>перетворення</th><th>коли безпечно</th></tr>
+  <tr><td>Горизонтальне дзеркало</td><td>майже завжди: у світі немає «правильного» боку. Виняток — текст, дорожні знаки, цифри</td></tr>
+  <tr><td>Зсув і обрізання</td><td>завжди, але потребує рішення про рамки на межі — див. нижче</td></tr>
+  <tr><td>Масштаб</td><td>завжди; найкорисніше, бо предмети в житті бувають на різній відстані</td></tr>
+  <tr><td>Яскравість і контраст</td><td>завжди, якщо клас не визначається кольором</td></tr>
+  <tr><td>Поворот на малий кут</td><td>обережно: рамка після повороту перестає бути тісною, бо вона завжди по осях</td></tr>
+  <tr><td>Вертикальне дзеркало</td><td>рідко: у більшості задач є низ і верх</td></tr>
+</table></div>
+
+<p>Останній рядок вартий окремого слова, бо його регулярно вмикають «за компанію» з
+горизонтальним. У нашому наборі є трикутник, і він <b>завжди</b> стоїть вістрям угору.
+Перевернувши сцену вертикально, ми отримуємо фігуру, якої в перевірній вибірці не буває
+ніколи, і витрачаємо на неї третину навчального часу. У реальних задачах те саме:
+перевернута машина, перевернута людина, перевернутий дорожній знак — усе це або не
+трапляється, або означає щось інше. Правило просте: <b>вмикай перетворення тільки
+тоді, коли можеш назвати кадр із реального життя, який на нього схожий</b>.</p>
+
+<h3>Рамка на межі кадру</h3>
+
+<p>Обрізання ставить питання, у якого немає очевидної відповіді: що робити з рамкою,
+яка після обрізання наполовину вийшла за кадр? Є три відповіді, і всі три
+використовуються.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Три політики для рамки на межі</p>
+  <p class="fig-sub">Повзунок рухає вікно обрізання, перемикач обирає політику.
+    Ліворуч — повна сцена з вікном, праворуч — те, що потрапить у навчання.</p>
+  <div class="panel">
+    <div><canvas id="cEdge" width="940" height="410" aria-label="Сцена з вікном обрізання і результат обрізання за трьома політиками для рамок на межі"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="xEdge">вікно обрізання <output id="xEdgev">0 px</output></label>
+        <input type="range" id="xEdge" min="0" max="16" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <span class="cap">рамка на межі</span>
+        <div class="seg wrap" id="pEdge">
+          <button type="button" data-i="0" aria-pressed="true">викинути</button>
+          <button type="button" data-i="1" aria-pressed="false">обрізати</button>
+          <button type="button" data-i="2" aria-pressed="false">лишити</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рамок у навчанні</b><i id="oEdgeIn">—</i></div>
+        <div class="cellv"><b>торкнулось межі</b><i id="oEdgeCut">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>mAP цієї політики</b><i id="oEdgeMap">—</i></div>
+      </div>
+      <div class="verdict" id="vEdge"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно на 240 сценах, з яких обрізано половину вікном 48×48.</b>
+    Межі торкнулись <b>135</b> рамок із 501. Політика «викинути» лишає 366 рамок і дає
+    0.7771, «обрізати» — 498 рамок і 0.7701, «лишити» — 498 рамок і 0.7450.</figcaption>
+</figure>
+
+<p>Читай ці числа обережно. Різниця між «викинути» й «обрізати» — 0.0070, тобто в пʼять
+разів менша за розкид від зерна: <b>ці дві політики нерозрізненні на наших даних</b>.
+А от «лишити» гірше за «викинути» на 0.0321 — рівно на один розкид, тобто на самій
+межі значущості. Причина зрозуміла: політика «лишити» вчить регресор передбачати
+координати, яких на картинці <b>не видно</b>, і це єдина з трьох, яка вимагає від
+мережі неможливого.</p>
+
+<p>Зверни увагу й на інше: політика «викинути» робить те саме, що пропущена рамка з
+розділу 4 — предмет видно, підпису немає. На наших даних вона від цього не постраждала,
+бо викидає лише рамки з обрізаної половини набору. Але якщо обрізати <b>всі</b> кадри,
+ця політика перетворюється на фабрику пропущених рамок, і розділ 4 пояснює, чим це
+закінчиться.</p>
+
+<h2 id="s7"><span class="num">07 / Поділ</span>Поділ вибірки</h2>
+
+<p>Найтихіша помилка з усіх. Якщо кадри одного відео потрапили і в навчання, і в
+перевірку, модель на перевірці впізнає майже ті самі картинки, які бачила під час
+навчання. Метрика виходить завищеною, і ти дізнаєшся про це вже на реальних даних —
+тобто найдорожчим можливим способом.</p>
+
+<p>Змоделюймо це чесно. Робимо <b>60 серій по 4 схожі кадри</b>: та сама компоновка
+предметів, центри дрижать на ±1 піксель, шум щоразу новий. Це модель кадрів з одного
+відео, знятих підряд. Ділимо 240 кадрів на 180 навчальних і 60 перевірних двома
+способами — випадково й за серіями. При випадковому поділі <b>42 серії з 60</b>
+опиняються по обидва боки.</p>
+
+<p>А потім міряємо кожну модель <b>двічі</b>: на своїй перевірці й на цілком
+незалежному наборі, згенерованому іншим зерном.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>поділ</th><th>своя перевірка</th><th>незалежний набір</th><th>ілюзія</th></tr>
+  <tr class="hot"><td>випадковий</td><td><b>0.8173</b></td><td>0.7279</td><td>+0.0893</td></tr>
+  <tr class="good"><td>за серіями</td><td>0.7527</td><td>0.7237</td><td>+0.0291</td></tr>
+</table></div>
+
+<p>Дивись на другий стовпчик — він тут головний. <b>Обидві моделі однаково добрі
+насправді</b>: 0.7279 і 0.7237, різниця усемеро менша за розкид від зерна. Уся різниця
+першого стовпчика — 0.8173 проти 0.7527 — це не якість, а <b>ілюзія</b>. Випадковий
+поділ обіцяє 0.8173 там, де насправді 0.7279: він завищує оцінку на 0.0893, тобто
+майже на три розкиди.</p>
+
+<p>Найнеприємніше в цій помилці — що вона не заважає. Модель із витоком навчається
+нормально, метрики ростуть, графіки красиві. Вона просто <b>бреше про майбутнє</b>.</p>
+
+<div class="note">
+  <b>Правило: ділимо за групами, а не за кадрами.</b><br>
+  Група — це все, що знято разом і схоже одне на одне: кадри одного відео, знімки
+  однієї сесії, фотографії одного предмета з різних боків, зображення від одного
+  клієнта. Ідентифікатор групи треба зберігати <b>поруч з іменем файлу від самого
+  початку</b>: придумати його після того, як дані вже поділені, майже неможливо.
+</div>
+
+<p>Той самий принцип стосується перевірної вибірки в іншому сенсі. Якщо ти вибирав
+пороги (розділ 8) за перевірною вибіркою, то ця вибірка вже перестала бути чесною
+оцінкою: ти підганяв під неї рішення. Для остаточного числа потрібен третій набір,
+якого не бачив ані оптимізатор, ані ти.</p>
+
+<h2 id="s8"><span class="num">08 / Пороги</span>Пороги — це рішення, а не константи</h2>
+
+<p>У детектора є два пороги, і обидва зазвичай беруть із чужого коду не думаючи:
+<b>поріг упевненості</b> (нижче якої оцінки передбачення викидаємо) і <b>поріг NMS</b>
+(наскільки сильно рамки мають перекриватись, щоб вважатись дублікатами). Стандартні
+0.5 і 0.5 — це не константи природи. Це два налаштування, які треба обрати під
+<b>ціну помилки</b> у твоїй задачі.</p>
+
+<p>Помилки бувають двох видів, і вони коштують по-різному. <b>Пропуск</b> — предмет
+був, детектор промовчав. <b>Хибне спрацювання</b> — детектор показав те, чого немає.
+Пошук зброї в аеропорту: пропуск катастрофічний, хибне спрацювання — зайва перевірка
+валізи. Автоматичне блокування рахунку: хибне спрацювання бʼє по клієнту, пропуск
+означає ще один прохід ручної перевірки. Ті самі дві помилки, протилежні ціни.</p>
+
+<p>Запишімо це формулою — вона тут проста настільки, що майже не є формулою:</p>
+
+<div class="eq">вартість на кадр = ( c<span class="sub">пропуск</span> · FN + c<span class="sub">хибне</span> · FP ) ÷ кадрів</div>
+
+<p><code>FN</code> — кількість пропусків (від <i>false negative</i>), <code>FP</code> —
+кількість хибних спрацювань (<i>false positive</i>), <code>c</code> — ціна однієї такої
+помилки в будь-яких одиницях: гривнях, хвилинах роботи оператора, чому завгодно.
+Важливе тут не абсолютне значення, а <b>відношення</b> двох цін.</p>
+
+<p>Далі — перебір. Беремо навчений детектор, будуємо сітку з девʼяти порогів
+упевненості на шість порогів NMS, у кожній клітинці рахуємо <code>TP</code>,
+<code>FP</code> і <code>FN</code> на 120 перевірних кадрах і шукаємо найдешевшу
+клітинку.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Оптимум переїжджає разом із ціною помилки</p>
+  <p class="fig-sub">Теплова карта: по вертикалі поріг упевненості, по горизонталі
+    поріг NMS, колір — вартість на кадр (світліше дешевше). Перемикач міняє ціну
+    помилки; бірюзова рамка показує оптимум.</p>
+  <div class="panel">
+    <div><canvas id="cThr" width="940" height="430" aria-label="Теплова карта вартості за сіткою порогів упевненості й NMS з позначеним оптимумом"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що дорожче</span>
+        <div class="seg wrap" id="cPrice">
+          <button type="button" data-i="0" aria-pressed="true">пропуск 10 : 1</button>
+          <button type="button" data-i="1" aria-pressed="false">однаково 1 : 1</button>
+          <button type="button" data-i="2" aria-pressed="false">хибне 1 : 10</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>поріг упевненості</b><i id="oThrConf">—</i></div>
+        <div class="cellv"><b>поріг NMS</b><i id="oThrNms">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вартість на кадр</b><i id="oThrCost">—</i></div>
+        <div class="cellv"><b>TP / FP / FN</b><i id="oThrErr" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="vThr"></div>
+    </div>
+  </div>
+  <figcaption><b>Модель одна й та сама, набір один і той самий — переїжджає тільки
+    оптимум.</b> Коли дорогий пропуск, вигідно 0.25 і 0.40: детектор говорить багато,
+    124 хибні спрацювання на 120 кадрів — прийнятна плата за 24 пропуски. Коли дорогі
+    хибні, вигідно 0.65 і 0.20: одне хибне спрацювання на весь набір ціною
+    118 пропусків.</figcaption>
+</figure>
+
+<p>Тепер найважливіше число цього розділу. Візьмімо пороги, оптимальні для «дорогого
+пропуску», і порахуймо, скільки вони коштують у світі, де дорогі хибні спрацювання:
+<b>10.533 проти 1.067</b>, тобто в <b>9.9 раза</b> дорожче. У зворотний бік трохи
+мʼякше, але теж боляче: 9.842 проти 3.033, у <b>3.2 раза</b>.</p>
+
+<p>А знамените «0.5 і 0.5» з чужого коду? Найближча до нього клітинка сітки — 0.55 і
+0.50 — дає 7.025 там, де оптимум 3.033 (у 2.3 раза дорожче), і 3.425 там, де оптимум
+1.067 (у 3.2 раза дорожче). Тобто замовчування програє <b>в обох</b> світах, і це
+природно: воно не було обране ні під один із них.</p>
+
+<div class="note warn">
+  <b>Пороги обираються на окремій вибірці.</b><br>
+  Перебравши 54 клітинки й обравши найкращу, ти підігнав два числа під перевірний
+  набір. Оцінка, отримана на тому самому наборі, вже завищена — рівно з тієї самої
+  причини, що й у розділі 7. Пороги добирай на одній частині даних, а остаточну
+  цифру називай на іншій.
+</div>
+
+<h2 id="s9"><span class="num">09 / Оцінка</span>Оцінка, зрозуміла замовникові</h2>
+
+<p><code>mAP</code> — правильна метрика для порівняння моделей і <b>погана</b> для
+розмови з людиною, яка не інженер. І це не питання простоти пояснення. Проблема
+глибша: <code>mAP</code> усереднює по класах і по <b>всіх порогах упевненості</b>,
+тобто описує модель у всіх режимах одразу, включно з тими, у яких її ніхто ніколи не
+запустить. Розділ 4 показав це на живому прикладі: дві моделі з однаковим
+<code>mAP</code> (0.8076 і 0.8068) і різною впевненістю на істинних предметах
+(0.3649 і 0.4753) — тобто з різною поведінкою на будь-якому фіксованому порозі.</p>
+
+<p>Замовникові потрібні числа, які описують <b>той режим, у якому система працює</b>.
+Два таких числа рахуються за пʼять рядків коду:</p>
+
+<ul>
+  <li><b>частка кадрів, де знайдено всі предмети</b> — «на скількох знімках зі ста
+    нічого не загубилось». Це число люди розуміють без пояснень;</li>
+  <li><b>середня кількість хибних спрацювань на кадр</b> — «скільки зайвого доведеться
+    відкидати руками».</li>
+</ul>
+
+<p>Порахуймо їх для шести моделей із цієї теми — при одному робочому порозі 0.30.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Одна метрика — один переможець</p>
+  <p class="fig-sub">Шість моделей із цієї теми. Перемикач міняє метрику, і порядок
+    перебудовується. Найкраща за одним числом опиняється останньою за іншим.</p>
+  <div class="panel">
+    <div><canvas id="cRank" width="940" height="400" aria-label="Стовпчикове впорядкування шести моделей за обраною метрикою"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">метрика</span>
+        <div class="seg wrap" id="mRank">
+          <button type="button" data-i="0" aria-pressed="true">mAP@0.5</button>
+          <button type="button" data-i="1" aria-pressed="false">повних кадрів</button>
+          <button type="button" data-i="2" aria-pressed="false">хибних на кадр</button>
+          <button type="button" data-i="3" aria-pressed="false">повнота</button>
+        </div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>переможець</b><i id="oRankTop" class="sm">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>його місце за mAP</b><i id="oRankMap" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="vRank"></div>
+    </div>
+  </div>
+  <figcaption><b>Найгірша модель набору стає найкращою, щойно метрика дивиться лише на
+    хибні спрацювання.</b> «Аугментація без рамок» має найнижчий <code>mAP</code>
+    (0.6231) і найнижчу повноту (0.377) — і рівно тому дає найменше хибних спрацювань
+    (0.33 на кадр). Вона просто мовчить.</figcaption>
+</figure>
+
+<p>Звідси головне правило розмови із замовником: <b>одне число не буває чесним</b>.
+Мінімальний чесний набір — <b>пара</b>: скільки знаходимо і скільки вигадуємо. Один
+показник без другого завжди можна виграти, зіпсувавши систему в потрібний бік.</p>
+
+<p>І ще: обидва числа мають бути порахованими <b>на тому порозі, який стоятиме в
+продуктиві</b>. Оцінка «в середньому по всіх порогах» описує модель, якої не існує.</p>
+
+<h2 id="s10"><span class="num">10 / Пастки</span>Типові пастки</h2>
+
+<p>Шість помилок, кожна з яких коштувала комусь тижня. Усі мовчазні: код не падає,
+повідомлень немає.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>пастка</th><th>як виглядає й що робити</th></tr>
+  <tr><td>Формат координат</td><td>Рамку записують трьома способами: <code>xyxy</code>, <code>xywh</code> (кут і розмір), <code>cxcywh</code> (центр і розмір) — усі три розібрані в <a href="../23-detection-setup/lecture.html">темі 23</a>. Переплутав — <code>IoU</code> виходить майже нулем, а помилки немає. Ліки: <code>torchvision.ops.box_convert</code> і <b>надрукувати одну рамку очима</b> перед першим розрахунком</td></tr>
+  <tr><td>Пікселі проти часток</td><td>Одні формати зберігають координати в пікселях, інші — нормованими від 0 до 1. Рамка <code>[0.1, 0.2, 0.3, 0.4]</code> на зображенні 640×480 — це або крихітний квадратик у кутку, або чверть кадру</td></tr>
+  <tr><td><code>model.eval()</code></td><td>Забув перемкнути режим — батчнорм рахує статистики по перевірній партії, і результат залежить від того, що лежало поруч у батчі. Механізм і ціна — у <a href="../11-training-cnn/lecture.html">темі 11</a></td></tr>
+  <tr><td>Клас фону</td><td>Одні бібліотеки віддають нульовий індекс фону й нумерують класи з одиниці, інші — ні. Зсув на одиницю дає модель, яка стабільно називає кола квадратами</td></tr>
+  <tr><td>Порядок класів</td><td>Список імен класів при навчанні береться з тек, а при виведенні — з конфігу. Достатньо, щоб хтось відсортував його інакше. Ліки: зберігати відповідність «індекс → імʼя» поруч із вагами й читати звідти</td></tr>
+  <tr><td>Рамка нульової площі</td><td>Після обрізання рамка може стати смужкою в один піксель. <code>log(ширина)</code> у кодуванні зсувів дає <code>−inf</code>, і навчання розвалюється. Ліки: викидати рамки, тонші за два пікселі</td></tr>
+</table></div>
+
+<p>Спільна риса всіх шести — жодну не ловить ані компілятор, ані тест «код запустився».
+Ловить тільки одне: <b>надрукувати проміжний результат і подивитись на нього очима</b>.
+Одна намальована сцена з рамками, узятими з реального завантажувача даних, знаходить
+пʼять із шести цих помилок за хвилину.</p>
+
+<h2 id="s11"><span class="num">11 / Вибір</span>Що обирати</h2>
+
+<p>Тепер, коли весь блок позаду, можна відповісти на питання «яку архітектуру брати» —
+і зробити це числами, а не смаком.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>беремо</th><th>коли й чому</th></tr>
+  <tr><td>Одноетапний<br>(RetinaNet, FCOS, YOLO)</td><td><b>Замовчування.</b> Одноетапна постановка дала прискорення у <b>18 разів</b> при однаковій ємності (<a href="../25-yolo/lecture.html">тема 25</a>), а focal loss закрив розрив у точності: <b>+0.1061</b> над звичайною крос-ентропією, причому купи зерен не перетинаються (<a href="../26-one-stage/lecture.html">тема 26</a>). Anchor-free голова додає ще <b>+0.0577</b> і втричі легша</td></tr>
+  <tr><td>Двоетапний<br>(Faster R-CNN)</td><td>Коли потрібні <b>найточніші рамки</b> й багато дрібних предметів, а час є. RPN дає повноту <b>0.997</b> усього на десяти кандидат-областях (<a href="../24-two-stage/lecture.html">тема 24</a>) — другий етап уточнює рамки на вже відібраних місцях</td></tr>
+  <tr><td>DETR і його нащадки</td><td>Коли предмети стоять <b>щільно</b> і NMS стає вузьким місцем. Числа з <a href="../27-detr/lecture.html">теми 27</a> красномовні: щільна голова знаходить усі предмети (повнота <b>1.000</b>), а NMS із порогом 0.5 зрізає її до <b>0.500</b> — половину предметів знищує фільтр, а не мережа. Ціна — повільна збіжність</td></tr>
+</table></div>
+
+<p>А тепер поверни це в масштаб. Найбільша різниця між архітектурами в таблиці —
+<b>0.1061</b>. Зсув рамок на чотири пікселі коштує <b>0.1749</b>. Витік через поділ
+вибірки завищує оцінку на <b>0.0893</b>. Чужі пороги множать вартість помилок
+до <b>9.9 раза</b>.</p>
+
+<p>Отже, порядок дій у реальному проєкті зворотний до порядку тем у цьому блоці.
+Спершу правила розмітки, поділ за групами, аугментація з перевіреними рамками й
+пороги під ціну помилки. Архітектуру бери з першого рядка таблиці й не думай про неї,
+поки все інше не зроблено чесно.</p>
+
+<h2 id="s12"><span class="num">12 / Блок</span>Підсумок блоку 5</h2>
+
+<p>Шість тем тому ми не вміли навіть сформулювати задачу. Ось що змінилось.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>тема</th><th>головне число</th></tr>
+  <tr><td>23 · Постановка</td><td>Відповідь стає списком, а метрика — окремою наукою: <code>mAP@0.5</code> = 0.9393 і <code>mAP@0.5:0.95</code> = 0.4900 на тій самій моделі. І NMS <b>назавжди губить</b> один із двох справжніх предметів, що стоять поруч із <code>IoU</code> 0.714</td></tr>
+  <tr><td>24 · Двоетапні</td><td>Кандидат-області замість перебору: R-CNN потребував 176 годин на 5000 зображень, Fast R-CNN пришвидшив це у 74 рази. Якорі — заготовка, яка не підходить: <b>0.079 %</b> позитивних і <b>28.3 %</b> істинних рамок без жодного якоря</td></tr>
+  <tr><td>25 · YOLO</td><td>Інша постановка, а не швидший конвеєр: <b>18×</b> прискорення. Ціна — конфлікт сітки: <b>8.95 %</b> втрачених предметів на звичайних сценах і <b>98.9 %</b> при двадцяти предметах на сітці 7×7</td></tr>
+  <tr><td>26 · Focal loss</td><td>Хвороба була у втраті, а не в архітектурі. Множник <code>(1−p)<span class="sup">γ</span></code> дає <b>+0.1061</b>, і всі три зерна кращі за всі три зерна крос-ентропії. Ініціалізація одного зсуву міняє втрату першого кроку з 72.190 на 2.255. Anchor-free — ще <b>+0.0577</b> при втричі легшій голові</td></tr>
+  <tr><td>27 · DETR</td><td>Детекція як передбачення множини: угорське зіставлення прибирає NMS. Повнота щільної голови <b>1.000</b> без NMS проти <b>0.500</b> з ним — доказ, що дублікати краще <b>не породжувати</b>, ніж фільтрувати</td></tr>
+  <tr><td>28 · Практика</td><td>І все це важить менше, ніж розмітка: зсув рамок на 4 пікселі — <b>−0.1749</b>, тобто більше за будь-який архітектурний виграш блоку. А витік через поділ вибірки додає до оцінки <b>+0.0893</b>, яких немає</td></tr>
+</table></div>
+
+<p>Дуга блоку виглядає так. Спершу ми навчились <b>питати</b>: де саме предмет і як
+виміряти відповідь. Потім три теми поспіль прибирали з детектора рукотворні деталі —
+перебір вікон, потім якорі, потім NMS. Кожен крок замінював людське припущення на
+щось, що вчиться з даних.</p>
+
+<p>А остання тема показала, куди ці припущення насправді переїхали. Вони не зникли —
+вони <b>вийшли з моделі назовні</b>, у правила розмітки, у поділ вибірки, у пороги, у
+вибір метрики. Там їх не видно в коді архітектури й не описано в жодній статті, і
+саме тому вони тепер вирішують більше.</p>
+
+<h2 id="s13"><span class="num">13 / Далі</span>Місток далі</h2>
+
+<p>Рамка — груба відповідь. Вона каже, <b>де</b> предмет, і навіть це каже
+приблизно: прямокутник по осях описує людину, що йде, чи автомобіль на повороті з
+величезним запасом порожнечі всередині. У розділі про аугментацію ми вже наткнулись на
+наслідок — після повороту рамка перестає бути тісною, бо вона завжди по осях.</p>
+
+<p>Але є питання, на яке рамка не відповідає в принципі: <b>які саме пікселі</b>
+належать предмету, а які — фону за ним. Порахувати площу листка на знімку, відділити
+пухлину від здорової тканини, замінити фон на відеозвʼязку, зрозуміти, де закінчується
+дорога й починається тротуар — усе це потребує відповіді для <b>кожного пікселя</b>,
+а не для прямокутника.</p>
+
+<p>Саме це й робить наступний блок — <b>сегментація</b>. Він міняє форму відповіді
+востаннє: замість списку прямокутників мережа видає карту, у якій кожен піксель
+підписаний. Усе, що ми навчились сьогодні про правила розмітки, поділ вибірки й
+пороги, лишається чинним — тільки розмічати стане ще дорожче, бо обвести предмет
+контуром довше, ніж накрити рамкою.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../27-detr/lecture.html"><span class="dir">попередня</span><span class="ttl">27. DETR</span></a>
+    <a class="next" href="../29-semantic-segmentation/lecture.html"><span class="dir">наступна</span><span class="ttl">29. Семантична сегментація: FCN і DeepLab</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* «1 рамка», «3 рамки», «5 рамок» — без цього табло виглядає неписьменно */
+function boxWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' рамка';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' рамки';
+  return n+' рамок';
+}
+function f4(x){return x.toFixed(4);}
+
+/* ═══════ числа: усе надруковано зошитом practice.ipynb ═══════ */
+var SIZE=64;
+var SPREAD=0.0321;                 /* розкид від зерна на чистій розмітці */
+var CLEAN=0.8540;
+
+/* розділ 3: ціна помилки розмітки */
+var KIND=[
+ {name:'зсув рамки', unit:' px', lv:[2,4],
+  map:[0.8294,0.6791], iou:[0.7841,0.6111]},
+ {name:'пропуск рамки', unit:' %', lv:[5,15,30], map:[0.8441,0.8314,0.8076]},
+ {name:'хибний клас', unit:' %', lv:[15,30], map:[0.8364,0.7445]}
+];
+/* виграші від зміни архітектури — тема 26, ті самі три зерна */
+var ARCH=[{n:'focal loss (26)', v:0.1061},{n:'anchor-free (26)', v:0.0577}];
+
+/* розділ 4: пропущена рамка проти відсутнього зображення */
+var SHARES=[0,15,30];
+var METRIC=[
+ {n:'mAP@0.5',            miss:[0.8540,0.8314,0.8076], drop:[0.8540,0.8499,0.8068], hi:1},
+ {n:'повнота при 0.30',   miss:[0.8596,0.8030,0.6775], drop:[0.8596,0.8394,0.8057], hi:1},
+ {n:'впевненість',        miss:[0.5702,0.4587,0.3649], drop:[0.5702,0.5272,0.4753], hi:1}
+];
+
+/* розділ 6: аугментація */
+var AUGMAP={none:0.3589, ok:0.8018, bad:0.6580};
+/* розділ 6: політики для рамки на межі */
+var EDGE=[{n:'викинути', map:0.7771, left:366},
+          {n:'обрізати', map:0.7701, left:498},
+          {n:'лишити',   map:0.7450, left:498}];
+
+/* розділ 8: сітка порогів, модель зерна 0 (mAP 0.8427), 120 кадрів */
+var CONF=[0.05,0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85];
+var NMSV=[0.20,0.30,0.40,0.50,0.60,0.70];
+var GRID=[
+ [[218,503,29],[228,730,19],[237,1032,10],[241,1432,6],[243,1849,4],[243,2196,4]],
+ [[214,123,33],[222,165,25],[229,275,18],[231,460,16],[231,662,16],[231,853,16]],
+ [[211,50,36],[217,68,30],[223,124,24],[225,251,22],[225,378,22],[225,515,22]],
+ [[201,24,46],[203,29,44],[210,66,37],[213,130,34],[213,195,34],[213,294,34]],
+ [[188,17,59],[189,19,58],[193,35,54],[195,71,52],[196,115,51],[196,177,51]],
+ [[163,10,84],[164,10,83],[166,14,81],[166,33,81],[166,49,81],[166,84,81]],
+ [[129,1,118],[129,1,118],[129,2,118],[129,9,118],[129,15,118],[129,21,118]],
+ [[73,0,174],[73,0,174],[73,0,174],[73,2,174],[73,4,174],[73,7,174]],
+ [[21,0,226],[21,0,226],[21,0,226],[21,0,226],[21,0,226],[21,0,226]]];
+var FRAMES=120;
+var PRICE=[{n:'пропуск дорогий', m:10, f:1},
+           {n:'однаково',        m:1,  f:1},
+           {n:'хибне дороге',    m:1,  f:10}];
+
+/* розділ 9: метрики для замовника, поріг 0.30, моделі зерна 0 */
+var RANK=[
+ {n:'чиста розмітка',   map:0.8427, full:0.808, fp:1.51, rec:0.887},
+ {n:'зсув 4 px',        map:0.7157, full:0.575, fp:1.12, rec:0.745},
+ {n:'пропуск 15 %',     map:0.8572, full:0.783, fp:0.71, rec:0.874},
+ {n:'хибний клас 30 %', map:0.7642, full:0.592, fp:0.67, rec:0.713},
+ {n:'аугм. з рамками',  map:0.8165, full:0.750, fp:1.01, rec:0.850},
+ {n:'аугм. без рамок',  map:0.6231, full:0.292, fp:0.33, rec:0.377}
+];
+var RKEY=[{k:'map', n:'mAP@0.5', up:1, dg:4},
+          {k:'full',n:'частка повних кадрів', up:1, dg:3},
+          {k:'fp',  n:'хибних на кадр', up:0, dg:2},
+          {k:'rec', n:'повнота', up:1, dg:3}];
+
+/* ═══════ спільна геометрія сцен ═══════ */
+function boxOf(o){return [o.cx-o.r, o.cy-o.r, o.cx+o.r+1, o.cy+o.r+1];}
+function iou(a,b){
+  var x1=Math.max(a[0],b[0]), y1=Math.max(a[1],b[1]);
+  var x2=Math.min(a[2],b[2]), y2=Math.min(a[3],b[3]);
+  var w=Math.max(0,x2-x1), h=Math.max(0,y2-y1), inter=w*h;
+  var ua=(a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-inter;
+  return ua>0 ? inter/ua : 0;
+}
+/* малюємо фігуру, вписану в рамку — так картинка й рамка не можуть розійтись */
+function shapeInBox(g,kind,b,ox,oy,K,color){
+  var x=ox+b[0]*K, y=oy+b[1]*K, w=(b[2]-b[0])*K, h=(b[3]-b[1])*K;
+  g.fillStyle=color;
+  if(kind===0){ g.beginPath(); g.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,6.2832); g.fill(); }
+  else if(kind===1){ g.fillRect(x,y,w,h); }
+  else { g.beginPath(); g.moveTo(x+w/2,y); g.lineTo(x+w,y+h); g.lineTo(x,y+h);
+         g.closePath(); g.fill(); }
+}
+function strokeBox(g,b,ox,oy,K,color,dash,width){
+  g.save(); g.strokeStyle=color; g.lineWidth=width||2;
+  if(dash) g.setLineDash(dash);
+  g.strokeRect(ox+b[0]*K, oy+b[1]*K, (b[2]-b[0])*K, (b[3]-b[1])*K);
+  g.restore();
+}
+function frame(g,ox,oy,K){
+  g.save(); g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(ox,oy,SIZE*K,SIZE*K); g.restore();
+}
+function panelBg(g,ox,oy,K){
+  g.fillStyle=css('--paper'); g.fillRect(ox,oy,SIZE*K,SIZE*K);
+}
+
+/* ═══════ 1 · правила розмітки ═══════ */
+var RULE_OBJ=[
+  {k:1,cx:22,cy:24,r:8,role:'over'},     /* перекритий: малюємо першим */
+  {k:1,cx:14,cy:20,r:8,role:'front'},    /* той, що перекриває */
+  {k:0,cx:64,cy:18,r:8,role:'edge'},     /* наполовину за кадром */
+  {k:0,cx:26,cy:50,r:3,role:'grp'},{k:0,cx:33,cy:52,r:3,role:'grp'},
+  {k:0,cx:40,cy:49,r:3,role:'grp'},{k:0,cx:30,cy:57,r:3,role:'grp'},
+  {k:0,cx:38,cy:57,r:3,role:'grp'}
+];
+var rOver=0, rEdge=0, rGroup=0;
+
+function ruleBoxes(){
+  var out=[], k, grp=null;
+  for(k=0;k<RULE_OBJ.length;k++){
+    var o=RULE_OBJ[k], b=boxOf(o);
+    if(o.role==='over'){ if(rOver===0) out.push({b:b,t:'перекрито 35 %',below:1}); continue; }
+    if(o.role==='front'){ out.push({b:b,t:''}); continue; }
+    if(o.role==='edge'){ if(rEdge===0) out.push({b:[b[0],b[1],Math.min(b[2],SIZE),b[3]],t:'видно 47 %'}); continue; }
+    if(grp===null) grp=[b[0],b[1],b[2],b[3]];
+    else { grp[0]=Math.min(grp[0],b[0]); grp[1]=Math.min(grp[1],b[1]);
+           grp[2]=Math.max(grp[2],b[2]); grp[3]=Math.max(grp[3],b[3]); }
+    if(rGroup===0) out.push({b:b,t:''});
+  }
+  if(rGroup===1 && grp) out.push({b:grp,t:'група'});
+  return out;
+}
+function drawRule(){
+  var cv=I('cRule'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var K=Math.min(5.4,(H-70)/SIZE), ox=Math.round((W-SIZE*K)/2), oy=26;
+  capt(g,'сцена 64×64 · 8 предметів',ox,18,css('--soft'),11,false,'left');
+  g.save(); g.beginPath(); g.rect(ox,oy,SIZE*K,SIZE*K); g.clip();
+  panelBg(g,ox,oy,K);
+  var k;
+  for(k=0;k<RULE_OBJ.length;k++){
+    var o=RULE_OBJ[k];
+    var col=(o.role==='front')?css('--ink'):(o.role==='over'?css('--soft'):css('--ink'));
+    shapeInBox(g,o.k,boxOf(o),ox,oy,K,col);
+  }
+  g.restore();
+  var bs=ruleBoxes();
+  for(k=0;k<bs.length;k++){
+    strokeBox(g,bs[k].b,ox,oy,K,css('--rose'),null,2);
+    if(bs[k].t){
+      var ly=bs[k].below ? oy+bs[k].b[3]*K+13 : oy+bs[k].b[1]*K-5;
+      capt(g,bs[k].t,ox+bs[k].b[0]*K,ly,css('--rose'),10,true,'left');
+    }
+  }
+  frame(g,ox,oy,K);
+  capt(g,'рамок в еталонній розмітці: '+bs.length,ox,oy+SIZE*K+20,css('--rose'),13,true,'left');
+  capt(g,'предметів на сцені: 8 — не змінюється',ox,oy+SIZE*K+38,css('--soft'),11,false,'left');
+  I('oCount').textContent=String(bs.length);
+  var t,c;
+  if(bs.length<=2){ t='t-no'; c='найсуворіші правила'; }
+  else if(bs.length>=7){ t='t-mid'; c='найщедріші правила'; }
+  else { t='t-ok'; c='середина'; }
+  verd('vRule',t,c,'Ці правила дають <b>'+boxWord(bs.length)+'</b> із восьми предметів. '+
+    'Крайні варіанти — 2 і 8, тобто вчетверо. Домовитись треба <b>до</b> розмітки: '+
+    'перерозмітити 10 000 зображень коштує місяць.');
+}
+
+/* ═══════ 2 · розмітка проти архітектури ═══════ */
+var kCost=0, lCost=1;
+function drawCost(){
+  var cv=I('cCost'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var kind=KIND[kCost];
+  var drop=CLEAN-kind.map[lCost];
+  var bars=[{n:'розмітка · '+kind.name+' '+kind.lv[lCost]+kind.unit, v:drop, c:css('--rose')},
+            {n:ARCH[0].n, v:ARCH[0].v, c:css('--teal')},
+            {n:ARCH[1].n, v:ARCH[1].v, c:css('--teal')},
+            {n:'розкид від зерна', v:SPREAD, c:css('--soft')}];
+  var left=286, right=W-70, top=54, rowH=58;
+  var vmax=0.20, k;
+  capt(g,'наскільки змінюється mAP@0.5',left,26,css('--soft'),11,false,'left');
+  /* сітка */
+  for(k=0;k<=4;k++){
+    var gx=left+(right-left)*(k*0.05)/vmax;
+    g.save(); g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(gx,top-10); g.lineTo(gx,top+rowH*4-14); g.stroke(); g.restore();
+    capt(g,(k*0.05).toFixed(2),gx,top+rowH*4+4,css('--soft'),10,false,'center');
+  }
+  for(k=0;k<bars.length;k++){
+    var y=top+k*rowH, w=Math.max(2,(right-left)*Math.min(bars[k].v,vmax)/vmax);
+    g.fillStyle=bars[k].c; g.fillRect(left,y,w,26);
+    capt(g,bars[k].n,left-12,y+18,css('--ink'),12,k===0,'right');
+    capt(g,f4(bars[k].v),left+w+8,y+18,bars[k].c,12,true,'left');
+  }
+  I('oCostMap').textContent=f4(kind.map[lCost]);
+  I('oCostDrop').textContent='−'+f4(drop);
+  var ratio=drop/ARCH[0].v;
+  I('oCostRatio').textContent=ratio.toFixed(2)+'×';
+  I('lCostv').textContent=kind.lv[lCost]+kind.unit;
+  var extra='';
+  if(kCost===0) extra=' Зсунута рамка перекривається з істинною на IoU '+kind.iou[lCost].toFixed(4)+'.';
+  if(drop>ARCH[0].v){
+    verd('vCost','t-no','розмітка переважила',
+      'Втрата <b>'+f4(drop)+'</b> більша за найкращий архітектурний виграш блоку ('+
+      f4(ARCH[0].v)+') у '+ratio.toFixed(2)+' раза.'+extra);
+  }else if(drop>SPREAD){
+    verd('vCost','t-mid','помітно, але менше за архітектуру',
+      'Втрата <b>'+f4(drop)+'</b> перевищує розкид від зерна ('+f4(SPREAD)+
+      '), тож вона справжня — але focal loss дав більше ('+f4(ARCH[0].v)+').'+extra);
+  }else{
+    verd('vCost','t-ok','усередині шуму',
+      'Втрата <b>'+f4(drop)+'</b> менша за розкид від зерна ('+f4(SPREAD)+
+      '). На трьох зернах така помилка не доведена.'+extra);
+  }
+}
+function syncCost(){
+  var s=I('lCost'); s.max=String(KIND[kCost].lv.length-1);
+  if(lCost>+s.max) lCost=+s.max;
+  s.value=String(lCost);
+  drawCost();
+}
+
+/* ═══════ 3 · пропущена рамка проти відсутнього зображення ═══════ */
+var mMetric=0, shMiss=2;
+function drawMiss(){
+  var cv=I('cMiss'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var m=METRIC[mMetric];
+  var left=90, right=W-40, top=64, bot=H-56;
+  var vmin=Math.min(Math.min.apply(null,m.miss),Math.min.apply(null,m.drop));
+  var vmax=Math.max(Math.max.apply(null,m.miss),Math.max.apply(null,m.drop));
+  var pad=Math.max(0.02,(vmax-vmin)*0.35);
+  var lo=vmin-pad, hi=vmax+pad;
+  function X(s){return left+(right-left)*(s/30);}
+  function Y(v){return bot-(bot-top)*(v-lo)/(hi-lo);}
+  var k;
+  for(k=0;k<=6;k++){
+    var v=lo+(hi-lo)*k/6, y=Y(v);
+    g.save(); g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(left,y); g.lineTo(right,y); g.stroke(); g.restore();
+    capt(g,v.toFixed(2),left-10,y+4,css('--soft'),10,false,'right');
+  }
+  for(k=0;k<SHARES.length;k++)
+    capt(g,SHARES[k]+' %',X(SHARES[k]),bot+20,css('--soft'),11,false,'center');
+  capt(g,'частка видаленого',(left+right)/2,bot+40,css('--soft'),11,false,'center');
+  capt(g,m.n,left,26,css('--ink'),12,true,'left');
+  /* легенда праворуч угорі, щоб підписи не лізли на самі криві */
+  var lx=right-230, ly=26;
+  g.save(); g.strokeStyle=css('--rose'); g.lineWidth=2.5;
+  g.beginPath(); g.moveTo(lx,ly-4); g.lineTo(lx+22,ly-4); g.stroke(); g.restore();
+  capt(g,'видалили рамки',lx+28,ly,css('--rose'),11,true,'left');
+  g.save(); g.strokeStyle=css('--teal'); g.lineWidth=2.5;
+  g.beginPath(); g.moveTo(lx,ly+14); g.lineTo(lx+22,ly+14); g.stroke(); g.restore();
+  capt(g,'видалили сцени',lx+28,ly+18,css('--teal'),11,true,'left');
+  function line(arr,color,dash){
+    g.save(); g.strokeStyle=color; g.lineWidth=2.5; if(dash) g.setLineDash(dash);
+    g.beginPath();
+    for(k=0;k<SHARES.length;k++){
+      var x=X(SHARES[k]), y=Y(arr[k]);
+      if(k===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke(); g.restore();
+    for(k=0;k<SHARES.length;k++){
+      g.fillStyle=color; g.beginPath(); g.arc(X(SHARES[k]),Y(arr[k]),4.5,0,6.2832); g.fill();
+    }
+  }
+  line(m.drop,css('--teal'),null);
+  line(m.miss,css('--rose'),null);
+  /* вертикаль на обраній частці */
+  var xs=X(SHARES[shMiss]);
+  g.save(); g.strokeStyle=css('--amber'); g.lineWidth=1.5; g.setLineDash([4,4]);
+  g.beginPath(); g.moveTo(xs,top-8); g.lineTo(xs,bot); g.stroke(); g.restore();
+
+  var a=m.miss[shMiss], b=m.drop[shMiss], d=b-a;
+  I('oMissA').textContent=f4(a);
+  I('oMissB').textContent=f4(b);
+  I('oMissD').textContent=(d>=0?'+':'')+f4(d);
+  I('shMissv').textContent=SHARES[shMiss]+' %';
+  if(shMiss===0){
+    verd('vMiss','t-ok','нічого не видалили',
+      'Обидві криві починаються з однієї точки: це та сама чиста настройка.');
+  }else if(Math.abs(d)<SPREAD){
+    verd('vMiss','t-mid','різниця в межах шуму',
+      'Тут різниця <b>'+f4(Math.abs(d))+'</b> менша за розкид від зерна ('+f4(SPREAD)+
+      '). Саме тому за mAP цю помилку не видно — переклади перемикач на повноту.');
+  }else if(mMetric===2){
+    verd('vMiss','t-no','пропущена рамка гірша',
+      'Різниця <b>'+f4(Math.abs(d))+'</b>, і тут купи зерен не перетинаються: '+
+      'усі три прогони «видалили рамки» нижчі за всі три «видалили сцени». '+
+      'Пропущена рамка не забирає приклад — вона наказує мережі мовчати там, '+
+      'де вона правильно побачила предмет.');
+  }else{
+    verd('vMiss','t-mid','напрямок той, ціна не зміряна',
+      'Різниця <b>'+f4(Math.abs(d))+'</b> велика, але розкид усередині «видалили '+
+      'рамки» тут дорівнює 0.3198: одне зерно з трьох розвалилось. Напрямок '+
+      'правильний, а число — ні. Переклади перемикач на впевненість: там висновок '+
+      'витримує перевірку зернами.');
+  }
+}
+
+/* ═══════ 4 · аугментація з рамками ═══════ */
+var AUG_OBJ=[{k:1,cx:18,cy:20,r:7},{k:2,cx:44,cy:40,r:8}];
+var tAug=0, bAug=0;
+function augBox(b,mode){
+  if(mode===0) return [SIZE-b[2], b[1], SIZE-b[0], b[3]];
+  if(mode===1) return [b[0]+10, b[1]-6, b[2]+10, b[3]-6];
+  var s=SIZE/48;
+  return [(b[0]-8)*s,(b[1]-8)*s,(b[2]-8)*s,(b[3]-8)*s];
+}
+function drawAug(){
+  var cv=I('cAug'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var K=Math.min(4.6,(H-88)/SIZE);
+  var side=SIZE*K, gap=54;
+  var ox1=Math.round(W/2-side-gap/2), ox2=Math.round(W/2+gap/2), oy=42;
+  capt(g,'оригінал',ox1,30,css('--soft'),12,true,'left');
+  capt(g,'після перетворення',ox2,30,css('--soft'),12,true,'left');
+  var k, sum=0;
+  /* оригінал */
+  g.save(); g.beginPath(); g.rect(ox1,oy,side,side); g.clip();
+  panelBg(g,ox1,oy,K);
+  for(k=0;k<AUG_OBJ.length;k++) shapeInBox(g,AUG_OBJ[k].k,boxOf(AUG_OBJ[k]),ox1,oy,K,css('--ink'));
+  g.restore();
+  for(k=0;k<AUG_OBJ.length;k++) strokeBox(g,boxOf(AUG_OBJ[k]),ox1,oy,K,css('--teal'),null,2);
+  frame(g,ox1,oy,K);
+  /* перетворення */
+  g.save(); g.beginPath(); g.rect(ox2,oy,side,side); g.clip();
+  panelBg(g,ox2,oy,K);
+  for(k=0;k<AUG_OBJ.length;k++)
+    shapeInBox(g,AUG_OBJ[k].k,augBox(boxOf(AUG_OBJ[k]),tAug),ox2,oy,K,css('--ink'));
+  g.restore();
+  for(k=0;k<AUG_OBJ.length;k++){
+    var truth=augBox(boxOf(AUG_OBJ[k]),tAug);
+    var shown=(bAug===0)?truth:boxOf(AUG_OBJ[k]);
+    sum+=iou(shown,truth);
+    if(bAug===1) strokeBox(g,truth,ox2,oy,K,css('--soft'),[5,4],1.5);
+    strokeBox(g,shown,ox2,oy,K,(bAug===0)?css('--teal'):css('--rose'),null,2);
+  }
+  frame(g,ox2,oy,K);
+  var mean=sum/AUG_OBJ.length;
+  if(bAug===1) capt(g,'пунктир — де рамка мала б бути',ox2,oy+side+22,css('--soft'),11,false,'left');
+  else capt(g,'рамка їде разом із предметом',ox2,oy+side+22,css('--teal'),11,false,'left');
+  I('oAugIou').textContent=mean.toFixed(3);
+  I('oAugMap').textContent=(bAug===0)?f4(AUGMAP.ok):f4(AUGMAP.bad);
+  if(bAug===0){
+    verd('vAug','t-ok','рамки перетворено',
+      'IoU рамки з предметом — <b>'+mean.toFixed(3)+'</b>, тобто рамка точно на місці. '+
+      'Такий набір дає mAP <b>'+f4(AUGMAP.ok)+'</b> проти '+f4(AUGMAP.none)+' без аугментації.');
+  }else{
+    verd('vAug','t-no','рамку забули',
+      'IoU впав до <b>'+mean.toFixed(3)+'</b>: підпис показує на порожнє місце. '+
+      'mAP падає з '+f4(AUGMAP.ok)+' до <b>'+f4(AUGMAP.bad)+'</b> — але лишається вищим '+
+      'за '+f4(AUGMAP.none)+' без аугментації, і саме тому помилку не помічають.');
+  }
+}
+
+/* ═══════ 5 · рамка на межі кадру ═══════ */
+var EDGE_OBJ=[{k:0,cx:12,cy:20,r:7},{k:1,cx:34,cy:30,r:8},{k:2,cx:50,cy:44,r:7}];
+var xEdge=0, pEdge=0;
+var CROP=48, CY0=8;
+function drawEdge(){
+  var cv=I('cEdge'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var K=Math.min(4.6,(H-92)/SIZE), side=SIZE*K, gap=54;
+  var ox1=Math.round(W/2-side-gap/2), ox2=Math.round(W/2+gap/2), oy=42;
+  var s=SIZE/CROP, k;
+  capt(g,'повна сцена й вікно обрізання',ox1,30,css('--soft'),12,true,'left');
+  capt(g,'що потрапить у навчання',ox2,30,css('--soft'),12,true,'left');
+  /* ліворуч */
+  g.save(); g.beginPath(); g.rect(ox1,oy,side,side); g.clip();
+  panelBg(g,ox1,oy,K);
+  for(k=0;k<EDGE_OBJ.length;k++) shapeInBox(g,EDGE_OBJ[k].k,boxOf(EDGE_OBJ[k]),ox1,oy,K,css('--ink'));
+  g.restore();
+  for(k=0;k<EDGE_OBJ.length;k++) strokeBox(g,boxOf(EDGE_OBJ[k]),ox1,oy,K,css('--soft'),null,1.5);
+  g.save(); g.strokeStyle=css('--amber'); g.lineWidth=2.5; g.setLineDash([6,4]);
+  g.strokeRect(ox1+xEdge*K,oy+CY0*K,CROP*K,CROP*K); g.restore();
+  frame(g,ox1,oy,K);
+  /* праворуч: вирізали й розтягнули */
+  var kept=0, touched=0, bleed=20;
+  g.save(); g.beginPath(); g.rect(ox2,oy,side,side); g.clip();
+  panelBg(g,ox2,oy,K);
+  for(k=0;k<EDGE_OBJ.length;k++){
+    var b=boxOf(EDGE_OBJ[k]);
+    var t=[(b[0]-xEdge)*s,(b[1]-CY0)*s,(b[2]-xEdge)*s,(b[3]-CY0)*s];
+    shapeInBox(g,EDGE_OBJ[k].k,t,ox2,oy,K,css('--ink'));
+  }
+  g.restore();
+  /* поле в 20 пікселів навколо кадру: видно, що рамка вилізла, але вона
+     не заповзає на сусідню панель */
+  g.save(); g.beginPath(); g.rect(ox2-bleed,oy-bleed,side+2*bleed,side+2*bleed); g.clip();
+  for(k=0;k<EDGE_OBJ.length;k++){
+    var b2=boxOf(EDGE_OBJ[k]);
+    var t2=[(b2[0]-xEdge)*s,(b2[1]-CY0)*s,(b2[2]-xEdge)*s,(b2[3]-CY0)*s];
+    var cl=[Math.max(0,t2[0]),Math.max(0,t2[1]),Math.min(SIZE,t2[2]),Math.min(SIZE,t2[3])];
+    if(cl[2]-cl[0]<2 || cl[3]-cl[1]<2) continue;      /* поза кадром зовсім */
+    var out=(t2[0]<0||t2[1]<0||t2[2]>SIZE||t2[3]>SIZE);
+    if(out) touched++;
+    if(pEdge===0){                                     /* викинути */
+      if(out) continue;
+      kept++; strokeBox(g,t2,ox2,oy,K,css('--teal'),null,2);
+    }else if(pEdge===1){                               /* обрізати */
+      kept++; strokeBox(g,cl,ox2,oy,K,css('--teal'),null,2);
+    }else{                                             /* лишити */
+      kept++; strokeBox(g,t2,ox2,oy,K,css('--rose'),null,2);
+    }
+  }
+  g.restore();
+  frame(g,ox2,oy,K);
+  capt(g,'вікно 48×48, потім розтягнуте назад до 64×64',ox2,oy+side+22,css('--soft'),11,false,'left');
+  I('oEdgeIn').textContent=String(kept);
+  I('oEdgeCut').textContent=String(touched);
+  I('oEdgeMap').textContent=f4(EDGE[pEdge].map);
+  I('xEdgev').textContent=xEdge+' px';
+  var best=EDGE[0].map, worst=EDGE[2].map;
+  if(pEdge===0){
+    verd('vEdge','t-mid','викинути',
+      'У навчання йде '+boxWord(kept)+' із трьох: усе, що торкнулось межі, зникло. '+
+      'Заміряно mAP <b>'+f4(EDGE[0].map)+'</b>, у навчальному наборі лишилось 366 рамок із 501. '+
+      'Небезпека — це та сама пропущена рамка з розділу 4.');
+  }else if(pEdge===1){
+    verd('vEdge','t-ok','обрізати',
+      'Рамка обрізається по краю кадру: '+boxWord(kept)+' у навчанні, 498 із 501 у наборі. '+
+      'mAP <b>'+f4(EDGE[1].map)+'</b> — від «викинути» відрізняється на '+
+      f4(Math.abs(EDGE[0].map-EDGE[1].map))+', тобто менше за розкид від зерна.');
+  }else{
+    verd('vEdge','t-no','лишити',
+      'Рамка зберігає координати, яких на картинці не видно. mAP <b>'+f4(EDGE[2].map)+
+      '</b> — на '+f4(best-worst)+' гірше за «викинути», рівно на один розкид. '+
+      'Це єдина з трьох політик, яка вимагає від мережі неможливого.');
+  }
+}
+
+/* ═══════ 6 · два пороги ═══════ */
+var cPrice=0;
+function costOf(i,j,p){
+  var c=GRID[i][j];
+  return (PRICE[p].m*c[2]+PRICE[p].f*c[1])/FRAMES;
+}
+function drawThr(){
+  var cv=I('cThr'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var left=118, top=54, cw=76, ch=36;
+  var i,j;
+  var lo=Infinity, hi=-Infinity, bi=0, bj=0;
+  for(i=0;i<CONF.length;i++) for(j=0;j<NMSV.length;j++){
+    var v=costOf(i,j,cPrice);
+    if(v<lo){ lo=v; bi=i; bj=j; }
+    if(v>hi) hi=v;
+  }
+  /* логарифмічна шкала кольору: вартості розрізняються на два порядки */
+  var lg=Math.log(hi/lo);
+  capt(g,'поріг NMS',left+cw*NMSV.length/2,top-30,css('--soft'),11,false,'center');
+  for(j=0;j<NMSV.length;j++)
+    capt(g,NMSV[j].toFixed(2),left+cw*j+cw/2,top-10,css('--soft'),11,false,'center');
+  capt(g,'поріг',left-16,top-28,css('--soft'),11,false,'right');
+  capt(g,'упевненості',left-16,top-14,css('--soft'),11,false,'right');
+  for(i=0;i<CONF.length;i++){
+    capt(g,CONF[i].toFixed(2),left-14,top+ch*i+ch/2+4,css('--soft'),11,false,'right');
+    for(j=0;j<NMSV.length;j++){
+      var v2=costOf(i,j,cPrice);
+      var t=lg>0 ? Math.log(v2/lo)/lg : 0;
+      /* світле = дешево, темно-рожеве = дорого */
+      var alpha=0.08+0.80*t;
+      g.fillStyle='rgba(194,24,91,'+alpha.toFixed(3)+')';
+      if(document.documentElement.getAttribute('data-theme')==='dark' ||
+         (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches &&
+          document.documentElement.getAttribute('data-theme')!=='light'))
+        g.fillStyle='rgba(240,98,146,'+alpha.toFixed(3)+')';
+      g.fillRect(left+cw*j+1,top+ch*i+1,cw-2,ch-2);
+      capt(g,v2<100?v2.toFixed(2):v2.toFixed(0),left+cw*j+cw/2,top+ch*i+ch/2+4,
+           t>0.55?'#fff':css('--ink'),11,false,'center');
+    }
+  }
+  /* оптимум */
+  g.save(); g.strokeStyle=css('--teal'); g.lineWidth=3;
+  g.strokeRect(left+cw*bj+1,top+ch*bi+1,cw-2,ch-2); g.restore();
+  capt(g,'вартість помилок на кадр · бірюзова рамка — оптимум',
+       left,top+ch*CONF.length+22,css('--soft'),11,false,'left');
+  var cell=GRID[bi][bj];
+  I('oThrConf').textContent=CONF[bi].toFixed(2);
+  I('oThrNms').textContent=NMSV[bj].toFixed(2);
+  I('oThrCost').textContent=lo.toFixed(3);
+  I('oThrErr').textContent=cell[0]+' / '+cell[1]+' / '+cell[2];
+  var dflt=costOf(5,3,cPrice);           /* найближче до «0.5 і 0.5» */
+  var txt='Оптимум: упевненість <b>'+CONF[bi].toFixed(2)+'</b>, NMS <b>'+
+    NMSV[bj].toFixed(2)+'</b>, вартість '+lo.toFixed(3)+' на кадр. '+
+    'Замовчування 0.55 / 0.50 коштувало б '+dflt.toFixed(3)+' — у '+
+    (dflt/lo).toFixed(1)+' раза дорожче.';
+  var pair=' Хибних спрацювань — '+cell[1]+', пропусків — '+cell[2]+' на 120 кадрів.';
+  if(cPrice===0) verd('vThr','t-no','пропуск дорогий',txt+' Детектор говорить багато.'+pair);
+  else if(cPrice===2) verd('vThr','t-ok','хибне дороге',txt+' Детектор мовчазний.'+pair);
+  else verd('vThr','t-mid','ціни однакові',txt+' Симетрична ціна дає середину.'+pair);
+}
+
+/* ═══════ 7 · метрика для замовника ═══════ */
+var mRank=0;
+function ordered(k,up){
+  var arr=RANK.slice();
+  arr.sort(function(a,b){return up? b[k]-a[k] : a[k]-b[k];});
+  return arr;
+}
+function drawRank(){
+  var cv=I('cRank'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var spec=RKEY[mRank];
+  var arr=ordered(spec.k,spec.up);
+  var left=210, right=W-100, top=48, rowH=52;
+  var vmax=0, k;
+  for(k=0;k<arr.length;k++) vmax=Math.max(vmax,arr[k][spec.k]);
+  capt(g,spec.n+(spec.up?' — більше краще':' — менше краще'),left,26,css('--ink'),12,true,'left');
+  for(k=0;k<arr.length;k++){
+    var y=top+k*rowH, v=arr[k][spec.k];
+    var w=Math.max(2,(right-left)*v/vmax);
+    var col=(k===0)?css('--teal'):(k===arr.length-1?css('--rose'):css('--soft'));
+    g.fillStyle=col; g.fillRect(left,y,w,24);
+    capt(g,arr[k].n,left-12,y+17,css('--ink'),12,k===0,'right');
+    capt(g,v.toFixed(spec.dg),left+w+8,y+17,col,12,true,'left');
+  }
+  I('oRankTop').textContent=arr[0].n;
+  var mapOrder=ordered('map',1), pos=0;
+  for(k=0;k<mapOrder.length;k++) if(mapOrder[k].n===arr[0].n) pos=k+1;
+  I('oRankMap').textContent=pos+' з '+RANK.length;
+  if(mRank===2){
+    verd('vRank','t-no','метрика бреше',
+      'За «хибними на кадр» перемагає <b>'+arr[0].n+'</b> — модель, яка за mAP '+
+      pos+'-та з '+RANK.length+' і знаходить лише '+arr[0].rec.toFixed(3)+
+      ' предметів. Вона виграла тим, що мовчить.');
+  }else if(mRank===0){
+    verd('vRank','t-mid','це і є сам mAP',
+      'За mAP перемагає <b>'+arr[0].n+'</b> — модель, навчена на розмітці, з якої '+
+      'викинули 15 % рамок. Переклади перемикач і подивись, як порядок розсиплеться.');
+  }else if(pos===1){
+    verd('vRank','t-ok','порядок збігається з mAP',
+      'За цією метрикою перемагає <b>'+arr[0].n+'</b>, і за mAP вона теж перша. '+
+      'Так буває — але перевіряти це треба щоразу, а не припускати.');
+  }else{
+    verd('vRank','t-mid','порядок інший',
+      'За цією метрикою перемагає <b>'+arr[0].n+'</b>, а за mAP вона '+pos+'-та з '+
+      RANK.length+'. Одне число не описує модель: чесний мінімум — <b>пара</b>, '+
+      'скільки знаходимо і скільки вигадуємо.');
+  }
+}
+
+/* ═══════ звʼязування ═══════ */
+segment('rOver', function(i){ rOver=i; drawRule(); });
+segment('rEdge', function(i){ rEdge=i; drawRule(); });
+segment('rGroup',function(i){ rGroup=i; drawRule(); });
+
+segment('kCost', function(i){ kCost=i; lCost=KIND[i].lv.length-1; syncCost(); });
+on('lCost','input', function(e){ lCost=+e.target.value; drawCost(); });
+
+segment('mMetric', function(i){ mMetric=i; drawMiss(); });
+on('shMiss','input', function(e){ shMiss=+e.target.value; drawMiss(); });
+
+segment('tAug', function(i){ tAug=i; drawAug(); });
+segment('bAug', function(i){ bAug=i; drawAug(); });
+
+on('xEdge','input', function(e){ xEdge=+e.target.value; drawEdge(); });
+segment('pEdge', function(i){ pEdge=i; drawEdge(); });
+
+segment('cPrice', function(i){ cPrice=i; drawThr(); });
+segment('mRank', function(i){ mRank=i; drawRank(); });
+
+function redrawAll(){
+  drawRule(); syncCost(); drawMiss(); drawAug(); drawEdge(); drawThr(); drawRank();
+}
+redrawAll();
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+})();
+</script>
+</body>
+</html>

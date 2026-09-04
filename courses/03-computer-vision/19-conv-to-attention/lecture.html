@@ -1,0 +1,2266 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Від згортки до уваги: операція, яка дивиться на все одразу</title>
+<meta name="description" content="Що таке self-attention і навіщо він знадобився зору. Формула softmax(QKᵀ/√d)V по кроках на чотирьох токенах руками, еквіваріантність щодо перестановки як алгебраїчний факт, позиційне кодування, кілька голів і квадратична ціна — усе доводиться замірами без жодного навчання.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.derive .lbl, h2 .num, .meta, .chk, .nums td:first-child,
+.mat, .big b, .big i{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* маленька матриця просто в тексті: рядки чисел, вирівняні по колонках */
+.mat{font-family:"JetBrains Mono",monospace; font-size:14px; white-space:pre;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:14px 16px; margin:20px 0; overflow-x:auto; box-shadow:var(--shadow);
+  font-variant-ligatures:none; line-height:1.55}
+.mat b{color:var(--rose); font-weight:700}
+.mat .hd{color:var(--soft); font-size:11.5px; letter-spacing:.08em; text-transform:none}
+
+/* картка з ключовим числом посеред тексту */
+.big{display:flex; gap:18px; flex-wrap:wrap; margin:26px 0}
+.big div{flex:1 1 180px; background:var(--raise); border:1px solid var(--hair);
+  border-radius:12px; padding:14px 16px; box-shadow:var(--shadow)}
+.big b{display:block; font-family:"JetBrains Mono",monospace; font-size:10.5px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+  margin-bottom:4px; font-variant-ligatures:none}
+.big i{font-style:normal; font-family:"JetBrains Mono",monospace; font-size:20px;
+  font-weight:700; font-variant-numeric:tabular-nums; font-variant-ligatures:none}
+.big span{display:block; font-size:13.5px; color:var(--soft); line-height:1.45; margin-top:4px}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 4 · Тема 19</p>
+    <h1>Від згортки до уваги</h1>
+    <p class="stand">Вісімнадцять тем ми будували мережі на згортці. Вона несе в собі
+      припущення, яке ми давно перестали помічати: важливо тільки сусідство.
+      Ця тема знімає це припущення й розбирає операцію, яка приходить йому на зміну.
+      Майже все тут доводиться алгеброю — без жодного навчання.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Що згортка вирішила за нас</a></li>
+        <li><a href="#s2">Де локальність заважає</a></li>
+        <li><a href="#s3">Хай кожен сам обере, з ким рахуватися</a></li>
+        <li><a href="#s4">Формула по кроках</a></li>
+        <li><a href="#s5">Навіщо ділити на корінь із d</a></li>
+        <li><a href="#s6">Кілька голів</a></li>
+        <li><a href="#s7">Увага не бачить порядку</a></li>
+        <li><a href="#s8">Позиційне кодування</a></li>
+        <li><a href="#s9">Ціна квадратична</a></li>
+        <li><a href="#s10">Увага проти згортки: чесне порівняння</a></li>
+        <li><a href="#s11">Увага не нова для зору</a></li>
+        <li><a href="#s12">Підсумок і що далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../18-architecture-comparison/lecture.html">← 18. Порівняння архітектур</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../20-vision-transformer/lecture.html">20. Vision Transformer →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У кінці <a href="../18-architecture-comparison/lecture.html">теми 18</a>
+ми поставили питання й лишили його без відповіді. Усі девʼять архітектур, які ми
+розібрали, — від AlexNet 2012 року до EfficientNet 2019-го — стоять на одному
+припущенні: <b>сусідні пікселі повʼязані, далекі — ні</b>. А що буде, якщо цю
+ставку зняти? Якщо дозволити кожній частині зображення дивитися одразу на будь-яку
+іншу, без вікна й без сусідства? Відповідь називається <b>увага</b>, і в цій темі
+ми розберемо саму операцію: звідки береться її формула, чому в ній стоїть
+ділення на корінь, що вона вміє задарма і за що доводиться платити.</p>
+
+<div class="note"><b>Чим ця тема незвична.</b> Майже все, що тут написано, можна
+перевірити за секунди й <b>без жодного навчання</b> — трьома-чотирма рядками коду.
+Головний факт теми доводиться взагалі алгеброю: він випливає з форми формули,
+а не з того, що модель чогось навчилась. У практиці ти зробиш усі заміри сам,
+і весь зошит іде менш ніж пів хвилини — бо навчати нема чого.</div>
+
+<h2 id="s1"><span class="num">01 / Спадок</span>Що згортка вирішила за нас</h2>
+
+<p>Повернімось до <a href="../06-why-not-dense/lecture.html">теми 06</a>. Там ми
+брали повнозвʼязну мережу, показували, що на зсунутих предметах вона падає до
+рівня вгадування, і вводили згортку як ліки. Ліки подіяли: та сама задача,
+у тринадцять разів менше ваг, точність на зсунутих предметах удвічі вища.</p>
+
+<p>Але кожні ліки — це вибір, і за нього чимось платять. Згортка не просто
+«краще працює». Вона <b>ухвалює за нас три рішення</b>, ще до того, як мережа
+побачить перший приклад. Ось вони.</p>
+
+<div class="scroll-x"><table class="plain">
+<thead><tr><th>рішення</th><th>що воно каже</th><th>що з нього випливає</th></tr></thead>
+<tbody>
+<tr><td>Локальність</td><td>значення має лише те, що лежить у вікні 3×3</td><td>далекий звʼязок треба збирати з багатьох шарів</td></tr>
+<tr><td>Спільні ваги</td><td>те саме ядро працює в кожній точці кадру</td><td>ознака, вивчена в кутку, працює по всьому кадру</td></tr>
+<tr><td>Порядок</td><td>піксель знає, хто його лівий сусід, а хто верхній</td><td>геометрія кадру закладена в саму операцію</td></tr>
+</tbody>
+</table></div>
+
+<p>Третє рішення варто розжувати, бо його майже ніколи не називають окремо.
+Коли ядро 3×3 множить свою верхню ліву клітинку на верхній лівий піксель вікна,
+воно тим самим <b>знає</b>, що цей піксель — верхній лівий. Це знання не вивчене,
+воно вбудоване в те, як записано операцію. Згортка отримує геометрію кадру
+безкоштовно, разом із формулою.</p>
+
+<p>Три рішення разом і є та ставка, про яку йшлося в кінці теми 18. Вона виявилась
+блискучою — але лишається ставкою: локальність не є властивістю зображень, вона є
+нашим припущенням про них. У цій темі подивимось на ті самі три рішення з іншого
+боку — <b>як на обмеження</b>. Почнемо з першого.</p>
+
+<h2 id="s2"><span class="num">02 / Межа</span>Де локальність заважає</h2>
+
+<p>Уяви фотографію кімнати: у лівому нижньому кутку склянка, у правому верхньому —
+вона ж у дзеркалі. Щоб зрозуміти, що це відображення, мережі треба звести обидва
+кутки в одне число. Скільки на це потрібно згорткових шарів?</p>
+
+<p>У <a href="../07-conv-layer/lecture.html">темі 07</a> ми вводили <b>рецептивне
+поле</b> — ділянку входу, здатну вплинути на одне число на виході. Для згортки 3×3
+із кроком 1 воно росте на два пікселі за шар: перший шар бачить 3×3, другий — 5×5,
+третій — 7×7. Формула:</p>
+
+<div class="eq">рецептивне поле після L шарів 3×3 = (2L + 1) × (2L + 1)</div>
+
+<p>Слово за словом: кількість шарів <span class="raw">L</span> множимо на два
+й додаємо одиницю — це сторона квадрата вхідних пікселів, які можуть вплинути на
+одне число після цих шарів. Множник два — бо кожен шар додає по пікселю з кожного
+боку; одиниця — бо нульовий шар бачить сам себе.</p>
+
+<p>Наші фігури — 28×28. Підставляємо: щоб рецептивне поле накрило <b>27×27</b>,
+тобто майже весь кадр, треба <span class="raw">L</span> = 13. <b>Тринадцять шарів
+згортки</b>, щоб перший піксель нарешті «побачив» останній. Це не оцінка — це
+арифметика, і зошит її друкує.</p>
+
+<div class="big">
+  <div><b>згортка 3×3</b><i>13 шарів</i><span>щоб довести рецептивне поле до 27×27 на кадрі 28×28</span></div>
+  <div><b>увага</b><i>1 шар</i><span>кожен із 49 патчів бачить усі 49 з першої ж операції</span></div>
+</div>
+
+<p>Проти цього — операція, яку ми зараз розберемо. Вона накриває весь кадр
+<b>з першого шару</b>, бо в неї взагалі немає поняття вікна. І це не хитрість:
+далі ми побачимо, скільки саме за це платять.</p>
+
+<p>Чесна поправка: на практиці тринадцять шарів 3×3 поспіль ніхто не ставить —
+пулінг і крок 2 подвоюють рецептивне поле разом із кожним зменшенням карти. Але
+суть не міняється: <b>далекий звʼязок у згортці доводиться будувати, а не брати</b>.
+Він збирається через ланцюжок посередників, і на кожній ланці частина інформації
+розмивається.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Локальність проти всеосяжності</p>
+  <p class="fig-sub">Ліворуч — рецептивне поле центрального нейрона після заданої
+    кількості згорток 3×3. Праворуч — та сама сітка з увагою, яка накриває все
+    з першого шару. Тягни повзунок і дивись, коли квадрат дістане до країв.</p>
+  <div class="panel">
+    <div><canvas id="cRf" width="940" height="360" aria-label="Кадр 28 на 28 із зафарбованим рецептивним полем після кількох згорткових шарів, поруч той самий кадр, накритий увагою повністю"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="rfL">згорткових шарів <output id="rfLV">1</output></label>
+        <input type="range" id="rfL" min="1" max="16" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рецептивне поле</b><i id="rfSize">3×3</i></div>
+        <div class="cellv"><b>частка кадру</b><i id="rfPct">1.1 %</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ваг у стосі</b><i id="rfW">—</i></div>
+        <div class="cellv"><b>шарів до 27×27</b><i id="rfNeed">13</i></div>
+      </div>
+      <div class="verdict" id="rfVd"></div>
+    </div>
+  </div>
+  <figcaption>Кадр 28×28, згортки 3×3 із кроком 1 і <code>padding=1</code>, один канал.
+    «Ваг у стосі» — <b>9·L</b>, тобто скільки ядерних чисел довелося поставити,
+    щоб дотягнутись. Увага накриває 100 % кадру при будь-якому положенні повзунка.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Ідея</span>Хай кожен сам обере, з ким рахуватися</h2>
+
+<p>Слово «увага» тут заважає більше, ніж допомагає: воно натякає, що мережа кудись
+дивиться й чогось хоче. Нічого такого не відбувається. Точне формулювання вміщається
+в одне речення: <b>для кожної позиції ми рахуємо зважену суму всіх позицій, і самі
+ваги теж рахуються з даних.</b></p>
+
+<p>Перша половина — «зважена сума всіх позицій» — це те, що робить і згортка:
+множимо сусідів на числа й додаємо. Різниця в тому, що сусідів тепер не девʼять,
+а всі. Друга половина — і саме вона нова — <b>ваги не фіксовані</b>. У згортці ядро
+вивчається один раз, і далі те саме число множить верхнього сусіда в кожній точці
+кадру. В увазі ваг не існує заздалегідь: вони обчислюються щоразу заново, для
+конкретного зображення.</p>
+
+<p>Далі — три слова, які треба ввести, бо без них не читається жоден код.
+Кожна позиція отримує три різні описи себе, і кожен потрібен для свого:</p>
+
+<div class="scroll-x"><table class="plain">
+<thead><tr><th>назва</th><th>питання, на яке відповідає</th><th>де вживається</th></tr></thead>
+<tbody>
+<tr><td>Запит <span class="raw">Q</span> (query)</td><td>що я шукаю?</td><td>у позиції, яка збирає інформацію</td></tr>
+<tr><td>Ключ <span class="raw">K</span> (key)</td><td>що я можу запропонувати?</td><td>у позиціях, які інформацію віддають</td></tr>
+<tr><td>Значення <span class="raw">V</span> (value)</td><td>що саме я віддам, якщо мене оберуть?</td><td>там само</td></tr>
+</tbody>
+</table></div>
+
+<p>Побутова аналогія — бібліотечний каталог. Ти приходиш із запитом («книжка про
+мости»), у кожної картки є ключ (тема, за якою її знайдуть) і значення (сама книжка).
+Збіг запиту з ключем вирішує, наскільки ця картка тобі потрібна.</p>
+
+<p><b>Де аналогія бреше.</b> У бібліотеці ти береш одну книжку — ту, що збіглась
+найкраще. Увага не бере одну: вона бере <b>всі</b>, змішує їх у пропорції
+«наскільки збіглось» і віддає суміш. Навіть найдальша картка отримує ненульову
+частку. Правильний образ — не пошук, а <b>усереднення з нерівними вагами</b>.</p>
+
+<p>І ще одне, важливе для наступних розділів. Три описи — запит, ключ, значення —
+отримують із того самого вектора позиції, помноживши його на три різні матриці
+ваг. Оці матриці й <b>є</b> те, що вчиться. Самі ваги уваги не вчаться ніколи;
+вчиться лише те, як їх рахувати.</p>
+
+<div class="note"><b>Звідки взялись «позиції».</b> Для згортки позиція — це піксель;
+для уваги працювати з окремими пікселями надто дорого (розділ 09), тому кадр ріжуть
+на квадратні <b>патчі</b> (patch) — у нас 4×4 пікселі, тобто 7×7 = 49 патчів на кадр
+28×28. Кожен патч розпрямляють у вектор із 16 чисел і проєктують у робочу
+розмірність; результат називають <b>токеном</b>. Як це робиться в справжній мережі —
+тема <a href="../20-vision-transformer/lecture.html">20</a>.</div>
+
+<h2 id="s4"><span class="num">04 / Формула</span>Формула по кроках</h2>
+
+<p>Ось вона повністю. Не лякайся — далі кожен символ буде розібраний, а потім
+ми порахуємо все руками на чотирьох числах.</p>
+
+<div class="eq">Увага(Q, K, V) = softmax( Q · K<span class="sup">т</span> / √d ) · V</div>
+
+<p>Що є що:</p>
+
+<ul>
+<li><span class="raw">Q</span>, <span class="raw">K</span>, <span class="raw">V</span> —
+  три таблиці чисел: рядків стільки, скільки токенів (49), колонок — скільки чисел
+  в описі токена (32). Рядок — це один токен;</li>
+<li><span class="raw">K</span><span class="sup">т</span> — та сама таблиця, покладена
+  набік: рядки стали колонками. Значок «т» читається «транспонована»;</li>
+<li><span class="raw">·</span> — множення матриць: клітинка результату — сума добутків
+  рядка на колонку;</li>
+<li><span class="raw">d</span> — довжина опису токена, у нас 32.
+  <span class="raw">√d</span> — квадратний корінь із неї, тобто число, яке при
+  множенні саме на себе дає 32 (приблизно 5,66);</li>
+<li><span class="raw">softmax</span> — функція з
+  <a href="../../02-ai-ml/14-logistic-regression/lecture.html">курсу машинного
+  навчання</a>: перетворює рядок довільних чисел на набір невідʼємних часток,
+  що в сумі дають одиницю. Що більше вхідне число, то більша частка.</li>
+</ul>
+
+<p>Тепер по кроках. Візьмемо <b>чотири токени по два числа</b> — так усі числа
+влізуть на екран і їх можна перевірити олівцем. Матриці ваг візьмемо
+<b>одиничні</b>, тобто <span class="raw">Q</span>, <span class="raw">K</span> і
+<span class="raw">V</span> просто дорівнюють входу. Це законний окремий випадок
+формули, а не спрощення: справжні матриці лише повертають і розтягують ці вектори,
+а вся механіка нижче лишається та сама.</p>
+
+<div class="mat"><span class="hd">вхід X — чотири токени, кожен із двох чисел</span>
+  t1 = [  2,   0 ]
+  t2 = [  0,   2 ]
+  t3 = [  2,   2 ]
+  t4 = [ -2,   0 ]</div>
+
+<div class="derive">
+
+<div class="step"><span class="lbl">крок 1 · три ролі</span>
+<p>Q = K = V = X. Кожен токен виступає одночасно і як запит, і як ключ, і як
+значення. Саме тому операція зветься <b>самоувагою</b> (self-attention): токени
+дивляться самі на себе, а не на якийсь інший набір.</p></div>
+
+<div class="step"><span class="lbl">крок 2 · наскільки схожі</span>
+<p>Множимо Q на K набік. Клітинка (i, j) — це скалярний добуток токена i на
+токен j: перемножили перші числа, перемножили другі, склали. Наприклад,
+t1·t3 = 2·2 + 0·2 = 4. Що більший добуток, то краще збіглись напрямки.</p>
+<div class="mat"><span class="hd">QKᵀ — сирі оцінки збігу</span>
+       t1    t2    t3    t4
+  t1 [  4     0     4    -4 ]
+  t2 [  0     4     4     0 ]
+  t3 [  4     4     8    -4 ]
+  t4 [ -4     0    -4     4 ]</div>
+<p>Рядок t1 каже, наскільки перший токен збігається з кожним із чотирьох. Найкраще —
+із собою й із t3 (по 4), найгірше — із t4 (мінус 4: вони дивляться в протилежні
+боки).</p></div>
+
+<div class="step"><span class="lbl">крок 3 · ділення на корінь</span>
+<p>Розмірність d = 2, отже √2 ≈ 1,414. Ділимо кожну клітинку на це число.
+Навіщо — цілий наступний розділ; поки просто зроби.</p>
+<div class="mat"><span class="hd">QKᵀ / √2</span>
+       t1      t2      t3      t4
+  t1 [ 2.828   0.000   2.828  -2.828 ]
+  t2 [ 0.000   2.828   2.828   0.000 ]
+  t3 [ 2.828   2.828   5.657  -2.828 ]
+  t4 [-2.828   0.000  -2.828   2.828 ]</div></div>
+
+<div class="step"><span class="lbl">крок 4 · softmax по рядках</span>
+<p>Кожен рядок окремо перетворюємо на частки. Для рядка t1: підносимо
+<span class="raw">e</span> (число 2,718…) до степеня кожного елемента — виходить
+16,92 · 1,00 · 16,92 · 0,059 — і ділимо кожне на їхню суму 34,90.</p>
+<div class="mat"><span class="hd">матриця уваги — кожен рядок у сумі дає рівно 1</span>
+       t1      t2      t3      t4     сума
+  t1 [ 0.485   0.029   0.485   0.002 ]  1.000
+  t2 [ 0.028   0.472   0.472   0.028 ]  1.000
+  t3 [ 0.053   0.053   0.894   0.000 ]  1.000
+  t4 [ 0.003   0.055   0.003   0.938 ]  1.000</div>
+<p>Оце і є <b>матриця уваги</b>. Рядок t1 читається так: «збираючи свій новий
+опис, перший токен візьме 48,5 % від себе, 48,5 % від t3, 2,9 % від t2 і майже
+нічого від t4». Зверни увагу на рядок t4: він майже цілком складається з самого
+себе (93,8 %) — бо ні з ким не збігся.</p></div>
+
+<div class="step"><span class="lbl">крок 5 · зважена сума значень</span>
+<p>Тепер множимо матрицю уваги на V. Кожен новий токен — це суміш усіх старих
+у щойно порахованих пропорціях. Для t1:</p>
+<div class="eq left">0.485·[2,0] + 0.029·[0,2] + 0.485·[2,2] + 0.002·[-2,0]
+   = [0.970 + 0 + 0.970 − 0.003,  0 + 0.057 + 0.970 + 0]
+   = [1.936, 1.027]</div>
+<div class="mat"><span class="hd">вихід уваги</span>
+  t1 = [  1.936   1.027 ]     було [  2   0 ]
+  t2 = [  0.944   1.888 ]     було [  0   2 ]
+  t3 = [  1.894   1.894 ]     було [  2   2 ]
+  t4 = [ -1.863   0.117 ]     було [ -2   0 ]</div>
+</div>
+
+</div>
+
+<p>В останній таблиці видно всю ідею. Токен t1 був <span class="raw">[2, 0]</span>,
+а став <span class="raw">[1.94, 1.03]</span> — його підтягнуло до t3, з яким він
+збігся. Токен t4 не збігся ні з ким і майже не змінився. Ніхто нічого не вчив:
+<b>усі ці числа вийшли з самого входу</b>, за один прохід.</p>
+
+<div class="note"><b>Що змінюють справжні матриці ваг.</b> У робочій мережі
+Q = X·W<span class="sub">q</span>, K = X·W<span class="sub">k</span>,
+V = X·W<span class="sub">v</span>, і три матриці різні. Це дозволяє шукати
+<b>не подібність</b>: токен «око» може мати запит, який збігається з ключем токена
+«око з іншого боку обличчя», хоч самі вектори не схожі. З одиничними матрицями
+увага вміє тільки «шукай схоже на себе» — саме тому їх і вчать.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Увага по кроках, усі числа на екрані</p>
+  <p class="fig-sub">Той самий приклад: чотири токени по два числа. Тисни «крок»
+    і проходь усі пʼять етапів формули. Повзунок рухає четвертий токен від −2
+    (як у тексті вище) до +2, де він стає копією першого. Дивись, що від цього
+    робиться з першим рядком матриці уваги.</p>
+  <div class="panel">
+    <div><canvas id="cStep" width="940" height="378" aria-label="Пʼять етапів обчислення уваги для чотирьох токенів: вхідні вектори, матриця скалярних добутків, поділена на корінь, матриця уваги після softmax і вихід"></canvas></div>
+    <div>
+      <span class="cap">етап</span>
+      <div class="code" id="stepCode">
+        <div data-k="0">Q = K = V = X</div>
+        <div data-k="1">S = Q · K.T</div>
+        <div data-k="2">S = S / sqrt(2)</div>
+        <div data-k="3">A = softmax(S)</div>
+        <div data-k="4">out = A · V</div>
+      </div>
+      <div class="btnrow">
+        <button id="stepPrev">← назад</button>
+        <button id="stepNext">крок →</button>
+      </div>
+      <div class="ctl" style="margin-top:15px">
+        <label for="stepX">перше число t4 <output id="stepXV">-2.0</output></label>
+        <input type="range" id="stepX" min="-20" max="20" step="5" value="-20">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>t1 бере від t4</b><i id="stepW14">—</i></div>
+        <div class="cellv"><b>t1 бере від себе</b><i id="stepW11">—</i></div>
+      </div>
+      <div class="verdict" id="stepVd"></div>
+    </div>
+  </div>
+  <figcaption>Матриці ваг одиничні, тому Q = K = V = X — той самий окремий випадок,
+    що в тексті. При <b>t4 = [−2, 0]</b> числа на екрані збігаються з розібраними
+    вище до третього знака. Обчислення живе, у подвійній точності.</figcaption>
+</figure>
+
+<p>А тепер те саме на справжніх даних: наша фігура 28×28, порізана на 49 патчів
+4×4, і матриця уваги 49×49 — вона теж уміщається на екран.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Матриця уваги: хто в кого бере інформацію</p>
+  <p class="fig-sub">Ліворуч — сітка 7×7 патчів фігури, праворуч — матриця уваги
+    49×49: рядок i показує, звідки бере інформацію патч i. Наведи мишу на рядок
+    матриці або на патч ліворуч. Повзунок міняє дільник у формулі.</p>
+  <div class="panel">
+    <div><canvas id="cMap" width="940" height="400" aria-label="Ліворуч фігура, порізана на сітку 7 на 7 патчів; праворуч теплова карта матриці уваги 49 на 49"></canvas></div>
+    <div>
+      <span class="cap">фігура</span>
+      <div class="seg wrap" id="mapSeg">
+        <button data-i="0" aria-pressed="true">кільце</button>
+        <button data-i="1" aria-pressed="false">хрест</button>
+        <button data-i="2" aria-pressed="false">квадрат</button>
+        <button data-i="3" aria-pressed="false">трикутник</button>
+      </div>
+      <div class="ctl">
+        <label for="mapT">дільник замість <span class="raw">√d</span> <output id="mapTV">4.00</output></label>
+        <input type="range" id="mapT" min="40" max="1200" step="20" value="400">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рядок під мишею</b><i id="mapRow">—</i></div>
+        <div class="cellv"><b>максимум у рядку</b><i id="mapMax">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ентропія цього рядка</b><i id="mapEnt">—</i></div>
+        <div class="cellv"><b>середній максимум</b><i id="mapAvg">—</i></div>
+      </div>
+      <div class="verdict" id="mapVd"></div>
+    </div>
+  </div>
+  <figcaption>Токен = патч 4×4, розпрямлений у 16 чисел і нормалізований до нульового
+    середнього й одиничного розкиду (те саме робить <code>LayerNorm</code> у справжній
+    мережі). Q = K = V = сам патч, тобто матриці ваг одиничні й нічого не навчено.
+    Ентропія рядка міряє, наскільки увага розмазана: 3.892 — рівномірно по всіх 49,
+    нуль — увесь вміст узято з одного патча. Рівномірна вага для 49 патчів —
+    <b>0.0204</b>; «середній максимум» — найбільша вага в рядку, усереднена по всіх
+    49 рядках. <span class="raw">√d</span> тут дорівнює 4.</figcaption>
+</figure>
+
+<p>Навіть без жодного навчання видно головне: рядок патча, що лежить на фігурі,
+підсвічує інші патчі фігури — по всьому кадру, зокрема ті, що на протилежному
+боці. Ніякого вікна тут немає. Це та сама всеосяжність із розділу 02, тільки
+тепер її видно.</p>
+
+<h2 id="s5"><span class="num">05 / Масштаб</span>Навіщо ділити на корінь із d</h2>
+
+<p>У формулі стоїть <span class="raw">/ √d</span>, і в кроці 3 ми його просто
+зробили. Тепер розберемось, звідки він, — бо це один із тих випадків, коли
+крихітна деталь вирішує, працюватиме навчання взагалі чи ні.</p>
+
+<p>Беремо два випадкові вектори довжини <span class="raw">d</span> — кожне число
+незалежне, із середнім нуль і одиничним розкидом (саме так виглядають ваги на
+початку навчання). Скалярний добуток — це сума <span class="raw">d</span> поелементних
+добутків. Середнє такої суми нуль, а <b>дисперсія</b> — міра розкиду — дорівнює
+рівно <span class="raw">d</span>: розкид суми незалежних доданків дорівнює сумі
+їхніх розкидів, кожен дає одиницю, доданків <span class="raw">d</span> штук. Отже,
+типовий розмір добутку росте як <span class="raw">√d</span>: при d = 4 це приблизно
+2, при d = 256 — приблизно 16.</p>
+
+<p>А softmax підносить <span class="raw">e</span> до степеня кожного числа. Різниця
+у входах на 16 перетворюється на різницю у виходах у
+<span class="raw">e</span><span class="sup">16</span> ≈ 9 мільйонів разів: один
+елемент забирає майже всю вагу.</p>
+
+<p>Це і поміряно. Девʼять тисяч вісімсот випадкових рядків по 49 елементів,
+чотири розмірності:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>d</th><th>дисперсія QKᵀ</th><th>макс. вага без ділення</th><th>з діленням</th><th>ентропія без</th><th>з діленням</th></tr></thead>
+<tbody>
+<tr><td>4</td><td>3.99</td><td>0.300</td><td>0.123</td><td>2.599</td><td>3.442</td></tr>
+<tr><td>16</td><td>16.06</td><td>0.599</td><td>0.126</td><td>1.284</td><td>3.427</td></tr>
+<tr><td>64</td><td>63.96</td><td>0.798</td><td>0.126</td><td>0.555</td><td>3.427</td></tr>
+<tr class="hot"><td>256</td><td>255.50</td><td><b>0.903</b></td><td>0.127</td><td>0.249</td><td>3.425</td></tr>
+</tbody>
+</table></div>
+
+<p>Друга колонка підтверджує теорію до другого знака: дисперсія дорівнює
+<span class="raw">d</span>. Третя — головна: без ділення при d = 256 один елемент
+забирає <b>90 % ваги</b> рядка з 49. Увага перестає бути зваженою сумою й
+вироджується у <b>вибір одного</b>. Четверта показує, що ділення тримає максимум
+коло 0.12–0.13 при будь-якій розмірності.</p>
+
+<p>Ентропія в останніх колонках міряє «розмазаність» розподілу: 3.892 — ідеально
+рівномірно по 49 позиціях, нуль — уся вага в одному. Без ділення при d = 256 вона
+падає до 0.249.</p>
+
+<h3>І чому це вбиває навчання</h3>
+
+<p>Виродження не просто негарне — воно зупиняє навчання. Щоб градієнт пройшов
+крізь softmax, зміна входу має міняти вихід. Наскільки — показує сума
+<span class="raw">p(1−p)</span> по рядку: якщо всі частки коло нуля або коло
+одиниці, цей добуток теж коло нуля, і сигнал не проходить.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>d</th><th>сума p(1−p) без ділення</th><th>з діленням</th><th>у скільки разів гірше</th></tr></thead>
+<tbody>
+<tr><td>4</td><td>0.827</td><td>0.948</td><td>1.1</td></tr>
+<tr><td>16</td><td>0.534</td><td>0.949</td><td>1.8</td></tr>
+<tr><td>64</td><td>0.281</td><td>0.950</td><td>3.4</td></tr>
+<tr class="hot"><td>256</td><td><b>0.138</b></td><td>0.950</td><td><b>6.9</b></td></tr>
+</tbody>
+</table></div>
+
+<p>Кожне збільшення розмірності вчетверо приблизно вдвічі зменшує здатність
+softmax пропускати градієнт. З діленням на <span class="raw">√d</span> ця величина
+стоїть на 0.95 при будь-якій розмірності — рівно тому, що дисперсія після ділення
+завжди одиниця. У цьому й уся ідея: <b>ділення робить масштаб оцінок незалежним
+від розмірності</b>.</p>
+
+<div class="note warn"><b>Не переплутай із температурою.</b>
+<span class="raw">√d</span> — не гіперпараметр, який добирають, а поправка на
+відомий заздалегідь ефект розмірності. Менший дільник дає ті самі проблеми, що
+й одиниця; значно більший розмазує увагу в рівномірне середнє. Обидва краї видно
+в інтерактиві 3 вище.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Що робить ділення на корінь</p>
+  <p class="fig-sub">Дві криві: як росте типовий максимум у рядку softmax зі
+    зростанням розмірності — без ділення й із діленням на <span class="raw">√d</span>.
+    Числа рахуються тут-таки, у браузері, на випадкових векторах. Тягни повзунок
+    розмірності й дивись, коли увага перестає бути сумою.</p>
+  <div class="panel">
+    <div><canvas id="cScale" width="940" height="380" aria-label="Графік максимальної ваги softmax і дисперсії скалярних добутків залежно від розмірності, з масштабуванням і без"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="scD">розмірність <span class="raw">d</span> <output id="scDV">64</output></label>
+        <input type="range" id="scD" min="0" max="8" step="1" value="5">
+      </div>
+      <span class="cap">що показати</span>
+      <div class="seg" id="scSeg">
+        <button data-i="0" aria-pressed="true">макс. вага</button>
+        <button data-i="1" aria-pressed="false">дисперсія</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>дисперсія без</b><i id="scV0">—</i></div>
+        <div class="cellv"><b>дисперсія з</b><i id="scV1">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>макс. вага без</b><i id="scM0">—</i></div>
+        <div class="cellv"><b>макс. вага з</b><i id="scM1">—</i></div>
+      </div>
+      <div class="verdict" id="scVd"></div>
+    </div>
+  </div>
+  <figcaption>Рядок із 49 елементів, 60 випадкових рядків на кожну розмірність,
+    генератор детермінований — числа однакові в усіх читачів. Рядків тут менше, ніж
+    у таблиці вище (там 9 800), тому третій знак трохи інший — це та сама величина,
+    заміряна на меншій вибірці. Рівномірна вага для 49 елементів — <b>0.0204</b>.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Голови</span>Кілька голів</h2>
+
+<p>У розібраній формулі є мовчазне обмеження. <b>Матриця уваги одна на всі числа
+опису.</b> Якщо токен вирішив узяти 48 % від сусіда, то він бере 48 % від
+<em>усіх тридцяти двох</em> чисел цього сусіда. Взяти колір звідси, а форму звідти
+не можна: пропорція одна на весь вектор.</p>
+
+<p>Ліки прості: <b>поріж опис на шматки й порахуй увагу в кожному окремо</b>.
+Було 32 числа й одна матриця уваги — стало чотири шматки по 8 чисел і чотири
+незалежні матриці. Кожен шматок називають <b>головою</b> (head), а конструкцію —
+<b>багатоголовою увагою</b> (multi-head attention). Результати склеюють назад
+у 32 числа й проганяють через одну вихідну матрицю.</p>
+
+<p>Тепер найцікавіше — <b>скільки це коштує</b>. Порахуємо параметри руками.
+Матриць чотири: три вхідні (<span class="raw">W</span><span class="sub">q</span>,
+<span class="raw">W</span><span class="sub">k</span>,
+<span class="raw">W</span><span class="sub">v</span>) і одна вихідна, кожна
+розміром d×d, і в кожної є зсув на d чисел:</p>
+
+<div class="eq">параметрів = 4·d·d + 4·d</div>
+
+<p>Підставляємо d = 32: 4·1024 + 128 = <b>4224</b>. А тепер той самий рахунок
+для восьми голів. Кожна голова має свої матриці розміром d×(d/8)… але їх вісім,
+і 8 · d · (d/8) = d·d. <b>Те саме число.</b> Заміряно на
+<code>nn.MultiheadAttention</code>:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>d</th><th>голів</th><th>розмір голови</th><th>ручний рахунок</th><th>sum(p.numel())</th></tr></thead>
+<tbody>
+<tr><td>32</td><td>1</td><td>32</td><td>4 224</td><td>4 224</td></tr>
+<tr><td>32</td><td>4</td><td>8</td><td>4 224</td><td>4 224</td></tr>
+<tr><td>32</td><td>8</td><td>4</td><td>4 224</td><td>4 224</td></tr>
+<tr class="hot"><td>768</td><td>1</td><td>768</td><td>2 362 368</td><td>2 362 368</td></tr>
+<tr class="hot"><td>768</td><td>12</td><td>64</td><td>2 362 368</td><td>2 362 368</td></tr>
+</tbody>
+</table></div>
+
+<p>Це й є відповідь на питання «чи не те саме одна велика голова?». <b>Ні, і не
+тому, що параметрів більше</b> — їх рівно стільки ж. Різниця в операції: одна
+голова рахує <em>одну</em> зважену суму, вісім голів — <em>вісім різних</em>.
+За ті самі ваги отримуємо вісім незалежних поглядів замість одного.</p>
+
+<p>Це видно навіть на випадкових вагах. При чотирьох головах кожен токен має
+в середньому <b>3.94</b> різних цілі з чотирьох можливих, а взаємна кореляція
+матриць уваги — <b>−0.012</b>, тобто фактично нуль. Голови незалежні за побудовою,
+ще до навчання.</p>
+
+<div class="note warn"><b>Межа, яку легко проґавити.</b> Ділити можна не
+нескінченно. При 16 головах на 32 числа кожна голова отримує <b>два</b> числа,
+і скалярний добуток двовимірних векторів уже майже нічого не розрізняє: там
+просто мало інформації. Заміряно на тому самому наборі — при 16 головах
+кількість різних цілей перестає рости пропорційно (12.29 замість 16), бо голови
+починають випадково збігатися. У справжніх мережах розмір голови тримають коло
+64 — це не традиція, а той розмір, при якому скалярний добуток ще щось означає.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Кілька голів дивляться в різні місця</p>
+  <p class="fig-sub">Один обраний патч (тягни повзунок) і те, куди він дивиться
+    кожною зі своїх голів. Перемикай кількість голів і стеж за лічильником
+    параметрів: він не міняється.</p>
+  <div class="panel">
+    <div><canvas id="cHead" width="940" height="384" aria-label="Кілька сіток 7 на 7, по одній на голову, з підсвіченими місцями, куди дивиться обраний патч"></canvas></div>
+    <div>
+      <span class="cap">голів</span>
+      <div class="seg" id="headSeg">
+        <button data-i="0" aria-pressed="false">1</button>
+        <button data-i="1" aria-pressed="false">2</button>
+        <button data-i="2" aria-pressed="true">4</button>
+        <button data-i="3" aria-pressed="false">8</button>
+      </div>
+      <div class="ctl">
+        <label for="headQ">патч-запит <output id="headQV">10</output></label>
+        <input type="range" id="headQ" min="0" max="48" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розмір голови</b><i id="headDim">—</i></div>
+        <div class="cellv"><b>параметрів</b><i id="headPar">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>різних цілей у середньому</b><i id="headTg">—</i></div>
+        <div class="cellv"><b>матриць уваги</b><i id="headMat">—</i></div>
+      </div>
+      <div class="verdict" id="headVd"></div>
+    </div>
+  </div>
+  <figcaption>Опис патча — 16 чисел, поділених між головами порівну. Хрестик —
+    куди дивиться голова найсильніше. Параметри рахуються за формулою
+    <b>4d² + 4d</b> для d = 16, тобто <b>1 088</b> при будь-якій кількості голів.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Порядок</span>Увага не бачить порядку</h2>
+
+<p>Тепер головне відкриття теми. Воно доводиться в три рядки, без навчання,
+і з нього випливає все, що буде далі.</p>
+
+<p>Подивись іще раз на формулу. Де в ній сказано, що токен №1 стоїть перед
+токеном №2? Ніде. Скалярний добуток не знає, звідки взялися вектори; softmax
+працює по рядку; значення підсумовуються — а сума не залежить від порядку
+додавання.</p>
+
+<p>Звідси випливає точне твердження. Переставмо токени на вході в будь-якому
+порядку. Тоді вихід переставиться <b>рівно так само</b>, і більше не зміниться
+нічого. Ця властивість зветься
+<b>еквіваріантністю щодо перестановки</b> (permutation equivariance).</p>
+
+<div class="note"><b>Еквіваріантність, а не інваріантність.</b> Слова схожі,
+означають різне, і плутають їх постійно.
+<b>Інваріантність</b> — вихід не змінюється взагалі: перемішав вхід і дістав
+той самий результат. <b>Еквіваріантність</b> — вихід змінюється <em>так само</em>,
+як вхід: перемішав вхід — вихід перемішався тим самим чином. Увага
+еквіваріантна. Але щойно поверх неї поставити усереднення по всіх токенах
+(а саме так роблять перед класифікатором), еквіваріантність перетворюється
+на інваріантність — і модель стає повністю сліпою до розташування.</div>
+
+<p>Перевіримо. Беремо 49 токенів нашої фігури, беремо
+<code>nn.MultiheadAttention</code> зі щойно створеними випадковими вагами
+й рахуємо два числа: <b>вихід від перемішаного входу</b> і <b>перемішаний вихід
+від нормального входу</b>. Якщо твердження правильне, вони мають збігтися.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>операція</th><th>найбільша різниця</th><th>що це означає</th></tr></thead>
+<tbody>
+<tr class="hot"><td>увага без позиційного</td><td><b>1.8·10⁻⁷</b></td><td>нуль із точністю float32</td></tr>
+<tr><td>увага з позиційним</td><td>0.135</td><td>порядок тепер видно</td></tr>
+<tr><td>згортка Conv1d(3)</td><td>1.700</td><td>порядок було видно завжди</td></tr>
+</tbody>
+</table></div>
+
+<p>Перший рядок — і є доказ. <b>1.8·10⁻⁷</b> — не «мала різниця», а арифметичний
+шум float32 при виході масштабу 0.82: відносна похибка дві десятимільйонні. Увага
+не «майже не помічає» перестановку — вона <b>не помічає її взагалі</b>.</p>
+
+<p>Третій рядок для контрасту: та сама перевірка на згортці дає 1.700 — величину
+порядку самого сигналу. Згортка ловить перестановку негайно.</p>
+
+<h3>Чому це руйнує класифікацію</h3>
+
+<p>Ось наслідок, який робить абстракцію відчутною. Візьмемо два зображення:
+маленька фігура у <b>верхньому лівому</b> куті та вона ж у <b>нижньому правому</b>.
+Друге отримано з першого чистою перестановкою патчів — жоден піксель не
+змінився, змінилися лише їхні місця. Пропускаємо обидва через увагу, усереднюємо
+49 виходів і подаємо в лінійний класифікатор:</p>
+
+<div class="big">
+  <div><b>без позиційного кодування</b><i>6·10⁻⁸</i><span>найбільша різниця логітів — тобто нуль. Модель фізично не може розрізнити ці дві картинки</span></div>
+  <div><b>з позиційним кодуванням</b><i>4.3·10⁻²</i><span>різниця зʼявилась. Тепер є що вчити</span></div>
+</div>
+
+<p>Це не результат навчання й не питання кількості даних. Мережа без позиційного
+кодування <b>ніколи</b> не навчиться відрізняти «фігура вгорі» від «фігура внизу»,
+скільки їй прикладів не показуй. Вихід у неї буквально той самий.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Перестановка: головна демонстрація теми</p>
+  <p class="fig-sub">Зліва — фігура, порізана на 49 патчів. Тисни «перемішати»
+    і дивись на число внизу: наскільки вихід перемішаного відрізняється від
+    перемішаного виходу. Перемкни позиційне кодування — і число ожине.</p>
+  <div class="panel">
+    <div><canvas id="cPerm" width="940" height="330" aria-label="Оригінальна сітка патчів, перемішана сітка, і стовпчики різниці для уваги без кодування, з кодуванням і для згортки"></canvas></div>
+    <div>
+      <span class="cap">позиційне кодування</span>
+      <div class="seg" id="permSeg">
+        <button data-i="0" aria-pressed="true">без нього</button>
+        <button data-i="1" aria-pressed="false">із ним</button>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>вихід(перемішаного) − перемішаний(виходу)</b><i id="permD">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>та сама перевірка на згортці</b><i id="permC">—</i></div>
+        <div class="cellv"><b>масштаб самого виходу</b><i id="permS">—</i></div>
+      </div>
+      <button id="permGo">перемішати патчі</button>
+      <div class="verdict" id="permVd"></div>
+    </div>
+  </div>
+  <figcaption>Обчислення живе в браузері, у подвійній точності — тому «нуль» тут
+    навіть менший, ніж заміряний у <code>torch</code> (там float32 і 1.8·10⁻⁷).
+    Згортка по токенах — фіксоване ядро з трьох чисел.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Геометрія</span>Позиційне кодування</h2>
+
+<p>Раз увага не знає порядку, порядок треба їй сказати. Спосіб, який виявився
+робочим, дивовижно грубий: <b>до кожного токена просто додають вектор, який
+залежить від його номера</b>. Не множать, не приклеюють збоку — додають, число
+до числа.</p>
+
+<div class="eq">токен<span class="sub">i</span> ← токен<span class="sub">i</span> + позиція<span class="sub">i</span></div>
+
+<p>Тобто якщо токен описується 32 числами, то вектор позиції теж має 32 числа,
+і вони додаються поелементно. Після цього два патчі з однаковим вмістом, але
+з різних місць кадру, стають різними векторами — і скалярний добуток нарешті
+може їх розрізнити.</p>
+
+<p>Додавання спочатку виглядає підозріло: ми ж псуємо вміст! Відповідь така:
+розмірність 32 (а в справжніх мережах 768) — це багато місця. Мережа може відвести
+частину напрямків під «що це» і частину під «де це» й навчитися читати їх окремо.
+Ніхто їй цього не наказує — вона просто має таку можливість.</p>
+
+<h3>Два способи взяти вектор позиції</h3>
+
+<div class="scroll-x"><table class="plain">
+<thead><tr><th></th><th>навчуване</th><th>синусоїдальне</th></tr></thead>
+<tbody>
+<tr><td>Що це</td><td>таблиця «номер → вектор», ініціалізована випадково й навчена разом з усім</td><td>вектор, порахований формулою з синусів і косинусів різної частоти</td></tr>
+<tr><td>Параметрів</td><td>кількість позицій × d</td><td>нуль</td></tr>
+<tr><td>Нові довжини</td><td>не працює: для позиції 200 рядка немає</td><td>працює: формула визначена для будь-якого номера</td></tr>
+<tr><td>Де вживають</td><td>ViT і майже всі трансформери зору</td><td>початковий Transformer, частина мовних моделей</td></tr>
+</tbody>
+</table></div>
+
+<p>Синусоїдальний варіант виглядає елегантніше, але в зорі переміг навчуваний:
+кількість патчів фіксована розміром входу, розтягуватись нікуди не треба. Скільки
+за нього платять — порахуємо на справжній моделі. Беремо <code>vit_b_16</code>
+із <code>torchvision</code>, збираємо з <code>weights=None</code> (нічого
+не завантажується) і рахуємо:</p>
+
+<div class="big">
+  <div><b>усього ваг у ViT-B/16</b><i>86 567 656</i><span>повна модель, зібрана офлайн</span></div>
+  <div><b>позиційне кодування</b><i>151 296</i><span>197 позицій × 768 чисел = <b>0.175 %</b> моделі</span></div>
+</div>
+
+<p>Сто пʼятдесят одна тисяча ваг із вісімдесяти шести мільйонів. Дві тисячні
+частки моделі. І це <b>вся геометрія, яку модель має</b> — усе, що вона знає про
+те, що ліворуч, а що праворуч, сидить у цих 0.175 %. Порівняй зі згорткою, де
+геометрія роздана безкоштовно в кожному з мільйонів ядерних чисел.</p>
+
+<p>Чи потрібне позиційне кодування завжди? Правило просте й випливає з розділу 07:
+<b>воно допомагає рівно тоді, коли положення має значення</b>. Якщо клас предмета
+не залежить від того, де предмет лежить у кадрі, кодування додає ваги, які нема
+чому вчити, — і на малих даних це може навіть заважати. Але щойно задача починає
+залежати від розташування — «фігура вгорі проти фігури внизу» з попереднього
+розділу — без кодування модель не працює <em>взагалі</em>, а не «гірше».</p>
+
+<h2 id="s9"><span class="num">09 / Ціна</span>Ціна квадратична</h2>
+
+<p>Тепер рахунок, який визначає все проєктування трансформерів зору. Матриця
+уваги має розмір «токенів × токенів». При <span class="raw">n</span> токенах
+у ній <span class="raw">n²</span> клітинок, і кожну треба порахувати. Подвоїв
+кількість токенів — учетверо збільшив роботу.</p>
+
+<p>Для кадру 28×28 усе залежить від одного числа — розміру патча:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>патч</th><th>токенів</th><th>пар уваги</th><th>множень у матриці</th><th>множень у проєкціях</th></tr></thead>
+<tbody>
+<tr><td>14×14</td><td>4</td><td>16</td><td>1 024</td><td>16 384</td></tr>
+<tr><td>7×7</td><td>16</td><td>256</td><td>16 384</td><td>65 536</td></tr>
+<tr><td>4×4</td><td>49</td><td>2 401</td><td>153 664</td><td>200 704</td></tr>
+<tr class="hot"><td>2×2</td><td>196</td><td><b>38 416</b></td><td><b>2 458 624</b></td><td>802 816</td></tr>
+</tbody>
+</table></div>
+
+<p>Розмір патча зменшився в сім разів — з 14 до 2, — а кількість пар зросла
+з 16 до 38 416, тобто в <b>2 401 раз</b>. Ось за що платять дрібними патчами.</p>
+
+<p>Дві останні колонки варто прочитати окремо, бо в них є перелом. «Множення
+в проєкціях» — вартість трьох матриць Q, K, V і однієї вихідної; вона росте
+<b>лінійно</b> за кількістю токенів. «Множення в матриці» ростуть квадратично.
+При 4 токенах проєкції коштують у 16 разів більше, а при 196 токенах — уже
+втричі менше. Точка рівноваги:</p>
+
+<div class="eq">2·n²·d = 4·n·d²  ⟹  n = 2·d</div>
+
+<p>Тобто при розмірності 32 матриця уваги стає дорожчою за проєкції, коли
+токенів більше <b>64</b>. До цієї межі квадратичність нікого не турбує; після
+неї вона починає визначати все.</p>
+
+<p>Час на реальній машині це підтверджує — і показує, де саме починається
+квадратичний режим. Прямий прохід <code>nn.MultiheadAttention</code>,
+розмірність 64, один потік CPU:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>токенів</th><th>пар</th><th>час, мс</th><th>час × від 49</th><th>пар × від 49</th></tr></thead>
+<tbody>
+<tr><td>49</td><td>2 401</td><td>0.121</td><td>1.0</td><td>1</td></tr>
+<tr><td>196</td><td>38 416</td><td>0.522</td><td>4.3</td><td>16</td></tr>
+<tr><td>784</td><td>614 656</td><td>5.930</td><td>48.9</td><td>256</td></tr>
+<tr><td>1 568</td><td>2 458 624</td><td>41.592</td><td>342.8</td><td>1 024</td></tr>
+<tr class="hot"><td>3 136</td><td>9 834 496</td><td><b>195.776</b></td><td><b>1 613.7</b></td><td>4 096</td></tr>
+</tbody>
+</table></div>
+
+<p>Абсолютні мілісекунди в тебе будуть інші — вони залежать від того, чим ще
+зайнята машина. Стале тут <b>співвідношення</b>, і воно каже ось що. На малих
+числах час росте <b>повільніше</b> за кількість пар: від 49 до 196 токенів пар
+стало в 16 разів більше, а часу — лише в 4.3. Квадратичність не зникла: на таких
+розмірах помітну частку зʼїдають накладні витрати виклику, а не множення. Зате
+від 784 токенів іде чистий квадратичний режим — подвоєння токенів учетверо
+збільшує кількість пар і в пʼять-сім разів час. На 3 136 токенах один прохід уваги
+займає вже <b>пʼяту частину секунди</b>.</p>
+
+<div class="note warn"><b>Куди це веде.</b> ViT-B/16 ділить кадр 224×224 на
+патчі 16×16 і отримує 196 токенів (плюс один службовий, звідси 197 у розділі 08).
+Зменшити патч до 8×8 — і токенів стане 784, а пар уваги вчетверо більше.
+Саме тому 16 стало стандартом: це компроміс, а не природна константа. Обійти
+квадратичність, не збільшуючи патч, — окрема інженерна задача, і їй присвячена
+тема <a href="../21-swin-hybrids/lecture.html">21</a>.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Ціна: розмір патча як головна ручка</p>
+  <p class="fig-sub">Два повзунки: розмір патча (він задає кількість токенів)
+    і робоча розмірність. Стовпчики показують, куди йдуть множення — у матрицю
+    уваги чи в проєкції. Знайди положення, де вони міняються місцями.</p>
+  <div class="panel">
+    <div><canvas id="cCost" width="940" height="370" aria-label="Стовпчики множень у матриці уваги й у проєкціях залежно від розміру патча й розмірності"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="costP">розмір патча <output id="costPV">4</output></label>
+        <input type="range" id="costP" min="0" max="4" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="costD">розмірність <span class="raw">d</span> <output id="costDV">32</output></label>
+        <input type="range" id="costD" min="0" max="5" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>токенів</b><i id="costN">—</i></div>
+        <div class="cellv"><b>пар уваги</b><i id="costPr">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>множень: матриця</b><i id="costM">—</i></div>
+        <div class="cellv"><b>множень: проєкції</b><i id="costJ">—</i></div>
+      </div>
+      <div class="verdict" id="costVd"></div>
+    </div>
+  </div>
+  <figcaption>Кадр 28×28. Множень у матриці — <b>2·n²·d</b> (оцінки збігу плюс
+    зважена сума значень), у проєкціях — <b>4·n·d²</b>. Порівнюються самі
+    множення, без накладних витрат: саме тому таблиця часу вище на малих
+    розмірах виглядає інакше.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Порівняння</span>Увага проти згортки: чесне порівняння</h2>
+
+<p>Тепер можна покласти дві операції поруч. Головне питання не «яка краща»,
+а <b>що кожна дає задарма, а що доводиться вчити</b>.</p>
+
+<div class="scroll-x"><table class="plain">
+<thead><tr><th></th><th>згортка</th><th>увага</th></tr></thead>
+<tbody>
+<tr><td>Локальність</td><td>задарма: вікно 3×3 вбудоване</td><td>треба вивчити з даних, якщо вона потрібна</td></tr>
+<tr><td>Далекий звʼязок</td><td>треба будувати: 13 шарів на кадр 28×28</td><td>задарма з першого шару</td></tr>
+<tr><td>Порядок і геометрія</td><td>задарма: закладений у форму операції</td><td>треба додати окремо, коштує 0.175 % ваг</td></tr>
+<tr><td>Спільні ваги по кадру</td><td>задарма: те саме ядро скрізь</td><td>задарма: ті самі матриці для всіх токенів</td></tr>
+<tr><td>Ваги залежать від входу</td><td>ні: ядро те саме для всіх зображень</td><td>так: матриця уваги рахується заново щоразу</td></tr>
+<tr><td>Ціна від розміру входу</td><td>лінійна</td><td>квадратична за кількістю токенів</td></tr>
+</tbody>
+</table></div>
+
+<p>Перший і третій рядки — це і є відповідь на питання, чому трансформерам
+потрібно більше даних. Згортка приходить із двома готовими правилами про світ:
+«важливе поруч» і «ось де ліворуч». Ці правила не безкоштовні в іншому сенсі —
+вони обмежують, — але вони <b>правильні</b> для зображень, і мережа отримує
+їх задарма, ще до першого прикладу.</p>
+
+<p>Увага не приходить ні з чим. Вона починає з чистого аркуша, на якому всі
+позиції рівноправні, і мусить <b>вивести локальність із даних</b> — тобто
+самотужки дійти до того, що сусідні патчі корисніші за далекі. Це можливо, але
+за це платять прикладами: правило, яке згортці подарували, трансформер має
+відкрити. Наскільки більше прикладів для цього треба й що буває, коли їх
+бракує, — із заміряними числами в темі
+<a href="../20-vision-transformer/lecture.html">20</a>.</p>
+
+<p>Останній рядок таблиці — «ваги залежать від входу» — те, чого згортка не вміє
+взагалі. Ядро після навчання застигає: воно однакове для котика й для креслення.
+Матриця уваги перераховується для кожного зображення окремо, і в цьому її сила,
+яку ніяким збільшенням глибини не заміниш.</p>
+
+<h2 id="s11"><span class="num">11 / Історія</span>Увага не нова для зору</h2>
+
+<p>Легко подумати, що увага прийшла в зір із трансформерів у 2020 році. Насправді
+вона працювала всередині згорткових мереж на кілька років раніше — просто скромніше
+й під іншими назвами.</p>
+
+<p><b>SE-блок</b> (squeeze-and-excitation, 2017) — найпростіший із них. Після
+згорткового шару він стискає кожну карту ознак в одне число, проганяє їх через
+крихітну мережу й отримує по коефіцієнту на канал, на який цю карту множить.
+Це увага по каналах: мережа вирішує, які ознаки зараз важливі, і робить це
+залежно від конкретного зображення. Той самий SE-блок стоїть усередині
+EfficientNet і MobileNet-v3 із
+<a href="../15-efficient-architectures/lecture.html">теми 15</a> — ти вже з ним
+працював, просто ми не називали це увагою.</p>
+
+<p><b>Non-local блок</b> (2018) — уже майже те, що ми розібрали: повна матриця
+«кожна позиція з кожною» всередині згорткової мережі. Її ставили одним-двома
+блоками в глибині, де карта ознак уже маленька й квадратична ціна терпима.</p>
+
+<p>Тобто ідея визріла всередині згорткового світу як <em>доповнення</em>. Питання,
+яке поставив 2020 рік, було іншим і значно різкішим: <b>а якщо згортки прибрати
+зовсім?</b> Відповідь — наступна тема.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Підсумок і що далі</h2>
+
+<p>Операцію розібрано до останнього символу. Що варто винести:</p>
+
+<ol class="steps">
+<li><b>Увага — зважена сума всіх позицій, де ваги рахуються з самих даних.</b>
+  Запит, ключ і значення — три описи того самого токена. Вчаться матриці, якими
+  їх отримують; самі ваги уваги не вчаться ніколи.</li>
+<li><b>Ділення на √d — не гіперпараметр.</b> Дисперсія скалярних добутків
+  дорівнює d, і без поправки softmax при d = 256 віддає 90 % ваги одному
+  елементу, а здатність пропускати градієнт падає всемеро.</li>
+<li><b>Кілька голів нічого не коштують у параметрах</b> — 4d² + 4d при будь-якій
+  їх кількості. Вони дають не більше ваг, а більше <em>різних</em> зважених сум
+  за ті самі ваги.</li>
+<li><b>Увага еквіваріантна щодо перестановки.</b> Це не властивість навченої
+  моделі, а наслідок форми формули: 1.8·10⁻⁷ проти 1.700 у згортки.
+  Із цього випливає, що геометрію треба додавати окремо.</li>
+<li><b>Позиційне кодування — уся геометрія моделі</b>, і коштує вона 0.175 %
+  ваг ViT-B/16.</li>
+<li><b>Ціна квадратична за кількістю токенів.</b> Патч 2×2 на кадрі 28×28 дає
+  38 416 пар замість 16. Розмір патча — головна ручка вартості.</li>
+</ol>
+
+<p>І головне про метод. Усі шість пунктів вище перевіряються <b>без жодного
+навчання</b> — випадковими вагами, за секунди. Це рідкість: більшість тверджень про
+мережі доводиться перевіряти прогонами, розкидом від зерна й трьома повтореннями,
+як у <a href="../18-architecture-comparison/lecture.html">темі 18</a>. Якщо твердження
+про архітектуру можна перевірити алгеброю — перевіряй алгеброю; це дешевше
+й надійніше за будь-який експеримент.</p>
+
+<p>Останнє перед наступною темою: <b>матриця уваги на ненавчених вагах майже
+рівномірна</b>. Заміряно на нашій фігурі — ентропія рядка 3.863 із максимальних
+3.892, тобто <b>99.3 %</b> від ідеально рівномірного розподілу, а найбільша вага
+0.034 проти рівномірних 0.020. Красиві карти уваги зі статей — результат навчання,
+а не властивість операції.</p>
+
+<h3>Місток до теми 20</h3>
+
+<p>Наступний крок очевидний: зібрати з операції цілу мережу — порізати зображення
+на патчі, додати позиційне кодування, покласти дюжину шарів уваги поспіль. Саме це
+зробили автори Vision Transformer, і саме це розбирає тема
+<a href="../20-vision-transformer/lecture.html">20</a>.</p>
+
+<p>А вийде там несподіване. Мережа справді працює — але на наших даних програє
+згортковій, яка в рази менша, і розрив із кількістю прикладів не зменшується,
+а <b>росте</b>. Чому так — там, із числами.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти
+зробиш усі заміри цієї теми сам: напишеш увагу <b>на чистому numpy</b> й звіриш
+її з <code>nn.MultiheadAttention</code> через <code>np.allclose</code>,
+порахуєш приклад на чотирьох токенах руками й перевіриш його бібліотекою,
+відтвориш перестановку, поміряєш вплив <span class="raw">√d</span> на насиченість
+softmax, звіриш ручний рахунок параметрів із <code>sum(p.numel())</code>,
+поміряєш час при 49–3 136 токенах і подивишся на карти уваги до навчання.
+Весь зошит іде <b>менш ніж пів хвилини</b>: навчати тут нема чого.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../18-architecture-comparison/lecture.html"><span class="dir">попередня</span><span class="ttl">18. Порівняння архітектур</span></a>
+    <a class="next" href="../20-vision-transformer/lecture.html"><span class="dir">наступна</span><span class="ttl">20. Vision Transformer</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function plate(g,txt,x,y,color,px,align,bg){
+  g.font=mono(px,true);
+  var w=g.measureText(txt).width+8;
+  g.fillStyle=bg; g.fillRect(align==='right'? x-w+4 : x-4, y-px-2, w, px+6);
+  g.fillStyle=color; g.textAlign=align; g.textBaseline='alphabetic';
+  g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+function шарів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'шар';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'шари';
+  return 'шарів';
+}
+function голів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'голова';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'голови';
+  return 'голів';
+}
+function чисел(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'число';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'числа';
+  return 'чисел';
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* колір теми як трійка RGB — потрібен для теплової карти в ImageData */
+function rgbOf(v){
+  var s=css(v), m;
+  if(s.charAt(0)==='#'){
+    if(s.length===4) return [parseInt(s.charAt(1)+s.charAt(1),16),
+                             parseInt(s.charAt(2)+s.charAt(2),16),
+                             parseInt(s.charAt(3)+s.charAt(3),16)];
+    return [parseInt(s.substr(1,2),16), parseInt(s.substr(3,2),16), parseInt(s.substr(5,2),16)];
+  }
+  m=s.match(/\d+/g);
+  return m ? [+m[0], +m[1], +m[2]] : [128,128,128];
+}
+
+/* детермінований генератор: картинка однакова у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; };
+}
+function mkNorm(rand){
+  return function(){
+    var u=0,v=0;
+    while(!u) u=rand();
+    while(!v) v=rand();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(6.283185307179586*v);
+  };
+}
+
+/* ═══════ маленька лінійна алгебра, спільна для інтерактивів 3, 5, 6 ═══════ */
+
+/* softmax одного рядка, стійкий до великих чисел */
+function softmax(row){
+  var k, mx=-Infinity, sum=0, out=new Array(row.length);
+  for(k=0;k<row.length;k++) if(row[k]>mx) mx=row[k];
+  for(k=0;k<row.length;k++){ out[k]=Math.exp(row[k]-mx); sum+=out[k]; }
+  for(k=0;k<row.length;k++) out[k]/=sum;
+  return out;
+}
+function entropy(row){
+  var k, e=0;
+  for(k=0;k<row.length;k++) if(row[k]>1e-12) e-=row[k]*Math.log(row[k]);
+  return e;
+}
+function dot(a,b,from,to){
+  var k, s=0;
+  for(k=from;k<to;k++) s+=a[k]*b[k];
+  return s;
+}
+/* самоувага з одиничними матрицями ваг: Q = K = V = X */
+function selfAttention(X, divisor){
+  var n=X.length, dLen=X[0].length, i, j, k;
+  var A=new Array(n), out=new Array(n);
+  for(i=0;i<n;i++){
+    var row=new Array(n);
+    for(j=0;j<n;j++) row[j]=dot(X[i],X[j],0,dLen)/divisor;
+    A[i]=softmax(row);
+    var o=new Array(dLen);
+    for(k=0;k<dLen;k++) o[k]=0;
+    for(j=0;j<n;j++) for(k=0;k<dLen;k++) o[k]+=A[i][j]*X[j][k];
+    out[i]=o;
+  }
+  return {attn:A, out:out};
+}
+/* різниця двох наборів векторів по модулю, найбільша */
+function maxDiff(a,b){
+  var i,k,m=0;
+  for(i=0;i<a.length;i++) for(k=0;k<a[i].length;k++){
+    var d=Math.abs(a[i][k]-b[i][k]); if(d>m) m=d;
+  }
+  return m;
+}
+function maxAbs(a){
+  var i,k,m=0;
+  for(i=0;i<a.length;i++) for(k=0;k<a[i].length;k++) if(Math.abs(a[i][k])>m) m=Math.abs(a[i][k]);
+  return m;
+}
+
+/* ═══════ наскрізний приклад: фігури 28×28 і патчі 4×4 ═══════ */
+function drawFigure(kind){
+  var img=new Array(28*28), rand=LCG(4200+kind*17), y, x;
+  var cy=13.5, cx=13.5, R=8.5;
+  for(y=0;y<28;y++) for(x=0;x<28;x++){
+    var dy=y-cy, dx=x-cx, r=Math.sqrt(dy*dy+dx*dx), v=0;
+    if(kind===0) v=(r<R && r>R-3.5)?1:0;
+    else if(kind===1) v=((Math.abs(dy)<=2 && Math.abs(dx)<=R) || (Math.abs(dx)<=2 && Math.abs(dy)<=R))?1:0;
+    else if(kind===2) v=(Math.abs(dy)<=R*0.8 && Math.abs(dx)<=R*0.8)?1:0;
+    else v=(dy>=-R*0.85 && dy<=R*0.85 && Math.abs(dx)<=(dy+R*0.85)*0.6)?1:0;
+    img[y*28+x]=Math.max(0,Math.min(1, v+(rand()-0.5)*0.12));
+  }
+  return img;
+}
+/* 28×28 → 49 патчів по 16 чисел.
+   Кожен патч нормалізуємо до нульового середнього й одиничного розкиду — те саме
+   робить LayerNorm перед увагою в справжній мережі. Без цього скалярні добутки
+   виходять надто дрібними, softmax дає рівномірну кашу й дивитись немає на що. */
+function toPatches(img){
+  var out=[], py, px, y, x, k;
+  for(py=0;py<7;py++) for(px=0;px<7;px++){
+    var p=new Array(16), t=0, mean=0, vari=0;
+    for(y=0;y<4;y++) for(x=0;x<4;x++) p[t++]=img[(py*4+y)*28+(px*4+x)];
+    for(k=0;k<16;k++) mean+=p[k];
+    mean/=16;
+    for(k=0;k<16;k++) vari+=(p[k]-mean)*(p[k]-mean);
+    var sd=Math.sqrt(vari/16)+1e-6;
+    for(k=0;k<16;k++) p[k]=(p[k]-mean)/sd;
+    out.push(p);
+  }
+  return out;
+}
+/* синусоїдальне позиційне кодування, 16 чисел на позицію */
+function posCode(n,dLen,amp){
+  var out=[], i, k;
+  for(i=0;i<n;i++){
+    var v=new Array(dLen);
+    for(k=0;k<dLen;k++){
+      var pair=Math.floor(k/2), ang=i/Math.pow(10000, 2*pair/dLen);
+      v[k]=amp*((k%2===0)? Math.sin(ang) : Math.cos(ang));
+    }
+    out.push(v);
+  }
+  return out;
+}
+function addVec(A,B){
+  var out=[], i, k;
+  for(i=0;i<A.length;i++){
+    var v=new Array(A[i].length);
+    for(k=0;k<A[i].length;k++) v[k]=A[i][k]+B[i][k];
+    out.push(v);
+  }
+  return out;
+}
+function permute(A,p){
+  var out=[], i;
+  for(i=0;i<p.length;i++) out.push(A[p[i]]);
+  return out;
+}
+/* сітка 7×7 патчів як картинка */
+function paintPatches(g, img, x0, y0, side, hi, hiColor, alpha){
+  var cell=side/28, py, px, y, x, k;
+  /* колір беремо з теми, а не літералом: інакше в темній темі буде білий квадрат */
+  var bg=rgbOf('--paper'), fg=rgbOf('--ink'), rgb=[0,0,0];
+  for(y=0;y<28;y++) for(x=0;x<28;x++){
+    var v=img[y*28+x];
+    for(k=0;k<3;k++) rgb[k]=Math.round(bg[k]+(fg[k]-bg[k])*v);
+    g.fillStyle='rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')';
+    g.fillRect(x0+x*cell, y0+y*cell, cell+0.6, cell+0.6);
+  }
+  if(hi){
+    for(py=0;py<7;py++) for(px=0;px<7;px++){
+      var w=hi[py*7+px];
+      if(w<=0) continue;
+      g.globalAlpha=Math.min(1, w*(alpha||1));
+      g.fillStyle=hiColor;
+      g.fillRect(x0+px*side/7, y0+py*side/7, side/7, side/7);
+      g.globalAlpha=1;
+    }
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  for(py=0;py<=7;py++){
+    g.beginPath(); g.moveTo(x0, y0+py*side/7+0.5); g.lineTo(x0+side, y0+py*side/7+0.5); g.stroke();
+    g.beginPath(); g.moveTo(x0+py*side/7+0.5, y0); g.lineTo(x0+py*side/7+0.5, y0+side); g.stroke();
+  }
+}
+
+/* ═════════════════ 1 · Локальність проти всеосяжності ═════════════════ */
+(function(){
+  var cv=I('cRf'); if(!cv) return;
+
+  function panel(g, x0, y0, side, title, half, color){
+    var cell=side/28, r, c, lo=Math.max(0,13-half), hi=Math.min(27,13+half);
+    capt(g, title, x0, y0-14, color, 12.5, true);
+    /* сітка пікселів кадру */
+    g.fillStyle=css('--paper');
+    g.fillRect(x0, y0, side, side);
+    g.strokeStyle=css('--hair'); g.lineWidth=0.6;
+    for(r=0;r<=28;r++){
+      g.beginPath(); g.moveTo(x0, y0+r*cell); g.lineTo(x0+side, y0+r*cell); g.stroke();
+      g.beginPath(); g.moveTo(x0+r*cell, y0); g.lineTo(x0+r*cell, y0+side); g.stroke();
+    }
+    /* саме рецептивне поле */
+    g.globalAlpha=0.34; g.fillStyle=color;
+    g.fillRect(x0+lo*cell, y0+lo*cell, (hi-lo+1)*cell, (hi-lo+1)*cell);
+    g.globalAlpha=1;
+    g.strokeStyle=color; g.lineWidth=2.4;
+    g.strokeRect(x0+lo*cell, y0+lo*cell, (hi-lo+1)*cell, (hi-lo+1)*cell);
+    /* нейрон, для якого це поле рахується */
+    g.fillStyle=color;
+    g.fillRect(x0+13*cell-1, y0+13*cell-1, cell+2, cell+2);
+    g.strokeStyle=css('--soft'); g.lineWidth=1;
+    g.strokeRect(x0+0.5, y0+0.5, side, side);
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv);
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+    var L=+I('rfL').value; I('rfLV').textContent=L;
+    var rf=2*L+1, shown=Math.min(rf,28), half=L;
+    var side=250, y0=64, xA=90, xB=W-90-side;
+
+    panel(g, xA, y0, side, 'згортка 3×3, '+L+' '+шарів(L), half, rose);
+    panel(g, xB, y0, side, 'увага, 1 шар', 99, teal);
+
+    capt(g, 'бачить '+shown+'×'+shown, xA, y0+side+24, rose, 12, true);
+    capt(g, 'бачить 28×28', xB, y0+side+24, teal, 12, true);
+    capt(g, 'ваг у стосі: '+gr(9*L), xA, y0+side+42, soft, 11);
+    capt(g, 'ваг: чотири матриці, розмір не залежить від кадру', xB, y0+side+42, soft, 11);
+
+    /* стрілка між панелями з підписом-різницею */
+    var midX=(xA+side+xB)/2, midY=y0+side/2;
+    capt(g, 'проти', midX, midY-6, ink, 12, true, 'center');
+    capt(g, L<13 ? 'ще не дотяглась' : 'нарешті дотяглась', midX, midY+14, L<13?rose:teal, 11, true, 'center');
+
+    var pct=100*shown*shown/784;
+    I('rfSize').textContent=shown+'×'+shown;
+    I('rfPct').textContent=pct.toFixed(1)+' %';
+    I('rfW').textContent=gr(9*L);
+    I('rfNeed').textContent='13';
+
+    if(rf>=27){
+      verd('rfVd','t-ok','нарешті накрило',
+        'Шарів: '+L+'. Рецептивне поле — '+shown+'×'+shown+', тобто '+pct.toFixed(1)+
+        '&nbsp;% кадру. На це пішло '+gr(9*L)+' ядерних чисел. Увага накриває ті самі 100 % '+
+        'з першого шару й без жодного додаткового.');
+    } else if(rf>=15){
+      verd('rfVd','t-mid','на пів дороги',
+        'Шарів: '+L+'. Це '+shown+'×'+shown+', тобто '+pct.toFixed(1)+
+        '&nbsp;% кадру. До 27×27 бракує ще '+(13-L)+' '+шарів(13-L)+
+        '. Увага цю відстань не долає — у неї її просто немає.');
+    } else {
+      verd('rfVd','t-no','далеко не дістає',
+        'Шарів: '+L+'. Центральний нейрон бачить лише '+shown+'×'+shown+
+        ' — '+pct.toFixed(1)+'&nbsp;% кадру. Протилежний кут для нього не існує. Праворуч '+
+        'та сама задача розвʼязана однією операцією.');
+    }
+  }
+  on('rfL','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════════ 2 · Увага по кроках ═════════════════ */
+(function(){
+  var cv=I('cStep'); if(!cv) return;
+  var stage=0;
+
+  function compute(x4){
+    var X=[[2,0],[0,2],[2,2],[x4,0]], i, j;
+    var S=[], SC=[], A=[], out=[];
+    for(i=0;i<4;i++){
+      S.push([]); SC.push([]);
+      for(j=0;j<4;j++){
+        var s=X[i][0]*X[j][0]+X[i][1]*X[j][1];
+        S[i].push(s); SC[i].push(s/Math.SQRT2);
+      }
+      A.push(softmax(SC[i]));
+    }
+    for(i=0;i<4;i++){
+      var o=[0,0];
+      for(j=0;j<4;j++){ o[0]+=A[i][j]*X[j][0]; o[1]+=A[i][j]*X[j][1]; }
+      out.push(o);
+    }
+    return {X:X, S:S, SC:SC, A:A, out:out};
+  }
+
+  function matrix(g, M, x0, y0, title, digits, heat){
+    var cw=74, ch=30, i, j;
+    capt(g, title, x0, y0-14, css('--ink'), 12, true);
+    for(j=0;j<4;j++) capt(g, 't'+(j+1), x0+52+j*cw+cw/2, y0-1, css('--soft'), 10.5, false, 'center');
+    for(i=0;i<4;i++){
+      capt(g, 't'+(i+1), x0+18, y0+22+i*ch, css('--soft'), 10.5, false, 'center');
+      for(j=0;j<4;j++){
+        var v=M[i][j];
+        if(heat){
+          g.globalAlpha=Math.min(1, v*2.2);
+          g.fillStyle=css('--rose');
+          g.fillRect(x0+52+j*cw+3, y0+i*ch+4, cw-6, ch-6);
+          g.globalAlpha=1;
+        }
+        g.strokeStyle=css('--hair'); g.lineWidth=1;
+        g.strokeRect(x0+52+j*cw+3.5, y0+i*ch+4.5, cw-7, ch-7);
+        capt(g, v.toFixed(digits), x0+52+j*cw+cw/2, y0+22+i*ch, css('--ink'), 12, i===0, 'center');
+      }
+    }
+  }
+
+  function vectors(g, V, x0, y0, title, before){
+    var i, ch=30;
+    capt(g, title, x0, y0-14, css('--ink'), 12, true);
+    for(i=0;i<4;i++){
+      capt(g, 't'+(i+1), x0, y0+22+i*ch, css('--soft'), 11);
+      capt(g, '[ '+V[i][0].toFixed(before?0:3)+',  '+V[i][1].toFixed(before?0:3)+' ]',
+           x0+30, y0+22+i*ch, i===0?css('--rose'):css('--ink'), 13, i===0);
+    }
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv);
+    var x4=(+I('stepX').value)/10; I('stepXV').textContent=x4.toFixed(1);
+    var R=compute(x4);
+    var soft=css('--soft');
+
+    var boxes=I('stepCode').querySelectorAll('div'), k;
+    for(k=0;k<boxes.length;k++){
+      boxes[k].className = (k===stage)?'on':((k<stage)?'done':'');
+    }
+    I('stepPrev').disabled = (stage===0);
+    I('stepNext').disabled = (stage===4);
+
+    vectors(g, R.X, 40, 60, 'вхід X (він же Q, K і V)', true);
+    capt(g, 'етап '+(stage+1)+' з 5', 40, 220, soft, 11);
+
+    if(stage===0){
+      capt(g, 'Одиничні матриці ваг: кожен токен', 40, 242, soft, 12);
+      capt(g, 'виступає й запитом, і ключем,', 40, 260, soft, 12);
+      capt(g, 'і значенням одночасно.', 40, 278, soft, 12);
+      vectors(g, R.X, 360, 60, 'Q = X', true);
+      vectors(g, R.X, 570, 60, 'K = X', true);
+      vectors(g, R.X, 780, 60, 'V = X', true);
+    } else if(stage===1){
+      matrix(g, R.S, 340, 60, 'S = Q · Kᵀ  (сирі оцінки збігу)', 2, false);
+      capt(g, 'клітинка (i, j) = скалярний добуток токена i на токен j', 340, 240, soft, 11.5);
+    } else if(stage===2){
+      matrix(g, R.SC, 340, 60, 'S / √2  (розмірність d = 2)', 3, false);
+      capt(g, '√2 ≈ 1.414 — поправка на розмірність, розділ 05', 340, 240, soft, 11.5);
+    } else if(stage===3){
+      matrix(g, R.A, 340, 60, 'A = softmax(S)  — матриця уваги', 3, true);
+      capt(g, 'кожен рядок у сумі дає рівно 1; насиченість = вага', 340, 240, soft, 11.5);
+    } else {
+      matrix(g, R.A, 300, 60, 'A — матриця уваги', 3, true);
+      vectors(g, R.out, 640, 60, 'out = A · V', false);
+      capt(g, 'кожен новий токен — суміш усіх старих', 640, 240, soft, 11.5);
+      capt(g, 'у пропорціях свого рядка A', 640, 258, soft, 11.5);
+    }
+
+    /* рядок t1 крупно, він же предмет вердикту */
+    var y=312;
+    capt(g, 'рядок t1 матриці уваги:', 40, y, soft, 11.5);
+    var j;
+    for(j=0;j<4;j++){
+      var w=R.A[0][j];
+      g.globalAlpha=Math.min(1, w*2.2); g.fillStyle=css('--rose');
+      g.fillRect(40+j*118, y+12, 108, 26); g.globalAlpha=1;
+      g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(40.5+j*118, y+12.5, 107, 25);
+      capt(g, 't'+(j+1)+' → '+w.toFixed(3), 40+j*118+54, y+30, css('--ink'), 12, true, 'center');
+    }
+    capt(g, 'сума: '+(R.A[0][0]+R.A[0][1]+R.A[0][2]+R.A[0][3]).toFixed(3),
+         40+4*118+14, y+30, css('--teal'), 12, true);
+
+    I('stepW14').textContent=R.A[0][3].toFixed(3);
+    I('stepW11').textContent=R.A[0][0].toFixed(3);
+
+    var w14=R.A[0][3];
+    if(w14<0.05){
+      verd('stepVd','t-no','t4 відкинуто',
+        't4 = ['+x4.toFixed(1)+', 0] дивиться в інший бік, ніж t1, тому скалярний добуток '+
+        'відʼємний і після softmax лишається '+w14.toFixed(3)+'. Новий t1 збирається '+
+        'майже цілком із себе та t3.');
+    } else if(w14<0.2){
+      verd('stepVd','t-mid','t4 зʼявився на радарі',
+        't4 = ['+x4.toFixed(1)+', 0] уже не протилежний t1, і його частка виросла до '+
+        w14.toFixed(3)+'. Ніяких ваг ніхто не міняв — змінився лише вхід.');
+    } else {
+      verd('stepVd','t-ok','t4 став повноправним донором',
+        't4 = ['+x4.toFixed(1)+', 0] тепер схожий на t1, і той бере від нього '+w14.toFixed(3)+
+        ' — стільки ж, скільки від себе ('+R.A[0][0].toFixed(3)+'). Ось що означає '+
+        '«ваги рахуються з даних».');
+    }
+  }
+  on('stepNext','click',function(){ if(stage<4){stage++; draw();} });
+  on('stepPrev','click',function(){ if(stage>0){stage--; draw();} });
+  on('stepX','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════════ 3 · Матриця уваги ═════════════════ */
+(function(){
+  var cv=I('cMap'); if(!cv) return;
+  var kind=0, sel=10;
+  /* грабля №1: теплову карту малюємо в окрему канву й виводимо через drawImage */
+  var off=document.createElement('canvas'); off.width=49; off.height=49;
+  var offG=off.getContext('2d');
+
+  function state(){
+    var img=drawFigure(kind), P=toPatches(img);
+    var div=(+I('mapT').value)/100;
+    var R=selfAttention(P, div);
+    return {img:img, A:R.attn, div:div};
+  }
+
+  function draw(){
+    var g=dpr(cv);
+    var S=state(), A=S.A;
+    var rose=css('--rose'), soft=css('--soft'), ink=css('--ink');
+    I('mapTV').textContent=S.div.toFixed(2);
+
+    var side=230, y0=72, xA=40, xB=316, xC=620, sideC=280;
+
+    /* панель A: сама фігура з патчами */
+    capt(g,'фігура, 49 патчів 4×4', xA, y0-16, ink, 12, true);
+    paintPatches(g, S.img, xA, y0, side, null, rose, 1);
+    /* обраний патч обводимо */
+    g.strokeStyle=rose; g.lineWidth=2.5;
+    g.strokeRect(xA+(sel%7)*side/7, y0+Math.floor(sel/7)*side/7, side/7, side/7);
+    capt(g,'обраний патч № '+sel, xA, y0+side+20, rose, 11.5, true);
+
+    /* панель B: куди він дивиться */
+    capt(g,'куди дивиться патч № '+sel, xB, y0-16, ink, 12, true);
+    var row=A[sel], mx=0, j;
+    for(j=0;j<49;j++) if(row[j]>mx) mx=row[j];
+    var norm=new Array(49);
+    for(j=0;j<49;j++) norm[j]=row[j]/mx;
+    paintPatches(g, S.img, xB, y0, side, norm, css('--teal'), 0.9);
+    capt(g,'насиченість = вага в рядку', xB, y0+side+20, css('--teal'), 11.5, true);
+
+    /* панель C: матриця 49×49 */
+    capt(g,'матриця уваги 49×49', xC, y0-16, ink, 12, true);
+    var imgData=offG.createImageData(49,49), i, k;
+    var bg=rgbOf('--paper'), fg=rgbOf('--rose'), gmax=0;
+    for(i=0;i<49;i++) for(j=0;j<49;j++) if(A[i][j]>gmax) gmax=A[i][j];
+    for(i=0;i<49;i++) for(j=0;j<49;j++){
+      var t=Math.pow(A[i][j]/gmax, 0.6), p=(i*49+j)*4;
+      for(k=0;k<3;k++) imgData.data[p+k]=Math.round(bg[k]+(fg[k]-bg[k])*t);
+      imgData.data[p+3]=255;
+    }
+    offG.putImageData(imgData,0,0);
+    g.imageSmoothingEnabled=false;
+    g.drawImage(off, xC, y0, sideC, sideC);
+    g.imageSmoothingEnabled=true;
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(xC+0.5,y0+0.5,sideC,sideC);
+    /* підсвічений рядок */
+    g.strokeStyle=css('--teal'); g.lineWidth=2;
+    g.strokeRect(xC, y0+sel*sideC/49, sideC, sideC/49);
+    capt(g,'рядок = хто бере · колонка = у кого', xC, y0+sideC+20, soft, 11);
+    capt(g,'0', xC, y0+sideC+38, soft, 10.5);
+    capt(g,'48', xC+sideC, y0+sideC+38, soft, 10.5, false, 'right');
+
+    var ent=entropy(row);
+    I('mapRow').textContent='№ '+sel;
+    I('mapMax').textContent=mx.toFixed(4);
+    I('mapEnt').textContent=ent.toFixed(3);
+
+    /* середній максимум по всіх 49 рядках — на ньому й стоїть вердикт */
+    var avg=0;
+    for(i=0;i<49;i++){
+      var rowMax=0;
+      for(j=0;j<49;j++) if(A[i][j]>rowMax) rowMax=A[i][j];
+      avg+=rowMax;
+    }
+    avg/=49;
+    I('mapAvg').textContent=avg.toFixed(4);
+
+    if(avg<0.09){
+      verd('mapVd','t-mid','увага майже нічого не обирає',
+        'Середній максимум у рядку '+avg.toFixed(4)+' проти рівномірних 0.0204 — '+
+        'усього в '+(avg/0.020408).toFixed(1)+' раза більше. Дільник '+S.div.toFixed(2)+
+        ' завеликий: усі патчі отримують майже однакову вагу, і вихід зводиться '+
+        'до простого середнього.');
+    } else if(avg>0.5){
+      verd('mapVd','t-no','увага вироджується у вибір одного',
+        'Середній максимум у рядку '+avg.toFixed(4)+' — тобто один патч забирає '+
+        (100*avg).toFixed(0)+'&nbsp;% ваги. Дільник '+S.div.toFixed(2)+' замалий, оцінки '+
+        'роздуті, і замість зваженої суми лишається вибір одного. Саме з цим '+
+        'бореться ділення на √d.');
+    } else {
+      verd('mapVd','t-ok','увага справді обирає',
+        'Дільник '+S.div.toFixed(2)+': середній максимум у рядку '+avg.toFixed(4)+
+        ' проти рівномірних 0.0204 — у '+(avg/0.020408).toFixed(1)+
+        ' раза більше, але далеко не одиниця. Розподіл нерівномірний і не '+
+        'вироджений — саме в цей режим і цілить ділення на √d, яке тут дорівнює 4.00.');
+    }
+  }
+
+  cv.addEventListener('mousemove', function(ev){
+    var rect=cv.getBoundingClientRect();
+    var lx=(ev.clientX-rect.left)*LW(cv)/rect.width;
+    var ly=(ev.clientY-rect.top)*LH(cv)/rect.height;
+    var side=230, y0=72, xA=40, xC=620, sideC=280, want=-1;
+    if(lx>=xA && lx<xA+side && ly>=y0 && ly<y0+side){
+      want=Math.floor((ly-y0)/(side/7))*7+Math.floor((lx-xA)/(side/7));
+    } else if(lx>=xC && lx<xC+sideC && ly>=y0 && ly<y0+sideC){
+      want=Math.floor((ly-y0)/(sideC/49));
+    }
+    if(want>=0 && want<49 && want!==sel){ sel=want; draw(); }
+  });
+  segment('mapSeg', function(i){ kind=i; draw(); });
+  on('mapT','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════════ 4 · Ділення на корінь із d ═════════════════ */
+(function(){
+  var cv=I('cScale'); if(!cv) return;
+  var DIMS=[2,4,8,16,32,64,128,256,512], view=0;
+
+  /* рахуємо один раз при завантаженні: 60 рядків по 49 оцінок на кожну розмірність */
+  var DATA=(function(){
+    var rand=LCG(20250901), nrm=mkNorm(rand), res=[], t, s, j, k;
+    for(t=0;t<DIMS.length;t++){
+      var d=DIMS[t], sum2=0, cnt=0, mx0=0, mx1=0, e0=0, e1=0;
+      for(s=0;s<60;s++){
+        var q=new Array(d);
+        for(k=0;k<d;k++) q[k]=nrm();
+        var raw=new Array(49), scl=new Array(49);
+        for(j=0;j<49;j++){
+          var dotp=0;
+          for(k=0;k<d;k++) dotp+=q[k]*nrm();
+          raw[j]=dotp; scl[j]=dotp/Math.sqrt(d);
+          sum2+=dotp*dotp; cnt++;
+        }
+        var p0=softmax(raw), p1=softmax(scl), m0=0, m1=0;
+        for(j=0;j<49;j++){ if(p0[j]>m0) m0=p0[j]; if(p1[j]>m1) m1=p1[j]; }
+        mx0+=m0; mx1+=m1; e0+=entropy(p0); e1+=entropy(p1);
+      }
+      res.push({d:d, var0:sum2/cnt, var1:sum2/cnt/d,
+                max0:mx0/60, max1:mx1/60, ent0:e0/60, ent1:e1/60});
+    }
+    return res;
+  })();
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), hair=css('--hair'), ink=css('--ink');
+    var idx=+I('scD').value, D=DATA[idx];
+    I('scDV').textContent=D.d;
+
+    var x0=88, x1=W-190, yTop=64, yBot=H-72;
+    function X(t){ return x0+(x1-x0)*t/(DIMS.length-1); }
+    function Y(v){ return yBot-(yBot-yTop)*v; }
+
+    /* сітка */
+    g.strokeStyle=hair; g.lineWidth=1;
+    var k;
+    for(k=0;k<=5;k++){
+      var yy=Y(k/5);
+      g.beginPath(); g.moveTo(x0,yy+0.5); g.lineTo(x1,yy+0.5); g.stroke();
+    }
+    for(k=0;k<DIMS.length;k++){
+      capt(g, String(DIMS[k]), X(k), yBot+20, k===idx?rose:soft, k===idx?12:10.5, k===idx, 'center');
+    }
+    capt(g,'розмірність d', (x0+x1)/2, yBot+44, soft, 11.5, false, 'center');
+
+    var key0 = view===0 ? 'max0' : 'var0';
+    var key1 = view===0 ? 'max1' : 'var1';
+    var top  = view===0 ? 1 : 512;
+    function V(v){ return view===0 ? v : Math.log(1+v)/Math.log(1+top); }
+
+    for(k=0;k<=5;k++){
+      var lab = view===0 ? (k/5).toFixed(1)
+                         : gr(Math.round(Math.exp(Math.log(1+top)*k/5)-1));
+      capt(g, lab, x0-10, Y(k/5)+4, soft, 10.5, false, 'right');
+    }
+    capt(g, view===0?'максимальна вага в рядку':'дисперсія оцінок', x0-58, yTop-24, soft, 11.5);
+
+    /* дві криві */
+    function curve(key, color, wide){
+      g.strokeStyle=color; g.lineWidth=wide; g.beginPath();
+      for(k=0;k<DIMS.length;k++){
+        var px=X(k), py=Y(V(DATA[k][key]));
+        if(k===0) g.moveTo(px,py); else g.lineTo(px,py);
+      }
+      g.stroke();
+      for(k=0;k<DIMS.length;k++){
+        g.fillStyle=color; g.beginPath(); g.arc(X(k), Y(V(DATA[k][key])), k===idx?5.5:3, 0, 6.284); g.fill();
+      }
+    }
+    curve(key0, rose, 2.2);
+    curve(key1, teal, 2.2);
+
+    /* рівень рівномірності */
+    if(view===0){
+      g.setLineDash([4,4]); g.strokeStyle=soft; g.lineWidth=1;
+      g.beginPath(); g.moveTo(x0, Y(1/49)+0.5); g.lineTo(x1, Y(1/49)+0.5); g.stroke();
+      g.setLineDash([]);
+      capt(g,'рівномірно, 0.0204', x0+6, Y(1/49)-6, soft, 10.5);
+    }
+
+    /* легенда праворуч */
+    capt(g,'без ділення', x1+16, Y(V(DATA[DIMS.length-1][key0]))+4, rose, 12, true);
+    capt(g,'з діленням', x1+16, Y(V(DATA[DIMS.length-1][key1]))+4, teal, 12, true);
+
+    /* вертикаль обраної розмірності */
+    g.setLineDash([3,4]); g.strokeStyle=ink; g.lineWidth=1;
+    g.beginPath(); g.moveTo(X(idx)+0.5, yTop); g.lineTo(X(idx)+0.5, yBot); g.stroke();
+    g.setLineDash([]);
+
+    I('scV0').textContent=D.var0.toFixed(1);
+    I('scV1').textContent=D.var1.toFixed(2);
+    I('scM0').textContent=D.max0.toFixed(3);
+    I('scM1').textContent=D.max1.toFixed(3);
+
+    if(view===1){
+      verd('scVd','t-mid','дисперсія дорівнює d',
+        'При d = '+D.d+' дисперсія сирих оцінок '+D.var0.toFixed(1)+' — це і є сама '+
+        'розмірність, із точністю до вибірки. Після ділення на √d вона дорівнює '+
+        D.var1.toFixed(2)+', і так буде при будь-якому d: у цьому вся суть поправки. '+
+        'Перемкни на «макс. вагу», щоб побачити наслідок.');
+    } else if(D.max0>0.55){
+      verd('scVd','t-no','увага вироджується',
+        'При d = '+D.d+' дисперсія оцінок '+D.var0.toFixed(1)+', і без ділення один '+
+        'елемент забирає '+(100*D.max0).toFixed(0)+'&nbsp;% ваги всього рядка. Це вже не зважена '+
+        'сума, а вибір одного. З діленням максимум лишається '+D.max1.toFixed(3)+'.');
+    } else if(D.max0>0.2){
+      verd('scVd','t-mid','перекіс уже помітний',
+        'При d = '+D.d+' максимум без ділення '+D.max0.toFixed(3)+' проти '+D.max1.toFixed(3)+
+        ' з діленням — різниця в '+(D.max0/D.max1).toFixed(1)+' раза. Дисперсія оцінок '+
+        D.var0.toFixed(1)+', тобто рівно d, як і має бути.');
+    } else {
+      verd('scVd','t-ok','на малій розмірності майже байдуже',
+        'При d = '+D.d+' дисперсія лише '+D.var0.toFixed(1)+', оцінки маленькі, і softmax '+
+        'без ділення дає максимум '+D.max0.toFixed(3)+' проти '+D.max1.toFixed(3)+
+        '. Проблема зʼявляється з ростом d — посунь повзунок праворуч.');
+    }
+  }
+  segment('scSeg', function(i){ view=i; draw(); });
+  on('scD','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════════ 5 · Кілька голів ═════════════════ */
+(function(){
+  var cv=I('cHead'); if(!cv) return;
+  var HEADS=[1,2,4,8], hi=2, img=drawFigure(0), P=toPatches(img);
+  var PE=posCode(49,16,0.4), X=addVec(P,PE);
+
+  function headRow(q, h){
+    var hd=16/h, out=[], head, j;
+    for(head=0;head<h;head++){
+      var row=new Array(49);
+      for(j=0;j<49;j++) row[j]=dot(X[q],X[j],head*hd,(head+1)*hd)/Math.sqrt(hd);
+      out.push(softmax(row));
+    }
+    return out;
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv);
+    var h=HEADS[hi], q=+I('headQ').value; I('headQV').textContent=q;
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+    var rows=headRow(q,h), cols=Math.min(h,4), lines=Math.ceil(h/4);
+    var side=Math.min(lines===1?185:122, (W-100-(cols-1)*22)/cols);
+    var y0=60, head, j;
+
+    capt(g,'патч-запит № '+q+' · куди дивиться кожна голова', 50, 34, ink, 13, true);
+
+    /* скільки різних цілей дають голови — у середньому по ВСІХ патчах-запитах.
+       По одному патчу число стрибає, і вердикт разом із ним. */
+    var distinct=0, other;
+    for(other=0;other<49;other++){
+      var seen={}, cnt=0, rowsAll=headRow(other,h);
+      for(head=0;head<h;head++){
+        var m2=0, a2=0;
+        for(j=0;j<49;j++) if(rowsAll[head][j]>m2){ m2=rowsAll[head][j]; a2=j; }
+        if(!seen[a2]){ seen[a2]=1; cnt++; }
+      }
+      distinct+=cnt;
+    }
+    distinct/=49;
+
+    for(head=0;head<h;head++){
+      var cx=50+(head%4)*(side+22), cy=y0+Math.floor(head/4)*(side+42);
+      var row=rows[head], mx=0, arg=0;
+      for(j=0;j<49;j++) if(row[j]>mx){ mx=row[j]; arg=j; }
+      var norm=new Array(49);
+      for(j=0;j<49;j++) norm[j]=row[j]/mx;
+      paintPatches(g, img, cx, cy, side, norm, teal, 0.9);
+      /* сам запит — рожевою рамкою, ціль голови — хрестиком */
+      g.strokeStyle=rose; g.lineWidth=2;
+      g.strokeRect(cx+(q%7)*side/7, cy+Math.floor(q/7)*side/7, side/7, side/7);
+      var tx=cx+(arg%7+0.5)*side/7, ty=cy+(Math.floor(arg/7)+0.5)*side/7, s=side/22;
+      g.strokeStyle=css('--amber'); g.lineWidth=2.4;
+      g.beginPath(); g.moveTo(tx-s,ty-s); g.lineTo(tx+s,ty+s);
+      g.moveTo(tx+s,ty-s); g.lineTo(tx-s,ty+s); g.stroke();
+      /* підпис одним рядком: при восьми головах панель завузька для двох (грабля №12) */
+      var lead='голова '+(head+1)+' → ';
+      capt(g, lead, cx, cy-8, soft, 11);
+      g.font=mono(11,false);
+      capt(g, '№ '+arg, cx+g.measureText(lead).width, cy-8, css('--amber'), 11, true);
+    }
+
+    var legendY=y0+lines*(side+42)+2;
+    capt(g,'рожева рамка — сам патч-запит · хрестик — куди голова дивиться найсильніше',
+         50, legendY, soft, 11);
+    capt(g,'насиченість клітинки — вага цього патча в рядку уваги',
+         50, legendY+17, soft, 11);
+
+    I('headDim').textContent=(16/h)+' '+чисел(16/h);
+    I('headPar').textContent='1 088';
+    I('headTg').textContent=distinct.toFixed(2)+' з '+h;
+    I('headMat').textContent=String(h);
+
+    if(h===1){
+      verd('headVd','t-no','одна пропорція на весь вектор',
+        'Одна голова — одна матриця уваги. Усі 16 чисел опису беруться з тих самих '+
+        'патчів у тих самих пропорціях. Взяти форму звідси, а фон звідти неможливо. '+
+        'Параметрів при цьому 1 088 — рівно стільки ж, скільки при восьми головах.');
+    } else if(distinct>=h*0.75){
+      verd('headVd','t-ok','голови дивляться в різні місця',
+        h+' '+голів(h)+' по '+(16/h)+' '+чисел(16/h)+' дають у середньому '+
+        distinct.toFixed(2)+' різних цілей із '+h+' можливих — майже всі різні. '+
+        'Параметрів усе ще 1 088: багатоголовість не коштує жодної зайвої ваги, '+
+        'вона лише інакше ділить наявні.');
+    } else {
+      verd('headVd','t-mid','частина голів дивиться в те саме місце',
+        'При '+h+' головах по '+(16/h)+' '+чисел(16/h)+' різних цілей виходить '+
+        'у середньому лише '+distinct.toFixed(2)+' із '+h+'. Розділення опису на '+
+        'шматки не гарантує різноманіття само собою — воно лише дає таку можливість, '+
+        'а скористається нею мережа під час навчання.');
+    }
+  }
+  segment('headSeg', function(i){ hi=i; draw(); });
+  on('headQ','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════════ 6 · Перестановка ═════════════════ */
+(function(){
+  var cv=I('cPerm'); if(!cv) return;
+  var withPos=0, shuffleSeed=1, img=drawFigure(1), P=toPatches(img);
+  var PE=posCode(49,16,0.5);
+  var KERNEL=[0.5, 1.0, -0.7];
+
+  function makePerm(seed){
+    var rand=LCG(seed*7919+13), p=[], k, i, t;
+    for(k=0;k<49;k++) p.push(k);
+    for(k=48;k>0;k--){ i=Math.floor(rand()*(k+1)); t=p[k]; p[k]=p[i]; p[i]=t; }
+    return p;
+  }
+  /* згортка по послідовності токенів: фіксоване ядро з трьох чисел */
+  function conv1d(A){
+    var out=[], i, k, t;
+    for(i=0;i<A.length;i++){
+      var v=new Array(16);
+      for(k=0;k<16;k++) v[k]=0;
+      for(t=-1;t<=1;t++){
+        var j=i+t; if(j<0||j>=A.length) continue;
+        for(k=0;k<16;k++) v[k]+=KERNEL[t+1]*A[j][k];
+      }
+      out.push(v);
+    }
+    return out;
+  }
+
+  function shuffledImage(perm){
+    var out=new Array(28*28), i, y, x;
+    for(i=0;i<49;i++){
+      var src=perm[i], sy=Math.floor(src/7)*4, sx=(src%7)*4,
+          dy=Math.floor(i/7)*4, dx=(i%7)*4;
+      for(y=0;y<4;y++) for(x=0;x<4;x++) out[(dy+y)*28+dx+x]=img[(sy+y)*28+sx+x];
+    }
+    return out;
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv);
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink'),
+        amber=css('--amber');
+    var perm=makePerm(shuffleSeed);
+    var base = withPos ? addVec(P,PE) : P;
+
+    var o1=selfAttention(base,4).out;
+    var permIn = withPos ? addVec(permute(P,perm), PE) : permute(P,perm);
+    var o2=selfAttention(permIn,4).out;
+    var dAttn=maxDiff(o2, permute(o1,perm));
+
+    var c1=conv1d(P), c2=conv1d(permute(P,perm));
+    var dConv=maxDiff(c2, permute(c1,perm));
+    var scale=maxAbs(o1);
+
+    var side=185, y0=76;
+    capt(g,'оригінал', 50, y0-14, ink, 12, true);
+    paintPatches(g, img, 50, y0, side, null, rose, 1);
+    capt(g,'перемішані патчі', 50+side+38, y0-14, ink, 12, true);
+    paintPatches(g, shuffledImage(perm), 50+side+38, y0, side, null, rose, 1);
+    capt(g,'ті самі 49 патчів, інший порядок', 50, y0+side+22, soft, 11);
+
+    /* три стовпчики в логарифмічній шкалі */
+    var bx=520, bw=W-bx-60, by=76, bh=42, gap=30;
+    var LO=-18, HI=1;
+    function len(v){
+      var lg=Math.log(Math.max(v,1e-18))/Math.LN10;
+      return bw*Math.max(0,Math.min(1,(lg-LO)/(HI-LO)));
+    }
+    function fmtSci(v){
+      if(v<1e-6) return v.toExponential(1);
+      return v.toFixed(4);
+    }
+    var bars=[
+      {t:'увага '+(withPos?'із кодуванням':'без кодування'), v:dAttn, c:withPos?amber:teal},
+      {t:'згортка по токенах', v:dConv, c:rose},
+      {t:'масштаб самого виходу', v:scale, c:soft}
+    ], k;
+    capt(g,'різниця «вихід перемішаного» − «перемішаний вихід»', bx, by-30, ink, 12, true);
+    for(k=0;k<bars.length;k++){
+      var yy=by+k*(bh+gap);
+      capt(g, bars[k].t, bx, yy-6, soft, 11);
+      g.fillStyle=css('--paper'); g.fillRect(bx, yy, bw, bh);
+      g.fillStyle=bars[k].c; g.fillRect(bx, yy, len(bars[k].v), bh);
+      g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(bx+0.5, yy+0.5, bw, bh);
+      plate(g, fmtSci(bars[k].v), bx+Math.max(len(bars[k].v)+8, 8), yy+27,
+            bars[k].c, 13, 'left', css('--raise'));
+    }
+    capt(g,'шкала логарифмічна: 10⁻¹⁸ ліворуч, 10 праворуч', bx, by+3*(bh+gap)+2, soft, 10.5);
+
+    I('permD').textContent=fmtSci(dAttn);
+    I('permC').textContent=fmtSci(dConv);
+    I('permS').textContent=scale.toFixed(4);
+
+    if(!withPos){
+      verd('permVd','t-no','порядок не помічено взагалі',
+        'Різниця '+fmtSci(dAttn)+' при виході масштабу '+scale.toFixed(3)+
+        ' — це нуль подвійної точності, а не «мало». Увага еквіваріантна щодо '+
+        'перестановки за побудовою. Згортка на тій самій перевірці дає '+
+        dConv.toFixed(3)+', тобто величину порядку самого сигналу.');
+    } else {
+      verd('permVd','t-ok','порядок тепер видно',
+        'Позиційне кодування додано до токенів, і різниця підскочила з нуля до '+
+        fmtSci(dAttn)+'. Тепер перестановка щось міняє — отже, є що вчити. '+
+        'Згортка для порівняння дає '+dConv.toFixed(3)+'.');
+    }
+  }
+  segment('permSeg', function(i){ withPos=i; draw(); });
+  on('permGo','click',function(){ shuffleSeed++; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════════ 7 · Ціна ═════════════════ */
+(function(){
+  var cv=I('cCost'); if(!cv) return;
+  var PATCH=[14,7,4,2,1], TOK=[4,16,49,196,784], DIMS=[8,16,32,64,128,256];
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), hair=css('--hair'), ink=css('--ink');
+    var pi=+I('costP').value, di=+I('costD').value;
+    var p=PATCH[pi], n=TOK[pi], d=DIMS[di];
+    I('costPV').textContent=p+'×'+p;
+    I('costDV').textContent=d;
+
+    var mat=2*n*n*d, prj=4*n*d*d;
+    var x0=100, x1=W-60, yBot=H-74, yTop=56;
+    var top=Math.log(1+2*784*784*256)/Math.LN10;
+    function Y(v){ return yBot-(yBot-yTop)*Math.log(1+v)/Math.LN10/top; }
+
+    g.strokeStyle=hair; g.lineWidth=1;
+    var k, gridv=[1e2,1e3,1e4,1e5,1e6,1e7,1e8];
+    for(k=0;k<gridv.length;k++){
+      var yy=Y(gridv[k]);
+      g.beginPath(); g.moveTo(x0,yy+0.5); g.lineTo(x1,yy+0.5); g.stroke();
+      capt(g,'10'+['²','³','⁴','⁵','⁶','⁷','⁸'][k], x0-10, yy+4, soft, 10.5, false, 'right');
+    }
+    capt(g,'множень', x0-56, yTop-20, soft, 11.5);
+
+    var slot=(x1-x0)/PATCH.length, bw=slot*0.3;
+    for(k=0;k<PATCH.length;k++){
+      var cx=x0+slot*(k+0.5), nk=TOK[k];
+      var m=2*nk*nk*d, j=4*nk*d*d, sel=(k===pi);
+      g.globalAlpha=sel?1:0.4;
+      g.fillStyle=rose; g.fillRect(cx-bw-2, Y(m), bw, yBot-Y(m));
+      g.fillStyle=teal; g.fillRect(cx+2, Y(j), bw, yBot-Y(j));
+      g.globalAlpha=1;
+      capt(g, PATCH[k]+'×'+PATCH[k], cx, yBot+20, sel?ink:soft, sel?12:10.5, sel, 'center');
+      capt(g, nk+' ток.', cx, yBot+36, sel?rose:soft, 10.5, sel, 'center');
+      if(sel){
+        g.strokeStyle=ink; g.lineWidth=1.4;
+        g.strokeRect(cx-bw-2.5, Y(m)-0.5, bw+1, yBot-Y(m)+1);
+        g.strokeRect(cx+1.5, Y(j)-0.5, bw+1, yBot-Y(j)+1);
+      }
+    }
+    capt(g,'розмір патча', (x0+x1)/2, yBot+56, soft, 11.5, false, 'center');
+    capt(g,'матриця уваги 2n²d', x0, yTop-20, rose, 12, true);
+    capt(g,'проєкції 4nd²', x0+180, yTop-20, teal, 12, true);
+
+    I('costN').textContent=String(n);
+    I('costPr').textContent=gr(n*n);
+    I('costM').textContent=gr(mat);
+    I('costJ').textContent=gr(prj);
+
+    var even=2*d;
+    var tail = (pi < PATCH.length-1)
+      ? ' Зменшити патч іще на крок — учетверо додати роботи.'
+      : ' Дрібнішого патча за один піксель не буває: це стеля.';
+    if(mat>prj*1.2){
+      verd('costVd','t-no','вирішує квадратичний доданок',
+        'При '+n+' токенах матриця уваги коштує '+gr(mat)+' множень проти '+gr(prj)+
+        ' у проєкціях — у '+(mat/prj).toFixed(1)+' раза більше. Рівновага при d = '+d+
+        ' настає на '+even+' токенах, і ми її вже минули.'+tail);
+    } else if(mat>prj*0.6){
+      verd('costVd','t-mid','точка рівноваги',
+        'Матриця уваги — '+gr(mat)+' множень, проєкції — '+gr(prj)+
+        '. Це і є перелом: 2n²d = 4nd² при n = 2d = '+even+', а в нас '+n+' токенів. '+
+        'Крок праворуч по повзунку — і квадратичність почне вирішувати все.');
+    } else {
+      verd('costVd','t-ok','квадратичність ще не турбує',
+        'При '+n+' токенах матриця уваги коштує лише '+gr(mat)+' множень проти '+gr(prj)+
+        ' у проєкціях. Уся вартість сидить у матрицях ваг, а не в парах. Так буде, '+
+        'поки токенів менше за 2d = '+even+'.');
+    }
+  }
+  on('costP','input',draw);
+  on('costD','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+})();
+</script>
+</body>
+</html>

@@ -18,7 +18,7 @@
 2. **До активації** запиши у файл `sposterezhennya.md` вивід трьох команд:
    `which python3` (Windows: `where python`), `python3 -c "import sys; print(sys.prefix)"`,
    `python3 -c "import sys; print(sys.path)"`.
-3. Активуй середовище. Переконайся, що в запрошенні з'явився префікс `(.venv)`.
+3. Активуй середовище. Переконайся, що в запрошенні зʼявився префікс `(.venv)`.
 4. **Після активації** запиши вивід тих самих трьох команд, а ще додай
    `which python` — без трійки.
 5. Виконай `deactivate` і перевір `which python` ще раз.

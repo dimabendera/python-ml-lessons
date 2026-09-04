@@ -1,0 +1,2070 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Одноетапні: focal loss і anchor-free</title>
+<meta name="description" content="Чому одноетапні детектори роками програвали за точністю й що це виправило. Дисбаланс у втраті, а не в кількості: 576 бінарних рішень на сцену, з них 4.05 позитивні, на один позитивний 141 негативний; фон дає 99.72 % втрати свіжої мережі, легкі негативні — 57.7 % втрати навченої. Focal loss по кроках: множник (1−p)^γ тлумить приклад із p=0.9 у 100 разів, із p=0.1 — лише в 1.2 раза; своя реалізація проти ops.sigmoid_focal_loss. γ = 0, 1, 2, 5 по три зерна: mAP 0.7549, 0.7817, 0.8610, 0.5656. Ініціалізація зсуву останнього шару: втрата на першому кроці 72.19 проти 2.25. Anchor-free голова FCOS: чотири відстані замість заготовок, голова легша втричі, mAP 0.9187 проти 0.8610. Centerness, зіставлення без якорів, розбір retinanet_resnet50_fpn і fcos_resnet50_fpn.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* грабля №3: під uppercase грецька γ перетворюється на Γ і читається як «Г».
+   Правило .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw{text-transform:none}
+
+/* пʼять кнопок показника γ мають лягти в три ряди, а не в два з сиротою */
+.seg.wrap button{flex:1 1 28%}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 5 · Тема 26</p>
+    <h1>Focal loss і anchor-free</h1>
+    <p class="stand">Одноетапні детектори стали швидкими одразу, а точними — ні.
+      Розрив тримався роками, і виявилось, що річ не в архітектурі, а у функції
+      втрати: фон, якого в сотні разів більше, забивав собою весь градієнт. Ця
+      тема — про два винаходи, які прибрали спершу дисбаланс, а потім і самі
+      якорі.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Чому одноетапні програвали</a></li>
+        <li><a href="#s2">Спроби, які не спрацювали</a></li>
+        <li><a href="#s3">Focal loss</a></li>
+        <li><a href="#s4">Що робить γ і що робить α</a></li>
+        <li><a href="#s5">Ініціалізація зсуву</a></li>
+        <li><a href="#s6">RetinaNet</a></li>
+        <li><a href="#s7">FPN: багатомасштабність</a></li>
+        <li><a href="#s8">Що не так із якорями</a></li>
+        <li><a href="#s9">Anchor-free</a></li>
+        <li><a href="#s10">Centerness</a></li>
+        <li><a href="#s11">Зіставлення без якорів</a></li>
+        <li><a href="#s12">Що з цього лишилось</a></li>
+        <li><a href="#s13">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../25-yolo/lecture.html">← 25. YOLO</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../27-detr/lecture.html">27. DETR →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У <a href="../25-yolo/lecture.html">попередній темі</a> одноетапна
+постановка дала вісімнадцятикратне прискорення при однаковій ємності мережі. Здавалось
+би, питання закрито: одна схема швидша й простіша, отже, перемогла. Але кілька років
+поспіль найточнішими лишались двоетапні детектори, а одноетапні відставали на
+пʼять-десять пунктів <code>mAP</code>. Причина не в тому, що вони «менше думають» — і
+не в тому, що їм бракує другого проходу. Причина в одному числі, яке ми зараз
+порахуємо: <b>скільки фону припадає на один предмет</b>. Виправлення виявилось не
+архітектурним, а арифметичним — переписали функцію втрати. А потім із детектора зникла
+ще й ціла сутність, яку доти вважали обовʼязковою.</p>
+
+<h2 id="s1"><span class="num">01 / Хвороба</span>Чому одноетапні детектори програвали</h2>
+
+<p>Різниця між двома схемами не в кількості проходів, а в тому, <b>що бачить голова</b>.
+Двоетапний детектор із <a href="../24-two-stage/lecture.html">теми 24</a> має фільтр:
+перший етап відбирає кількасот кандидат-областей, і лише вони йдуть на класифікацію.
+Серед відібраних місць співвідношення «предмет проти фону» ще стерпне, бо відбір
+навмисне тягне туди, де щось є. Одноетапна голова фільтра не має: вона застосовується
+<b>до кожної позиції</b> карти ознак, і кожна позиція мусить відповісти. Порахуймо,
+скільки їх.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · позиції та якорі</span>
+    <p>Тіло мережі зменшує сцену 64 × 64 до карти ознак 8 × 8 — це <b>64 позиції</b>,
+    та сама сітка, що в темах 23 і 25. У кожній позиції стоять три квадратні якорі
+    зі сторонами 12, 18 і 26 пікселів: разом <code>64 × 3 = 192</code> якорі.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · рішення</span>
+    <p>Про кожен якір голова каже окремо для кожного класу: «це коло?», «це квадрат?»,
+    «це трикутник?».</p>
+    <div class="eq">рішень = позицій × якорів × класів = 64 × 3 × 3 = 576</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · скільки з них «так»</span>
+    <p>Зошит рахує по всіх 240 навчальних сценах: позитивних рішень у середньому
+    <b>4.05</b> на сцену, тобто <b>0.703 %</b>. На один позитивний припадає
+    <b>141</b> негативний.</p>
+  </div>
+</div>
+
+<p>Число 141 варте того, щоб стати поруч із двома вже відомими.
+<a href="../23-detection-setup/lecture.html">Тема 23</a> дістала <b>85.4 %</b> чистого
+фону серед клітинок сітки, <a href="../24-two-stage/lecture.html">тема 24</a> на
+дрібнішій карті й із суворішим порогом — <b>1 258</b> фонових якорів на один
+позитивний. Наші 141 — те саме явище на легшій конфігурації: більша клітинка, мʼякший
+поріг, якорі підібрані під наші предмети. Хвороба та сама, різна лише температура.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Скільки фону дивиться одноетапна голова</p>
+  <p class="fig-sub">Сцена 64×64 з якорями. Повзунок міняє кількість предметів,
+    кнопка — саму сцену. Праворуч рахується те саме, що рахує зошит: скільки
+    рішень позитивні й скільки негативних припадає на один позитивний.</p>
+  <div class="panel">
+    <div><canvas id="cImb" width="940" height="430" aria-label="Сцена з фігурами, накрита сіткою якорів; підсвічені позитивні якорі й смуга співвідношення позитивних до фонових"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="kImb">предметів у сцені <output id="kImbv">2</output></label>
+        <input type="range" id="kImb" min="1" max="6" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="tImb">поріг IoU <output id="tImbv">0.50</output></label>
+        <input type="range" id="tImb" min="0.3" max="0.8" step="0.05" value="0.5">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рішень усього</b><i id="iAll">—</i></div>
+        <div class="cellv"><b>позитивних</b><i id="iPos">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>на 1 позитивний</b><i id="iRat">—</i></div>
+        <div class="cellv"><b>частка позитивних</b><i id="iShare">—</i></div>
+      </div>
+      <button id="iNext" type="button">інша сцена</button>
+      <div class="verdict" id="iVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Сцена й IoU рахуються прямо в браузері тим самим правилом, що в
+    зошиті.</b> Навіть при шести предметах — а це вдвічі більше за наш звичайний
+    максимум — фону лишається в десятки разів більше. Зверни увагу на поріг: підняв
+    його — і позитивних стало менше, тобто дисбаланс погіршився саме тоді, коли ти
+    вимагав від рамок вищої якості.</figcaption>
+</figure>
+
+<p>Тепер головне уточнення. Дисбаланс шкодить <b>не тим, що метрика стає
+безглуздою</b> — це ми проходили в темі 23. Він шкодить тим, що керує <b>градієнтом</b>:
+мережа рухається туди, куди тягне сума похідних, а ця сума майже цілком складається з
+фонових доданків. Порахуймо це на свіжій, ще не навченій мережі.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>звідки втрата</th><th>сума</th><th>частка</th></tr>
+  <tr class="hot"><td>фон</td><td>9 286.319</td><td>99.72 %</td></tr>
+  <tr><td>предмети</td><td>26.146</td><td>0.28 %</td></tr>
+  <tr class="sumrow"><td>разом</td><td>9 312.465</td><td>100 %</td></tr>
+</table></div>
+
+<p><b>99.72 %</b> втрати — це фон. У темі 25 те саме число для YOLO-подібної голови
+було 92.3 %, і вже тоді здавалося великим. Різниця в тому, що YOLO питає про предмет
+один раз на клітинку, а щільна голова — окремо про кожен якір і кожен клас.</p>
+
+<h2 id="s2"><span class="num">02 / Милиці</span>Спроби, які не спрацювали</h2>
+
+<p>До 2017 року дисбаланс лікували <b>вибіркою</b>: не давати мережі всі негативні
+приклади, а відібрати частину. Способів було три, і всі три живі досі.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>спосіб</th><th>як працює</th><th>де стояв</th></tr>
+  <tr><td>Збалансований мінібатч</td><td>із зображення береться близько 256 якорів, половина позитивних; решта у втрату не входить</td><td>RPN у Faster R-CNN</td></tr>
+  <tr><td>Жорсткий добір негативних (OHEM, hard negative mining)</td><td>рахуємо втрату по всіх негативних і лишаємо найважчі</td><td>SSD, Fast R-CNN</td></tr>
+  <tr><td>Співвідношення 1 : 3</td><td>на кожен позитивний беремо три найважчі негативні</td><td>SSD</td></tr>
+</table></div>
+
+<p>Порахуймо ціну третього способу. Позитивних рішень 4.05, негативних лишається
+<code>3 × 4.05 = 12.15</code>, разом у втраті <b>16.20</b> рішень із 576.</p>
+
+<div class="eq">викинуто = (576 − 16.20) ÷ 576 = 97.2 %</div>
+
+<p>Мережа не отримує градієнта від <b>97.2 %</b> того, що бачить. І це не «зайві»
+дані, а весь фон, який вона щойно правильно вгадала, — той самий сигнал «так, тут
+нічого немає, тримайся цієї думки».</p>
+
+<p>Проти вибірки є три заперечення, і кожне варте свого рядка.</p>
+
+<ul>
+  <li><b>Зʼявляється гіперпараметр, якого не було.</b> Чому 1 : 3, а не 1 : 5? Це
+  число нізвідки не виводиться — його підібрали на конкретному наборі даних.</li>
+  <li><b>«Найважчий» негативний часто просто зіпсований</b> — це помилка розмітки або
+  предмет, якого розмітник не позначив. OHEM за побудовою тягне саме такі приклади
+  й підсилює шум.</li>
+  <li><b>Рішення дискретне.</b> Порядковий номер у відсортованому списку вирішує все:
+  256-й негативний увійшов, 257-й ні, хоча втрата в них однакова до третього знака.</li>
+</ul>
+
+<p>Звідси питання: <b>а чи обовʼязково вибирати?</b> Може, лишити всі приклади, але
+дати їм різну вагу — не руками, а за правилом, яке само залежить від того, наскільки
+приклад легкий.</p>
+
+<h2 id="s3"><span class="num">03 / Focal loss</span>Focal loss: не викидати, а стишити</h2>
+
+<p>Крос-ентропія для бінарного рішення — це <code>−log p</code>, де <code>p</code> —
+ймовірність, яку модель дала <b>правильній</b> відповіді. Знак <code>log</code> — це
+натуральний логарифм; нам важлива одна його властивість: коли <code>p</code>
+наближається до одиниці, <code>−log p</code> наближається до нуля.</p>
+
+<p>Нехай мережа впевнено бачить фон: <code>p = 0.9</code>, тобто
+<code>−log 0.9 = 0.105</code>. Дрібниця. Тепер згадаймо, скільки таких дрібниць: зошит
+рахує на навченій мережі <b>17 541</b> легке фонове рішення проти <b>129</b> позитивних.
+Помножимо — і дрібниця перестає бути дрібницею.</p>
+
+<div class="note warn">
+  <b>Головне число розділу.</b> На навченій мережі зі звичайною крос-ентропією легкі
+  негативні приклади дають <b>57.7 %</b> усієї втрати — більше, ніж усі предмети разом
+  (15.8 %). Мережа з них нічого не вивчить, але саме вони визначають наступний крок.
+</div>
+
+<p>Focal loss розвʼязує це одним множником — до крос-ентропії дописується
+<b>множник тлумлення</b> <code>(1 − p)<span class="sup">γ</span></code>.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · чого ми хочемо</span>
+    <p>Потрібна величина, яка близька до нуля для впевнених прикладів і близька до
+    одиниці для невпевнених. Найпростіша така величина — це <code>1 − p</code>:
+    при <code>p = 0.9</code> вона дорівнює 0.1, при <code>p = 0.1</code> — 0.9.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · регулятор сили</span>
+    <p>Одного множника <code>(1 − p)</code> замало: він тлумить занадто мʼяко. Піднімемо
+    його до степеня <code>γ</code> (гамма) — тоді сила тлумлення стає ручкою.
+    <code>0.1<span class="sup">2</span> = 0.01</code>, тобто вдесятеро сильніше, ніж
+    <code>0.1</code>.</p>
+    <div class="eq">множник тлумлення = (1 − p)<span class="sup">γ</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · стала вага класів</span>
+    <p>Окремо додається <code>α</code> (альфа) — стала вага: одна для позитивних
+    прикладів, інша <code>(1 − α)</code> для фону. Вона не залежить від упевненості
+    й робить іншу роботу — про це наступний розділ.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · разом</span>
+    <div class="eq">FL = −α · (1 − p)<span class="sup">γ</span> · log p</div>
+    <p>При <code>γ = 0</code> множник дорівнює одиниці, і формула перетворюється на
+    звичайну зважену крос-ентропію. Тобто focal loss не замінює її, а <b>узагальнює</b>.</p>
+  </div>
+</div>
+
+<p>Тепер підставимо числа. Ось та сама таблиця, яку друкує зошит: втрата одного
+прикладу залежно від упевненості <code>p</code> і від <code>γ</code>. Множник
+<code>α</code> тут не беремо, щоб не заважав.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>p</th><th>CE (γ = 0)</th><th>γ = 0.5</th><th>γ = 1</th><th>γ = 2</th><th>γ = 5</th><th>тлумлення при γ=2</th></tr>
+  <tr class="hot"><td>0.9</td><td>0.10536</td><td>0.03332</td><td>0.01054</td><td>0.00105</td><td>0.00000</td><td>100.0×</td></tr>
+  <tr><td>0.7</td><td>0.35667</td><td>0.19536</td><td>0.10700</td><td>0.03210</td><td>0.00087</td><td>11.1×</td></tr>
+  <tr><td>0.5</td><td>0.69315</td><td>0.49013</td><td>0.34657</td><td>0.17329</td><td>0.02166</td><td>4.0×</td></tr>
+  <tr><td>0.3</td><td>1.20397</td><td>1.00732</td><td>0.84278</td><td>0.58995</td><td>0.20235</td><td>2.0×</td></tr>
+  <tr class="hot"><td>0.1</td><td>2.30259</td><td>2.18442</td><td>2.07233</td><td>1.86509</td><td>1.35965</td><td>1.2×</td></tr>
+</table></div>
+
+<p>Читаємо останню колонку. Легкий приклад із <code>p = 0.9</code> при
+<code>γ = 2</code> стає в <b>100 разів</b> тихішим, важкий із <code>p = 0.1</code> —
+лише в <b>1.2 раза</b>. Ось уся ідея в двох числах: тлумлення тим сильніше, чим менше
+приклад може навчити.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Криві втрати й сила тлумлення</p>
+  <p class="fig-sub">Втрата одного прикладу залежно від упевненості. Сіра крива —
+    звичайна крос-ентропія, малинова — focal loss при обраному γ. Повзунок міняє
+    γ, другий повзунок ставить точку, для якої рахується тлумлення.</p>
+  <div class="panel">
+    <div><canvas id="cFoc" width="940" height="400" aria-label="Криві втрати від упевненості для крос-ентропії та focal loss при різних гамма"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="gFoc"><span class="raw">γ</span> <output id="gFocv">2.0</output></label>
+        <input type="range" id="gFoc" min="0" max="5" step="0.25" value="2">
+      </div>
+      <div class="ctl">
+        <label for="pFoc">упевненість p <output id="pFocv">0.90</output></label>
+        <input type="range" id="pFoc" min="0.05" max="0.95" step="0.05" value="0.9">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>крос-ентропія</b><i id="fCe">—</i></div>
+        <div class="cellv"><b>focal loss</b><i id="fFl">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>тихіше в</b><i id="fRat">—</i></div>
+        <div class="cellv"><b>множник</b><i id="fMul">—</i></div>
+      </div>
+      <div class="verdict" id="fVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Криві не перетинаються й не міняють порядок.</b> Focal loss ніде не
+    робить приклад <em>важливішим</em> — вона лише притискає праву частину кривої до
+    нуля. Тому вона й не потребує жодного порога: перехід від «важливо» до «майже
+    неважливо» плавний, і жодне значення <code>p</code> не є особливим.</figcaption>
+</figure>
+
+<div class="note">
+  <b>Чому не просто поріг.</b> Здається, простіше сказати: «приклади з
+  <code>p &gt; 0.9</code> у втрату не входять». Це знову вибірка з усіма трьома її
+  вадами: приклад із <code>p = 0.9001</code> зникає, а з <code>p = 0.8999</code>
+  важить повністю; число 0.9 треба звідкись узяти; і межа стрибає, поки мережа
+  вчиться. Степенева функція робить те саме плавно.
+</div>
+
+<h3>Своя реалізація проти бібліотечної</h3>
+
+<p>Формула коротка, тож напишімо її самі й звірмо з
+<code>ops.sigmoid_focal_loss</code>. Тут чекає пастка: пряма реалізація «порахуй
+<code>p</code> через сигмоїду, потім візьми логарифм» <b>не збігається</b> з
+бібліотечною.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>реалізація</th><th>найбільше розходження</th><th>np.allclose</th></tr>
+  <tr class="hot"><td>наївна, буквально за формулою</td><td>0.00489</td><td>False</td></tr>
+  <tr><td>через binary_cross_entropy_with_logits</td><td>9.54 · 10⁻⁷</td><td>True</td></tr>
+</table></div>
+
+<p>Причина суто арифметична. Логіт детектора легко доходить до 12, сигмоїда від нього
+дає <code>p = 0.9999938</code>, а різниця <code>1 − p</code> — це
+<code>6.1 · 10⁻⁶</code>. Віднімання майже рівних чисел у <code>float32</code> зʼїдає
+значущі цифри, і логарифм від зіпсованого числа дає похибку близько <b>0.005</b> на
+кожному з десятків тисяч фонових прикладів.
+<code>binary_cross_entropy_with_logits</code> рахує ту саму величину, не переходячи
+через <code>p</code>. Це не прискіпливість: у детекторі великі логіти саме там, де
+прикладів найбільше.</p>
+
+<h2 id="s4"><span class="num">04 / γ і α</span>Що робить γ і що робить α</h2>
+
+<p>Два параметри роблять дві різні роботи, і плутати їх не можна.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>параметр</th><th>що вирівнює</th><th>чи залежить від прикладу</th></tr>
+  <tr><td>γ (гамма)</td><td>легкі проти важких</td><td>так — через упевненість <code>p</code></td></tr>
+  <tr><td>α (альфа)</td><td>предмети проти фону</td><td>ні — стала для всього класу</td></tr>
+</table></div>
+
+<p><code>α</code> відома задовго до focal loss: помножити втрату рідкісного класу на
+більше число. <code>γ</code> — це нове: вага залежить від того, як модель поводиться
+<b>саме зараз</b>, і міняється по ходу навчання. На початку майже всі приклади важкі,
+множник близький до одиниці, і focal loss майже дорівнює крос-ентропії. Що далі, то
+більше прикладів переходить у розряд легких і замовкає.</p>
+
+<div class="note">
+  <b>Контрінтуїтивна деталь із оригінальної статті.</b> Здається, що <code>α</code>
+  має бути велика для рідкісного класу. Насправді в RetinaNet узято
+  <code>α = 0.25</code>, тобто предметам дають <b>меншу</b> вагу, ніж фону (0.75):
+  <code>γ = 2</code> вже прибрав фон із гри, і піднімати предмети означало б перегнути
+  в другий бік. <b>Ці два параметри добирають разом</b> — у статті сказано, що найкраще
+  <code>α</code> падає, коли <code>γ</code> росте. Число 0.25 цитоване, не наш замір.
+</div>
+
+<h3>Що дає γ на наших даних</h3>
+
+<p>Тепер замір. Той самий детектор, ті самі епохи, той самий AdamW — міняється лише
+<code>γ</code>, і кожна настройка навчена <b>з трьох зерен</b>.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>γ</th><th>зерно 0</th><th>зерно 1</th><th>зерно 2</th><th>середнє</th><th>розкид</th></tr>
+  <tr><td>0</td><td>0.8067</td><td>0.6646</td><td>0.7935</td><td>0.7549</td><td>0.1420</td></tr>
+  <tr><td>1</td><td>0.7988</td><td>0.6984</td><td>0.8479</td><td>0.7817</td><td>0.1495</td></tr>
+  <tr class="hot"><td>2</td><td>0.8805</td><td>0.8361</td><td>0.8662</td><td>0.8610</td><td>0.0444</td></tr>
+  <tr><td>5</td><td>0.5930</td><td>0.5970</td><td>0.5069</td><td>0.5656</td><td>0.0902</td></tr>
+</table></div>
+
+<p>Три висновки, і третій — найважливіший.</p>
+
+<p><b>Перший: різницю між γ = 0 і γ = 2 самими середніми не довести.</b> Виграш —
+<code>0.8610 − 0.7549 = 0.1060</code>, а розкид усередині настройки <code>γ = 0</code>
+дорівнює <b>0.1420</b>, тобто більший за виграш. Якби ми зупинились на середніх, чесна
+відповідь була б «не знаємо» — саме так закінчився замір ваг втрати в темі 25.</p>
+
+<p><b>Другий: але тут є сильніше твердження.</b> Найгірше зерно при <code>γ = 2</code>
+дало <b>0.8361</b>, а найкраще зерно при <code>γ = 0</code> — <b>0.8067</b>. Усі три
+прогони з focal loss кращі за <b>всі три</b> прогони без неї. Це порівняння не
+залежить від того, наскільки великий розкид усередині кожної купи, і воно переконливіше
+за різницю середніх.</p>
+
+<p><b>Третій: focal loss зменшила сам розкид</b> — із 0.1420 до 0.0444, тобто втричі.
+Коли градієнт не залежить від того, скільки випадкового фону трапилось у партії,
+навчання стає передбачуваним: мережа з <code>γ = 0</code> на одному зерні виїжджає, на
+іншому провалюється до 0.66.</p>
+
+<p>І окремо — <code>γ = 5</code>. Середній <code>mAP</code> падає до <b>0.5656</b>,
+тобто на 0.2953 нижче за <code>γ = 2</code>. Цей провал більший за будь-який розкид у
+таблиці, тож <b>перетлумити можна</b>. При <code>γ = 5</code> приклад із
+<code>p = 0.5</code> важить у 32 рази менше за звичайний — а це вже не «легкий фон»,
+це якраз те місце, де мережа вагається й де їй треба вчитись.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Хто дає втрату при різних γ</p>
+  <p class="fig-sub">Стовпчики — фактичні складники втрати навченого детектора на
+    партії з 32 сцен, поділені на три купи. Числа під стовпчиками — частки. Усе
+    заміряно зошитом; перемикач обирає γ.</p>
+  <div class="panel">
+    <div><canvas id="cShare" width="940" height="400" aria-label="Три стовпчики внеску у втрату: позитивні, важкі негативні, легкі негативні при різних гамма"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">показник <span class="raw">γ</span></span>
+        <div class="seg wrap" id="segShare">
+          <button type="button" data-i="0" aria-pressed="true">0</button>
+          <button type="button" data-i="1" aria-pressed="false">0.5</button>
+          <button type="button" data-i="2" aria-pressed="false">1</button>
+          <button type="button" data-i="3" aria-pressed="false">2</button>
+          <button type="button" data-i="4" aria-pressed="false">5</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>легкі негативні</b><i id="sEasy">—</i></div>
+        <div class="cellv"><b>їх штук</b><i id="sEasyN">17 541</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>предмети</b><i id="sPos">—</i></div>
+        <div class="cellv"><b>їх штук</b><i id="sPosN">129</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>заміряний mAP@0.5 цього <span class="raw">γ</span></b><i id="sMap">—</i></div>
+      </div>
+      <div class="verdict" id="sVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Кількість прикладів у купах не міняється — міняється лише їхня вага.</b>
+    Легких негативних завжди 17 541, важких 288, позитивних 129. При γ = 0 перша купа
+    важить 57.7 %, при γ = 2 — 1.2 %. Мітка mAP під перемикачем — це середнє з трьох
+    зерен для того самого γ, тож видно, де перерозподіл допоміг, а де зашкодив.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Зсув</span>Ініціалізація зсуву: деталь, без якої нічого не працює</h2>
+
+<p>Тепер про річ, якої майже немає в переказах статті, зате вона є в коді кожної
+реалізації. Останній шар голови класифікації — це згортка, і в неї є <b>зсув</b>
+(bias), який <code>torch</code> за замовчуванням ініціалізує близько нуля.</p>
+
+<p>Сигмоїда від нуля дорівнює 0.5. Тобто свіжа мережа, яка ще нічого не бачила,
+<b>вважає, що предмет є всюди</b> — у кожному з 576 місць кожної сцени з упевненістю
+50 %. Кожен фоновий приклад голосно помиляється, і сума їхніх втрат величезна.
+Ліки прості: поставити зсув так, щоб початкова ймовірність предмета дорівнювала
+маленькому числу <code>π</code>. У RetinaNet узято <code>π = 0.01</code>.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · обертаємо сигмоїду</span>
+    <p>Сигмоїда перетворює число <code>z</code> на ймовірність за формулою
+    <code>p = 1 ÷ (1 + e<span class="sup">−z</span>)</code>, де <code>e</code> — стала
+    2.71828… Нам треба навпаки: знаючи бажану <code>p = π</code>, знайти
+    <code>z</code>. Розвʼязуємо рівняння й дістаємо:</p>
+    <div class="eq">зсув = −log((1 − π) ÷ π)</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · підставляємо</span>
+    <p>При <code>π = 0.01</code> дріб дорівнює <code>0.99 ÷ 0.01 = 99</code>,
+    натуральний логарифм від 99 — це 4.5951, зі знаком мінус — <code>−4.5951</code>.
+    Перевірка: сигмоїда від <code>−4.5951</code> дає рівно <code>0.0100</code>.</p>
+  </div>
+</div>
+
+<p>Тепер замір. Одна й та сама мережа, одна й та сама партія, різниця лише в одному
+числі — початковому зсуві.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>зсув</th><th>p на старті</th><th>втрата, γ = 0</th><th>втрата, γ = 2</th></tr>
+  <tr class="hot"><td>нульовий (як у torch)</td><td>0.4918</td><td>72.190</td><td>19.698</td></tr>
+  <tr><td>−4.5951 (π = 0.01)</td><td>0.0103</td><td>2.255</td><td>1.152</td></tr>
+  <tr class="sumrow"><td>у скільки разів менше</td><td>—</td><td>32.0×</td><td>17.1×</td></tr>
+</table></div>
+
+<p>Різниця в <b>тридцять два рази</b> — і це втрата <em>до першого оновлення ваг</em>.
+Більша втрата означає більший градієнт: перший же крок оптимізатора зриває ваги в бік
+«мовчи скрізь», і мережа може звідти не повернутись. Саме тому в статті про RetinaNet
+цю ініціалізацію названо необхідною для стабільності на початку навчання, а не
+косметичною деталлю.</p>
+
+<div class="note">
+  <b>Це не наша вигадка — подивись у код бібліотеки.</b> Зошит будує
+  <code>retinanet_resnet50_fpn</code> і <code>fcos_resnet50_fpn</code> без ваг і
+  друкує зсув їхнього останнього шару класифікації. В обох стоїть <b>−4.5951</b>,
+  тобто рівно <code>−log(99)</code>. Дві різні архітектури, одна й та сама константа,
+  зашита в конструктор.
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Початкова ймовірність і втрата першого кроку</p>
+  <p class="fig-sub">Повзунок задає π — ймовірність предмета, яку мережа має на
+    старті. Крива показує втрату першого кроку, стовпчики — з чого вона
+    складається. Перемикач міняє γ.</p>
+  <div class="panel">
+    <div><canvas id="cInit" width="940" height="400" aria-label="Крива втрати першого кроку залежно від початкової ймовірності, зі стовпчиками внеску фону й предметів"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="pInit"><span class="raw">π</span> на старті <output id="pInitv">0.010</output></label>
+        <input type="range" id="pInit" min="-3" max="-0.301" step="0.02" value="-2">
+      </div>
+      <div class="ctl">
+        <span class="cap">втрата</span>
+        <div class="seg" id="segInit">
+          <button type="button" data-i="0" aria-pressed="true">крос-ентропія</button>
+          <button type="button" data-i="1" aria-pressed="false"><span class="raw">focal, γ=2</span></button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зсув</b><i id="nBias">—</i></div>
+        <div class="cellv"><b>втрата</b><i id="nLoss">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>від фону</b><i id="nBg">—</i></div>
+        <div class="cellv"><b>від предметів</b><i id="nFg">—</i></div>
+      </div>
+      <div class="verdict" id="nVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Дивись не на висоту кривої, а на два стовпчики праворуч.</b> Це
+    рахунок за формулою для 17 829 фонових і 129 позитивних рішень партії — тих
+    самих, що в зошиті, і зошит цю формулу теж друкує. При <span class="raw">π</span> = 0.5
+    вона дає 72.02 при заміряних 72.19; при <span class="raw">π</span> = 0.01 —
+    2.19 при заміряних 2.25. Розбіжність у кілька відсотків — від того, що справжні
+    логіти не однакові, а трохи розкидані навколо зсуву.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / RetinaNet</span>RetinaNet: де живе focal loss</h2>
+
+<p>Focal loss придумали не саму по собі, а разом із детектором, який мав довести, що
+одноетапна схема здатна на точність двоетапної. Він зветься <b>RetinaNet</b> і
+влаштований прозоро — усе цікаве в ньому вже описано в попередніх темах.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>частина</th><th>що робить</th><th>звідки знайома</th></tr>
+  <tr><td>Тіло (backbone)</td><td>ResNet-50 або ResNet-101 рахує карти ознак</td><td>тема 14</td></tr>
+  <tr><td>Шия: FPN</td><td>зводить карти пʼяти рівнів до однакової товщини 256 каналів</td><td>розділ 07 нижче</td></tr>
+  <tr><td>Голова класифікації</td><td>чотири згортки 3×3, потім згортка на <code>A · C</code> виходів</td><td>тема 24, якорі</td></tr>
+  <tr><td>Голова регресії</td><td>такі самі чотири згортки, потім згортка на <code>A · 4</code> виходів</td><td>тема 24, зсуви</td></tr>
+</table></div>
+
+<p>Тут <code>A</code> — кількість якорів у позиції (девʼять: три розміри × три
+пропорції), <code>C</code> — кількість класів. Дві голови <b>не мають спільних ваг</b>:
+класифікація й локалізація — різні задачі. У темі 25 ми бачили, як та сама ідея
+повернулась у YOLOv8 під назвою «розділена голова».</p>
+
+<p>А от між <b>рівнями піраміди</b> ваги спільні: одна голова проходить по всіх пʼяти
+картах. Це не заощадження, а твердження про світ — предмет, зменшений удвічі й поданий
+на вдвічі дрібнішу карту, має виглядати для голови однаково. Якби кожен рівень мав
+свою голову, кожна вчилась би на впʼятеро меншій кількості прикладів.</p>
+
+<p>Зошит будує <code>retinanet_resnet50_fpn</code> офлайн і рахує ваги по частинах:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>частина</th><th>параметрів</th></tr>
+  <tr><td>хребет: ResNet-50 + FPN</td><td>27 376 704</td></tr>
+  <tr class="hot"><td>голова класифікації</td><td>4 248 115</td></tr>
+  <tr><td>голова регресії</td><td>2 443 300</td></tr>
+  <tr class="sumrow"><td>разом</td><td>34 068 119</td></tr>
+</table></div>
+
+<p>Голова класифікації майже вдвічі важча за голову регресії, хоча згортки в них
+однакові: різниця в останньому шарі, який видає <code>9 × 91 = 819</code> чисел проти
+<code>9 × 4 = 36</code>.</p>
+
+<h2 id="s7"><span class="num">07 / FPN</span>FPN: чому дрібним предметам потрібен свій рівень</h2>
+
+<p>Одна карта ознак не може обслуговувати і слона, і мураху. Причина в
+<b>рецептивному полі</b> — області входу, яка впливає на одну клітинку карти. Ми
+рахували його в <a href="../09-cnn-complete/lecture.html">темі 09</a>: із глибиною
+воно росте, і на пізніх шарах одна клітинка «бачить» сотні пікселів.</p>
+
+<p>Звідси наслідок. Для великого предмета глибока карта чудова: клітинка бачить його
+цілком. Для предмета в 15 пікселів та сама клітинка бачить його разом із половиною
+кадру, і сигнал тоне в контексті. А рання карта бачить дрібний предмет добре, зате не
+має складних ознак: там ще немає нічого, крім меж і плям.</p>
+
+<p><b>Піраміда ознак</b> (FPN, feature pyramid network) розвʼязує цей конфлікт, не
+вибираючи між рівнями. Вона будується у два ходи.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">хід 1 · згори вниз</span>
+    <p>Беремо найглибшу, найдрібнішу карту — багату на зміст, бідну на роздільність —
+    і <b>збільшуємо</b> її вдвічі інтерполяцією.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">хід 2 · бічне зʼєднання</span>
+    <p>Додаємо карту того самого розміру з ранішого шару, стиснуту згорткою 1×1 до
+    256 каналів. Виходить карта, у якої й роздільність рання, і зміст глибокий.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">хід 3 · повторюємо</span>
+    <p>Крок за кроком спускаємось до найбільшої карти. Кожен рівень має однакову
+    товщину 256 каналів — саме тому одна голова може ходити по всіх.</p>
+  </div>
+</div>
+
+<p>Рівні звуться <code>P3</code>…<code>P7</code>: у <code>P3</code> крок 8 пікселів,
+у <code>P7</code> — 128, і кожен відповідає за свій діапазон розмірів. Ось скільки
+позицій дає така піраміда на кадрі 800 × 1216:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>рівень</th><th>крок</th><th>карта</th><th>позицій</th><th>частка</th></tr>
+  <tr class="hot"><td>P3</td><td>8</td><td>100 × 152</td><td>15 200</td><td>75.0 %</td></tr>
+  <tr><td>P4</td><td>16</td><td>50 × 76</td><td>3 800</td><td>18.7 %</td></tr>
+  <tr><td>P5</td><td>32</td><td>25 × 38</td><td>950</td><td>4.7 %</td></tr>
+  <tr><td>P6</td><td>64</td><td>13 × 19</td><td>247</td><td>1.2 %</td></tr>
+  <tr><td>P7</td><td>128</td><td>7 × 10</td><td>70</td><td>0.3 %</td></tr>
+  <tr class="sumrow"><td>разом</td><td>—</td><td>—</td><td>20 267</td><td>100 %</td></tr>
+</table></div>
+
+<p>Три чверті всієї роботи піраміди — це найдрібніший рівень, і там же живе майже
+весь фон. Отже, дисбаланс із розділу 01 — не просто спільна властивість одноетапних
+детекторів, а насамперед властивість <b>найдрібнішого рівня</b>. Focal loss рятує
+саме його.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Хто з рівнів відповідає за предмет</p>
+  <p class="fig-sub">Повзунок задає розмір предмета — точніше, найбільшу відстань
+    від його центра до сторони рамки. Підсвічується рівень, який за нього
+    відповідає, і показується, яку частку всіх позицій піраміди цей рівень тримає.</p>
+  <div class="panel">
+    <div><canvas id="cFpn" width="940" height="410" aria-label="Пʼять рівнів піраміди ознак із підсвіченим рівнем, відповідальним за поточний розмір предмета"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="sFpn">відстань до краю, px <output id="sFpnv">40</output></label>
+        <input type="range" id="sFpn" min="4" max="700" step="4" value="40">
+      </div>
+      <div class="ctl">
+        <label for="hFpn">довга сторона кадру <output id="hFpnv">1216</output></label>
+        <input type="range" id="hFpn" min="320" max="1333" step="32" value="1216">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рівень</b><i id="pLev">—</i></div>
+        <div class="cellv"><b>крок</b><i id="pStr">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>позицій на рівні</b><i id="pPos">—</i></div>
+        <div class="cellv"><b>частка піраміди</b><i id="pShare">—</i></div>
+      </div>
+      <div class="verdict" id="pVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Вікна рівнів узяті з коду <code>torchvision</code>, а не з памʼяті.</b>
+    Правило там таке: <code>P3</code> бере все до <code>крок × 8 = 64</code>,
+    далі кожен рівень бере від <code>крок × 4</code> до <code>крок × 8</code>, а
+    <code>P7</code> — усе, що більше за 512. Розміри карт рахуються діленням із
+    округленням угору, як у самій мережі.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Якорі</span>Що не так із якорями</h2>
+
+<p>З дисбалансом розібрались. Тепер друга частина теми — про сутність, яку прибрали
+цілком.</p>
+
+<p><a href="../24-two-stage/lecture.html">Тема 24</a> вже показала два незручні числа.
+На її сцені <b>28.3 %</b> істинних рамок не мали жодного якоря з IoU понад 0.7 — тобто
+майже для кожної третьої рамки не існувало заготовки, достатньо схожої на неї. І з девʼяти
+варіантів якоря (три розміри × три пропорції) на її даних спрацювали <b>два</b>, обидва
+квадратні. Сім із девʼяти — мертвий вантаж, який чесно множив час рахунку.</p>
+
+<p>Порахуймо, скільки рішень мусить ухвалити людина, перш ніж якірний детектор почне
+вчитись:</p>
+
+<ul>
+  <li><b>скільки розмірів</b> якоря брати й <b>які саме</b> (у нас 12, 18, 26 пікселів);</li>
+  <li><b>які пропорції сторін</b> (у нас лише квадрат — бо наші фігури квадратні);</li>
+  <li><b>поріг IoU для позитивного</b> якоря (у нас 0.5);</li>
+  <li><b>поріг IoU для негативного</b> (у нас 0.4) і що робити з проміжком між ними;</li>
+  <li>чи вмикати <b>рятівне правило</b> «найкращий якір кожної істини позитивний завжди».</li>
+</ul>
+
+<p>Пʼять рішень, і жодне не виводиться з даних. Наші три розміри взяті не зі стелі:
+рамка фігури радіусом 6-10 пікселів має сторону 12-21, і числа 12, 18, 26 її
+накривають. Якби ми скопіювали конфігурацію з чужої статті — скажімо, розміри 32, 64,
+128 із RetinaNet для COCO, — жоден якір не перетнув би поріг, і рятівне правило
+лишилось би єдиним джерелом позитивних прикладів.</p>
+
+<div class="note warn">
+  <b>Це і є суть претензії до якорів.</b> Не «вони погані», а «вони переносять частину
+  задачі з даних на розробника». Набір якорів — це гіпотеза про форми предметів,
+  записана числами до того, як мережа побачила хоч одне зображення.
+</div>
+
+<h2 id="s9"><span class="num">09 / Anchor-free</span>Anchor-free: чотири відстані замість заготовки</h2>
+
+<p>Ідея, до якої дійшли одночасно кілька груп, звучить майже нахабно: <b>а навіщо
+взагалі заготовка?</b> Нехай кожна позиція передбачає рамку <em>прямо</em> — не зсув
+від чогось, а саму рамку. Найпростіший спосіб це записати придумали в детекторі
+<b>FCOS</b>: у кожній позиції мережа видає <b>чотири відстані</b> від центра позиції
+до лівого, верхнього, правого й нижнього краю рамки. Їх позначають <code>l</code>,
+<code>t</code>, <code>r</code>, <code>b</code> — від <em>left, top, right, bottom</em>.</p>
+
+<div class="eq left">x1 = x − l·крок    y1 = y − t·крок
+x2 = x + r·крок    y2 = y + b·крок</div>
+
+<p>Тут <code>x</code>, <code>y</code> — координати центра позиції в пікселях, а
+відстані передбачаються в одиницях кроку карти, щоб числа були близькі до одиниці.
+Чотири невідʼємні числа — і рамка готова. Зіставлення теж спрощується до одного
+речення: <b>позиція позитивна, якщо її центр лежить усередині істинної рамки</b>;
+якщо всередині кількох — беремо рамку з найменшою площею.</p>
+
+<p>Порівняймо дві голови на одній задачі. Те саме тіло, ті самі епохи, той самий
+<code>γ = 2</code>, ті самі три зерна.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>що міряємо</th><th>якірна</th><th>anchor-free</th></tr>
+  <tr><td>чисел на позицію</td><td>21</td><td>7</td></tr>
+  <tr class="hot"><td>параметрів у голові</td><td>12 117</td><td>4 039</td></tr>
+  <tr><td>параметрів усього</td><td>72 693</td><td>64 615</td></tr>
+  <tr class="hot"><td>mAP@0.5, середнє з 3 зерен</td><td>0.8610</td><td>0.9187</td></tr>
+  <tr><td>розкид по зернах</td><td>0.0444</td><td>0.0383</td></tr>
+  <tr><td>прохід по сцені, мс</td><td>≈ 1.7</td><td>≈ 1.7</td></tr>
+  <tr><td>гіперпараметрів зіставлення</td><td>пʼять</td><td>жодного</td></tr>
+</table></div>
+
+<p>Голова схудла <b>втричі</b>, а <code>mAP</code> виріс на <b>0.0577</b> — більше
+за розкид обох настройок, тож різниця справжня.</p>
+
+<p>А от час проходу не змінився: у двох прогонах того самого зошита виходило 1.67
+проти 1.65 мілісекунди й 1.71 проти 1.83, тобто різниця тоне в шумі машини.
+<b>Голова не є вузьким місцем</b> — час визначає тіло, яке в обох випадках однакове.
+Anchor-free виграє не швидкістю, а простотою й відсутністю гіпотез.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Що передбачає одна позиція</p>
+  <p class="fig-sub">Перемикач обирає схему. Ліворуч — одна позиція карти ознак і те,
+    що з неї виходить. Повзунок міняє кількість класів: видно, як росте голова в
+    кожній схемі.</p>
+  <div class="panel">
+    <div><canvas id="cHead" width="940" height="420" aria-label="Порівняння якірної та anchor-free голови: що передбачається в одній позиції карти ознак"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">схема голови</span>
+        <div class="seg" id="segHead">
+          <button type="button" data-i="0" aria-pressed="true">якірна</button>
+          <button type="button" data-i="1" aria-pressed="false">anchor-free</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="cHeadN">класів C <output id="cHeadNv">3</output></label>
+        <input type="range" id="cHeadN" min="1" max="91" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <label for="aHeadN">якорів A <output id="aHeadNv">3</output></label>
+        <input type="range" id="aHeadN" min="1" max="9" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>чисел на позицію</b><i id="hNum">—</i></div>
+        <div class="cellv"><b>ціна класу</b><i id="hCost">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>треба вгадати наперед</b><i id="hHyp" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="hVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Повзунок якорів діє лише на якірну схему — в anchor-free його немає
+    що міняти.</b> У цьому й річ: ліва схема має ручку, яку треба крутити під дані,
+    права — ні. При 91 класі COCO якірна голова з девʼятьма якорями видає 855 чисел на
+    позицію, anchor-free — 95.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Centerness</span>Centerness: чому крайові позиції дають гірші рамки</h2>
+
+<p>У схеми «чотири відстані» є вроджена нерівність. Позиція в центрі передбачає
+чотири приблизно однакові невеликі відстані — задача легка. Позиція біля краю мусить
+сказати «до лівого краю 1 піксель, до правого 19», і помилка на довгому плечі коштує
+дорожче; до того ж крайова позиція бачить переважно фон. Перевірмо, чи це правда,
+перш ніж лікувати: зошит бере навчений anchor-free детектор і для кожної позитивної
+позиції рахує IoU тієї рамки, яку вона побудувала.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>наскільки позиція центральна</th><th>позицій</th><th>середній IoU рамки</th></tr>
+  <tr class="hot"><td>0.0 … 0.2 (край)</td><td>253</td><td>0.743</td></tr>
+  <tr><td>0.2 … 0.4</td><td>367</td><td>0.782</td></tr>
+  <tr><td>0.4 … 0.6</td><td>215</td><td>0.798</td></tr>
+  <tr><td>0.6 … 0.8</td><td>111</td><td>0.806</td></tr>
+  <tr class="hot"><td>0.8 … 1.0 (центр)</td><td>23</td><td>0.857</td></tr>
+</table></div>
+
+<p>Передумова підтвердилась: IoU росте монотонно від краю до центра, різниця між
+крайніми купами — <b>0.115</b>. FCOS лікує це третьою гілкою голови —
+<b>centerness</b>, одним числом на позицію, яке відповідає на питання «наскільки я в
+центрі». Формула бере відношення меншої відстані до більшої по кожній осі:</p>
+
+<div class="eq">centerness = √( min(l,r) ÷ max(l,r) · min(t,b) ÷ max(t,b) )</div>
+
+<p>Прочитаймо словами. Якщо позиція рівно в центрі, <code>l = r</code> і
+<code>t = b</code>, обидва дроби дорівнюють одиниці, корінь з одиниці — теж одиниця.
+Якщо позиція біля лівого краю, перший дріб близький до нуля — і все значення падає.
+Корінь потрібен, щоб спад був не надто різким.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>зсув від центра рамки 20×20</th><th>l</th><th>r</th><th>centerness</th></tr>
+  <tr><td>0 px</td><td>10.0</td><td>10.0</td><td>1.000</td></tr>
+  <tr><td>2 px</td><td>12.0</td><td>8.0</td><td>0.816</td></tr>
+  <tr><td>4 px</td><td>14.0</td><td>6.0</td><td>0.655</td></tr>
+  <tr><td>6 px</td><td>16.0</td><td>4.0</td><td>0.500</td></tr>
+  <tr class="hot"><td>8 px</td><td>18.0</td><td>2.0</td><td>0.333</td></tr>
+</table></div>
+
+<p>Гілка навчається окремою втратою, а під час передбачення оцінка рамки множиться
+на неї: <code>оцінка = √(ймовірність класу × centerness)</code>. Сенс — опустити рамки
+з крайових позицій нижче, щоб NMS викидав саме їх.</p>
+
+<h3>Що це дало нам: чесний результат</h3>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>варіант</th><th>mAP@0.5</th><th>розкид</th></tr>
+  <tr class="hot"><td>гілки centerness немає взагалі</td><td>0.9187</td><td>0.0383</td></tr>
+  <tr><td>гілка є, оцінка без множника</td><td>0.8173</td><td>0.1932</td></tr>
+  <tr><td>гілка є, оцінка × centerness</td><td>0.7938</td><td>0.2629</td></tr>
+</table></div>
+
+<p><b>На наших даних centerness не дає нічого — навпаки, забирає.</b> І це при тому,
+що сама гілка навчилась чудово: кореляція між її передбаченням і її ціллю дорівнює
+<b>0.903</b>. Мережа зрозуміла завдання, а завдання виявилось некорисним.</p>
+
+<p>Чому так — видно з попередніх чисел. Кореляція між centerness позиції й IoU її
+рамки лише <b>0.191</b>: тенденція є, та слабка, і різниця в 0.115 IoU не перекриває
+розкид усередині купи. Наші предмети маленькі — сторона 12-21 піксель при кроці карти
+8, тобто чотири позиції на предмет, і крайових серед чотирьох мало. На фотографії, де
+предмет накриває сотню позицій, картина інша, але це вже твердження про інші дані, і
+ми його не міряли.</p>
+
+<div class="note warn">
+  <b>Не переноси цей висновок на справжні дані — переноси метод.</b> Перевіряй
+  передумову окремо від наслідку: ми спершу довели, що крайові позиції справді гірші,
+  і лише потім поміряли, чи допомагають ліки. Якби ми міряли тільки mAP, вийшло б
+  «centerness — марна вигадка», а це неправда.
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Позиція, її centerness і якість рамки</p>
+  <p class="fig-sub">Рамка предмета й позиція всередині неї. Повзунки рухають позицію
+    по горизонталі й вертикалі; праворуч — чотири відстані, значення centerness і
+    заміряна якість рамки для цього рівня центральності.</p>
+  <div class="panel">
+    <div><canvas id="cCtr" width="940" height="400" aria-label="Рамка предмета з рухомою позицією всередині, чотирма відстанями до сторін і значенням centerness"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="xCtr">зсув по x, px <output id="xCtrv">0</output></label>
+        <input type="range" id="xCtr" min="-9" max="9" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <label for="yCtr">зсув по y, px <output id="yCtrv">0</output></label>
+        <input type="range" id="yCtr" min="-9" max="9" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>l, r</b><i id="tLR">—</i></div>
+        <div class="cellv"><b>t, b</b><i id="tTB">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>centerness</b><i id="tCn">—</i></div>
+        <div class="cellv"><b>заміряний IoU</b><i id="tIo">—</i></div>
+      </div>
+      <div class="verdict" id="tVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Права цифра — не розрахунок, а замір.</b> Це середній IoU рамок,
+    побудованих із позицій такої самої центральності, по 969 позиціях перевірного
+    набору. Пройди повзунком від краю до центра: centerness падає з одиниці до нуля,
+    а IoU міняється лише в межах 0.743 … 0.857. Саме тому множник і не допоміг.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Зіставлення</span>Зіставлення без якорів: хто відповідає за предмет</h2>
+
+<p>Прибравши якорі, ми прибрали й старе правило зіставлення, яке спиралося на IoU з
+заготовкою. Потрібне нове, і воно виявилось окремою темою для досліджень.</p>
+
+<p>Правило FCOS складається з трьох умов, і всі три читаються прямо в коді
+<code>torchvision</code>:</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">умова 1 · усередині рамки</span>
+    <p>Центр позиції має лежати всередині істинної рамки. Це те правило, яке ми
+    реалізували в зошиті.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">умова 2 · центральна вибірка</span>
+    <p>Мало бути всередині — треба бути <b>біля центра</b>: не далі ніж
+    <code>1.5 × крок</code> від центра рамки по кожній осі. Так відсікаються ті самі
+    крайові позиції, заради яких вигадували centerness — тільки тут вони не
+    зважуються, а просто не стають позитивними.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">умова 3 · діапазон масштабів</span>
+    <p>Найбільша з чотирьох відстаней має потрапити у вікно свого рівня піраміди: від
+    <code>крок × 4</code> до <code>крок × 8</code>. Так anchor-free детектор розводить
+    предмети по рівнях — без жодних заготовок.</p>
+  </div>
+</div>
+
+<p>Якщо після трьох умов позиція підходить кільком предметам, береться той, у якого
+рамка <b>найменша за площею</b>: у великого предмета позицій багато, у малого мало.</p>
+
+<p>Наступний крок цієї історії — відмова від фіксованих порогів узагалі. Метод
+<b>ATSS</b> (adaptive training sample selection) для кожної істинної рамки бере кілька
+найближчих кандидатів, рахує <b>середнє й стандартне відхилення</b> їхніх IoU і
+оголошує порогом <code>середнє + відхилення</code>. Поріг рахується з даних окремо для
+кожної рамки: дрібний предмет, для якого всі кандидати погані, дістає низький поріг і
+не лишається без позитивних прикладів; великий — високий.</p>
+
+<div class="note">
+  <b>Чому це важливіше, ніж здається.</b> У роботі про ATSS показано: якщо взяти
+  якірний RetinaNet і anchor-free FCOS і вирівняти в них <em>лише правило
+  зіставлення</em>, різниця в точності майже зникає. Тобто головна перевага
+  anchor-free була не в тому, що прибрали заготовки, а в тому, що разом із ними
+  прибрали старе правило зіставлення. <b>Це висновок із літератури, не наш замір</b>,
+  але він пояснює, чому далі всі зайнялися саме зіставленням: SimOTA в YOLOX,
+  динамічний добір у YOLOv8.
+</div>
+
+<h2 id="s12"><span class="num">12 / Спадок</span>Що з цього стоїть у сучасних детекторах</h2>
+
+<p>Обидва винаходи теми пережили свої архітектури: RetinaNet і FCOS сьогодні майже
+не запускають, а от їхні частини стоять усюди.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>ідея</th><th>де живе зараз</th></tr>
+  <tr><td>Focal loss</td><td>усі щільні детектори; у варіантах (quality focal loss, varifocal loss) ціллю є не одиниця, а якість рамки</td></tr>
+  <tr><td>Ініціалізація зсуву π = 0.01</td><td>−4.5951 у RetinaNet і FCOS з <code>torchvision</code>, те саме в ultralytics</td></tr>
+  <tr><td>Anchor-free голова</td><td>YOLOv6, YOLOv7, YOLOv8, YOLOX, DETR і його нащадки</td></tr>
+  <tr><td>Розділена голова</td><td>YOLOv8: окрема гілка для рамки, окрема для класів</td></tr>
+  <tr><td>Динамічне зіставлення</td><td>ATSS, SimOTA, TaskAlignedAssigner у YOLOv8</td></tr>
+  <tr><td>Centerness</td><td>здебільшого замінено: якість рамки вбудували в саму ціль класифікації</td></tr>
+</table></div>
+
+<p><a href="../25-yolo/lecture.html">Тема 25</a> уже показала це на числах: у голові
+YOLOv8 немає окремої впевненості, є дві окремі гілки й немає жодного якоря. Тепер
+видно, звідки кожна риса взялася. Порівняймо дві моделі <code>torchvision</code>,
+зібрані офлайн:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>частина</th><th>RetinaNet</th><th>FCOS</th></tr>
+  <tr><td>хребет: ResNet-50 + FPN</td><td>27 376 704</td><td>27 376 704</td></tr>
+  <tr class="hot"><td>голова класифікації</td><td>4 248 115</td><td>2 572 123</td></tr>
+  <tr><td>голова регресії</td><td>2 443 300</td><td>2 373 893</td></tr>
+  <tr class="sumrow"><td>разом</td><td>34 068 119</td><td>32 322 720</td></tr>
+</table></div>
+
+<p>Хребет у них <b>однаковий до останнього числа</b>. Уся різниця — <b>1 745 399</b>
+параметрів — сидить у головах, і майже вся вона в останній згортці класифікації: у
+RetinaNet це <code>Conv2d(256, 819)</code>, бо <code>819 = 9 якорів × 91 клас</code>,
+у FCOS — <code>Conv2d(256, 91)</code>, бо позиція одна. У голові регресії FCOS, крім
+чотирьох відстаней, є ще й <code>bbox_ctrness</code> — та сама centerness окремою
+згорткою.</p>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Підсумок і місток далі</h2>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>ідея</th><th>у чому суть</th></tr>
+  <tr><td>Дисбаланс у втраті</td><td>576 рішень на сцену, 4.05 позитивні; фон дає 99.72 % втрати свіжої мережі</td></tr>
+  <tr><td>Милиці не годяться</td><td>вибірка 1 : 3 викидає 97.2 % рішень і додає гіперпараметр</td></tr>
+  <tr><td>Focal loss</td><td>множник <code>(1−p)<span class="sup">γ</span></code>: приклад із p = 0.9 стає в 100 разів тихішим, із p = 0.1 — у 1.2 раза</td></tr>
+  <tr><td>γ вирішує</td><td>усі три зерна при γ = 2 кращі за всі три при γ = 0; при γ = 5 mAP падає до 0.5656</td></tr>
+  <tr><td>Ініціалізація зсуву</td><td>72.19 проти 2.25 на першому кроці — та сама мережа, різний один зсув</td></tr>
+  <tr><td>Anchor-free</td><td>чотири відстані замість заготовки: голова легша втричі, mAP 0.9187 проти 0.8610</td></tr>
+  <tr><td>Centerness</td><td>передумова істинна (IoU 0.743 на краю проти 0.857 у центрі), а виграшу на наших даних немає</td></tr>
+</table></div>
+
+<p>Головна пара чисел теми — <b>72.19 і 2.25</b>: втрата на першому кроці однієї й
+тієї самої мережі, у якої відрізняється лише початкове значення одного зсуву. Тридцять
+два рази за рядок коду, якого немає в жодному переказі статті.</p>
+
+<p>А головна думка не про числа. Обидва винаходи цієї теми прибрали <b>рукотворні
+деталі</b>: focal loss — правило «які приклади брати в навчання», anchor-free — набір
+заготовок, який доводилось вгадувати під датасет. Детектор ставав дедалі менше
+конструкцією з налаштувань і дедалі більше однією функцією, яку вчать наскрізно.</p>
+
+<p>Але один рукотворний вузол ми так і не чіпали. Детектор досі видає тисячі рамок,
+серед яких повно дублікатів, і досі прибирає їх окремим алгоритмом —
+<a href="../23-detection-setup/lecture.html">NMS</a>. Це не частина мережі: його не
+навчають, у нього свій поріг, і в темі 23 ми бачили, як він <b>назавжди губить</b>
+один із двох предметів, що стоять поруч із IoU 0.714. Усе інше вже вчиться з даних, а
+останній крок конвеєра лишився жорстко запрограмованим.</p>
+
+<p><a href="../27-detr/lecture.html">Наступна тема</a> прибирає і його — змінивши не
+голову, а саме поняття відповіді: замість оцінки для кожної позиції — фіксований набір
+запитів, кожен з яких відповідає щонайбільше за один предмет. Дублікатів не буде, бо
+їх не буде звідки взяти.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../25-yolo/lecture.html"><span class="dir">попередня</span><span class="ttl">25. YOLO</span></a>
+    <a class="next" href="../27-detr/lecture.html"><span class="dir">наступна</span><span class="ttl">27. DETR</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* «1 число», «3 числа», «5 чисел» — без цього табло виглядає неписьменно */
+function numWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' число';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' числа';
+  return n+' чисел';
+}
+/* детермінований генератор: картинка однакова у всіх читачів */
+function LCG(s){
+  if(!isFinite(s) || s<=0) s=1;
+  var x=(s>>>0)||1;
+  return function(){ x=(Math.imul(x,1664525)+1013904223)>>>0; return x/4294967296; };
+}
+
+/* ═══════ дані: усе поміряно зошитом practice.ipynb ═══════ */
+var SIZE=64, GRID=8, STRIDE=8;
+var ANCHOR_SIZES=[12,18,26];
+var CLASSES=3;
+var DECISIONS=GRID*GRID*ANCHOR_SIZES.length*CLASSES;   /* 576 */
+
+/* внесок у втрату по трьох купах, партія з 32 сцен, навчена мережа */
+var SHARE=[
+  {g:'0',   pos:26.473, hard:44.169, easy:96.463, map:0.7549},
+  {g:'0.5', pos:20.719, hard:20.481, easy:15.330, map:null},
+  {g:'1',   pos:16.613, hard:10.037, easy:3.097,  map:0.7817},
+  {g:'2',   pos:11.281, hard:2.837,  easy:0.178,  map:0.8610},
+  {g:'5',   pos:4.689,  hard:0.166,  easy:0.000,  map:0.5656}
+];
+var COUNTS={pos:129, hard:288, easy:17541};
+
+/* ініціалізація зсуву: та сама партія, 17 829 фонових і 129 позитивних рішень */
+var INIT={neg:17829, pos:129, alpha:0.25};
+
+/* centerness: середній IoU рамки по купах центральності, 969 позицій */
+var CBIN=[{lo:0.0,hi:0.2,n:253,iou:0.743},{lo:0.2,hi:0.4,n:367,iou:0.782},
+          {lo:0.4,hi:0.6,n:215,iou:0.798},{lo:0.6,hi:0.8,n:111,iou:0.806},
+          {lo:0.8,hi:1.01,n:23,iou:0.857}];
+
+/* піраміда FCOS: кроки й вікна розмірів, узяті з torchvision */
+var LEVELS=[{n:'P3',s:8},{n:'P4',s:16},{n:'P5',s:32},{n:'P6',s:64},{n:'P7',s:128}];
+
+/* ═══════ спільна геометрія ═══════ */
+function iou(a,b){
+  var x1=Math.max(a[0],b[0]), y1=Math.max(a[1],b[1]);
+  var x2=Math.min(a[2],b[2]), y2=Math.min(a[3],b[3]);
+  var w=Math.max(0,x2-x1), h=Math.max(0,y2-y1), inter=w*h;
+  var ua=(a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-inter;
+  return ua>0 ? inter/ua : 0;
+}
+/* фігура сцени: коло, квадрат, трикутник — як у зошиті */
+function drawShape(g,o,ox,oy,K,color){
+  g.fillStyle=color;
+  if(o.kind===0){
+    g.beginPath(); g.arc(ox+(o.cx+0.5)*K, oy+(o.cy+0.5)*K, o.r*K, 0, 6.2832); g.fill();
+  }else if(o.kind===1){
+    g.fillRect(ox+(o.cx-o.r)*K, oy+(o.cy-o.r)*K, (2*o.r+1)*K, (2*o.r+1)*K);
+  }else{
+    g.beginPath();
+    g.moveTo(ox+(o.cx+0.5)*K, oy+(o.cy-o.r)*K);
+    g.lineTo(ox+(o.cx+o.r+1)*K, oy+(o.cy+o.r+1)*K);
+    g.lineTo(ox+(o.cx-o.r)*K, oy+(o.cy+o.r+1)*K);
+    g.closePath(); g.fill();
+  }
+}
+/* маска будь-якої з трьох фігур дає рамку однакового вигляду — перевірено в зошиті */
+function boxOf(o){ return [o.cx-o.r, o.cy-o.r, o.cx+o.r+1, o.cy+o.r+1]; }
+
+function makeScene(seed,k){
+  var rnd=LCG(seed), out=[], i, t;
+  for(i=0;i<k;i++){
+    for(t=0;t<60;t++){
+      var rad=6+Math.floor(rnd()*5);
+      var cx=rad+1+Math.floor(rnd()*(SIZE-2*rad-2));
+      var cy=rad+1+Math.floor(rnd()*(SIZE-2*rad-2));
+      var cand={cx:cx,cy:cy,r:rad,kind:Math.floor(rnd()*3)};
+      var box=boxOf(cand), ok=true, j;
+      for(j=0;j<out.length;j++){
+        var prev=boxOf(out[j]);
+        var ow=Math.max(0,Math.min(box[2],prev[2])-Math.max(box[0],prev[0]));
+        var oh=Math.max(0,Math.min(box[3],prev[3])-Math.max(box[1],prev[1]));
+        if(ow*oh > 0.45*(box[2]-box[0])*(box[3]-box[1])){ ok=false; break; }
+      }
+      if(!ok) continue;
+      out.push(cand); break;
+    }
+  }
+  return out;
+}
+/* усі 192 якорі сцени */
+function allAnchors(){
+  var out=[], row, col, s;
+  for(row=0;row<GRID;row++) for(col=0;col<GRID;col++){
+    var ax=(col+0.5)*STRIDE, ay=(row+0.5)*STRIDE;
+    for(s=0;s<ANCHOR_SIZES.length;s++){
+      var sz=ANCHOR_SIZES[s];
+      out.push([ax-sz/2, ay-sz/2, ax+sz/2, ay+sz/2]);
+    }
+  }
+  return out;
+}
+var ANCHORS=allAnchors();
+
+/* позитивні якорі: поріг IoU плюс рятівне правило «найкращий якір кожної істини» */
+function positiveAnchors(objs, thr){
+  var boxes=objs.map(boxOf), flags=new Array(ANCHORS.length), a, t;
+  for(a=0;a<ANCHORS.length;a++) flags[a]=false;
+  for(t=0;t<boxes.length;t++){
+    var best=-1, bestV=-1;
+    for(a=0;a<ANCHORS.length;a++){
+      var v=iou(ANCHORS[a],boxes[t]);
+      if(v>=thr) flags[a]=true;
+      if(v>bestV){ bestV=v; best=a; }
+    }
+    if(best>=0) flags[best]=true;
+  }
+  return flags;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 1 · Скільки фону дивиться одноетапна голова
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cImb'); if(!cv) return;
+  var seed=284;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose'), paper=css('--paper');
+    var k=+I('kImb').value, thr=+I('tImb').value;
+    I('kImbv').textContent=k; I('tImbv').textContent=thr.toFixed(2);
+
+    var objs=makeScene(seed,k), flags=positiveAnchors(objs,thr);
+    var pos=0, a;
+    for(a=0;a<flags.length;a++) if(flags[a]) pos++;
+    var neg=DECISIONS-pos;
+
+    /* ── ліворуч: сцена ── */
+    var K=5.6, ox=26, oy=44;
+    capt(g,'сцена 64 x 64 з якорями',ox,32,soft,11.5,true);
+    g.fillStyle=paper; g.fillRect(ox,oy,SIZE*K,SIZE*K);
+    var i;
+    for(i=0;i<objs.length;i++) drawShape(g,objs[i],ox,oy,K,soft);
+
+    /* сітка карти ознак */
+    g.strokeStyle=hair; g.lineWidth=1; g.globalAlpha=0.85;
+    for(i=0;i<=GRID;i++){
+      g.beginPath(); g.moveTo(ox+i*STRIDE*K,oy); g.lineTo(ox+i*STRIDE*K,oy+SIZE*K); g.stroke();
+      g.beginPath(); g.moveTo(ox,oy+i*STRIDE*K); g.lineTo(ox+SIZE*K,oy+i*STRIDE*K); g.stroke();
+    }
+    g.globalAlpha=1;
+
+    /* позитивні якорі */
+    g.strokeStyle=rose; g.lineWidth=1.6;
+    for(a=0;a<ANCHORS.length;a++){
+      if(!flags[a]) continue;
+      var b=ANCHORS[a];
+      g.strokeRect(ox+b[0]*K, oy+b[1]*K, (b[2]-b[0])*K, (b[3]-b[1])*K);
+    }
+    /* істинні рамки */
+    g.strokeStyle=teal; g.lineWidth=2; g.setLineDash([5,3]);
+    for(i=0;i<objs.length;i++){
+      var t=boxOf(objs[i]);
+      g.strokeRect(ox+t[0]*K, oy+t[1]*K, (t[2]-t[0])*K, (t[3]-t[1])*K);
+    }
+    g.setLineDash([]);
+    capt(g,'бірюзові — істина, малинові — позитивні якорі',ox,oy+SIZE*K+22,soft,11);
+
+    /* ── праворуч: стіна з 576 рішень ── */
+    var wx=430, wy=44, cell=16;
+    capt(g,'576 бінарних рішень: якір x клас',wx,32,soft,11.5,true);
+    /* індекс рішення = якір*3 + клас; позитивним є одне рішення на позитивний якір */
+    var col, r, idx=0;
+    for(r=0;r<24;r++) for(col=0;col<24;col++){
+      idx=r*24+col;
+      var anchorIndex=Math.floor(idx/CLASSES), isPos=flags[anchorIndex] && (idx%CLASSES===1);
+      g.fillStyle=isPos?rose:hair;
+      g.globalAlpha=isPos?1:0.55;
+      g.fillRect(wx+col*cell, wy+r*cell, cell-2, cell-2);
+    }
+    g.globalAlpha=1;
+    capt(g,'1 квадратик = 1 рішення',wx,wy+24*cell+22,soft,11);
+
+    /* лічильники праворуч від стіни */
+    var lx=wx+24*cell+22;
+    capt(g,'малинових',lx,wy+16,soft,11);
+    capt(g,String(pos),lx,wy+38,rose,17,true);
+    capt(g,'сірих (фон)',lx,wy+74,soft,11);
+    capt(g,gr(neg),lx,wy+96,ink,17,true);
+    capt(g,'частка',lx,wy+132,soft,11);
+    capt(g,(100*pos/DECISIONS).toFixed(2)+' %',lx,wy+154,ink,15,true);
+
+    I('iAll').textContent=DECISIONS;
+    I('iPos').textContent=pos;
+    I('iRat').textContent='1 : '+Math.round(neg/Math.max(1,pos));
+    I('iShare').textContent=(100*pos/DECISIONS).toFixed(2)+' %';
+
+    var ratio=neg/Math.max(1,pos);
+    if(ratio>=100)
+      verd('iVd','t-no','ФОН ТОПИТЬ','На один позитивний приклад '+Math.round(ratio)+
+        ' фонових. Якщо просто скласти втрату по всіх, мережа вивчить одну відповідь — «фон».');
+    else if(ratio>=40)
+      verd('iVd','t-mid','ЛЕГШЕ, АЛЕ НЕ ЛЕГКО','1 до '+Math.round(ratio)+
+        '. Дисбаланс зменшився, та навіть таке співвідношення жодна класифікація не любить.');
+    else
+      verd('iVd','t-no','НАВІТЬ ТУТ 1 ДО '+Math.round(ratio),
+        'Найлегший можливий випадок: предметів '+k+', поріг усього '+thr.toFixed(2)+
+        ' — і фону все одно в десятки разів більше.');
+  }
+  on('kImb','input',draw); on('tImb','input',draw);
+  on('iNext','click',function(){ seed=(seed*7+13)%9973; draw(); });
+  window.addEventListener('resize',draw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 2 · Криві втрати й сила тлумлення
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cFoc'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal');
+    var gam=+I('gFoc').value, p=+I('pFoc').value;
+    I('gFocv').textContent=gam.toFixed(2); I('pFocv').textContent=p.toFixed(2);
+
+    var L=70, R=900, T=34, B=330, YMAX=3;
+    function X(v){ return L+v*(R-L); }
+    function Y(v){ return B-Math.min(v,YMAX)/YMAX*(B-T); }
+
+    /* осі */
+    g.strokeStyle=hair; g.lineWidth=1;
+    var t;
+    for(t=0;t<=3;t++){
+      g.beginPath(); g.moveTo(L,Y(t)); g.lineTo(R,Y(t)); g.stroke();
+      capt(g,String(t),L-10,Y(t)+4,soft,11,false,'right');
+    }
+    for(t=0;t<=4;t++){
+      var xv=t/4;
+      capt(g,xv.toFixed(2),X(xv),B+20,soft,11,false,'center');
+    }
+    capt(g,'втрата одного прикладу',L,T-12,soft,11.5,true);
+    capt(g,'упевненість у правильній відповіді p',(L+R)/2,B+40,soft,11.5,false,'center');
+
+    /* крива крос-ентропії */
+    function curve(gv,color,width,dash){
+      g.strokeStyle=color; g.lineWidth=width; g.setLineDash(dash||[]);
+      g.beginPath();
+      var started=false, i;
+      for(i=0;i<=400;i++){
+        var pv=0.005+i/400*0.99;
+        var val=-Math.log(pv)*Math.pow(1-pv,gv);
+        if(val>YMAX){ started=false; continue; }
+        if(!started){ g.moveTo(X(pv),Y(val)); started=true; }
+        else g.lineTo(X(pv),Y(val));
+      }
+      g.stroke(); g.setLineDash([]);
+    }
+    curve(0,soft,1.8,[5,4]);
+    curve(gam,rose,2.6);
+
+    var ce=-Math.log(p), fl=ce*Math.pow(1-p,gam), mul=Math.pow(1-p,gam);
+
+    /* вертикаль у вибраній точці */
+    g.strokeStyle=teal; g.lineWidth=1.4; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(X(p),T); g.lineTo(X(p),B); g.stroke(); g.setLineDash([]);
+    g.fillStyle=soft;
+    g.beginPath(); g.arc(X(p),Y(ce),4.5,0,6.2832); g.fill();
+    g.fillStyle=rose;
+    g.beginPath(); g.arc(X(p),Y(fl),4.5,0,6.2832); g.fill();
+
+    /* легенда останньою й на підкладці: інакше вертикаль поточної точки
+       перекреслює її текст, коли p велике */
+    g.fillStyle=css('--raise'); g.fillRect(R-215,T+2,215,52);
+    g.strokeStyle=soft; g.lineWidth=1.8; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(R-205,T+18); g.lineTo(R-170,T+18); g.stroke(); g.setLineDash([]);
+    capt(g,'крос-ентропія',R-163,T+22,soft,11.5,true);
+    g.strokeStyle=rose; g.lineWidth=2.6;
+    g.beginPath(); g.moveTo(R-205,T+42); g.lineTo(R-170,T+42); g.stroke();
+    capt(g,'focal, gamma = '+gam.toFixed(2),R-163,T+46,rose,11.5,true);
+
+    I('fCe').textContent=ce.toFixed(4);
+    I('fFl').textContent=fl.toFixed(5);
+    I('fRat').textContent=(mul>0?(1/mul).toFixed(1)+'x':'нескінченно');
+    I('fMul').textContent=mul.toFixed(5);
+
+    if(gam===0)
+      verd('fVd','t-mid','ЦЕ ПРОСТО КРОС-ЕНТРОПІЯ','При gamma = 0 множник дорівнює 1, і криві збігаються. Focal loss не замінює крос-ентропію, а узагальнює її.');
+    else if(p>=0.7 && 1/mul>=10)
+      verd('fVd','t-ok','ЛЕГКИЙ ПРИКЛАД ЗАТИХ','Приклад із p = '+p.toFixed(2)+' став у '+(1/mul).toFixed(1)+
+        ' раза тихішим. Саме таких прикладів у детекторі 17 541 із 17 958.');
+    else if(p<=0.3)
+      verd('fVd','t-ok','ВАЖКИЙ ПРИКЛАД МАЙЖЕ НЕ ЧІПАЄМО','Тлумлення лише в '+(1/mul).toFixed(1)+
+        ' раза. Приклад, у якому мережа помиляється, лишається голосним — і саме він її вчить.');
+    else
+      verd('fVd','t-mid','СЕРЕДИНА ШКАЛИ','Тлумлення в '+(1/mul).toFixed(1)+
+        ' раза. Перехід від «важливо» до «неважливо» плавний: жодне значення p не є особливим.');
+  }
+  on('gFoc','input',draw); on('pFoc','input',draw);
+  window.addEventListener('resize',draw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 3 · Хто дає втрату при різних γ
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cShare'); if(!cv) return;
+  var pick=0;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+    var d=SHARE[pick], base=SHARE[0];
+    var total=d.pos+d.hard+d.easy, tot0=base.pos+base.hard+base.easy;
+    var groups=[
+      {name:'предмети', v:d.pos, v0:base.pos, n:COUNTS.pos, col:teal},
+      {name:'важкий фон', v:d.hard, v0:base.hard, n:COUNTS.hard, col:amber},
+      {name:'легкий фон', v:d.easy, v0:base.easy, n:COUNTS.easy, col:rose}
+    ];
+    var B=296, T=54, xs=[150,440,730], bw=170, i;
+    capt(g,'частка втрати, %',26,32,soft,11.5,true);
+    /* сітка */
+    g.strokeStyle=hair; g.lineWidth=1;
+    for(i=0;i<=4;i++){
+      var yy=B-(B-T)*i/4;
+      g.beginPath(); g.moveTo(60,yy); g.lineTo(900,yy); g.stroke();
+      capt(g,String(i*25),52,yy+4,soft,11,false,'right');
+    }
+    for(i=0;i<3;i++){
+      var gr0=groups[i], share=100*gr0.v/total, share0=100*gr0.v0/tot0;
+      var h=(B-T)*share/100, h0=(B-T)*share0/100;
+      /* привид: те саме при gamma = 0 */
+      g.strokeStyle=hair; g.lineWidth=1.5; g.setLineDash([4,3]);
+      g.strokeRect(xs[i]-bw/2, B-h0, bw, h0); g.setLineDash([]);
+      g.fillStyle=gr0.col; g.globalAlpha=0.85;
+      g.fillRect(xs[i]-bw/2, B-h, bw, Math.max(1,h)); g.globalAlpha=1;
+      capt(g,share.toFixed(1)+' %',xs[i],B-h-12,gr0.col,15,true,'center');
+      capt(g,gr0.name,xs[i],B+22,ink,12.5,true,'center');
+      capt(g,gr(gr0.n)+' прикладів',xs[i],B+40,soft,11,false,'center');
+      capt(g,'сума втрати '+gr0.v.toFixed(3),xs[i],B+58,soft,11,false,'center');
+    }
+    capt(g,'пунктир — та сама купа при gamma = 0',60,B+80,soft,11);
+    capt(g,'gamma = '+d.g,900,32,rose,13,true,'right');
+
+    I('sEasy').textContent=(100*d.easy/total).toFixed(1)+' %';
+    I('sPos').textContent=(100*d.pos/total).toFixed(1)+' %';
+    I('sMap').textContent=(d.map===null?'не міряли':d.map.toFixed(4));
+
+    var easyShare=100*d.easy/total, posShare=100*d.pos/total;
+    if(pick===0)
+      verd('sVd','t-no','ФОН ВИРІШУЄ','Легкий фон дає '+easyShare.toFixed(1)+
+        ' % втрати — більше за всі предмети разом ('+posShare.toFixed(1)+
+        ' %). Мережа з нього нічого не вивчить, але саме він визначає крок.');
+    else if(d.g==='2')
+      verd('sVd','t-ok','БАЛАНС ЗНАЙДЕНО','Легкий фон затих до '+easyShare.toFixed(1)+
+        ' %, предмети піднялись до '+posShare.toFixed(1)+
+        ' %. Заміряний mAP тут найвищий: '+d.map.toFixed(4)+'.');
+    else if(d.g==='5')
+      verd('sVd','t-no','ПЕРЕТЛУМИЛИ','Предмети забирають '+posShare.toFixed(1)+
+        ' % втрати, фону майже не лишилось — і mAP падає до '+d.map.toFixed(4)+
+        '. Разом із фоном затихли й корисні важкі приклади.');
+    else
+      verd('sVd','t-mid','ПРОМІЖНИЙ КРОК','Легкий фон уже слабший ('+easyShare.toFixed(1)+
+        ' %), але ще помітний. '+(d.map===null?'Цю точку ми не навчали.':'Заміряний mAP: '+d.map.toFixed(4)+'.'));
+  }
+  segment('segShare',function(i){ pick=i; draw(); });
+  window.addEventListener('resize',draw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 4 · Початкова ймовірність і втрата першого кроку
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cInit'); if(!cv) return;
+  var gammaOn=0;
+  /* аналітична модель партії: усі логіти дорівнюють зсуву, тож p однакове */
+  function parts(pi,gam){
+    var bg=INIT.neg*(1-INIT.alpha)*Math.pow(pi,gam)*(-Math.log(1-pi));
+    var fg=INIT.pos*INIT.alpha*Math.pow(1-pi,gam)*(-Math.log(pi));
+    return {bg:bg/INIT.pos, fg:fg/INIT.pos};
+  }
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal');
+    var lg=+I('pInit').value, pi=Math.pow(10,lg), gam=gammaOn?2:0;
+    I('pInitv').textContent=pi<0.01?pi.toFixed(4):pi.toFixed(3);
+
+    var L=70, R=560, T=44, B=320;
+    function X(v){ return L+(Math.log(v)/Math.LN10+3)/2.699*(R-L); }
+    function Y(v){ return B-(Math.log(Math.max(v,0.2))/Math.LN10+0.7)/2.7*(B-T); }
+
+    g.strokeStyle=hair; g.lineWidth=1;
+    var ticks=[0.2,1,10,100], i;
+    for(i=0;i<ticks.length;i++){
+      g.beginPath(); g.moveTo(L,Y(ticks[i])); g.lineTo(R,Y(ticks[i])); g.stroke();
+      capt(g,String(ticks[i]),L-8,Y(ticks[i])+4,soft,11,false,'right');
+    }
+    var xt=[0.001,0.01,0.1,0.5];
+    for(i=0;i<xt.length;i++) capt(g,String(xt[i]),X(xt[i]),B+20,soft,11,false,'center');
+    capt(g,'втрата першого кроку',L,T-14,soft,11.5,true);
+    capt(g,'початкова ймовірність предмета',(L+R)/2,B+40,soft,11.5,false,'center');
+
+    /* крива */
+    g.strokeStyle=rose; g.lineWidth=2.6; g.beginPath();
+    var startedLine=false, k;
+    for(k=0;k<=300;k++){
+      var pv=Math.pow(10,-3+k/300*2.699);
+      var pp=parts(pv,gam), val=pp.bg+pp.fg;
+      if(!startedLine){ g.moveTo(X(pv),Y(val)); startedLine=true; }
+      else g.lineTo(X(pv),Y(val));
+    }
+    g.stroke();
+
+    var cur=parts(pi,gam), total=cur.bg+cur.fg;
+    g.fillStyle=teal; g.beginPath(); g.arc(X(pi),Y(total),5,0,6.2832); g.fill();
+
+    /* дві опорні точки */
+    g.strokeStyle=hair; g.lineWidth=1; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(X(0.01),T); g.lineTo(X(0.01),B); g.stroke(); g.setLineDash([]);
+    capt(g,'RetinaNet',X(0.01)+6,T+12,soft,10.5);
+
+    /* стовпчики внеску */
+    var bx=650, bw=90, base=320, top=60;
+    capt(g,'з чого складається',bx-10,32,soft,11.5,true);
+    var share=100*cur.bg/total;
+    var hb=(base-top)*share/100, hf=(base-top)*(100-share)/100;
+    g.fillStyle=rose; g.globalAlpha=0.85; g.fillRect(bx,base-hb,bw,Math.max(1,hb));
+    g.fillStyle=teal; g.fillRect(bx+130,base-hf,bw,Math.max(1,hf)); g.globalAlpha=1;
+    capt(g,share.toFixed(2)+' %',bx+bw/2,base-hb-12,rose,14,true,'center');
+    capt(g,(100-share).toFixed(2)+' %',bx+130+bw/2,base-hf-12,teal,14,true,'center');
+    capt(g,'фон',bx+bw/2,base+22,ink,12,true,'center');
+    capt(g,'предмети',bx+130+bw/2,base+22,ink,12,true,'center');
+    capt(g,'17 829 рішень',bx+bw/2,base+40,soft,10.5,false,'center');
+    capt(g,'129 рішень',bx+130+bw/2,base+40,soft,10.5,false,'center');
+
+    I('nBias').textContent=(-Math.log((1-pi)/pi)).toFixed(3);
+    I('nLoss').textContent=total.toFixed(2);
+    I('nBg').textContent=share.toFixed(2)+' %';
+    I('nFg').textContent=(100-share).toFixed(2)+' %';
+
+    var ref=parts(0.01,gam), refTotal=ref.bg+ref.fg, refShare=100*ref.bg/refTotal;
+    if(share>95)
+      verd('nVd','t-no','ФОН З\'ЇДАЄ ВСЕ','Ще до першого оновлення ваг '+share.toFixed(2)+
+        ' % втрати — це фон. Разом '+total.toFixed(1)+' проти '+refTotal.toFixed(2)+
+        ' при звичному для RetinaNet значенні 0.01.');
+    else if(share>70)
+      verd('nVd','t-mid','ЩЕ ПЕРЕКОШЕНО','Фон дає '+share.toFixed(2)+
+        ' % втрати. Зменшуй далі: при 0.01 частка фону падає до '+refShare.toFixed(2)+' %.');
+    else if(share>=25)
+      verd('nVd','t-ok','БАЛАНС РОЗУМНИЙ','Фон дає '+share.toFixed(2)+
+        ' % втрати, предмети — '+(100-share).toFixed(2)+
+        ' %. Мережа починає навчання, чуючи обидві сторони, а не лише «мовчи».');
+    else
+      verd('nVd','t-mid','ПЕРЕХИЛИЛИ В ІНШИЙ БІК','Тепер предмети дають '+(100-share).toFixed(2)+
+        ' % втрати, а фон майже мовчить. Сума втрати вже близька до свого мінімуму:'+
+        ' далі ліворуч вона почне рости, бо −log від крихітного числа великий.');
+  }
+  on('pInit','input',draw);
+  segment('segInit',function(i){ gammaOn=i; draw(); });
+  window.addEventListener('resize',draw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 5 · Хто з рівнів відповідає за предмет
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cFpn'); if(!cv) return;
+  function levelOf(d){
+    var i;
+    for(i=0;i<LEVELS.length;i++){
+      var low = i===0 ? 0 : LEVELS[i].s*4;
+      var high = i===LEVELS.length-1 ? Infinity : LEVELS[i].s*8;
+      /* межу віддаємо старшому рівню: інакше рівно 64 px не належало б нікому */
+      if(d>=low && d<high) return i;
+    }
+    return LEVELS.length-1;
+  }
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+    var d=+I('sFpn').value, long=+I('hFpn').value;
+    I('sFpnv').textContent=d; I('hFpnv').textContent=long;
+    var short=Math.round(long*800/1216);
+
+    var counts=[], total=0, i;
+    for(i=0;i<LEVELS.length;i++){
+      var rows=Math.ceil(short/LEVELS[i].s), cols=Math.ceil(long/LEVELS[i].s);
+      counts.push({rows:rows, cols:cols, n:rows*cols});
+      total+=rows*cols;
+    }
+    var act=levelOf(d);
+
+    /* лінійка розмірів угорі */
+    var RL=190, RR=900, RY=50;
+    capt(g,'розмір предмета: відстань від центра до сторони рамки',26,30,soft,11.5,true);
+    function RX(v){ return RL+(Math.log(v)/Math.LN10-Math.log(4)/Math.LN10)/(Math.log(700)/Math.LN10-Math.log(4)/Math.LN10)*(RR-RL); }
+    for(i=0;i<LEVELS.length;i++){
+      var low=i===0?4:LEVELS[i].s*4, high=i===LEVELS.length-1?700:LEVELS[i].s*8;
+      g.fillStyle=(i===act)?rose:hair; g.globalAlpha=(i===act)?0.85:0.5;
+      g.fillRect(RX(low),RY-11,Math.max(2,RX(high)-RX(low))-2,22); g.globalAlpha=1;
+      capt(g,LEVELS[i].n,(RX(low)+RX(high))/2,RY+4,(i===act)?'#fff':soft,11,true,'center');
+    }
+    g.strokeStyle=teal; g.lineWidth=2.5;
+    g.beginPath(); g.moveTo(RX(Math.max(4,d)),RY-18); g.lineTo(RX(Math.max(4,d)),RY+18); g.stroke();
+    capt(g,d+' px',RX(Math.max(4,d)),RY+34,teal,11.5,true,'center');
+
+    /* рядки рівнів */
+    var y0=94, step=56, maxN=counts[0].n;
+    for(i=0;i<LEVELS.length;i++){
+      var y=y0+i*step, on1=(i===act);
+      capt(g,LEVELS[i].n+' · крок '+LEVELS[i].s,26,y+17,on1?rose:soft,12.5,on1);
+      var w=Math.max(4, 560*Math.pow(counts[i].n/maxN,0.42));
+      g.fillStyle=on1?rose:hair; g.globalAlpha=on1?0.85:0.6;
+      g.fillRect(190,y,w,26); g.globalAlpha=1;
+      capt(g,counts[i].rows+' x '+counts[i].cols+'  ·  '+gr(counts[i].n)+' позицій  ·  '
+            +(100*counts[i].n/total).toFixed(1)+' %',196,y+17,on1?'#fff':ink,11.5,on1);
+    }
+    capt(g,'кадр '+short+' x '+long+', позицій у піраміді разом: '+gr(total),26,y0+5*step+14,soft,11.5);
+    capt(g,'ширина смуги росте як корінь із кількості позицій — інакше P7 не було б видно',26,y0+5*step+34,soft,10.5);
+
+    I('pLev').textContent=LEVELS[act].n;
+    I('pStr').textContent=LEVELS[act].s+' px';
+    I('pPos').textContent=gr(counts[act].n);
+    I('pShare').textContent=(100*counts[act].n/total).toFixed(1)+' %';
+
+    var share=100*counts[act].n/total;
+    if(act===0)
+      verd('pVd','t-no','ДРІБНІ ПРЕДМЕТИ — ЦЕ ВСЯ РОБОТА','Рівень '+LEVELS[act].n+' тримає '+
+        share.toFixed(1)+' % усіх позицій піраміди. Саме тут живе майже весь фон — і саме сюди цілиться focal loss.');
+    else if(share<2)
+      verd('pVd','t-ok','ВЕЛИКИЙ ПРЕДМЕТ — ДЕШЕВИЙ','Рівень '+LEVELS[act].n+' має лише '+
+        gr(counts[act].n)+' позицій, тобто '+share.toFixed(1)+
+        ' % піраміди. Великі предмети обслуговує мізерна частка обчислень.');
+    else
+      verd('pVd','t-mid','СЕРЕДНІЙ РІВЕНЬ','За предмет відповідає '+LEVELS[act].n+' з кроком '+
+        LEVELS[act].s+' px; на нього припадає '+share.toFixed(1)+' % позицій піраміди.');
+  }
+  on('sFpn','input',draw); on('hFpn','input',draw);
+  window.addEventListener('resize',draw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 6 · Що передбачає одна позиція
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cHead'); if(!cv) return;
+  var mode=0;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), paper=css('--paper');
+    var C=+I('cHeadN').value, A=+I('aHeadN').value;
+    I('cHeadNv').textContent=C; I('aHeadNv').textContent=A;
+
+    var ox=40, oy=70, K=4.2, side=64;
+    capt(g, mode===0?'якірна голова: одна позиція карти':'anchor-free голова: одна позиція карти',
+         ox,44,soft,12,true);
+    /* поле навколо позиції */
+    g.fillStyle=paper; g.fillRect(ox,oy,side*K,side*K);
+    g.strokeStyle=hair; g.lineWidth=1;
+    var i;
+    for(i=0;i<=8;i++){
+      g.beginPath(); g.moveTo(ox+i*8*K,oy); g.lineTo(ox+i*8*K,oy+side*K); g.stroke();
+      g.beginPath(); g.moveTo(ox,oy+i*8*K); g.lineTo(ox+side*K,oy+i*8*K); g.stroke();
+    }
+    var cx=ox+32*K, cy=oy+32*K;
+    /* клітинка позиції */
+    g.strokeStyle=teal; g.lineWidth=2;
+    g.strokeRect(ox+28*K,oy+28*K,8*K,8*K);
+
+    if(mode===0){
+      var sizes=[10,15,21,28,36,44,10,15,21];
+      g.lineWidth=1.8;
+      for(i=0;i<A;i++){
+        var sz=sizes[i%6];
+        g.strokeStyle=rose; g.globalAlpha=0.35+0.65*(i/Math.max(1,A-1));
+        g.strokeRect(cx-sz*K/2, cy-sz*K/2, sz*K, sz*K);
+      }
+      g.globalAlpha=1;
+      capt(g,A+' заготовки різного розміру',ox,oy+side*K+22,soft,11.5);
+      capt(g,'мережа каже, наскільки посунути кожну',ox,oy+side*K+40,soft,11.5);
+    }else{
+      var half=17;
+      g.strokeStyle=rose; g.lineWidth=2; g.setLineDash([5,3]);
+      g.strokeRect(cx-half*K, cy-half*K, 2*half*K, 2*half*K); g.setLineDash([]);
+      g.fillStyle=teal; g.beginPath(); g.arc(cx,cy,5,0,6.2832); g.fill();
+      g.strokeStyle=teal; g.lineWidth=2;
+      var arrows=[[-half,0,'l'],[0,-half,'t'],[half,0,'r'],[0,half,'b']];
+      for(i=0;i<4;i++){
+        var a=arrows[i];
+        g.beginPath(); g.moveTo(cx,cy); g.lineTo(cx+a[0]*K, cy+a[1]*K); g.stroke();
+        capt(g,a[2],cx+a[0]*K*0.62-4, cy+a[1]*K*0.62-6, teal,13,true);
+      }
+      capt(g,'чотири відстані до сторін рамки',ox,oy+side*K+22,soft,11.5);
+      capt(g,'жодної заготовки немає',ox,oy+side*K+40,soft,11.5);
+    }
+
+    /* праворуч: з чого складається вихід */
+    var bx=420, by=80, rowh=44;
+    capt(g,'що виходить із цієї позиції',bx,44,soft,12,true);
+    var rows = mode===0
+      ? [{t:'класи: '+A+' x '+C, n:A*C, c:rose},
+         {t:'зсуви рамки: '+A+' x 4', n:A*4, c:teal}]
+      : [{t:'класи: '+C, n:C, c:rose},
+         {t:'відстані l, t, r, b', n:4, c:teal}];
+    var totalNums=0;
+    for(i=0;i<rows.length;i++) totalNums+=rows[i].n;
+    var maxNums = Math.max(A*C+A*4, C+4);
+    for(i=0;i<rows.length;i++){
+      var y=by+i*rowh;
+      var w=Math.max(6, 380*rows[i].n/maxNums);
+      g.fillStyle=rows[i].c; g.globalAlpha=0.8; g.fillRect(bx,y,w,22); g.globalAlpha=1;
+      capt(g,rows[i].t,bx,y-6,soft,11);
+      capt(g,String(rows[i].n),bx+w+8,y+16,ink,12,true);
+    }
+    var yy=by+rows.length*rowh+18;
+    capt(g,'разом чисел на позицію: '+totalNums,bx,yy,ink,14,true);
+    if(mode===1) capt(g,'повний FCOS додає ще одне число: centerness',bx,yy+20,amber,11);
+
+    /* порівняння двох схем при поточних C і A */
+    var anchorNums=A*C+A*4, freeNums=C+4;
+    var cy2=yy+48;
+    capt(g,'при C = '+C+' і A = '+A,bx,cy2,soft,11.5,true);
+    var pairs=[{t:'якірна', n:anchorNums, c:rose},{t:'anchor-free', n:freeNums, c:teal}];
+    var maxPair=Math.max(anchorNums,freeNums);
+    for(i=0;i<2;i++){
+      var y3=cy2+18+i*30;
+      var w3=Math.max(6, 320*pairs[i].n/maxPair);
+      g.fillStyle=pairs[i].c; g.globalAlpha=(mode===i)?0.9:0.35;
+      g.fillRect(bx+110,y3,w3,20); g.globalAlpha=1;
+      capt(g,pairs[i].t,bx,y3+15,soft,11.5);
+      capt(g,String(pairs[i].n),bx+110+w3+8,y3+15,ink,12,true);
+    }
+
+    I('hNum').textContent=(mode===0?anchorNums:freeNums);
+    I('hCost').textContent=numWord(mode===0?A:1);
+    I('hHyp').textContent=(mode===0
+      ? 'розміри, пропорції, два пороги IoU, рятівне правило'
+      : 'нічого');
+
+    var ratio=anchorNums/freeNums;
+    if(mode===0 && A===1)
+      verd('hVd','t-mid','ОДИН ЯКІР — СХЕМИ ЗБІГЛИСЬ','При A = 1 якірна голова видає стільки ж чисел, скільки anchor-free ('+
+        anchorNums+' проти '+freeNums+'). Різниця лишається тільки в гіперпараметрах: розміри й пороги IoU все одно треба задати.');
+    else if(mode===0)
+      verd('hVd','t-mid','КОЖЕН КЛАС КОШТУЄ x'+A,'Додати один клас у якірній голові — це +'+
+        numWord(A)+' на кожну позицію, бо клас передбачається для кожного якоря окремо. Разом '+
+        anchorNums+' проти '+freeNums+' в anchor-free.');
+    else
+      verd('hVd','t-ok','ОДНЕ ПЕРЕДБАЧЕННЯ НА ПОЗИЦІЮ','Клас коштує одне число, рамка — чотири. При C = '+
+        C+' це '+freeNums+' проти '+anchorNums+' у якірної, тобто в '+ratio.toFixed(1)+
+        ' раза менше. І жодного гіперпараметра.');
+  }
+  segment('segHead',function(i){ mode=i; draw(); });
+  on('cHeadN','input',draw); on('aHeadN','input',draw);
+  window.addEventListener('resize',draw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 7 · Позиція, її centerness і якість рамки
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cCtr'); if(!cv) return;
+  function binOf(c){
+    var i;
+    for(i=0;i<CBIN.length;i++) if(c>=CBIN[i].lo && c<CBIN[i].hi) return i;
+    return CBIN.length-1;
+  }
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+    var dx=+I('xCtr').value, dy=+I('yCtr').value;
+    I('xCtrv').textContent=dx; I('yCtrv').textContent=dy;
+
+    var half=10, K=14, ox=60, oy=70;
+    var bx=ox, by=oy, bw=2*half*K, bh=2*half*K;
+    capt(g,'рамка предмета 20 x 20 пікселів',ox,44,soft,12,true);
+    g.fillStyle=paper; g.fillRect(bx,by,bw,bh);
+    g.strokeStyle=teal; g.lineWidth=2.4; g.strokeRect(bx,by,bw,bh);
+
+    var px=bx+(half+dx)*K, py=by+(half+dy)*K;
+    var l=half+dx, r=half-dx, t=half+dy, b=half-dy;
+    var cn=Math.sqrt((Math.min(l,r)/Math.max(l,r))*(Math.min(t,b)/Math.max(t,b)));
+
+    g.strokeStyle=rose; g.lineWidth=1.8;
+    g.beginPath(); g.moveTo(bx,py); g.lineTo(px,py); g.stroke();
+    g.beginPath(); g.moveTo(px,by); g.lineTo(px,py); g.stroke();
+    g.strokeStyle=soft; g.lineWidth=1.4; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(px,py); g.lineTo(bx+bw,py); g.stroke();
+    g.beginPath(); g.moveTo(px,py); g.lineTo(px,by+bh); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle=teal; g.beginPath(); g.arc(px,py,6,0,6.2832); g.fill();
+
+    capt(g,'l = '+l.toFixed(0),(bx+px)/2,py-8,rose,12,true,'center');
+    capt(g,'r = '+r.toFixed(0),(px+bx+bw)/2,py-8,soft,12,true,'center');
+    capt(g,'t = '+t.toFixed(0),px+8,(by+py)/2,rose,12,true);
+    capt(g,'b = '+b.toFixed(0),px+8,(py+by+bh)/2,soft,12,true);
+    capt(g,'позиція карти ознак',ox,by+bh+26,soft,11.5);
+
+    /* шкала centerness */
+    var sx=420, sy=76, sw=54, sh=250;
+    capt(g,'centerness',sx,60,soft,11.5,true);
+    g.fillStyle=hair; g.globalAlpha=0.5; g.fillRect(sx,sy,sw,sh); g.globalAlpha=1;
+    g.fillStyle=rose; g.globalAlpha=0.85;
+    g.fillRect(sx,sy+sh*(1-cn),sw,Math.max(2,sh*cn)); g.globalAlpha=1;
+    capt(g,cn.toFixed(3),sx+sw/2,sy+sh+22,rose,15,true,'center');
+    capt(g,'1.0',sx+sw+8,sy+6,soft,10.5);
+    capt(g,'0.0',sx+sw+8,sy+sh,soft,10.5);
+
+    /* заміряний IoU по купах */
+    var gx=560, gy=76, gw=340, gh=250, i;
+    capt(g,'заміряний середній IoU рамки з такої позиції',gx,60,soft,11.5,true);
+    var lo=0.70, hi=0.90;
+    g.strokeStyle=hair; g.lineWidth=1;
+    for(i=0;i<=4;i++){
+      var v=lo+(hi-lo)*i/4, yy=gy+gh-(v-lo)/(hi-lo)*gh;
+      g.beginPath(); g.moveTo(gx,yy); g.lineTo(gx+gw,yy); g.stroke();
+      capt(g,v.toFixed(2),gx-6,yy+4,soft,10.5,false,'right');
+    }
+    var active=binOf(cn), bwid=gw/CBIN.length;
+    for(i=0;i<CBIN.length;i++){
+      var h2=(CBIN[i].iou-lo)/(hi-lo)*gh;
+      g.fillStyle=(i===active)?rose:hair; g.globalAlpha=(i===active)?0.85:0.6;
+      g.fillRect(gx+i*bwid+8, gy+gh-h2, bwid-16, h2); g.globalAlpha=1;
+      capt(g,CBIN[i].iou.toFixed(3),gx+i*bwid+bwid/2, gy+gh-h2-8,(i===active)?rose:soft,11,true,'center');
+      capt(g,CBIN[i].lo.toFixed(1),gx+i*bwid+bwid/2, gy+gh+18, soft,10,false,'center');
+    }
+    capt(g,'купи за centerness позиції, 969 позицій перевірного набору',gx,gy+gh+40,soft,10.5);
+
+    I('tLR').textContent=l.toFixed(0)+' , '+r.toFixed(0);
+    I('tTB').textContent=t.toFixed(0)+' , '+b.toFixed(0);
+    I('tCn').textContent=cn.toFixed(3);
+    I('tIo').textContent=CBIN[active].iou.toFixed(3);
+
+    if(cn>=0.8)
+      verd('tVd','t-ok','ЦЕНТРАЛЬНА ПОЗИЦІЯ','Усі чотири відстані близькі, centerness '+cn.toFixed(3)+
+        '. Рамки з таких позицій найкращі — заміряний IoU '+CBIN[active].iou.toFixed(3)+
+        '. Але таких позицій лише 23 із 969.');
+    else if(cn<0.2)
+      verd('tVd','t-no','КРАЙОВА ПОЗИЦІЯ','Одне плече втричі довше за інше, centerness '+cn.toFixed(3)+
+        '. Заміряний IoU тут '+CBIN[active].iou.toFixed(3)+' — найгірший, але лише на 0.115 гірший за центр.');
+    else
+      verd('tVd','t-mid','СЕРЕДИНА','centerness '+cn.toFixed(3)+', заміряний IoU '+
+        CBIN[active].iou.toFixed(3)+'. Проведи повзунок від краю до центра: centerness міняється в десять разів, IoU — на 0.115.');
+  }
+  on('xCtr','input',draw); on('yCtr','input',draw);
+  window.addEventListener('resize',draw);
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+  draw();
+})();
+
+})();
+</script>
+</body>
+</html>

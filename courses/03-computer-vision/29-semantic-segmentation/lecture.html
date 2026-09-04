@@ -1,0 +1,1881 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Семантична сегментація: FCN і DeepLab</title>
+<meta name="description" content="Перша тема блоку про сегментацію: як зробити так, щоб мережа видала відповідь того самого розміру, що й вхід. Заміряно на сценах 64×64 з масками, три зерна на кожну точку. Крок тіла вирішує половину метрики: 0.6815 при кроці 4, 0.6151 при 8 і лише 0.2268 при 16. Атрозне тіло без жодного стискання дає 0.4322 при тих самих 9 588 параметрах і тому самому полі зору — але навчається в 6.0 раза довше. Навчене збільшення ConvTranspose2d програло звичайній білінійній інтерполяції (0.1673 проти 0.2268) при втричі більшій кількості ваг; ядро 3 при кроці 2 дає покриття 1·2·2·4 і класичну шахівницю. ASPP кращий за одну гілку в 2.6 раза й у двадцять разів стабільніший. Точність по пікселях дорівнює частці фону (0.9001) при mIoU 0.000. Dice = 2·IoU/(1+IoU): на перекритті 10 % це 0.1000 проти 0.0526. Атрозна згортка з dilation 16 дає поле 33×33 за ті самі 36 928 параметрів.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.hot td{background:var(--rose-w)}
+.nums tr.good td{background:var(--teal-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* під uppercase у .cap і кнопках не піднімаємо регістр там, де стоїть .raw */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw{text-transform:none}
+
+/* перемикачі цієї теми довгі словами — даємо їм два рядки замість трьох */
+.seg.wrap button{flex:1 1 46%}
+
+/* чек-лист рішень проєкту */
+.deck{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+  gap:12px; margin:26px 0}
+.deck div{border:1px solid var(--hair); background:var(--raise); border-radius:11px;
+  padding:14px 16px; font-size:15px; line-height:1.5}
+.deck b{display:block; font-family:Unbounded,sans-serif; font-size:13px;
+  margin-bottom:5px; color:var(--rose)}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 6 · Тема 29</p>
+    <h1>Семантична сегментація</h1>
+    <p class="stand">Рамка каже, <b>де</b> предмет. Маска каже, <b>які саме пікселі</b>
+      йому належать. Різниця в одному слові коштує цілого блоку тем — бо мережа, яка
+      навчилась стискати картинку в сто разів, тепер мусить видати відповідь того
+      самого розміру, що й вхід.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Від рамки до пікселя</a></li>
+        <li><a href="#s2">Класифікація кожного пікселя</a></li>
+        <li><a href="#s3">Головна проблема — роздільність</a></li>
+        <li><a href="#s4">Метрики: IoU, mIoU, Dice</a></li>
+        <li><a href="#s5">Спосіб перший: просто збільшити</a></li>
+        <li><a href="#s6">Спосіб другий: навчити збільшення</a></li>
+        <li><a href="#s7">Спосіб третій: не стискати взагалі</a></li>
+        <li><a href="#s8">ASPP: кілька масштабів одразу</a></li>
+        <li><a href="#s9">Три способи поруч</a></li>
+        <li><a href="#s10">Втрата на дисбалансі</a></li>
+        <li><a href="#s11">Справжні моделі</a></li>
+        <li><a href="#s12">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../28-detection-practice/lecture.html">← 28. Детекція на практиці</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../30-unet/lecture.html">30. U-Net →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Пʼять тем блоку про детекцію закінчились одним реченням, яке варто
+перечитати: рамка каже, <b>де</b> предмет, але не каже, <b>які саме пікселі</b> йому
+належать. Прямокутник по осях описує людину, що йде, з величезним запасом порожнечі
+всередині; описує листок на гілці разом із половиною гілки; описує пухлину на знімку
+разом зі здоровою тканиною навколо. Якщо тобі треба порахувати площу, вирізати предмет
+із фону або сказати, де рівно закінчується дорога — рамка не відповідає в принципі.
+Сьогодні ми міняємо форму відповіді востаннє: замість списку прямокутників мережа
+видає <b>карту</b>, у якій підписаний кожен піксель.</p>
+
+<h2 id="s1"><span class="num">01 / Постановка</span>Від рамки до пікселя</h2>
+
+<p><a href="../02-cv-task-map/lecture.html">Тема 02</a> вже називала цю задачу на карті
+завдань компʼютерного зору й дала їй імʼя: <b>семантична сегментація</b>. Формулювання
+коротке. Вхід — зображення висотою H і шириною W. Вихід — масив тієї самої висоти й
+ширини, у якому на місці кожного пікселя стоїть номер класу. Такий масив зветься
+<b>маскою</b> (mask).</p>
+
+<p>«Семантична» означає: ми питаємо <b>що це</b>, а не <b>котрий це</b>. Три кола на
+одній картинці дадуть одну спільну область із міткою «коло» — маска не розрізняє, де
+перше коло, а де друге. Задача «розрізнити окремі предмети» зветься instance
+segmentation, і їй присвячена <a href="../31-instance-segmentation/lecture.html">тема 31</a>;
+задача «дати кожному пікселю і клас, і номер предмета» зветься panoptic — це
+<a href="../32-panoptic-sam/lecture.html">тема 32</a>. Сьогодні ми свідомо беремо
+найпростішу з трьох і розбираємо її до дна, бо всі решта стоять на ній.</p>
+
+<p>Що змінюється порівняно з детекцією:</p>
+
+<div class="deck">
+  <div><b>Форма виходу</b>Не список рамок змінної довжини, а тензор фіксованої форми
+    H×W×(класів). Ніякого NMS, ніяких якорів, ніякого зіставлення прогнозів з
+    істинами — кожна клітинка виходу вже стоїть навпроти своєї клітинки істини.</div>
+  <div><b>Втрата</b>Звичайна крос-ентропія, тільки застосована H×W разів замість одного.
+    Задача формально повертається до класифікації — тієї самої, що в блоці 2.</div>
+  <div><b>Розмітка</b>Не чотири числа на предмет, а обведений контур. Тема 02 рахувала:
+    близько <b>10 годин на сотню масок</b> — у десятки разів дорожче за рамки.</div>
+  <div><b>Метрика</b>Не mAP, бо немає впевненості й немає чого впорядковувати за нею.
+    Натомість IoU по класах, усереднене — mIoU.</div>
+</div>
+
+<p>Останній рядок другого пункту — не жарт і не спрощення. Семантична сегментація
+справді є класифікацією: тією самою, яку ми робили в
+<a href="../09-cnn-complete/lecture.html">темі 09</a>, тільки замість одного числа на
+картинку модель дає одне число на піксель. Уся складність теми в тому, <b>як</b> зробити
+так, щоб цих чисел було стільки ж, скільки пікселів на вході.</p>
+
+<div class="note"><b>Чесно про наш приклад.</b> Наскрізний набір блоку — ті самі
+сцени 64×64 з кола, квадрата й трикутника, що й у блоці про детекцію. Маски там
+істинні до пікселя, бо саме з них ми виводили рамки: фігуру намалювала формула,
+і ми точно знаємо, які пікселі їй належать. Це рідкісна розкіш. На справжніх даних
+маска — найдорожчий вид розмітки з усіх, і жоден зошит цього не покаже. Наш зошит
+показує механізм, а не вартість проєкту.</div>
+
+<h2 id="s2"><span class="num">02 / Ідея</span>Класифікація кожного пікселя</h2>
+
+<p>Візьмімо звичайну класифікаційну мережу з блоку 2 і подивимось, що в ній заважає.
+Вона влаштована так: кілька згорткових блоків стискають картинку в карту ознак,
+далі глобальне усереднення перетворює карту на вектор, далі повнозвʼязний шар дає
+логіти класів. Останні два кроки і є перешкода — вони <b>навмисно</b> викидають
+просторову інформацію. Глобальне усереднення каже «десь на картинці є кіт», і саме
+цього ми колись хотіли.</p>
+
+<p>Прибираємо їх. Замість глобального усереднення й повнозвʼязного шару ставимо
+згортку <code>1×1</code> з числом виходів, рівним числу класів. Що вона робить:
+бере вектор ознак у кожній клітинці карти окремо й перетворює його на вектор логітів
+класів у тій самій клітинці. Просторова сітка при цьому не рухається взагалі.</p>
+
+<div class="eq left">карта ознак   64 канали × 8 × 8
+згортка 1×1   64 → 4
+логіти        4 канали × 8 × 8   ← клас у кожній клітинці</div>
+
+<p>Це і є головна ідея <b>FCN</b> — fully convolutional network, повністю згорткова
+мережа. Стаття 2015 року називалась саме так, і вся її новизна вміщається в один
+абзац: викиньте з класифікатора повнозвʼязні шари, і він почне видавати карту
+міток замість одного класу. Мережа стає <b>повністю згортковою</b> — у ній не
+лишається жодного шару, який залежить від розміру входу.</p>
+
+<p>Друга, менш очевидна перевага: така мережа <b>приймає вхід будь-якого розміру</b>.
+Повнозвʼязний шар привʼязаний до довжини вектора, тому класифікатор вимагає рівно
+224×224. Згортці <code>1×1</code> байдуже: подай 512×512 — дістанеш більшу карту.</p>
+
+<p>А тепер погана новина, з якої й починається справжня тема.</p>
+
+<h2 id="s3"><span class="num">03 / Проблема</span>Головна проблема — роздільність</h2>
+
+<p>Тіло класифікаційної мережі стискає. У ResNet-50 пʼять етапів зменшення, разом
+вони дають крок (stride) <b>32</b>: карта ознак у 32 рази менша за вхід по кожній
+стороні. При вході 224×224 остання карта має розмір <b>7×7</b>. Тобто наш чудовий
+шар <code>1×1</code> видасть маску 7×7 — сорок девʼять чисел на все зображення.</p>
+
+<p>Порахуймо, що це означає для одного пікселя карти:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>мережа</th><th>крок</th><th>карта при вході 224×224</th><th>один піксель карти =</th></tr></thead>
+<tbody>
+<tr class="hot"><td>FCN-32s</td><td>32</td><td>7×7</td><td>32×32 px входу</td></tr>
+<tr><td>FCN-16s</td><td>16</td><td>14×14</td><td>16×16 px</td></tr>
+<tr><td>FCN-8s</td><td>8</td><td>28×28</td><td>8×8 px</td></tr>
+</tbody></table></div>
+
+<p>Один піксель карти при кроці 32 відповідає квадрату <b>32×32</b> вхідних пікселів —
+це 1024 пікселі, яким мережа дає одну спільну відповідь. Межі предмета всередині цього
+квадрата не існує. Саме тому маски FCN-32s зі статей виглядають як розмиті плями.</p>
+
+<p>На наших сценах 64×64 картина та сама, тільки числа менші: крок 16 дає карту 4×4,
+і фігура радіусом 6-10 пікселів уміщається в одну її клітинку цілком.</p>
+
+<p>Наскільки це дорого — можна поміряти <b>без жодного навчання</b>. Візьмемо істинну
+маску, загрубимо її до кроку S і повернемо назад до 64×64. Ніякого навчання: ми просто
+дивимось, скільки від маски лишається після проходу крізь сітку такого розміру.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Крок карти вбиває межу</p>
+  <p class="fig-sub">Ліворуч — істинна маска 64×64. Посередині — та сама маска, стиснута
+    до карти кроку S. Праворуч — те, що вийде, якщо повернути її назад до розміру входу.
+    Перемикач задає, <em>як</em> повертати: сходинками (кожна клітинка — суцільний
+    квадрат) чи плавно (лінійна інтерполяція оцінок класів). Число mIoU рахується
+    по 24 сценах одразу, не по одній намальованій.</p>
+  <div class="panel">
+    <div><canvas id="cStride" width="940" height="360" aria-label="Три панелі: істинна маска сцени 64 на 64, стиснута карта заданого кроку і відновлена з неї маска"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="strideK">крок карти <output id="strideKv">8</output></label>
+        <input type="range" id="strideK" min="0" max="5" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <span class="cap">як повертати розмір</span>
+        <div class="seg" id="strideMode">
+          <button type="button" data-i="0" aria-pressed="true">сходинками</button>
+          <button type="button" data-i="1" aria-pressed="false">плавно</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>карта</b><i id="strideMap">8×8</i></div>
+        <div class="cellv"><b>піксель карти</b><i id="stridePx">8×8 px</i></div>
+        <div class="cellv"><b><span class="raw">mIoU</span></b><i id="strideIou">—</i></div>
+        <div class="cellv"><b>точність по пікселях</b><i id="strideAcc">—</i></div>
+      </div>
+      <div class="verdict" id="vStride"></div>
+    </div>
+  </div>
+  <figcaption><b>Крок 8 лишає від істинної маски mIoU 0.4039, якщо повертати розмір
+    сходинками, і 0.6528, якщо повертати плавно.</b> Точність по пікселях при цьому
+    тримається біля 0.92 і майже нічого не помічає — перший натяк на те, що вона
+    непридатна як метрика. Зверни увагу й на друге: <b>спосіб повернення важить не
+    менше за сам крок</b>. Та сама груба карта дає різницю приблизно в чверть mIoU
+    залежно від того, розтягуєш ти її сходинками чи плавно. Числа цього абзацу — із
+    зошита, де перевірна вибірка складається зі 120 сцен; інтерактив рахує на своїх
+    24, тому показує близькі, але не ті самі значення.</figcaption>
+</figure>
+
+<p>Ті самі числа, пораховані зошитом на всіх 120 перевірних сценах, варто виписати
+окремо — вони задають рамку всій темі. Це міра втрати на самій сітці, ще до будь-якого
+навчання:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>крок</th><th>карта</th><th>mIoU сходинками</th><th>mIoU плавно</th></tr></thead>
+<tbody>
+<tr><td>2</td><td>32×32</td><td>0.8577</td><td>0.9738</td></tr>
+<tr class="good"><td>4</td><td>16×16</td><td>0.6631</td><td>0.9081</td></tr>
+<tr class="hot"><td>8</td><td>8×8</td><td>0.4039</td><td>0.6528</td></tr>
+<tr><td>16</td><td>4×4</td><td>0.1503</td><td>0.1300</td></tr>
+<tr><td>32</td><td>2×2</td><td>0.0295</td><td>0.0013</td></tr>
+</tbody></table></div>
+
+<div class="note warn"><b>Це показник, а не доведена стеля.</b> Спокусливо сказати
+«мережа з кроком 8 не дасть більше за 0.6528». Неправда: у зошиті навчена мережа з
+кроком 16 дала 0.2268, тобто <b>більше</b> за 0.1300 із таблиці. Причина в тому, що
+таблиця пропускає крізь карту саме <em>істинну</em> маску, а навчена мережа не
+зобовʼязана видавати в клітинці усереднену істину — вона може видати такі оцінки
+класів, з яких після розтягування вийде краща межа. Тобто число показує, скільки
+губить сітка при чесному усередненні, і нічого не забороняє мережі хитрувати.</div>
+
+<p>Тепер поміряймо те саме на справжній мережі. Будуємо просту FCN-подібну модель:
+тіло з кількох згорткових блоків зі стисканням, голова <code>1×1</code>, білінійне
+збільшення логітів до 64×64. Міняємо лише крок тіла:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>крок тіла</th><th>карта</th><th>параметрів</th><th>mIoU (3 зерна)</th><th>час навчання</th></tr></thead>
+<tbody>
+<tr class="good"><td>4</td><td>16×16</td><td>4 916</td><td>0.6815 ± 0.0606</td><td>12.9 с</td></tr>
+<tr><td>8</td><td>8×8</td><td>7 252</td><td>0.6151 ± 0.0279</td><td>11.8 с</td></tr>
+<tr class="hot"><td>16</td><td>4×4</td><td>9 588</td><td>0.2268 ± 0.0224</td><td>10.0 с</td></tr>
+</tbody></table></div>
+
+<p>Перше, що впадає в око, — <b>параметрів більше в гіршої мережі</b>: крок 16 має 9 588 ваг проти 4 916 у кроку 4, бо кожен рівень стискання додає ще один згортковий блок. Стискання купує не якість, а дешевизну обчислень.<br><br>Друге: між кроком 4 і кроком 8 різниця лише 0.0664 при розкиді 0.0606 — тобто її фактично немає. А от між кроком 8 і кроком 16 різниця <b>0.3884</b>, у 14 разів більша за розкид. Це і є момент, коли роздільності перестає вистачати: ціла фігура вміщається в одну клітинку карти 4×4, і мережі нема де сказати, де в цій клітинці межа.</p>
+
+<h2 id="s4"><span class="num">04 / Метрики</span>Метрики: IoU, mIoU, Dice</h2>
+
+<p>Перш ніж лагодити роздільність, треба домовитись, чим міряти. І тут на нас чекає
+пастка, у яку легко впасти й важко помітити.</p>
+
+<h3>Чому точність по пікселях безглузда</h3>
+
+<p>Найочевидніша метрика — частка правильно підписаних пікселів. Порахуймо, з чого
+складається наша перевірна вибірка:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>клас</th><th>пікселів</th><th>частка</th></tr></thead>
+<tbody>
+<tr class="hot"><td>фон</td><td>442 403</td><td>90.01 %</td></tr>
+<tr><td>квадрат</td><td>22 475</td><td>4.57 %</td></tr>
+<tr><td>коло</td><td>14 949</td><td>3.04 %</td></tr>
+<tr><td>трикутник</td><td>11 693</td><td>2.38 %</td></tr>
+</tbody></table></div>
+
+<p>Тепер уяви найгіршу можливу модель: вона фарбує все зображення фоном і більше не
+вміє нічого. Її точність по пікселях дорівнює <b>0.9001</b> — і це не збіг, а тотожність:
+частка правильних пікселів у такої моделі <b>дорівнює частці фону</b>, хоч би що ти
+робив із даними. Девʼяносто відсотків звучать як добра модель. Користі — нуль.</p>
+
+<div class="note warn"><b>Той самий сюжет ми вже бачили.</b> У
+<a href="../23-detection-setup/lecture.html">темі 23</a> фон займав 85.4 % якорів, і
+саме звідти виріс focal loss у <a href="../26-one-stage/lecture.html">темі 26</a>.
+У сегментації дисбаланс ще різкіший, бо він рахується не по якорях, а по пікселях:
+у нас 90 %, а на вуличних сценах небо й дорога легко дають 95 % і більше.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Точність по пікселях міряє розмір фону, а не модель</p>
+  <p class="fig-sub">Повзунок міняє середній радіус фігур — а разом із ним і частку
+    фону. Перемикач обирає порожню модель: «усе фон», «усе квадрат» або випадковий
+    підпис. Обидві метрики рахуються по 24 сценах.</p>
+  <div class="panel">
+    <div><canvas id="cBal" width="940" height="350" aria-label="Сцена, прогноз порожньої моделі і стовпчики часток класів; поруч точність по пікселях і mIoU"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="balR">радіус фігур <output id="balRv">8</output></label>
+        <input type="range" id="balR" min="3" max="14" step="1" value="8">
+      </div>
+      <div class="ctl">
+        <span class="cap">порожня модель</span>
+        <div class="seg wrap" id="balMode">
+          <button type="button" data-i="0" aria-pressed="true">усе фон</button>
+          <button type="button" data-i="1" aria-pressed="false">усе квадрат</button>
+          <button type="button" data-i="2" aria-pressed="false">навмання</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>частка фону</b><i id="balBg">—</i></div>
+        <div class="cellv"><b>точність по пікселях</b><i id="balAcc">—</i></div>
+        <div class="cellv"><b><span class="raw">mIoU</span></b><i id="balIou">—</i></div>
+        <div class="cellv"><b>найбільший клас</b><i id="balTop" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="vBal"></div>
+    </div>
+  </div>
+  <figcaption><b>Хоч би як ти крутив повзунок, точність по пікселях моделі «усе фон»
+    дорівнює частці фону — до останнього знака.</b> Метрика не міряє модель, вона
+    міряє датасет. mIoU при цьому стоїть на <b>0.000</b> і не рухається: жодного
+    пікселя жодного предмета не вгадано, отже перетин порожній.</figcaption>
+</figure>
+
+<h3>IoU по класах і mIoU</h3>
+
+<p>Правильна метрика будується так само, як у детекції, тільки не для рамок, а для
+множин пікселів. Для кожного класу окремо:</p>
+
+<div class="eq">IoU<span class="sub">клас</span> = |прогноз ∩ істина| / |прогноз ∪ істина|</div>
+
+<p>Словами: скільки пікселів ми і мережа назвали цим класом <b>разом</b>, поділити на
+скільки пікселів назвав цим класом <b>хоч хтось із двох</b>. Символ ∩ — перетин,
+спільна частина двох множин; ∪ — обʼєднання, усе разом без повторів. Число завжди
+між 0 і 1: одиниця означає повний збіг, нуль — жодного спільного пікселя.</p>
+
+<p><b>mIoU</b> (mean IoU) — середнє цих чисел по класах. І тут є питання, від якого
+залежить сама цифра: <b>чи входить у середнє фон</b>. У нашому курсі — ні, ми
+усереднюємо по трьох класах предметів. Причина видно на прикладі вище: модель «усе
+фон» має IoU фону 0.9001 і IoU предметів 0, тож середнє з фоном дало б 0.2250, а без
+фону — рівно <b>0.000</b>. Друге число чесніше описує, що модель нікому не потрібна.
+Обидві угоди трапляються в статтях, тому, читаючи чуже mIoU, завжди перевіряй, які
+класи в ньому усереднені.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · рахуємо руками</span>
+    <p>Хай істина — квадрат 10×10 пікселів, тобто 100 пікселів класу «квадрат».
+    Мережа підписала квадратом область 12×12 = 144 пікселі, зсунуту на 2 пікселі
+    вправо й на 2 вниз.</p></div>
+  <div class="step"><span class="lbl">крок 2 · перетин</span>
+    <p>Спільна частина — прямокутник 8×8, бо зсув на 2 зʼїдає по два стовпці й
+    два рядки з боку істини.</p>
+    <div class="eq">|перетин| = 8 × 8 = 64</div></div>
+  <div class="step"><span class="lbl">крок 3 · обʼєднання</span>
+    <p>Сума площ мінус перетин, щоб спільну частину не порахувати двічі.</p>
+    <div class="eq">|обʼєднання| = 100 + 144 − 64 = 180</div></div>
+  <div class="step"><span class="lbl">крок 4 · відповідь</span>
+    <div class="eq">IoU = 64 / 180 = 0.3556</div>
+    <p>Здається несправедливо суворо: мережа накрила предмет цілком, а дістала
+    трохи більше за третину. Але IoU карає одразу за дві речі — за пропущене
+    й за зайве, — і саме тому його важко обдурити.</p></div>
+</div>
+
+<h3>Чим Dice відрізняється від IoU</h3>
+
+<p>Друга метрика, яку постійно цитують поруч, — <b>коефіцієнт Дайса</b> (Dice
+coefficient), у медичних статтях його ще звуть F1 по пікселях:</p>
+
+<div class="eq">Dice = 2·|прогноз ∩ істина| / (|прогноз| + |істина|)</div>
+
+<p>Різниця з IoU в знаменнику: там було обʼєднання, тут — сума площ, у якій перетин
+порахований <b>двічі</b>. Через це Dice завжди більший або рівний IoU. Звʼязок між
+ними точний і не залежить від форми масок:</p>
+
+<div class="eq">Dice = 2·IoU / (1 + IoU)</div>
+
+<p>Підставимо наш приклад: IoU = 0.3556, отже Dice = 2·0.3556/1.3556 = <b>0.5246</b>.
+Перевіримо прямо за визначенням: 2·64/(100+144) = 128/244 = 0.5246. Збіглося.</p>
+
+<p>Тепер найважливіше — <b>наскільки</b> Dice оптимістичніший. Візьмімо дві маски
+однакової площі й будемо міняти частку перекриття:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>перекриття</th><th>IoU</th><th>Dice</th><th>у скільки разів більший</th></tr></thead>
+<tbody>
+<tr class="good"><td>90 %</td><td>0.8182</td><td>0.9000</td><td>1.10</td></tr>
+<tr><td>50 %</td><td>0.3333</td><td>0.5000</td><td>1.50</td></tr>
+<tr class="hot"><td>10 %</td><td>0.0526</td><td>0.1000</td><td>1.90</td></tr>
+</tbody></table></div>
+
+<p>На добрих масках дві метрики майже збігаються — різниця 10 %. На поганих Dice
+майже <b>вдвічі</b> оптимістичніший: 0.0526 проти 0.1000. Практичний наслідок простий:
+дві статті на одному датасеті можуть звітувати 0.85 і 0.75, і краща з них — та, що
+цитує <b>IoU</b>. Дивись, яку метрику назвали, перш ніж порівнювати числа.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · IoU і Dice на двох масках, які можна зсувати</p>
+  <p class="fig-sub">Ліворуч — дві однакові маски; повзунок розводить їх. Перетин
+    підсвічено. Праворуч — крива Dice = 2·IoU/(1+IoU) і поточна точка на ній. Обидва
+    числа рахуються прямим підрахунком пікселів, а не за формулою — формула лише
+    звіряється з ними.</p>
+  <div class="panel">
+    <div><canvas id="cDice" width="940" height="400" aria-label="Дві маски з підсвіченим перетином і графік залежності Dice від IoU"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="diceShift">зсув другої маски <output id="diceShiftv">0</output></label>
+        <input type="range" id="diceShift" min="0" max="70" step="1" value="20">
+      </div>
+      <div class="ctl">
+        <span class="cap">форма масок</span>
+        <div class="seg" id="diceShape">
+          <button type="button" data-i="0" aria-pressed="true">коло</button>
+          <button type="button" data-i="1" aria-pressed="false">квадрат</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>перекриття</b><i id="diceOv">—</i></div>
+        <div class="cellv"><b><span class="raw">IoU</span></b><i id="diceIou">—</i></div>
+        <div class="cellv"><b><span class="raw">Dice</span></b><i id="diceDice">—</i></div>
+        <div class="cellv"><b><span class="raw">Dice / IoU</span></b><i id="diceRatio">—</i></div>
+      </div>
+      <div class="verdict" id="vDice"></div>
+    </div>
+  </div>
+  <figcaption><b>Що гірший збіг, то більший розрив.</b> Криву Dice = 2·IoU/(1+IoU)
+    видно праворуч: біля одиниці вона притискається до діагоналі, біля нуля
+    відривається від неї вдвічі. Тобто Dice прикрашає саме там, де тобі найважливіше
+    знати правду — на поганих масках.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Спосіб 1</span>Спосіб перший: просто збільшити</h2>
+
+<p>Отже, у нас є карта логітів 8×8, а потрібна маска 64×64. Найпростіше рішення —
+розтягнути карту інтерполяцією. Ніяких ваг, ніякого навчання: чиста арифметика.</p>
+
+<p>Найгрубіший варіант — <b>найближчий сусід</b> (nearest): кожна клітинка карти стає
+суцільним квадратом 8×8. Саме його ми міряли в інтерактиві 1 як «сходинками», і саме
+він дав 0.4039. Межа виходить пилчастою, з кроком у розмір клітинки.</p>
+
+<p><b>Білінійна інтерполяція</b> робить те саме плавно. Для кожного вихідного пікселя
+вона знаходить чотири найближчі клітинки карти й бере їхнє зважене середнє: що ближче
+клітинка, то більша вага. «Бі-» означає, що це робиться двічі — спершу вздовж рядка,
+потім уздовж стовпця.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · де ми між клітинками</span>
+    <p>Хай вихідний піксель лежить між клітинками карти так, що по горизонталі він
+    відстоїть на 0.25 від лівої, а по вертикалі — на 0.75 від верхньої.
+    Позначимо ці частки u = 0.25 і v = 0.75.</p></div>
+  <div class="step"><span class="lbl">крок 2 · ваги чотирьох сусідів</span>
+    <p>Вага кожного сусіда — добуток двох «протилежних» часток. Ближчий по
+    горизонталі дістає (1−u), дальший — u; так само по вертикалі.</p>
+    <div class="eq">верх-ліво (1−u)(1−v) = 0.75·0.25 = 0.1875
+верх-право u(1−v) = 0.25·0.25 = 0.0625
+низ-ліво  (1−u)v  = 0.75·0.75 = 0.5625
+низ-право  u·v    = 0.25·0.75 = 0.1875</div>
+    <p>Сума ваг дорівнює одиниці: 0.1875+0.0625+0.5625+0.1875 = 1.0000. Це важливо —
+    інакше інтерполяція міняла б яскравість.</p></div>
+  <div class="step"><span class="lbl">крок 3 · відповідь</span>
+    <p>Значення пікселя — сума значень чотирьох клітинок, помножених на їхні ваги.
+    Ніяких навчених чисел тут немає взагалі.</p></div>
+</div>
+
+<p>Чому це дає розмиту межу. Між двома сусідніми клітинками інтерполяція будує
+<b>лінійний перехід</b> завширшки в одну клітинку — вісім пікселів при кроці 8.
+Різкої межі там нема з чого взяти: карта не містить інформації, де саме в цьому
+проміжку предмет закінчився. Ми не відновлюємо деталь, ми <b>згладжуємо сходинки</b> —
+і все ж це не дрібниця: 0.4039 проти 0.6528 на тій самій карті кроку 8. Плавне
+збільшення дає межу з точністю до половини клітинки замість цілої.</p>
+
+<div class="note"><b>Так робить і DeepLab.</b> Здається дивним, що серйозна модель
+закінчується найпростішою інтерполяцією без жодної ваги — але саме так і є:
+<code>deeplabv3_resnet50</code> рахує логіти на карті кроку 8 і в останньому рядку
+розтягує їх білінійно до розміру входу. Уся робота зроблена <em>до</em> цього кроку,
+а не в ньому.</div>
+
+<h2 id="s6"><span class="num">06 / Спосіб 2</span>Спосіб другий: навчити збільшення</h2>
+
+<p>Другий підхід: хай ваги збільшення теж вчаться. Операція зветься <b>транспонована
+згортка</b> (transposed convolution), у коді — <code>nn.ConvTranspose2d</code>.
+Трапляється назва «деконволюція», і вона невдала: жодного оберненого перетворення
+тут немає.</p>
+
+<p>Що вона робить: звичайна згортка бере <em>багато</em> вхідних пікселів і дає
+<em>один</em> вихідний; транспонована — навпаки. Вона бере <em>один</em> вхідний
+піксель, множить на нього все ядро й <b>додає</b> цей відбиток у кілька сусідніх
+вихідних клітинок, потім зсувається на <code>stride</code> і додає наступний.
+Вихід — сума всіх накладених відбитків.</p>
+
+<p>І тут ховається пастка, через яку транспонована згортка стала відома більше своїми
+дефектами, ніж перевагами.</p>
+
+<h3>Артефакт шахівниці</h3>
+
+<p>Порахуймо, <b>скільки разів</b> кожна вихідна клітинка отримує внесок. Хай ядро
+має розмір k, а крок дорівнює 2. Відбитки ядра лягають через два, тому клітинка з
+парним номером і клітинка з непарним номером можуть накритись різну кількість разів.</p>
+
+<p>Найпростіша перевірка: покладімо всі ваги ядра рівними одиниці й подамо на вхід
+одиниці. Тоді значення кожної вихідної клітинки дорівнює просто кількості відбитків,
+які на неї впали. Ось що виходить у центрі карти для клітинки 2×2:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>ядро · крок</th><th>внесків у 4 позиціях</th><th>дисперсія</th><th>найбільше / найменше</th></tr></thead>
+<tbody>
+<tr class="good"><td>2 · 2</td><td>1 1 1 1</td><td>0.0000</td><td>1.00</td></tr>
+<tr class="hot"><td>3 · 2</td><td>1 2 2 4</td><td>1.1875</td><td>4.00</td></tr>
+<tr class="good"><td>4 · 2</td><td>4 4 4 4</td><td>0.0000</td><td>1.00</td></tr>
+<tr><td>5 · 2</td><td>4 6 6 9</td><td>3.1875</td><td>2.25</td></tr>
+<tr class="good"><td>6 · 2</td><td>9 9 9 9</td><td>0.0000</td><td>1.00</td></tr>
+</tbody></table></div>
+
+<p>Правило видно одразу: <b>якщо розмір ядра ділиться на крок без остачі, усі позиції
+покриті однаково</b>. Якщо ні — на виході зʼявляється регулярний візерунок із періодом
+у крок, схожий на шахівницю. При ядрі 3 і кроці 2 одна позиція з чотирьох отримує
+вчетверо більший внесок за іншу, і жодне навчання цього не прибирає: мережа може
+підправити ваги, але не може змінити, скільки разів клітинка накрита.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Звідки береться шахівниця</p>
+  <p class="fig-sub">Ліворуч — куди лягають відбитки ядра на вихід, коли вхідна карта
+    8×8 збільшується вдвічі з кроком 2. Праворуч — скільки внесків отримала кожна
+    вихідна клітинка: що темніше, то більше. Перемикай розмір ядра й дивись, коли
+    візерунок зникає.</p>
+  <div class="panel">
+    <div><canvas id="cCheck" width="940" height="380" aria-label="Схема накладання відбитків транспонованої згортки і карта кількості внесків у кожну вихідну клітинку"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap"><span class="raw">kernel_size</span> при кроці 2</span>
+        <div class="seg" id="checkK">
+          <button type="button" data-i="2" aria-pressed="false">2</button>
+          <button type="button" data-i="3" aria-pressed="true">3</button>
+          <button type="button" data-i="4" aria-pressed="false">4</button>
+          <button type="button" data-i="5" aria-pressed="false">5</button>
+          <button type="button" data-i="6" aria-pressed="false">6</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>внесків у клітинці 2×2</b><i id="checkCells" class="sm">—</i></div>
+        <div class="cellv"><b>дисперсія</b><i id="checkVar">—</i></div>
+        <div class="cellv"><b>найбільше / найменше</b><i id="checkRatio">—</i></div>
+        <div class="cellv"><b>ділиться на крок</b><i id="checkDiv" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="vCheck"></div>
+    </div>
+  </div>
+  <figcaption><b>Ядро 3 при кроці 2 дає покриття 1 · 2 · 2 · 4 — різниця вчетверо між
+    сусідніми пікселями виходу.</b> Ядра 2, 4 і 6 покривають вихід рівно, бо діляться
+    на крок. Це не питання навчання: покриття задане геометрією, і мережа може лише
+    компенсувати його вагами, а не скасувати.</figcaption>
+</figure>
+
+<p>У зошиті ми поставили обидва ядра в одну мережу — тіло кроку 16, чотири сходинки
+збільшення по два — і навчили кожну на трьох зернах:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>збільшення</th><th>параметрів</th><th>mIoU (3 зерна)</th><th>час, с</th></tr></thead>
+<tbody>
+<tr class="good"><td>ядро 4, крок 2</td><td>26 100</td><td>0.1673 ± 0.0250</td><td>19.3</td></tr>
+<tr class="hot"><td>ядро 3, крок 2</td><td>18 932</td><td>0.0602 ± 0.0694</td><td>19.5</td></tr>
+</tbody></table></div>
+
+<p>Перший висновок: ядро 3 гірше за ядро 4 — 0.0602 проти 0.1673. Але головне тут не середнє, а <b>окремі зерна</b>: у ядра 3 вони дали 0.1575, 0.0230, 0.0001. Одне навчання з трьох розвалилось повністю, а розкид (0.0694) більший за сам результат — тоді як у ядра 4 він 0.0250, у 2.8 раза менший. Саме ця нестабільність, а не різниця середніх, і є найпереконливіший наслідок нерівного покриття.<br><br>Другий висновок неприємніший для самої ідеї: обидві мережі гірші за просте білінійне збільшення з того самого тіла, яке дало 0.2268. Тобто 16 512 додаткових ваг не купили нічого — саме тому сучасні декодери майже не беруть <code>ConvTranspose2d</code>.</p>
+
+<div class="note"><b>Практичне правило.</b> Береш <code>ConvTranspose2d</code> — став
+<code>kernel_size</code>, кратний <code>stride</code>: 4 при кроці 2, 6 при кроці 3.
+Ще безпечніше — не брати її взагалі: <code>nn.Upsample</code> плюс звичайна згортка
+<code>3×3</code> дають те саме вміння з навченими вагами й без жодного візерунка.
+Саме так і роблять сучасні декодери, і це той шлях, яким піде
+<a href="../30-unet/lecture.html">тема 30</a>.</div>
+
+<h2 id="s7"><span class="num">07 / Спосіб 3</span>Спосіб третій: не стискати взагалі</h2>
+
+<p>Обидва попередні способи лікують наслідок. Карта вже стала маленькою, і ми
+намагаємось відновити те, чого в ній немає. DeepLab поставив питання інакше:
+а навіщо ми взагалі стискаємо?</p>
+
+<p>Відповідь відома з <a href="../08-pooling/lecture.html">теми 08</a>: стискання
+розширює <b>поле зору</b> (receptive field). Згортка 3×3 бачить три пікселі. Дві
+згортки поспіль — пʼять. Щоб один нейрон побачив ділянку 33×33, потрібно шістнадцять
+згорток 3×3 підряд, а це шістнадцять шарів ваг. Пулінг дає те саме дешевше: після
+зменшення вдвічі та сама згортка 3×3 накриває вже 6 пікселів оригіналу.</p>
+
+<p>Атрозна згортка (atrous convolution, вона ж dilated) дає третій вихід. Ідея
+дитяча: лишити в ядрі ті самі девʼять ваг, але <b>розсунути</b> їх. Замість дивитись
+на сусідні пікселі, ядро дивиться через один, через три, через сім. Аргумент, що цим
+керує, зветься <code>dilation</code>.</p>
+
+<div class="eq">ефективний розмір ядра = d·(k − 1) + 1</div>
+
+<p>Тут k — скільки ваг у ядрі по стороні (у нас 3), d — <code>dilation</code>. При
+d = 1 виходить звичайна згортка 3×3. При d = 16 ядро охоплює 16·2 + 1 = <b>33</b>
+пікселі по стороні. І ось головне число теми:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>dilation</th><th>ефективне ядро</th><th>поле, пікселів</th><th>параметрів</th><th>множень на піксель</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>3×3</td><td>9</td><td>36 928</td><td>36 864</td></tr>
+<tr><td>2</td><td>5×5</td><td>25</td><td>36 928</td><td>36 864</td></tr>
+<tr><td>4</td><td>9×9</td><td>81</td><td>36 928</td><td>36 864</td></tr>
+<tr><td>8</td><td>17×17</td><td>289</td><td>36 928</td><td>36 864</td></tr>
+<tr class="good"><td>16</td><td>33×33</td><td>1 089</td><td>36 928</td><td>36 864</td></tr>
+</tbody></table></div>
+
+<p>Числа взяті з <code>nn.Conv2d(64, 64, 3, padding=d, dilation=d)</code>. Поле зору
+виросло зі 9 пікселів до 1089 — у <b>121 раз</b>. Параметрів як було 36 928, так і
+лишилось: 64·64·9 ваг плюс 64 зсуви. Множень теж стільки само. Це і є вся ідея
+DeepLab в одному рядку: <b>поле зору можна купити задарма</b>.</p>
+
+<p>Наслідок для сегментації прямий. Якщо поле зору більше не потребує стискання, то
+можна прибрати останні пулінги з тіла й лишити карту великою. Мережа бачить контекст
+і водночас зберігає роздільність. Саме так улаштований DeepLab: у ResNet-50 останні
+два етапи зменшення замінені на dilation 2 і 4, і крок падає з 32 до 8 без утрати
+поля зору.</p>
+
+<p>Але задарма нічого не буває, і в атрозної згортки є своя ціна — навіть дві.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Поле росте, параметри не рухаються</p>
+  <p class="fig-sub">Ліворуч — сітка вхідних пікселів; підсвічені девʼять, які читає
+    ядро при заданому <code>dilation</code>, і окреслене поле, яке воно накриває.
+    Праворуч — два лічильники в часі: поле зору росте квадратично, параметри стоять.</p>
+  <div class="panel">
+    <div><canvas id="cAtr" width="940" height="400" aria-label="Сітка пікселів із девʼятьма підсвіченими відліками атрозного ядра і графік зростання поля зору при незмінній кількості параметрів"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="atrD"><span class="raw">dilation</span> <output id="atrDv">1</output></label>
+        <input type="range" id="atrD" min="1" max="16" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ефективне ядро</b><i id="atrK">3×3</i></div>
+        <div class="cellv"><b>поле, пікселів</b><i id="atrField">9</i></div>
+        <div class="cellv"><b>параметрів</b><i id="atrPar">36 928</i></div>
+        <div class="cellv"><b>прочитано з поля</b><i id="atrDens">100 %</i></div>
+      </div>
+      <div class="verdict" id="vAtr"></div>
+    </div>
+  </div>
+  <figcaption><b>Параметрів рівно 36 928 у всіх положеннях повзунка — від dilation 1
+    до dilation 16.</b> Але подивись на четверте табло: частка поля, яку ядро
+    насправді читає, падає з 100 % до <b>0.83 %</b>. Дірки ростуть швидше за поле,
+    і при великому <code>dilation</code> ядро бачить широко, але рідко.</figcaption>
+</figure>
+
+<p>Це перша ціна, і вона має назву — <b>ефект решітки</b> (gridding). Сусідні пікселі
+починають читати <em>різні</em>, ніде не перетинні набори відліків: піксель із парною
+координатою при d = 2 бачить лише парні, з непарною — лише непарні. Дрібна деталь
+завширшки в один-два пікселі може провалитись між зубцями решітки. Через це в
+DeepLab dilation усередині блоку не роблять однаковим — беруть кілька різних значень,
+щоб дірки одного ядра затулялись відліками іншого.</p>
+
+<p>Друга ціна — <b>час</b>. Атрозна згортка не додає множень на піксель, але вона
+працює на <b>карті, яку ми не стиснули</b>. Карта 64×64 містить у 64 рази більше
+клітинок, ніж карта 8×8, і кожна з них коштує повного набору множень. У нашому
+зошиті це видно прямо в секундах — про це наступні розділи.</p>
+
+<h2 id="s8"><span class="num">08 / ASPP</span>ASPP: кілька масштабів одразу</h2>
+
+<p>Тепер зʼєднаймо дві думки. Перша: різні предмети на одному кадрі мають різний
+розмір, і потрібне їм поле зору теж різне. Друга: одне атрозне ядро з великим
+<code>dilation</code> бачить широко, але рідко.</p>
+
+<p>Рішення DeepLab зветься <b>ASPP</b> — atrous spatial pyramid pooling. Замість
+однієї згортки ставимо <b>кілька паралельних</b> гілок з різними
+<code>dilation</code>, пропускаємо ту саму карту крізь усі, склеюємо результати по
+каналах і зводимо їх назад згорткою <code>1×1</code>. У справжньому
+<code>deeplabv3_resnet50</code> гілок пʼять:</p>
+
+<div class="scroll-x"><table class="plain">
+<tbody>
+<tr><td>1×1</td><td>без контексту взагалі — чисте перекодування ознак у точці</td></tr>
+<tr><td>3×3, dilation 12</td><td>поле 25×25 клітинок карти</td></tr>
+<tr><td>3×3, dilation 24</td><td>поле 49×49</td></tr>
+<tr><td>3×3, dilation 36</td><td>поле 73×73</td></tr>
+<tr><td>глобальне усереднення</td><td>уся карта одним числом на канал</td></tr>
+</tbody></table></div>
+
+<p>Остання гілка заслуговує окремого слова. Вона стискає всю карту до одного пікселя
+усередненням, пропускає його крізь <code>1×1</code> і розтягує назад. Навіщо: жодне
+скінченне <code>dilation</code> не бачить кадр цілком, а глобальний контекст іноді
+вирішує все — синє над горизонтом це небо, синє під ним вода.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Що покриває кожна гілка ASPP</p>
+  <p class="fig-sub">Сітка навколо одного пікселя. Кожна гілка малює свої девʼять
+    відліків своїм кольором. Перемикай набір <code>dilation</code> і дивись, як
+    змінюється сумарне поле й скільки пікселів у ньому взагалі прочитано.</p>
+  <div class="panel">
+    <div><canvas id="cAspp" width="940" height="420" aria-label="Сітка пікселів, на якій різними кольорами показані відліки кількох паралельних атрозних гілок"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">набір <span class="raw">dilation</span></span>
+        <div class="seg wrap" id="asppSet">
+          <button type="button" data-i="0" aria-pressed="false">одна гілка: 2</button>
+          <button type="button" data-i="1" aria-pressed="true">1 · 2 · 4</button>
+          <button type="button" data-i="2" aria-pressed="false">1 · 2 · 4 · 8</button>
+          <button type="button" data-i="3" aria-pressed="false">1 · 6 · 12 · 18</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">гілка глобального усереднення</span>
+        <div class="seg" id="asppPool">
+          <button type="button" data-i="0" aria-pressed="false">без неї</button>
+          <button type="button" data-i="1" aria-pressed="true">є</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сумарне поле</b><i id="asppField">—</i></div>
+        <div class="cellv"><b>прочитано пікселів</b><i id="asppRead">—</i></div>
+        <div class="cellv"><b>гілок</b><i id="asppN">—</i></div>
+        <div class="cellv"><b>щільність</b><i id="asppDens">—</i></div>
+      </div>
+      <div class="verdict" id="vAspp"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна гілка з dilation 2 читає 9 пікселів із поля 25.</b> Набір
+    1 · 2 · 4 читає 25 пікселів із поля 81 — і, головне, дрібні деталі вже не
+    провалюються, бо гілка з dilation 1 дивиться суцільно. Набір 1 · 6 · 12 · 18 —
+    той, що стоїть у справжньому DeepLab, — бачить дуже далеко, але щільність падає
+    до одиниць відсотків: він розрахований на карту кроку 8, де один піксель це вісім.</figcaption>
+</figure>
+
+<p>Замір у зошиті: те саме тіло кроку 16, та сама голова <code>1×1</code>, різниця лише
+в модулі між ними.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>модуль контексту</th><th>параметрів</th><th>mIoU (3 зерна)</th><th>час, с</th></tr></thead>
+<tbody>
+<tr class="hot"><td>одна гілка 3×3, dilation 2</td><td>12 212</td><td>0.0746 ± 0.0559</td><td>10.5</td></tr>
+<tr class="good"><td>ASPP 1 · 2 · 4 + усереднення</td><td>15 860</td><td>0.1920 ± 0.0059</td><td>13.2</td></tr>
+</tbody></table></div>
+
+<p>ASPP кращий за одну гілку в 2.6 раза: 0.1920 проти 0.0746. Різниця 0.1174 — удвічі більша за розкид однієї гілки (0.0559) і у двадцять разів за розкид ASPP (0.0059).<br><br>Друге — саме ці розкиди. Одна гілка на одному зерні дала 0.0123, а на іншому 0.1478: це не модель, а лотерея. ASPP на трьох зернах тримається в межах 0.0135. Кілька масштабів роблять навчання не лише кращим, а й <b>передбачуваним</b>.</p>
+
+<div class="note warn"><b>Чесна деталь, яку не можна ховати.</b> Обидва модулі на нашій
+задачі виявились гіршими за просту голову <code>1×1</code> без жодного модуля — та
+сама мережа без нього дала 0.2268. Причина не в ASPP, а в розмірі задачі: 160
+навчальних сцен замало, щоб окупити три зайві шари. Порівняння «одна гілка проти
+ASPP» від цього не псується — обидві мережі отримали однакову надбавку в глибині, і
+серед них ASPP виграє впевнено. Але цитувати наше число як «ASPP покращує
+сегментацію» не можна: воно каже лише «серед модулів контексту кілька масштабів
+кращі за один».</div>
+
+<h2 id="s9"><span class="num">09 / Порівняння</span>Три способи поруч</h2>
+
+<p>Тепер поставимо всі три підходи в одну таблицю. Беремо <b>найгірший</b> випадок із
+розділу 3 — крок 16, карта 4×4 — і лагодимо його трьома способами. Умови однакові
+для всіх: 16 каналів, ті самі 160 навчальних сцен, 14 епох, AdamW, три зерна.</p>
+
+<p>Третій рядок підібраний так, щоб порівняння було чесним до кінця. Атрозне тіло
+має <b>стільки ж шарів, стільки ж параметрів і те саме поле зору</b> (63 пікселі),
+що й тіло кроку 16. Різниця рівно одна: воно не стискає.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>спосіб</th><th>карта перед головою</th><th>параметрів</th><th>час, с</th><th>mIoU (3 зерна)</th></tr></thead>
+<tbody>
+<tr><td>білінійне збільшення</td><td>4×4</td><td>9 588</td><td>10.0</td><td>0.2268 ± 0.0224</td></tr>
+<tr class="hot"><td>ConvTranspose2d, ядро 4</td><td>4×4 → 64×64</td><td>26 100</td><td>19.3</td><td>0.1673 ± 0.0250</td></tr>
+<tr class="good"><td>атрозні згортки</td><td>64×64</td><td>9 588</td><td>60.1</td><td>0.4322 ± 0.0389</td></tr>
+</tbody></table></div>
+
+<p>Головне число теми — у третьому рядку. Атрозне тіло дало <b>0.4322</b> проти 0.2268 у білінійного при <b>тих самих 9 588 параметрах</b>, тому самому числі шарів і тому самому полі зору 63 пікселі. Виграш 0.2055 — у 9 разів більший за розкид. Єдина різниця між двома мережами в тому, стискаємо ми карту чи ні, і саме вона коштує майже половини метрики. Оце і є DeepLab у мініатюрі.<br><br>Тепер ціна. Атрозне тіло навчалося 60.1 с проти 10.0 с — у <b>6.0 раза</b> довше. Кожна зайва секунда пішла на те, що всі пʼять згорток працюють на карті 64×64 замість 32×32, 16×16, 8×8 і 4×4. Ось компроміс DeepLab у двох числах: маску вдвічі кращу купують проходом у шість разів довшим.<br><br>І середній рядок, який теж треба назвати вголос: навчене збільшення програло навіть білінійному, маючи втричі більше ваг і вдвічі довший прохід. На цій задачі воно не окупилось жодним чином.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Три способи на одній масці</p>
+  <p class="fig-sub">Перемикач обирає спосіб, повзунок — крок тіла. Ліворуч видно, що
+    вийде з істинної маски після проходу крізь карту такого кроку й повернення назад
+    обраним способом. Праворуч — скільки множень коштує тіло на кадр 64×64.</p>
+  <div class="panel">
+    <div><canvas id="cWays" width="940" height="380" aria-label="Відновлена маска для трьох способів повернення роздільності і стовпчики вартості тіла в множеннях"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">спосіб</span>
+        <div class="seg wrap" id="waysMode">
+          <button type="button" data-i="0" aria-pressed="true">збільшити</button>
+          <button type="button" data-i="1" aria-pressed="false">навчити збільшення</button>
+          <button type="button" data-i="2" aria-pressed="false">не стискати</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="waysS">крок тіла <output id="waysSv">4</output></label>
+        <input type="range" id="waysS" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>карта перед головою</b><i id="waysMap">—</i></div>
+        <div class="cellv"><b><span class="raw">mIoU</span> відновлення</b><i id="waysIou">—</i></div>
+        <div class="cellv"><b>множень у тілі</b><i id="waysMac">—</i></div>
+        <div class="cellv"><b>дорожче за найдешевше</b><i id="waysRel">—</i></div>
+      </div>
+      <div class="verdict" id="vWays"></div>
+    </div>
+  </div>
+  <figcaption><b>Повзунок кроку рухає перші два способи й нічого не робить із третім —
+    у цьому вся суть.</b> Атрозне тіло не має кроку: карта завжди 64×64, тому маска
+    не грубішає ніколи. Плату видно в останніх двох табло: на краю повзунка, при
+    кроці 16, атрозне тіло коштує <b>вдесятеро</b> більше множень за те саме тіло зі
+    стисканням, а при кроці 2 — лише втричі. Що глибше стискання, то дорожча відмова
+    від нього.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Втрата</span>Втрата на дисбалансі</h2>
+
+<p>Девʼяносто відсотків фону тиснуть не лише на метрику, а й на саму втрату. Звичайна
+крос-ентропія рахує середнє по пікселях, тож девʼять із десяти доданків у ній — це
+фон. Модель отримує найбільшу винагороду за те, щоб добре фарбувати фон, і найменшу —
+за межі предметів, яких мало.</p>
+
+<p>Два звичні ліки:</p>
+
+<ol>
+  <li><b>Зважена крос-ентропія.</b> Кожному класу дається вага, обернено пропорційна
+    його частоті. У нас це дає фону вагу 0.280, а трикутникові — 10.507: помилка на
+    трикутнику коштує в тридцять сім разів більше за помилку на фоні.</li>
+  <li><b>Втрата Дайса.</b> Береться формула Dice, зроблена гладкою (замість жорстких
+    міток — імовірності softmax), і мінімізується 1 − Dice. Головна її властивість:
+    вона нормована <b>на площу класу</b>, тому маленький клас важить у ній стільки ж,
+    скільки великий, без жодних ваг.</li>
+</ol>
+
+<p>Замір, три зерна, одна й та сама мережа кроку 8 — міняється тільки втрата:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>втрата</th><th>mIoU (3 зерна)</th><th>розкид</th></tr></thead>
+<tbody>
+<tr class="good"><td>крос-ентропія</td><td>0.6151</td><td>± 0.0279</td></tr>
+<tr class="hot"><td>зважена крос-ентропія</td><td>0.4181</td><td>± 0.0176</td></tr>
+<tr><td>втрата Дайса</td><td>0.6647</td><td>± 0.0505</td></tr>
+</tbody></table></div>
+
+<p>Результат не той, якого чекаєш від підручника.<br><br><b>Зважування зашкодило.</b> 0.4181 проти 0.6151 — падіння на 0.1970, у сім разів більше за розкид. Причина видно на масках: з вагою 10.507 модель щедро малює трикутники там, де їх немає. Пропущених пікселів меншає, зайвих більшає, а IoU карає і за те, і за те. Зважування зсуває поріг рішення, а не вчить мережу бачити краще.<br><br><b>Втрата Дайса не відрізняється від крос-ентропії.</b> 0.6647 проти 0.6151 — різниця 0.0496 при розкиді 0.0505, тобто її немає. Висновок: на цій задачі вибір втрати не вирішує нічого, а вибір кроку тіла вирішив половину метрики.</p>
+
+<div class="note"><b>Правило, ширше за цю тему.</b> Різниця, менша за розкид від
+зерна, не є різницею. Блок про детекцію нагадував про це весь час, і в сегментації
+воно чинне так само: перш ніж радіти новій втраті, поміряй, скільки дає просто інше
+зерно.</div>
+
+<h2 id="s11"><span class="num">11 / Моделі</span>Справжні моделі</h2>
+
+<p>Подивимось, як усе це виглядає в бібліотеці. Три готові сегментатори з
+<code>torchvision</code>, побудовані без ваг
+(<code>weights=None, weights_backbone=None</code>), щоб порахувати саму конструкцію:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>модель</th><th>тіло</th><th>голова</th><th>усього</th></tr></thead>
+<tbody>
+<tr><td>fcn_resnet50</td><td>23 508 032</td><td>9 448 981</td><td>32 957 013</td></tr>
+<tr class="hot"><td>deeplabv3_resnet50</td><td>23 508 032</td><td>16 130 837</td><td>39 638 869</td></tr>
+<tr class="good"><td>lraspp_mobilenet_v3_large</td><td>2 971 952</td><td>249 586</td><td>3 221 538</td></tr>
+</tbody></table></div>
+
+<p>Перше, що варто побачити: у перших двох моделей <b>однакове тіло</b> — той самий
+ResNet-50 на 23 508 032 ваги. Уся різниця між FCN і DeepLab сидить у голові:
+9 448 981 проти 16 130 837. DeepLab дорожчий рівно на ASPP, і це <b>6.7 мільйона
+ваг</b> — більше, ніж уся мережа LR-ASPP разом із тілом.</p>
+
+<p>Друге — розрив у <b>12.3 раза</b> між DeepLab на ResNet-50 і LR-ASPP на
+MobileNetV3. Звідки він береться, видно з двох стовпців окремо:</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">джерело 1 · інше тіло</span>
+    <p>MobileNetV3 замість ResNet-50: 2 971 952 проти 23 508 032, тобто в
+    <b>7.9 раза</b> легше. Це заслуга не сегментації, а
+    <a href="../15-efficient-architectures/lecture.html">теми 15</a> — роздільних
+    згорток.</p></div>
+  <div class="step"><span class="lbl">джерело 2 · інша голова</span>
+    <p>249 586 проти 16 130 837 — у <b>64 рази</b> легше. LR-ASPP (lite reduced ASPP)
+    викидає з ASPP усі атрозні гілки й лишає дві: <code>1×1</code> і глобальне
+    усереднення, яке працює як «ворота» — множить перші ознаки на своє значення,
+    замість склеювати по каналах.</p></div>
+  <div class="step"><span class="lbl">перевірка</span>
+    <p>Що важить більше? Перевіряється однією моделлю:
+    <code>deeplabv3_mobilenet_v3_large</code> має те саме легке тіло (2 971 952),
+    але важку голову ASPP (8 053 525) — разом <b>11 025 477</b>. Тобто на легкому
+    тілі вибір голови міняє модель у <b>3.4 раза</b>.</p></div>
+</div>
+
+<p>Практичний висновок: якщо треба сегментація на телефоні, дивись не лише на тіло.
+Голова ASPP, яка на ResNet-50 губилась серед двадцяти трьох мільйонів, на MobileNet
+стає більшою за саму мережу.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Підсумок і місток далі</h2>
+
+<p>Семантична сегментація ставить перед мережею просту вимогу: вихід тієї самої форми,
+що вхід. Прибрати повнозвʼязні шари й поставити <code>1×1</code> легко — це FCN. Далі
+починається справжня задача, і вона одна: <b>повернути роздільність</b>, яку тіло
+стерло стисканням.</p>
+
+<div class="deck">
+  <div><b>Просто збільшити</b>Нуль ваг, нуль часу. Плавна інтерполяція набагато краща
+    за сходинки (0.6528 проти 0.4039 на кроці 8), але межу вона не відновлює, а
+    згладжує.</div>
+  <div><b>Навчити збільшення</b>Ваги вчаться, але <code>kernel_size</code>, не кратний
+    <code>stride</code>, дає шахівницю: покриття 1 · 2 · 2 · 4 замість рівного.</div>
+  <div><b>Не стискати</b>Атрозна згортка купує поле зору задарма: 33×33 при тих самих
+    36 928 параметрах. Плата — час на нестиснутій карті й ефект решітки.</div>
+  <div><b>ASPP</b>Кілька dilation паралельно плюс глобальне усереднення. Латає решітку
+    й дає кілька масштабів одразу — ціною найважчої голови серед усіх.</div>
+</div>
+
+<p>І ще дві речі, які легко забути, бо вони не про архітектуру. Перша: <b>точність по
+пікселях не є метрикою</b> — вона дорівнює частці найбільшого класу. Друга: <b>Dice і
+IoU — різні числа</b>, і що гірша маска, то більший між ними розрив; на перекритті
+10 % він дворазовий.</p>
+
+<p>Тепер про межу сьогоднішнього підходу. Атрозна згортка зберігає роздільність
+чесно — але дорого, бо кожен шар тіла працює на повній карті. У нашому крихітному
+прикладі це коштувало у 6.0 раза довшим навчанням: 60.1 с проти 10.0 с. На кадрі 512×512 із сотнями каналів той самий
+множник робить модель непридатною для реального часу.</p>
+
+<p>Тому є другий шлях, протилежний за духом. Не «не стискати», а <b>стиснути, як
+завжди, і потім повернути деталі з ранніх шарів</b> — тих, які ще памʼятають, де
+проходила межа, бо вони працювали на повній роздільності. Ідея називається скіп-зʼєднання,
+а мережа, яка на ній побудована, — U-Net. Це
+<a href="../30-unet/lecture.html">наступна тема</a>, і там на нас чекає несподіванка:
+скіп-зʼєднання допомагають не завжди, а рівно тоді, коли є що втрачати.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../28-detection-practice/lecture.html"><span class="dir">попередня</span><span class="ttl">28. Детекція на практиці</span></a>
+    <a class="next" href="../30-unet/lecture.html"><span class="dir">наступна</span><span class="ttl">30. U-Net</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f4(x){return x.toFixed(4);}
+function f2(x){return x.toFixed(2);}
+function pct(x){return (100*x).toFixed(2)+' %';}
+/* пробіл між тисячами: 36928 читається гірше, ніж 36 928 */
+function big(n){
+  var s=String(n), out='', i, c=0;
+  for(i=s.length-1;i>=0;i--){ out=s[i]+out; c++; if(c%3===0 && i>0) out=' '+out; }
+  return out;
+}
+/* «1 піксель», «3 пікселі», «5 пікселів» — без цього вердикт виглядає неписьменно */
+function pxWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return big(n)+' піксель';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return big(n)+' пікселі';
+  return big(n)+' пікселів';
+}
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+}
+
+/* ═══════ спільне: сцени 64×64 з масками ═══════ */
+var SZ=64, NC=4;
+var CLS=['фон','коло','квадрат','трикутник'];
+
+function paintShape(seg,kind,cx,cy,rad){
+  var x,y,dx,dy,inside;
+  for(y=Math.max(0,cy-rad); y<=Math.min(SZ-1,cy+rad); y++){
+    for(x=Math.max(0,cx-rad); x<=Math.min(SZ-1,cx+rad); x++){
+      dx=x-cx; dy=y-cy; inside=false;
+      if(kind===0) inside=(dx*dx+dy*dy<=rad*rad);
+      else if(kind===1) inside=(Math.abs(dx)<=rad && Math.abs(dy)<=rad);
+      else inside=(dy+rad>=0 && dy<=rad && Math.abs(dx)<=(dy+rad)/2);
+      if(inside) seg[y*SZ+x]=kind+1;
+    }
+  }
+}
+function makeScenes(count,rlo,rhi,seed){
+  var rnd=LCG(seed), out=[], i, k, n, rad, cx, cy, seg;
+  for(i=0;i<count;i++){
+    seg=new Uint8Array(SZ*SZ);
+    n=1+Math.floor(rnd()*3);
+    for(k=0;k<n;k++){
+      rad=rlo+Math.floor(rnd()*(rhi-rlo+1));
+      cx=rad+1+Math.floor(rnd()*(SZ-2*rad-2));
+      cy=rad+1+Math.floor(rnd()*(SZ-2*rad-2));
+      paintShape(seg,Math.floor(rnd()*3),cx,cy,rad);
+    }
+    out.push(seg);
+  }
+  return out;
+}
+/* матриця плутанини: рядок — істина, стовпець — прогноз */
+function addConf(cm,pred,truth){
+  var i; for(i=0;i<truth.length;i++) cm[truth[i]*NC+pred[i]]++;
+}
+function miouObjects(cm){
+  var c, inter, rowSum, colSum, union, k, acc=0, used=0;
+  for(c=1;c<NC;c++){
+    inter=cm[c*NC+c]; rowSum=0; colSum=0;
+    for(k=0;k<NC;k++){ rowSum+=cm[c*NC+k]; colSum+=cm[k*NC+c]; }
+    union=rowSum+colSum-inter;
+    if(rowSum>0){ acc+=union>0?inter/union:0; used++; }
+  }
+  return used?acc/used:0;
+}
+function pixAcc(cm){
+  var c, d=0, t=0, k;
+  for(c=0;c<NC;c++){ d+=cm[c*NC+c]; for(k=0;k<NC;k++) t+=cm[c*NC+k]; }
+  return t?d/t:0;
+}
+function classColors(){
+  return [css('--hair'), css('--teal'), css('--rose'), css('--amber')];
+}
+/* маску малюємо через окрему канву-заготовку, а не putImageData на екранну (грабля №1) */
+function drawMask(g,seg,ox,oy,K){
+  var col=classColors(), x, y, v;
+  g.fillStyle=css('--paper'); g.fillRect(ox,oy,SZ*K,SZ*K);
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++){
+    v=seg[y*SZ+x];
+    if(v){ g.fillStyle=col[v]; g.fillRect(ox+x*K,oy+y*K,K,K); }
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(ox+0.5,oy+0.5,SZ*K-1,SZ*K-1);
+}
+function drawSmall(g,map,n,ox,oy,side){
+  var col=classColors(), K=side/n, x, y, v;
+  g.fillStyle=css('--paper'); g.fillRect(ox,oy,side,side);
+  for(y=0;y<n;y++) for(x=0;x<n;x++){
+    v=map[y*n+x];
+    if(v){ g.fillStyle=col[v]; g.fillRect(ox+x*K,oy+y*K,K,K); }
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  for(y=0;y<=n;y++){
+    g.beginPath(); g.moveTo(ox,oy+y*K+0.5); g.lineTo(ox+side,oy+y*K+0.5); g.stroke();
+    g.beginPath(); g.moveTo(ox+y*K+0.5,oy); g.lineTo(ox+y*K+0.5,oy+side); g.stroke();
+  }
+}
+/* білінійне збільшення карти оцінок класів — та сама угода, що align_corners=False */
+function bilinearUp(small,n,out){
+  var res=new Float32Array(NC*out*out), c, y, x, fy, fx, y0, y1, x0, x1, wy, wx, sc=n/out;
+  for(y=0;y<out;y++){
+    fy=(y+0.5)*sc-0.5; if(fy<0) fy=0; if(fy>n-1) fy=n-1;
+    y0=Math.floor(fy); y1=Math.min(n-1,y0+1); wy=fy-y0;
+    for(x=0;x<out;x++){
+      fx=(x+0.5)*sc-0.5; if(fx<0) fx=0; if(fx>n-1) fx=n-1;
+      x0=Math.floor(fx); x1=Math.min(n-1,x0+1); wx=fx-x0;
+      for(c=0;c<NC;c++){
+        res[(c*out+y)*out+x]=
+          (small[(c*n+y0)*n+x0]*(1-wx)+small[(c*n+y0)*n+x1]*wx)*(1-wy)+
+          (small[(c*n+y1)*n+x0]*(1-wx)+small[(c*n+y1)*n+x1]*wx)*wy;
+      }
+    }
+  }
+  return res;
+}
+function avgPoolOneHot(seg,S){
+  var n=SZ/S, res=new Float32Array(NC*n*n), y, x, c;
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++)
+    res[(seg[y*SZ+x]*n+((y/S)|0))*n+((x/S)|0)]+=1;
+  for(c=0;c<NC*n*n;c++) res[c]/=S*S;
+  return res;
+}
+function argmaxMap(scores,side){
+  var out=new Uint8Array(side*side), i, c, best, bv, v;
+  for(i=0;i<side*side;i++){
+    best=0; bv=-1e9;
+    for(c=0;c<NC;c++){ v=scores[c*side*side+i]; if(v>bv){bv=v; best=c;} }
+    out[i]=best;
+  }
+  return out;
+}
+function nearestDown(seg,S){
+  var n=SZ/S, out=new Uint8Array(n*n), y, x;
+  for(y=0;y<n;y++) for(x=0;x<n;x++) out[y*n+x]=seg[(y*S)*SZ+(x*S)];
+  return out;
+}
+function nearestUp(map,n,S){
+  var out=new Uint8Array(SZ*SZ), y, x;
+  for(y=0;y<SZ;y++) for(x=0;x<SZ;x++) out[y*SZ+x]=map[((y/S)|0)*n+((x/S)|0)];
+  return out;
+}
+
+/* ═══════ 1 · крок карти вбиває межу ═══════ */
+var STR_STEPS=[1,2,4,8,16,32], strS=8, strMode=0;
+var STR_SCENES=makeScenes(24,6,10,7);
+
+function strideRestore(seg,S,mode){
+  if(S===1) return seg;
+  var n=SZ/S;
+  if(mode===0) return nearestUp(nearestDown(seg,S),n,S);
+  return argmaxMap(bilinearUp(avgPoolOneHot(seg,S),n,SZ),SZ);
+}
+function drawStride(){
+  var cv=I('cStride'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), S=strS, n=SZ/S, K=4, i, cm=new Float64Array(NC*NC);
+  for(i=0;i<STR_SCENES.length;i++)
+    addConf(cm,strideRestore(STR_SCENES[i],S,strMode),STR_SCENES[i]);
+  var mi=miouObjects(cm), ac=pixAcc(cm);
+  var side=SZ*K, gap=(W-3*side)/4, y0=42;
+
+  drawMask(g,STR_SCENES[0],gap,y0,K);
+  capt(g,'істина 64×64',gap,y0-14,css('--ink'),12,true);
+  var small=(strMode===0)?nearestDown(STR_SCENES[0],S)
+            :argmaxMap(avgPoolOneHot(STR_SCENES[0],S),n);
+  drawSmall(g,small,n,gap*2+side,y0,side);
+  capt(g,'карта '+n+'×'+n,gap*2+side,y0-14,css('--ink'),12,true);
+  drawMask(g,strideRestore(STR_SCENES[0],S,strMode),gap*3+2*side,y0,K);
+  capt(g,'повернено до 64×64',gap*3+2*side,y0-14,css('--ink'),12,true);
+
+  capt(g,'один піксель карти дорівнює квадрату '+S+'×'+S+' пікселів входу',
+       gap,y0+side+26,css('--soft'),12,false);
+  capt(g,'mIoU по 24 сценах: '+f4(mi)+'    точність по пікселях: '+f4(ac),
+       gap,y0+side+46,css('--rose'),13,true);
+
+  I('strideMap').textContent=n+'×'+n;
+  I('stridePx').textContent=S+'×'+S+' px';
+  I('strideIou').textContent=f4(mi);
+  I('strideAcc').textContent=f4(ac);
+  I('strideKv').textContent=S;
+
+  var name=strMode===0?'сходинками':'плавно';
+  if(S===1) verd('vStride','t-ok','КРОК 1',
+    'Крок 1 означає, що карта збігається з входом. Маска ідеальна, mIoU '+f4(mi)+
+    ' — але таке тіло не стискає взагалі й коштує найдорожче.');
+  else if(mi>=0.90) verd('vStride','t-ok','МАЙЖЕ БЕЗ УТРАТ',
+    'Крок '+S+', повернення '+name+': mIoU '+f4(mi)+'. Утрачено лише тонку смужку на межі.');
+  else if(mi>=0.6) verd('vStride','t-ok','ЩЕ ЖИВЕ',
+    'Крок '+S+', повернення '+name+': mIoU '+f4(mi)+'. Межа помітно зіпсована, але предмети '+
+    'ще впізнавані.');
+  else if(mi>=0.3) verd('vStride','t-mid','ПОМІТНО ГІРШЕ',
+    'Крок '+S+', повернення '+name+': mIoU '+f4(mi)+'. Утрачено вже більшу частину збігу, '+
+    'а точність по пікселях досі '+f4(ac)+' — вона цього майже не бачить.');
+  else verd('vStride','t-no','МАСКИ БІЛЬШЕ НЕМАЄ',
+    'Крок '+S+', повернення '+name+': mIoU '+f4(mi)+'. Фігура радіусом 6-10 пікселів '+
+    'уміщається в одну клітинку карти, і повернути з неї нема чого.');
+}
+
+/* ═══════ 2 · точність по пікселях міряє фон ═══════ */
+var balR=8, balMode=0;
+function drawBal(){
+  var cv=I('cBal'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), scenes=makeScenes(24,balR,balR,11);
+  var cm=new Float64Array(NC*NC), i, j, pred, rnd=LCG(5), counts=new Float64Array(NC), total=0;
+  for(i=0;i<scenes.length;i++){
+    pred=new Uint8Array(SZ*SZ);
+    for(j=0;j<SZ*SZ;j++){
+      if(balMode===0) pred[j]=0;
+      else if(balMode===1) pred[j]=2;
+      else pred[j]=Math.floor(rnd()*NC);
+      counts[scenes[i][j]]++; total++;
+    }
+    addConf(cm,pred,scenes[i]);
+  }
+  var mi=miouObjects(cm), ac=pixAcc(cm), share=[], topI=0;
+  for(i=0;i<NC;i++){ share.push(counts[i]/total); if(counts[i]>counts[topI]) topI=i; }
+
+  var K=4, side=SZ*K, y0=42, col=classColors();
+  drawMask(g,scenes[0],26,y0,K);
+  capt(g,'істина',26,y0-14,css('--ink'),12,true);
+  var shown=new Uint8Array(SZ*SZ), rnd2=LCG(5);
+  for(j=0;j<SZ*SZ;j++) shown[j]=balMode===0?0:(balMode===1?2:Math.floor(rnd2()*NC));
+  drawMask(g,shown,26+side+26,y0,K);
+  capt(g,'прогноз порожньої моделі',26+side+26,y0-14,css('--ink'),12,true);
+
+  /* стовпчики часток класів: підпис НАД стовпчиком, інакше він виїжджає за канву */
+  var bx=26+2*side+62, bw=W-bx-30, bh=16;
+  capt(g,'з чого складається вибірка',bx,y0-14,css('--ink'),12,true);
+  for(i=0;i<NC;i++){
+    var rowTop=y0+i*(bh+30);
+    capt(g,CLS[i]+' — '+pct(share[i]),bx,rowTop+11,css('--soft'),12,false);
+    g.fillStyle=i===0?css('--soft'):col[i];
+    g.fillRect(bx,rowTop+18,Math.max(2,bw*share[i]),bh);
+  }
+  capt(g,'точність по пікселях '+f4(ac),26,y0+side+22,css('--rose'),13,true);
+  capt(g,'mIoU по трьох класах предметів '+f4(mi),26,y0+side+42,css('--rose'),13,true);
+
+  I('balBg').textContent=pct(share[0]);
+  I('balAcc').textContent=f4(ac);
+  I('balIou').textContent=f4(mi);
+  I('balTop').textContent=CLS[topI]+' '+pct(share[topI]);
+  I('balRv').textContent=balR;
+
+  var names=['усе фон','усе квадрат','навмання'];
+  var equal=Math.abs(ac-share[balMode===0?0:(balMode===1?2:0)])<0.0005;
+  if(balMode===0) verd('vBal','t-no','ТОЧНІСТЬ = ЧАСТКА ФОНУ',
+    'Модель «усе фон» дає точність '+f4(ac)+', і це рівно частка фону '+pct(share[0])+
+    (equal?' — до останнього знака':'')+'. mIoU '+f4(mi)+': жодного пікселя предмета не вгадано.');
+  else if(balMode===1) verd('vBal','t-no','ТЕ САМЕ, ТІЛЬКИ НАВПАКИ',
+    'Модель «'+names[balMode]+'» дає точність '+f4(ac)+' — частку квадратів. mIoU '+f4(mi)+
+    ': один клас має крихітне IoU, два інші нульове.');
+  else verd('vBal','t-no','ВИПАДКОВІСТЬ НЕ РЯТУЄ',
+    'Випадковий підпис дає точність '+f4(ac)+' і mIoU '+f4(mi)+'. Обидві метрики малі, '+
+    'але саме mIoU показує, що моделі немає.');
+}
+
+/* ═══════ 3 · IoU і Dice ═══════ */
+var GN=140, diceShift=20, diceShape=0;
+function diceMask(shape,cx){
+  var m=new Uint8Array(GN*GN), x, y, r=34, dx, dy;
+  for(y=0;y<GN;y++) for(x=0;x<GN;x++){
+    dx=x-cx; dy=y-GN/2;
+    if(shape===0){ if(dx*dx+dy*dy<=r*r) m[y*GN+x]=1; }
+    else { if(Math.abs(dx)<=r && Math.abs(dy)<=r) m[y*GN+x]=1; }
+  }
+  return m;
+}
+function drawDice(){
+  var cv=I('cDice'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var cx=36, A=diceMask(diceShape,cx), B=diceMask(diceShape,cx+diceShift);
+  var i, inter=0, na=0, nb=0;
+  for(i=0;i<GN*GN;i++){ if(A[i]) na++; if(B[i]) nb++; if(A[i]&&B[i]) inter++; }
+  var union=na+nb-inter, iou=union?inter/union:0, dice=(na+nb)?2*inter/(na+nb):0;
+  var ov=na?inter/na:0, byFormula=2*iou/(1+iou);
+
+  var K=2.2, ox=26, oy=44;
+  g.fillStyle=css('--paper'); g.fillRect(ox,oy,GN*K,GN*K);
+  var x, y;
+  for(y=0;y<GN;y++) for(x=0;x<GN;x++){
+    i=y*GN+x;
+    if(A[i]&&B[i]) g.fillStyle=css('--rose');
+    else if(A[i]) g.fillStyle=css('--teal-w');
+    else if(B[i]) g.fillStyle=css('--amber-w');
+    else continue;
+    g.fillRect(ox+x*K,oy+y*K,K+0.5,K+0.5);
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(ox+0.5,oy+0.5,GN*K-1,GN*K-1);
+  capt(g,'перетин підсвічено',ox,oy-14,css('--ink'),12,true);
+  capt(g,'перетин '+big(inter)+' px    обʼєднання '+big(union)+' px',ox,oy+GN*K+20,css('--soft'),12,false);
+
+  /* графік Dice від IoU */
+  var px=ox+GN*K+70, py=oy, pw=W-px-40, ph=GN*K;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(px+0.5,py+0.5,pw,ph);
+  var t, gx, gy;
+  g.strokeStyle=css('--soft'); g.setLineDash([4,4]); g.beginPath();
+  g.moveTo(px,py+ph); g.lineTo(px+pw,py); g.stroke(); g.setLineDash([]);
+  capt(g,'діагональ: якби Dice = IoU',px+8,py+16,css('--soft'),11,false);
+  g.strokeStyle=css('--rose'); g.lineWidth=2; g.beginPath();
+  for(t=0;t<=100;t++){
+    gx=px+pw*t/100; gy=py+ph-ph*(2*(t/100)/(1+t/100));
+    if(t===0) g.moveTo(gx,gy); else g.lineTo(gx,gy);
+  }
+  g.stroke();
+  gx=px+pw*iou; gy=py+ph-ph*dice;
+  g.fillStyle=css('--teal'); g.beginPath(); g.arc(gx,gy,5,0,6.2832); g.fill();
+  capt(g,'IoU',px+pw/2,py+ph+20,css('--soft'),11,false,'center');
+  capt(g,'Dice',px-8,py+ph/2,css('--soft'),11,false,'right');
+  capt(g,'крива Dice = 2·IoU / (1 + IoU)',px,py-14,css('--ink'),12,true);
+
+  I('diceOv').textContent=pct(ov);
+  I('diceIou').textContent=f4(iou);
+  I('diceDice').textContent=f4(dice);
+  I('diceRatio').textContent=inter>0?f2(dice/iou):'—';
+  I('diceShiftv').textContent=diceShift;
+
+  var agree=Math.abs(dice-byFormula)<0.002;
+  if(inter===0) verd('vDice','t-no','МАСКИ РОЗІЙШЛИСЬ',
+    'Спільних пікселів немає жодного: IoU '+f4(iou)+', Dice '+f4(dice)+'. Тут обидві метрики '+
+    'однаково кажуть «нуль» — розходяться вони лише там, де перетин є.');
+  else if(iou<0.02) verd('vDice','t-no','ПЕРЕТИН МАЙЖЕ ЗНИК',
+    'Перекриття '+pct(ov)+': IoU '+f4(iou)+', Dice '+f4(dice)+' — у '+f2(dice/iou)+
+    ' раза більше. Це та сама межа вдвічі, до якої прямує крива праворуч.');
+  else if(dice/iou<1.2) verd('vDice','t-ok','МЕТРИКИ МАЙЖЕ ЗБІГАЮТЬСЯ',
+    'Перекриття '+pct(ov)+': IoU '+f4(iou)+', Dice '+f4(dice)+', різниця в '+f2(dice/iou)+
+    ' раза. На добрих масках байдуже, яку цитувати.'+(agree?' Формула дає те саме: '+f4(byFormula)+'.':''));
+  else if(dice/iou<1.55) verd('vDice','t-mid','РОЗРИВ РОСТЕ',
+    'Перекриття '+pct(ov)+': IoU '+f4(iou)+', Dice '+f4(dice)+' — уже в '+f2(dice/iou)+
+    ' раза більше.'+(agree?' Формула 2·IoU/(1+IoU) дає '+f4(byFormula)+' — збіглося.':''));
+  else verd('vDice','t-no','DICE ПРИКРАШАЄ ВДВІЧІ',
+    'Перекриття '+pct(ov)+': IoU '+f4(iou)+', а Dice '+f4(dice)+' — у '+f2(dice/iou)+
+    ' раза більше. Саме на поганих масках вибір метрики міняє висновок статті.');
+}
+
+/* ═══════ 4 · артефакт шахівниці ═══════ */
+var chkK=3;
+function coverage(k){
+  var inN=8, stride=2, outN=(inN-1)*stride+k, cov=new Float64Array(outN*outN), a, b, y, x;
+  for(a=0;a<inN;a++) for(b=0;b<inN;b++)
+    for(y=0;y<k;y++) for(x=0;x<k;x++)
+      cov[(a*stride+y)*outN+(b*stride+x)]+=1;
+  return {cov:cov,n:outN};
+}
+function coverCells(k){
+  var c=coverage(k), lo=k, hi=c.n-k-1, cells=[0,0,0,0], cnt=[0,0,0,0], y, x, idx;
+  for(y=lo;y<=hi;y++) for(x=lo;x<=hi;x++){
+    idx=(((y-lo)%2)*2)+((x-lo)%2);
+    cells[idx]+=c.cov[y*c.n+x]; cnt[idx]++;
+  }
+  var i; for(i=0;i<4;i++) cells[i]=cnt[i]?cells[i]/cnt[i]:0;
+  return cells;
+}
+function drawCheck(){
+  var cv=I('cCheck'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), k=chkK, c=coverage(k), cells=coverCells(k);
+  var mean=(cells[0]+cells[1]+cells[2]+cells[3])/4, i, vr=0;
+  for(i=0;i<4;i++) vr+=(cells[i]-mean)*(cells[i]-mean);
+  vr/=4;
+  var mx=Math.max.apply(null,cells), mn=Math.min.apply(null,cells);
+
+  /* ліворуч: як лягають відбитки ядра */
+  var K=14, ox=26, oy=48, n=c.n;
+  capt(g,'вихід '+n+'×'+n,ox,oy-16,css('--ink'),12,true);
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  var y, x;
+  for(y=0;y<=n;y++){
+    g.beginPath(); g.moveTo(ox,oy+y*K+0.5); g.lineTo(ox+n*K,oy+y*K+0.5); g.stroke();
+    g.beginPath(); g.moveTo(ox+y*K+0.5,oy); g.lineTo(ox+y*K+0.5,oy+n*K); g.stroke();
+  }
+  var picks=[[2,2],[3,2],[2,3],[3,3]], cols=[css('--rose'),css('--teal'),css('--amber'),css('--soft')];
+  for(i=0;i<picks.length;i++){
+    g.globalAlpha=0.30; g.fillStyle=cols[i];
+    g.fillRect(ox+picks[i][1]*2*K,oy+picks[i][0]*2*K,k*K,k*K);
+    g.globalAlpha=1; g.strokeStyle=cols[i]; g.lineWidth=1.5;
+    g.strokeRect(ox+picks[i][1]*2*K+0.5,oy+picks[i][0]*2*K+0.5,k*K-1,k*K-1);
+  }
+  capt(g,'чотири сусідні відбитки; крок 2',ox,oy+n*K+20,css('--soft'),12,false);
+
+  /* праворуч: скільки внесків отримала кожна клітинка */
+  var px=ox+n*K+66, py=oy;
+  capt(g,'скільки внесків отримала клітинка',px,py-16,css('--ink'),12,true);
+  var top=Math.max.apply(null,Array.prototype.slice.call(c.cov));
+  for(y=0;y<n;y++) for(x=0;x<n;x++){
+    var v=c.cov[y*n+x];
+    g.globalAlpha=top?0.12+0.88*v/top:0.12;
+    g.fillStyle=css('--rose'); g.fillRect(px+x*K,py+y*K,K,K);
+  }
+  g.globalAlpha=1;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  for(y=0;y<=n;y++){
+    g.beginPath(); g.moveTo(px,py+y*K+0.5); g.lineTo(px+n*K,py+y*K+0.5); g.stroke();
+    g.beginPath(); g.moveTo(px+y*K+0.5,py); g.lineTo(px+y*K+0.5,py+n*K); g.stroke();
+  }
+  capt(g,'у клітинці 2×2: '+cells.map(function(v){return v.toFixed(0);}).join(' · '),
+       px,py+n*K+20,css('--rose'),13,true);
+  capt(g,'дисперсія '+f4(vr)+',  найбільше / найменше '+f2(mx/mn),
+       px,py+n*K+40,css('--soft'),12,false);
+
+  I('checkCells').textContent=cells.map(function(v){return v.toFixed(0);}).join(' · ');
+  I('checkVar').textContent=f4(vr);
+  I('checkRatio').textContent=f2(mx/mn);
+  I('checkDiv').textContent=(k%2===0)?'так':'ні';
+
+  if(k%2===0) verd('vCheck','t-ok','ПОКРИТТЯ РІВНЕ',
+    'Ядро '+k+' ділиться на крок 2, тому всі чотири позиції дістають по '+cells[0].toFixed(0)+
+    ' внесків. Дисперсія '+f4(vr)+' — візерунка немає.');
+  else verd('vCheck','t-no','ШАХІВНИЦЯ',
+    'Ядро '+k+' на крок 2 не ділиться: покриття '+cells.map(function(v){return v.toFixed(0);}).join(' · ')+
+    ', тобто одна позиція дістає в '+f2(mx/mn)+' раза більше за іншу. Дисперсія '+f4(vr)+
+    '. Це геометрія, а не ваги — навчанням її не скасувати.');
+}
+
+/* ═══════ 5 · атрозна згортка ═══════ */
+var atrD=1;
+function drawAtr(){
+  var cv=I('cAtr'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), d=atrD, N=33, K=10, ox=26, oy=48, c=(N-1)/2;
+  var eff=2*d+1, field=eff*eff, dens=9/field;
+
+  capt(g,'сітка вхідних пікселів',ox,oy-16,css('--ink'),12,true);
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  var i, j;
+  for(i=0;i<=N;i++){
+    g.beginPath(); g.moveTo(ox,oy+i*K+0.5); g.lineTo(ox+N*K,oy+i*K+0.5); g.stroke();
+    g.beginPath(); g.moveTo(ox+i*K+0.5,oy); g.lineTo(ox+i*K+0.5,oy+N*K); g.stroke();
+  }
+  /* поле, яке накриває ядро */
+  var half=d, x0=c-half, y0=c-half;
+  g.strokeStyle=css('--teal'); g.lineWidth=2;
+  g.strokeRect(ox+x0*K,oy+y0*K,eff*K,eff*K);
+  for(i=-1;i<=1;i++) for(j=-1;j<=1;j++){
+    var gx=c+j*d, gy=c+i*d;
+    g.fillStyle=(i===0&&j===0)?css('--rose'):css('--amber');
+    g.fillRect(ox+gx*K+1,oy+gy*K+1,K-2,K-2);
+  }
+  capt(g,'поле '+eff+'×'+eff+', відліків завжди девʼять',
+       ox,oy+N*K+20,css('--soft'),12,false);
+
+  /* праворуч: два лічильники */
+  var px=ox+N*K+64, py=oy, pw=W-px-34, ph=N*K;
+  capt(g,'що росте, а що стоїть',px,py-16,css('--ink'),12,true);
+  g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(px+0.5,py+0.5,pw,ph);
+  var maxF=33*33, t, gx, gy;
+  g.strokeStyle=css('--teal'); g.lineWidth=2; g.beginPath();
+  for(t=1;t<=16;t++){
+    gx=px+pw*(t-1)/15; gy=py+ph-ph*((2*t+1)*(2*t+1))/maxF;
+    if(t===1) g.moveTo(gx,gy); else g.lineTo(gx,gy);
+  }
+  g.stroke();
+  g.strokeStyle=css('--rose'); g.lineWidth=2; g.beginPath();
+  g.moveTo(px,py+ph-ph*0.34); g.lineTo(px+pw,py+ph-ph*0.34); g.stroke();
+  capt(g,'поле зору',px+10,py+22,css('--teal'),12,true);
+  capt(g,'параметри: 36 928 при будь-якому dilation',px+10,py+ph-ph*0.34-10,css('--rose'),12,true);
+  gx=px+pw*(d-1)/15; gy=py+ph-ph*(field/maxF);
+  g.fillStyle=css('--teal'); g.beginPath(); g.arc(gx,gy,5,0,6.2832); g.fill();
+  capt(g,'dilation',px+pw/2,py+ph+20,css('--soft'),11,false,'center');
+
+  I('atrK').textContent=eff+'×'+eff;
+  I('atrField').textContent=big(field);
+  I('atrPar').textContent=big(36928);
+  I('atrDens').textContent=(100*dens).toFixed(2)+' %';
+  I('atrDv').textContent=d;
+
+  if(d===1) verd('vAtr','t-ok','ЗВИЧАЙНА ЗГОРТКА',
+    'dilation 1 — це проста згортка 3×3: поле 9 пікселів, прочитано всі 9, тобто 100 %. '+
+    'Далі буде цікавіше.');
+  else if(dens>=0.10) verd('vAtr','t-ok','ПОЛЕ ЗАДАРМА',
+    'Поле виросло до '+eff+'×'+eff+' = '+pxWord(field)+', параметрів так само 36 928. '+
+    'Прочитано '+(100*dens).toFixed(2)+' % поля — дірки ще не критичні.');
+  else verd('vAtr','t-mid','ШИРОКО, АЛЕ РІДКО',
+    'Поле '+eff+'×'+eff+' = '+pxWord(field)+' при тих самих 36 928 параметрах, '+
+    'але ядро читає з нього лише '+(100*dens).toFixed(2)+' %. Дрібна деталь може провалитись '+
+    'між відліками — саме через це в DeepLab гілок кілька, а не одна.');
+}
+
+/* ═══════ 6 · ASPP ═══════ */
+var ASPP_SETS=[[2],[1,2,4],[1,2,4,8],[1,6,12,18]];
+var asppSet=1, asppPool=1;
+function drawAspp(){
+  var cv=I('cAspp'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), ds=ASPP_SETS[asppSet];
+  var maxd=Math.max.apply(null,ds), N=2*maxd+1, K=Math.min(24,Math.floor(330/N));
+  var side=N*K, ox=26, oy=50, c=(N-1)/2, i, j, b;
+  var read={}, readCount=0;
+
+  capt(g,'відліки гілок',ox,oy-16,css('--ink'),12,true);
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  for(i=0;i<=N;i++){
+    g.beginPath(); g.moveTo(ox,oy+i*K+0.5); g.lineTo(ox+side,oy+i*K+0.5); g.stroke();
+    g.beginPath(); g.moveTo(ox+i*K+0.5,oy); g.lineTo(ox+i*K+0.5,oy+side); g.stroke();
+  }
+  var cols=[css('--rose'),css('--teal'),css('--amber'),css('--ink')];
+  for(b=0;b<ds.length;b++){
+    for(i=-1;i<=1;i++) for(j=-1;j<=1;j++){
+      var gx=c+j*ds[b], gy=c+i*ds[b], key=gy*N+gx;
+      if(!read[key]){ read[key]=1; readCount++; }
+      g.fillStyle=cols[b%cols.length];
+      g.globalAlpha=(i===0&&j===0)?1:0.75;
+      g.fillRect(ox+gx*K+1,oy+gy*K+1,K-2,K-2);
+      g.globalAlpha=1;
+    }
+  }
+  var legY=oy+side+22;
+  for(b=0;b<ds.length;b++){
+    g.fillStyle=cols[b%cols.length];
+    g.fillRect(ox+b*104,legY-9,10,10);
+    capt(g,'dilation '+ds[b],ox+b*104+15,legY,css('--soft'),12,false);
+  }
+
+  var field=N*N, dens=readCount/field;
+  var px=ox+side+64, py=oy, pw=W-px-34;
+  capt(g,'що дає кожна гілка',px,py-16,css('--ink'),12,true);
+  var rowY=py+8;
+  for(b=0;b<ds.length;b++){
+    var f=(2*ds[b]+1);
+    g.fillStyle=cols[b%cols.length]; g.fillRect(px,rowY-10,10,10);
+    capt(g,'dilation '+ds[b]+':  поле '+f+'×'+f+',  відліків 9',px+16,rowY,css('--soft'),12.5,false);
+    rowY+=26;
+  }
+  if(asppPool){
+    g.fillStyle=css('--soft'); g.fillRect(px,rowY-10,10,10);
+    capt(g,'глобальне усереднення:  уся карта одним числом',px+16,rowY,css('--soft'),12.5,false);
+    rowY+=26;
+  }
+  rowY+=10;
+  capt(g,'сумарне поле '+N+'×'+N+' = '+pxWord(field),px,rowY,css('--ink'),13,true); rowY+=22;
+  capt(g,'прочитано різних пікселів: '+readCount,px,rowY,css('--ink'),13,true); rowY+=22;
+  capt(g,'щільність '+(100*dens).toFixed(1)+' %',px,rowY,css('--rose'),13,true);
+
+  I('asppField').textContent=N+'×'+N;
+  I('asppRead').textContent=readCount+' з '+big(field);
+  I('asppN').textContent=ds.length+(asppPool?' + усереднення':'');
+  I('asppDens').textContent=(100*dens).toFixed(1)+' %';
+
+  if(ds.length===1) verd('vAspp','t-no','ОДИН МАСШТАБ',
+    'Одна гілка з dilation '+ds[0]+' читає девʼять пікселів із поля '+N+'×'+N+', тобто '+
+    (100*dens).toFixed(1)+' %. Предмет іншого розміру такому ядру не по зубах, '+
+    'а дірки нічим не затулити.'+(asppPool?' Гілка усереднення додає лише загальний контекст.':''));
+  else if(dens>=0.10) verd('vAspp','t-ok','ДІРКИ ЗАТУЛЕНО',
+    'Гілок '+ds.length+', сумарне поле '+N+'×'+N+', різних прочитаних пікселів '+readCount+' '+
+    '('+(100*dens).toFixed(1)+' %). Гілка з dilation 1 дивиться суцільно, тому дрібна деталь '+
+    'не провалюється між відліками інших.'+(asppPool?' Усереднення додає контекст усього кадру.':
+    ' Без гілки усереднення бракує загального контексту кадру.'));
+  else verd('vAspp','t-mid','ШИРОКО, АЛЕ РІДКО',
+    'Сумарне поле '+N+'×'+N+', але різних прочитаних пікселів лише '+readCount+' — це '+
+    (100*dens).toFixed(1)+' %. Такий набір розрахований на карту кроку 8, де один її '+
+    'піксель дорівнює восьми вхідним, тож на повній роздільності він занадто розріджений.');
+}
+
+/* ═══════ 7 · три способи поруч ═══════ */
+var WAY_S=[2,4,8,16], waysMode=0, waysSi=1;
+var WAY_SCENES=makeScenes(24,6,10,3);
+function bilinearUp2x(scores,n){
+  return bilinearUp(scores,n,2*n);
+}
+function waysRestore(seg,S,mode){
+  if(mode===2) return seg;
+  var n=SZ/S, small=avgPoolOneHot(seg,S);
+  if(mode===0) return argmaxMap(bilinearUp(small,n,SZ),SZ);
+  var cur=small, size=n;
+  while(size<SZ){ cur=bilinearUp2x(cur,size); size*=2; }
+  return argmaxMap(cur,SZ);
+}
+function bodyMacs(S,mode){
+  var levels=Math.log2(S)|0, C=16, macs=SZ*SZ*1*C*9, l, side;
+  if(mode===2){ return macs + levels*SZ*SZ*C*C*9; }
+  for(l=1;l<=levels;l++){ side=SZ>>l; macs+=side*side*C*C*9; }
+  if(mode===1) for(l=levels;l>=1;l--){ side=SZ>>(l-1); macs+=side*side*C*C*16; }
+  return macs;
+}
+function drawWays(){
+  var cv=I('cWays'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), S=WAY_S[waysSi], mode=waysMode;
+  var cm=new Float64Array(NC*NC), i;
+  for(i=0;i<WAY_SCENES.length;i++) addConf(cm,waysRestore(WAY_SCENES[i],S,mode),WAY_SCENES[i]);
+  var mi=miouObjects(cm);
+  var K=4, side=SZ*K, ox=26, oy=48;
+  var names=['білінійне збільшення','навчене збільшення','атрозне тіло без стискання'];
+
+  drawMask(g,WAY_SCENES[0],ox,oy,K);
+  capt(g,'істина',ox,oy-16,css('--ink'),12,true);
+  drawMask(g,waysRestore(WAY_SCENES[0],S,mode),ox+side+30,oy,K);
+  capt(g,names[mode],ox+side+30,oy-16,css('--ink'),12,true);
+  capt(g,mode===2?'карта завжди 64×64':'карта перед головою '+(SZ/S)+'×'+(SZ/S),
+       ox+side+30,oy+side+20,css('--soft'),12,false);
+
+  /* стовпчики вартості тіла */
+  var px=ox+2*side+64, py=oy, pw=W-px-40, m, i2;
+  capt(g,'множень у тілі на кадр 64×64',px,py-24,css('--ink'),12,true);
+  var vals=[bodyMacs(S,0),bodyMacs(S,1),bodyMacs(S,2)];
+  var top=Math.max(vals[0],Math.max(vals[1],vals[2]));
+  for(i2=0;i2<3;i2++){
+    var wpx=Math.max(3,pw*0.50*vals[i2]/top);
+    g.fillStyle=(i2===mode)?css('--rose'):css('--hair');
+    g.fillRect(px,py+14+i2*48,wpx,24);
+    capt(g,names[i2],px,py+14+i2*48-6,css('--soft'),11.5,false);
+    capt(g,big(Math.round(vals[i2]/1000))+' тис.',px+wpx+8,py+14+i2*48+17,
+         (i2===mode)?css('--rose'):css('--soft'),12,true);
+  }
+  capt(g,'mIoU відновлення істинної маски: '+f4(mi),px,py+14+3*48+16,css('--rose'),13,true);
+  capt(g,'рахуємо по 24 сценах',px,py+14+3*48+36,css('--soft'),12,false);
+
+  I('waysMap').textContent=mode===2?'64×64':(SZ/S)+'×'+(SZ/S);
+  I('waysIou').textContent=f4(mi);
+  I('waysMac').textContent=big(vals[mode]);
+  I('waysRel').textContent=f2(vals[mode]/Math.min(vals[0],Math.min(vals[1],vals[2])))+' ×';
+  I('waysSv').textContent=S;
+
+  var rel=vals[2]/vals[0];
+  if(mode===2) verd('vWays','t-ok','КРОКУ ПРОСТО НЕМАЄ',
+    'Атрозне тіло не стискає, тому карта завжди 64×64 і маска відновлюється точно: mIoU '+f4(mi)+
+    '. Повзунок кроку на неї не впливає взагалі. Плата видно поруч: при кроці '+S+
+    ' це тіло коштує в '+f2(rel)+' раза більше множень за те саме тіло зі стисканням.');
+  else if(mi>=0.75) verd('vWays','t-ok','РОЗДІЛЬНОСТІ ЩЕ ВИСТАЧАЄ',
+    'Крок '+S+', спосіб «'+names[mode]+'»: mIoU '+f4(mi)+'. При такому кроці карта ще '+
+    'тримає межу, і платити за атрозне тіло (у '+f2(rel)+' раза дорожче) нема за що.');
+  else if(mi>=0.4) verd('vWays','t-mid','МЕЖА ПОЧАЛА ЗНИКАТИ',
+    'Крок '+S+', спосіб «'+names[mode]+'»: mIoU '+f4(mi)+'. Ще не катастрофа, але різниця '+
+    'з атрозним тілом (яке дає 1.0000) уже помітна.');
+  else verd('vWays','t-no','ВІДНОВЛЮВАТИ НЕМА З ЧОГО',
+    'Крок '+S+', спосіб «'+names[mode]+'»: mIoU '+f4(mi)+'. Жодне збільшення не поверне того, '+
+    'чого в карті немає — саме тут атрозне тіло виправдовує свої '+f2(rel)+' раза.');
+}
+
+/* ═══════ підключення керування ═══════ */
+on('strideK','input',function(e){ strS=STR_STEPS[+e.target.value]; drawStride(); });
+segment('strideMode',function(i){ strMode=i; drawStride(); });
+on('balR','input',function(e){ balR=+e.target.value; drawBal(); });
+segment('balMode',function(i){ balMode=i; drawBal(); });
+on('diceShift','input',function(e){ diceShift=+e.target.value; drawDice(); });
+segment('diceShape',function(i){ diceShape=i; drawDice(); });
+segment('checkK',function(i){ chkK=i; drawCheck(); });
+on('atrD','input',function(e){ atrD=+e.target.value; drawAtr(); });
+segment('asppSet',function(i){ asppSet=i; drawAspp(); });
+segment('asppPool',function(i){ asppPool=i; drawAspp(); });
+segment('waysMode',function(i){ waysMode=i; drawWays(); });
+on('waysS','input',function(e){ waysSi=+e.target.value; drawWays(); });
+
+function drawAll(){ drawStride(); drawBal(); drawDice(); drawCheck(); drawAtr(); drawAspp(); drawWays(); }
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+})();
+</script>
+</body>
+</html>

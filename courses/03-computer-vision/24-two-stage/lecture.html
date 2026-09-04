@@ -1,0 +1,2010 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Двоетапні детектори: від R-CNN до Faster R-CNN</title>
+<meta name="description" content="Історія трьох вузьких місць. Ковзне вікно дає мільйони кандидатів, R-CNN проганяє дві тисячі шматків крізь мережу окремо, Fast R-CNN рахує ознаки раз, RoI-Align прибирає округлення координат, а RPN вчить кандидат-області замість Selective Search. Усі числа заміряні: 126 с на кадр проти 1.7 с, зсув квантування до 8.7 px, 242 991 якір на кадр, 0.079 % позитивних, повнота 0.997 на десяти кандидат-областях проти тисячі випадкових.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 5 · Тема 24</p>
+    <h1>Двоетапні детектори</h1>
+    <p class="stand">Історія про те, як задачу навчилися розвʼязувати взагалі —
+      і як потім тричі поспіль прибирали те, що робило розвʼязок непридатним.
+      Три архітектури, три вузькі місця, і час на кадр, який упав із чотирьох
+      хвилин до чверті секунди.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Найпростіша ідея, яка працює</a></li>
+        <li><a href="#s2">Кандидати замість перебору</a></li>
+        <li><a href="#s3">R-CNN і його ціна</a></li>
+        <li><a href="#s4">Fast R-CNN: один прохід</a></li>
+        <li><a href="#s5">RoI-пулінг</a></li>
+        <li><a href="#s6">RoI-Align</a></li>
+        <li><a href="#s7">Кандидатів теж вчимо</a></li>
+        <li><a href="#s8">Якорі</a></li>
+        <li><a href="#s9">RPN на нашій задачі</a></li>
+        <li><a href="#s10">Розбір справжньої моделі</a></li>
+        <li><a href="#s11">Чим платять два етапи</a></li>
+        <li><a href="#s12">Підсумок</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../23-detection-setup/lecture.html">← 23. Постановка детекції</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../25-yolo/lecture.html">25. YOLO →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Попередня тема поставила задачу й дала лінійку. Ми знаємо, що
+відповідь детектора — це список рамок, знаємо, як зіставити передбачену рамку з
+істинною через IoU, знаємо, звідки береться середня точність і чому притлумлення
+немаксимумів іноді викидає справжній предмет. Чого ми досі не знаємо — як
+детектор узагалі влаштований усередині. Ця тема відповідає на це питання
+історично: не «ось правильна архітектура», а «ось три спроби, і кожна наступна
+прибирала рівно одне вузьке місце попередньої». Дивитись треба не на назви, а на
+числа, бо саме числа щоразу примушували щось міняти.</p>
+
+<div class="note"><b>Що вже стоїть.</b> Постановку детекції, IoU, зіставлення
+рамок, точність-повноту, AP, mAP і притлумлення немаксимумів дала <a href="../23-detection-setup/lecture.html"><b>тема 23
+«Постановка детекції»</b></a>. Тут вони вживаються як готові інструменти й не
+переказуються. Наскрізний приклад той самий, що в усьому блоці: сцени
+<b>64×64</b> з одним-трьома предметами трьох класів (коло, квадрат, трикутник),
+радіус 6-10 пікселів, шум 0.12, рамка рахується з маски й тому істинна за
+побудовою.</div>
+
+<h2 id="s1"><span class="num">01 / Перебір</span>Найпростіша ідея, яка працює</h2>
+
+<p>Класифікувати ціле зображення ми вміємо з <a
+href="../09-cnn-complete/lecture.html">теми 09</a>. Найкоротший шлях від
+класифікації до детекції виглядає так: якщо мережа вміє сказати «на цьому
+шматку — квадрат», то візьмемо всі можливі шматки й спитаємо в неї про кожен.
+Там, де вона впевнено скаже «квадрат», квадрат і лежить.</p>
+
+<p>Цей прийом зветься <b>ковзним вікном</b> (sliding window). Беремо прямокутник
+заданого розміру, ставимо його в лівий верхній кут, вирізаємо, класифікуємо,
+зсуваємо на кілька пікселів праворуч, повторюємо. Дійшли до краю — переходимо на
+рядок нижче. Пройшли все зображення — беремо вікно іншого розміру, бо предмети
+бувають різні, і йдемо по колу знову.</p>
+
+<p>Ідея чесна й до появи згорткових мереж працювала: саме так були влаштовані
+детектори облич і пішоходів, які ми згадували в <a
+href="../05-classic-features/lecture.html">темі 05</a>. Проблема в
+кількості. Порахуймо.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1 · скільки положень має одне вікно</span>
+    <p>Зображення шириною <b>W</b> і висотою <b>H</b>, вікно шириною <b>w</b> і
+    висотою <b>h</b>, зсув на <b>s</b> пікселів. По горизонталі вікно
+    поміститься (W − w) ÷ s + 1 разів, по вертикалі — (H − h) ÷ s + 1. Разом
+    добуток цих двох чисел.</p>
+    <div class="eq">положень = ((W − w) / s + 1) × ((H − h) / s + 1)</div>
+  </div>
+  <div class="step"><span class="lbl">Крок 2 · підставляємо числа</span>
+    <p>Фотографія 600×1000, вікно 128×128, крок 4 пікселі. По горизонталі:
+    (1000 − 128) ÷ 4 + 1 = 219. По вертикалі: (600 − 128) ÷ 4 + 1 = 119. Разом
+    <b>26 061</b> положень — і це лише для одного розміру вікна.</p>
+  </div>
+  <div class="step"><span class="lbl">Крок 3 · множимо на розміри й форми</span>
+    <p>Предмети бувають різні за величиною, тож потрібно кілька масштабів —
+    візьмімо девʼять, від 32 до 512 пікселів. І різні за формою: людина стоїть
+    вертикально, автобус лежить горизонтально, тож на кожен масштаб три
+    співвідношення сторін. Разом <b>591 415</b> вікон на один кадр.</p>
+  </div>
+</div>
+
+<p>Пів мільйона вікон — це пів мільйона запусків класифікатора. Ми заміряли,
+скільки коштує один такий запуск: ResNet-18 на шматку 224×224 в одному потоці
+йде <b>63.2 мс</b>. Множимо — і дістаємо <b>10.4 години на одну фотографію</b>.
+Не на датасет, не на відео. На один кадр.</p>
+
+<p>Зменшити крок не можна — навпаки, хочеться менший, бо при кроці 4 пікселі
+вікно рідко лягає точно на предмет. Збільшити крок до 16 знижує кількість вікон
+до 37 672, тобто в 16 разів, але тоді рамка гарантовано зсунута щодо істини на
+вісім пікселів, і з таблиці <a href="../23-detection-setup/lecture.html">теми 23</a> ми знаємо, що для предмета сорок пікселів
+завширшки це вже втрата IoU нижче 0.75.</p>
+
+<figure>
+  <p class="fig-head">Ковзне вікно: скільки разів доведеться спитати мережу</p>
+  <p class="fig-sub">Кадр 1000×600. Перший повзунок задає розмір вікна, яке видно на кадрі;
+    лічильник «усього» підсумовує всі масштаби й три співвідношення сторін на
+    кожен із них. Покрути крок і кількість масштабів — і подивись, як росте число. Ліворуч показано положення вікон (намальовано не всі, щоб
+    не залити кадр суцільним чорним), праворуч — кількість вікон при різних кроках
+    у логарифмічному масштабі.</p>
+  <div class="panel">
+    <canvas id="fig1" width="660" height="330"></canvas>
+    <div>
+      <div class="ctl"><label>розмір вікна <output id="o1a">128</output></label>
+        <input type="range" id="win1" min="32" max="384" step="16" value="128"></div>
+      <div class="ctl"><label>крок, px <output id="o1b">4</output></label>
+        <input type="range" id="step1" min="1" max="16" step="1" value="4"></div>
+      <div class="ctl"><label>масштабів <output id="o1c">9</output></label>
+        <input type="range" id="sc1" min="1" max="9" step="1" value="9"></div>
+      <div class="readout">
+        <div class="cellv"><b>вікон цього розміру</b><i id="v1a">—</i></div>
+        <div class="cellv"><b>вікон, усього</b><i id="v1b">—</i></div>
+        <div class="cellv"><b>час, ResNet-18</b><i id="v1c" class="sm">—</i></div>
+        <div class="cellv"><b>час, крихітна CNN</b><i id="v1d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="verd1"></div>
+    </div>
+  </div>
+  <figcaption>Три співвідношення сторін на кожен масштаб. Час порахований за
+    заміряними в зошиті числами: <b>63.2 мс</b> на один прохід ResNet-18 по
+    шматку 224×224 і <b>0.255 мс</b> на прохід крихітної мережі з 3 828 ваг по
+    шматку 32×32, обидва в одному потоці на процесорі. Навіть найдешевший
+    класифікатор не рятує: при кроці 4 його доводиться запускати
+    <b>591 415</b> разів на кадр.</figcaption>
+</figure>
+
+<p>Висновок цього розділу простий і він же — мотив усієї теми. <b>Ковзне вікно
+не має вузького місця, яке можна полагодити.</b> Дорого тут усе одразу: і
+кількість вікон, і ціна одного запуску. Далі історія розгортається як
+послідовне зняття обох.</p>
+
+<h2 id="s2"><span class="num">02 / Кандидати</span>Кандидат-області замість перебору</h2>
+
+<p>Перша ідея, яка зрушила справу з місця, звучить майже нахабно: більшість
+із цих пів мільйона вікон очевидно порожні. Ділянка однорідного неба не містить
+предмета, і щоб це зрозуміти, класифікатор не потрібен — досить подивитись на
+пікселі.</p>
+
+<p>Отже, розділімо роботу. Спершу дешевий алгоритм переглядає зображення й
+пропонує кілька тисяч ділянок, які <em>схожі на окремий предмет</em> — неважливо
+який. Потім дорога мережа розбирається лише з ними. Такі ділянки звуть
+<b>кандидат-областями</b> (region proposals), а алгоритм, який їх видає, —
+генератором кандидатів. У розмові їх часто називають просто кандидатами; далі в
+темі вживається повна назва, бо саме вона стоїть у глосарії курсу.</p>
+
+<p>Найвідоміший із них — <b>Selective Search</b>. Не заглиблюючись у деталі,
+його ідея така: спершу зображення ріжеться на дрібні однорідні шматочки за
+кольором і текстурою, потім найсхожіші сусідні шматочки поступово зливаються в
+більші, і на кожному кроці злиття народжується рамка-кандидат. Дрібні шматочки
+дають маленькі рамки, злиті — великі, тож масштаби виходять самі, без окремого
+перебору.</p>
+
+<p>Важлива тут не механіка, а <b>зміна порядку величин</b>. Selective Search
+видає близько <b>двох тисяч</b> кандидат-областей на зображення замість пів мільйона
+вікон — це у <b>295 разів</b> менше. І кандидат-області не рівномірні: вони ліпляться
+до країв предметів, а не стоять сіткою.</p>
+
+<div class="note"><b>Чому це не шахрайство.</b> Генератор кандидат-областей має право
+помилятися в один бік: якщо він запропонував зайве, дорога мережа потім скаже
+«фон», і нічого страшного не сталося. А от якщо він <em>не</em> запропонував
+рамку навколо справжнього предмета, предмет утрачено назавжди — жоден наступний
+етап його вже не побачить. Тому єдина метрика, за якою судять генератор, — це
+<b>повнота кандидат-областей</b>: яка частка істинних рамок має серед кандидат-областей хоча б
+одну з достатнім IoU. Точність генератора нікого не цікавить.</div>
+
+<h2 id="s3"><span class="num">03 / R-CNN</span>R-CNN і його ціна</h2>
+
+<p><b>R-CNN</b> (regions with CNN features) — це перша архітектура, яка склала
+докупи згорткову мережу й кандидат-області та вперше показала на детекції результат,
+помітно кращий за класичні методи. Будова її буквально така, як щойно описано:</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Етап 1 · кандидат-області</span>
+    <p>Selective Search дає близько 2 000 рамок. Мережа тут не бере участі
+    взагалі — це окремий алгоритм на процесорі.</p></div>
+  <div class="step"><span class="lbl">Етап 2 · ознаки</span>
+    <p>Кожна з 2 000 ділянок <b>вирізається з картинки, розтягується до
+    фіксованого розміру 224×224 і окремо проганяється крізь згорткову
+    мережу</b>. На виході — вектор ознак для кожної кандидат-області.</p></div>
+  <div class="step"><span class="lbl">Етап 3 · рішення</span>
+    <p>По вектору ознак окремий класифікатор (метод опорних векторів) вирішує,
+    що це за клас, а окрема лінійна регресія трохи підправляє координати рамки.
+    Обидва навчаються <b>після</b> мережі й окремо від неї.</p></div>
+</div>
+
+<p>Тепер друге речення другого етапу, і саме воно все вирішує. <b>Окремо</b> —
+означає, що згорткова мережа запускається дві тисячі разів на одне зображення.
+Кандидат-області перекриваються, іноді на девʼяносто відсотків, і піксель, що лежить у
+двадцяти кандидат-областях, буде згорнутий двадцять разів. Ознаки одного й того самого
+місця рахуються знову й знову.</p>
+
+<p>Ми заміряли, скільки це коштує. Один прохід ResNet-18 по шматку 224×224 в
+одному потоці на процесорі — <b>63.2 мс</b>.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>Що рахуємо</th><th>Скільки</th></tr>
+  <tr><td>прямих проходів на одне зображення</td><td>2 000</td></tr>
+  <tr><td>час на одне зображення</td><td>126.4 с</td></tr>
+  <tr><td>прямих проходів на 5 000 зображень</td><td>10 000 000</td></tr>
+  <tr class="hot"><td>час на 5 000 зображень</td><td>176 год</td></tr>
+</table></div>
+
+<p>Дві хвилини на кадр. Тиждень безперервної роботи, щоб один раз пройти
+датасет із пʼяти тисяч зображень. На нашій крихітній мережі в 3 828 ваг ті самі
+дві тисячі проходів займають 0.51 с на кадр і 43 хвилини на датасет — уже не
+трагедія, але й мережа тут іграшкова.</p>
+
+<div class="note warn"><b>Про час і твою машину.</b> Усі секунди в цій темі
+заміряні на процесорі в одному потоці, і машина при цьому не була вільною. У
+тебе вийдуть інші абсолютні числа — можливо, удвічі менші. Незмінне тут
+<b>співвідношення</b>: скільки разів працює тіло мережі. Саме воно, а не
+конкретна цифра, рухало всю історію.</div>
+
+<div class="note warn"><b>Це не все.</b> Крім часу R-CNN має ще одну ваду, яку
+видно не з секундоміра, а зі схеми: <b>три окремі етапи навчаються окремо</b>.
+Спершу донавчається згорткова мережа, потім на її заморожених ознаках
+навчаються класифікатори, потім — регресія рамок. Помилка останнього етапу
+ніяк не впливає на перший: сигнал не має куди повернутись, бо між етапами немає
+градієнта. Мережа не може підправити свої ознаки під те, що з ними роблять далі.
+І місця на диску це теж коштує: ознаки всіх кандидат-областей усього датасету
+доводилось складати у файл.</div>
+
+<h2 id="s4"><span class="num">04 / Fast R-CNN</span>Fast R-CNN: один прохід</h2>
+
+<p>Вузьке місце названо: ознаки одного місця рахуються стільки разів, скільки
+кандидат-областей його накрили. Тепер його знімають — і спосіб виявляється майже
+очевидним заднім числом.</p>
+
+<p>Згортка не переставляє пікселі. Ми знаємо це з <a
+href="../07-conv-layer/lecture.html">теми 07</a>: карта ознак зберігає
+просторову будову входу, лише в дрібнішій сітці. Якщо мережа має сумарний крок
+16, то клітинка карти з координатами (3, 5) відповідає ділянці зображення
+приблизно навколо точки (48, 80). Отже, <b>не треба вирізати шматок із картинки
+й гнати його крізь мережу — можна пройти мережею по цілому зображенню один раз,
+а потім вирізати потрібну ділянку з готової карти ознак</b>.</p>
+
+<div class="eq">R-CNN: вирізати → порахувати ознаки &nbsp;·&nbsp; Fast R-CNN: порахувати ознаки → вирізати</div>
+
+<p>Це і є <b>Fast R-CNN</b>. Порядок двох дій міняється місцями, і разом із
+порядком зникає повторний рахунок: скільки б кандидат-областей не було, згорткове тіло
+працює <b>рівно один раз</b> на кадр. Друга зміна не менш важлива: тепер
+класифікатор і регресія рамки — це звичайні шари тієї самої мережі, а не окремі
+моделі. Навчання стає одним, і градієнт від помилки координат доходить аж до
+першої згортки.</p>
+
+<figure>
+  <p class="fig-head">R-CNN проти Fast R-CNN: скільки разів працює тіло мережі</p>
+  <p class="fig-sub">Повзунок задає кількість кандидат-областей. У верхньому ряду кожна
+    кандидат-область вирізається й іде крізь мережу окремо; у нижньому тіло проходить
+    по кадру один раз, а кандидат-області беруть готові ознаки. Смуги внизу —
+    заміряний час у логарифмічному масштабі.</p>
+  <div class="panel">
+    <canvas id="fig2" width="660" height="340"></canvas>
+    <div>
+      <div class="ctl"><label>кандидат-областей <output id="o2a">2000</output></label>
+        <input type="range" id="k2" min="50" max="2000" step="50" value="2000"></div>
+      <div class="readout">
+        <div class="cellv"><b>проходів тіла: R-CNN</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>проходів тіла: Fast</b><i id="v2b">1</i></div>
+        <div class="cellv"><b>час R-CNN</b><i id="v2c" class="sm">—</i></div>
+        <div class="cellv"><b>час Fast R-CNN</b><i id="v2d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="verd2"></div>
+    </div>
+  </div>
+  <figcaption>Заміряно в зошиті на процесорі в одному потоці. R-CNN:
+    <b>63.2 мс</b> на прохід ResNet-18 по шматку 224×224, помножені на кількість
+    кандидат-областей. Fast R-CNN: <b>576 мс</b> на один прохід згорткового тіла по
+    кадру 600×1000 плюс <b>0.57 мс</b> на кожну кандидат-область (вибірка з карти ознак
+    і дві повнозвʼязні голови). Це справжні виміри, а не оцінка: на 2 000 рамках
+    заміряно 1 717 мс, на 300 — 757 мс, на 100 — 642 мс.</figcaption>
+</figure>
+
+<p>Два висновки з цієї картинки, і другий цікавіший за перший.</p>
+
+<p><b>Перший:</b> на двох тисячах кандидат-областей виграш становить <b>74 рази</b> —
+126.4 с проти 1.717 с. Це та різниця, після якої задача перестає бути
+теоретичною.</p>
+
+<p><b>Другий:</b> подивись, як поводяться дві смуги, коли рухаєш повзунок.
+Смуга R-CNN росте пропорційно кількості кандидат-областей — від нуля. Смуга Fast R-CNN
+починається з <b>576 мс</b> і росте повільно. Отже, у Fast R-CNN зʼявилося нове
+вузьке місце, якого не було видно раніше: <b>сталий внесок</b> одного проходу
+тіла. Поки кандидат-областей дві тисячі, головна витрата — усе ще вони (1 141 мс проти
+576 мс). Але варто скоротити їх до трьохсот, і картина перевертається: 171 мс на
+кандидат-області проти 576 мс на тіло.</p>
+
+<p>Це підказує, куди дивитись далі. І ще одне, чого на цій картинці немає
+взагалі: <b>сам Selective Search</b>. Він працює на процесорі й коштує близько
+двох секунд на зображення (число цитоване, ми його не міряли). Тобто у Fast
+R-CNN генератор кандидат-областей став дорожчим за всю мережу разом узяту.</p>
+
+<h2 id="s5"><span class="num">05 / RoI-пулінг</span>Як вирізати ділянку з карти ознак</h2>
+
+<p>Лишилась технічна деталь, без якої «вирізати з карти ознак» — порожні слова.
+Кандидат-області мають різні розміри: одна 30×40 пікселів, друга 180×95. А
+повнозвʼязна голова, яка робить остаточне рішення, вимагає <b>сталої</b>
+кількості чисел на вході. Треба перетворити прямокутник довільного розміру на
+сітку сталого розміру — скажімо, 7×7.</p>
+
+<p>Операція, яка це робить, зветься <b>RoI-пулінг</b> (RoI — region of interest,
+ділянка інтересу). Механіка така:</p>
+
+<ol class="steps">
+  <li>Координати рамки з пікселів зображення перераховуються в клітинки карти
+  ознак: ділимо на крок мережі. Рамка 100.3…187.7 при кроці 16 дає
+  6.27…11.73 клітинки.</li>
+  <li>Ділянка карти ділиться на 7×7 однакових комірок.</li>
+  <li>У кожній комірці береться максимум (або середнє) — і виходить рівно 49
+  чисел на канал, скільки б не була завбільшки початкова рамка.</li>
+</ol>
+
+<p>А тепер те, заради чого цей розділ існує. Крок 1 дає <b>дробові</b>
+координати, а індексувати масив дробовим числом не можна. Класичний RoI-пулінг
+розвʼязує це найпростішим способом: <b>округлює</b>. 6.27 стає 6, 11.73 стає 12.
+Потім, коли ділянку ріжуть на 7 комірок, межі комірок теж не потрапляють у цілі
+клітинки — і їх теж округлюють. Два округлення підряд.</p>
+
+<div class="note"><b>Як поміряти зсув, не сперечаючись.</b> Нам потрібна карта
+ознак, на якій видно, звідки саме взято значення. Візьмімо таку, де значення
+клітинки <em>дорівнює її горизонтальній координаті</em>: у нульовому стовпчику
+скрізь нуль, у першому одиниця й так далі — рівний пандус. Тоді середнє значення
+вирізаного вікна дорівнює горизонтальній координаті його центра. Порівнявши це
+середнє з тим, де центр рамки має бути насправді, ми дістаємо зсув у клітинках —
+а помноживши на крок мережі, у пікселях зображення. Жодних оцінок на око.</div>
+
+<figure>
+  <p class="fig-head">Округлення проти білінійної вибірки</p>
+  <p class="fig-sub">Карта ознак 12×12, крок мережі 16 пікселів; значення клітинки
+    дорівнює її стовпчику, тому колір — це просто координата. Рамка з дробовими
+    координатами повзе праворуч по одному пікселю. Слідкуй за двома вертикальними
+    мітками: суцільна темна — де центр рамки насправді, рожевий пунктир — де його
+    бачить обраний спосіб вирізання.</p>
+  <div class="panel">
+    <canvas id="fig3" width="660" height="364"></canvas>
+    <div>
+      <div class="ctl"><span class="cap">спосіб вирізання</span>
+        <div class="seg" id="seg3">
+          <button data-i="0" aria-pressed="true">округлення</button>
+          <button data-i="1" aria-pressed="false">білінійна</button>
+        </div></div>
+      <div class="ctl"><label>зсув рамки, px <output id="o3a">0</output></label>
+        <input type="range" id="sh3" min="0" max="15" step="1" value="0"></div>
+      <div class="readout">
+        <div class="cellv"><b>центр істинний</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>центр вирізаного</b><i id="v3b">—</i></div>
+        <div class="cellv"><b>зсув, клітинок</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>зсув, пікселів</b><i id="v3d">—</i></div>
+      </div>
+      <div class="verdict" id="verd3"></div>
+    </div>
+  </div>
+  <figcaption>Числа рахує сама сторінка тим самим алгоритмом, що й зошит, і вони
+    збігаються. Округлення дає <b>сходинку</b>: рамка їде, а вирізана ділянка
+    стоїть на місці, поки координата не перескочить наступне ціле. Модуль зсуву
+    гуляє від <b>0.57</b> до <b>8.71</b> пікселя, у середньому <b>4.64</b>. Білінійна
+    вибірка тримає <b>0.00</b> у всіх шістнадцяти положеннях.</figcaption>
+</figure>
+
+<p>Подивись на сходинку уважно, бо вона пояснює, чому це не дрібниця.
+Округлення — не «трохи неточно». Воно <b>рве звʼязок між координатою рамки й
+вирізаними ознаками</b>: у діапазоні цілої клітинки різні рамки дають однакові
+ознаки, а на межі клітинки ознаки стрибають. Голові, яка потім регресує
+координати, доводиться вгадувати зсув із ознак, які про цей зсув нічого не
+знають.</p>
+
+<p>Наскільки це шкодить, залежить від кроку мережі й розміру предмета. При кроці
+16 половина клітинки — це вісім пікселів. З таблиці <a href="../23-detection-setup/lecture.html">теми 23</a> ми знаємо: щоб
+утримати IoU 0.75 на рамці сорок пікселів завширшки, її не можна зсувати більш
+ніж на 5.7 пікселя. Вісім — уже за межею. Для наших сцен 64×64 крок мережі
+всього 4 пікселі, тож і зсув удесятеро менший, і рятує нас саме дрібна сітка, а
+не акуратність операції.</p>
+
+<h2 id="s6"><span class="num">06 / RoI-Align</span>Білінійна інтерполяція замість округлення</h2>
+
+<p>Лікування знайшлося пізніше, у роботі про Mask R-CNN, і воно зветься
+<b>RoI-Align</b>. Ідея в одному реченні: <b>не округлювати нічого</b>.</p>
+
+<p>Якщо потрібне значення карти ознак у точці з дробовими координатами, його
+не беруть із найближчої клітинки, а <em>обчислюють</em> — як зважене середнє
+чотирьох сусідніх клітинок, де вага кожної тим більша, чим вона ближча. Це
+зветься <b>білінійною інтерполяцією</b> і працює так само, як зміна розміру
+зображення з <a href="../03-opencv-basics/lecture.html">теми 03</a>, тільки не по
+пікселях, а по картах ознак.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1 · чотири сусіди</span>
+    <p>Хай потрібне значення в точці (y, x) = (2.3, 5.7). Цілі частини дають
+    лівого верхнього сусіда (2, 5). Три інші — (2, 6), (3, 5), (3, 6).</p></div>
+  <div class="step"><span class="lbl">Крок 2 · ваги з дробових частин</span>
+    <p>Дробові частини: по вертикалі 0.3, по горизонталі 0.7. Тоді вага
+    сусіда (2, 5) дорівнює (1 − 0.3) × (1 − 0.7) = 0.21, сусіда (2, 6) —
+    0.7 × 0.7 = 0.49, і так далі. Сума всіх чотирьох ваг завжди рівно 1.</p>
+    <div class="eq">f(2.3, 5.7) = 0.21·f(2,5) + 0.49·f(2,6) + 0.09·f(3,5) + 0.21·f(3,6)</div></div>
+  <div class="step"><span class="lbl">Крок 3 · кілька точок на комірку</span>
+    <p>У кожній із 49 комірок беруть не одну точку, а чотири (сітка 2×2 у
+    середині комірки), рахують у них значення білінійно й усереднюють. Це
+    згладжує результат і робить операцію придатною для навчання: похідна
+    існує в кожній точці, бо ніде немає стрибка.</p></div>
+</div>
+
+<p>Що це дало за літературою: у роботі про Mask R-CNN заміна RoI-пулінгу на
+RoI-Align підняла якість масок приблизно на три пункти AP, причому виграш був
+тим більший, чим суворіший поріг IoU (число цитоване). Це узгоджується з нашим
+заміром: зсув у кілька пікселів майже не заважає при порозі 0.5 і стає
+вирішальним при 0.75.</p>
+
+<p>У <code>torchvision</code> це операція <code>ops.roi_align</code>, і в неї є
+аргумент <code>aligned</code>, який коштує окремої уваги. Він відповідає за пів
+пікселя: центр нульового пікселя лежить у координаті 0.5, а не 0, і якщо це не
+врахувати, уся ділянка зсувається на <b>рівно пів клітинки</b>. Ми заміряли:
+при кроці 16 це <b>8.00 пікселя</b>, стабільно, у будь-якому положенні рамки.
+Замовчування — <code>aligned=False</code>, тобто зі зсувом; правильне
+значення — <code>True</code>.</p>
+
+<div class="note warn"><b>Не пастка бібліотеки, а історія.</b>
+<code>aligned=False</code> лишили замовчуванням заради сумісності зі старими
+навченими моделями: якщо мережу навчали зі зсувом, то з ним же треба й
+запускати, інакше ознаки поїдуть. У новому коді став <code>aligned=True</code>
+свідомо. І перевір це заміром на пандусі — це чотири рядки коду, і вони
+дають точну відповідь замість здогадки.</div>
+
+<h2 id="s7"><span class="num">07 / Faster R-CNN</span>Кандидат-області теж вчимо</h2>
+
+<p>Порахуймо, що лишилось у Fast R-CNN. Тіло по кадру — 576 мс. Дві тисячі
+кандидат-областей — 1 141 мс. Selective Search — близько двох секунд на процесорі.
+Найдорожча частина конвеєра — та єдина, що не є мережею й нічого не вчить.</p>
+
+<p>Далі йде хід, після якого архітектура набуває сучасного вигляду. Карта ознак
+уже порахована. Вона лежить готова й описує все зображення. То <b>чому б не
+попросити самі ці ознаки сказати, де тут предмети?</b> Замість чужого алгоритму
+поставимо ще одну маленьку мережу, яка читає ту саму карту й видає кандидат-області.
+Вона зветься <b>RPN</b> (region proposal network, мережа кандидат-областей), а
+архітектура з нею — <b>Faster R-CNN</b>.</p>
+
+<p>Вигода потрійна, і про останню часто забувають:</p>
+
+<ul>
+  <li><b>Швидкість.</b> RPN — це одна згортка 3×3 і дві згортки 1×1 поверх уже
+  готової карти. Ми порахували її розмір у справжній моделі: <b>593 935</b> ваг,
+  тобто 1.42 % від усієї мережі. Дві секунди Selective Search перетворюються на
+  одиниці мілісекунд.</li>
+  <li><b>Менше кандидат-областей.</b> Навчена мережа не сипле кандидатами наосліп. Замість
+  двох тисяч вистачає <b>трьохсот</b> — і саме звідси береться друге прискорення,
+  видиме на попередній картинці.</li>
+  <li><b>Спільні ознаки.</b> RPN і голова другого етапу читають <em>одну й ту саму
+  карту</em>. Тіло навчається під обидві задачі одразу, і кандидат-області
+  підлаштовуються під той детектор, який їх споживатиме.</li>
+</ul>
+
+<p>Тепер мережа одна: від пікселів до рамок веде суцільний ланцюг, по якому
+проходить градієнт. Але щоб RPN узагалі могла щось видати, треба відповісти на
+незручне питання. Мережа — це функція із фіксованим виходом. Скільки чисел вона
+має видати, якщо предметів на кадрі може бути нуль, а може сто?</p>
+
+<h2 id="s8"><span class="num">08 / Якорі</span>Якорі: сітка заготовлених рамок</h2>
+
+<p>Відповідь називається <b>якорями</b> (anchors), і вона така: мережа не
+вигадує рамки з нічого. Ми заздалегідь розкладаємо по зображенню фіксований
+набір рамок-заготовок, а мережа лише каже про кожну дві речі — «тут предмет чи
+фон» і «наскільки цю заготовку треба посунути й розтягнути».</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1 · сітка</span>
+    <p>Центри якорів стоять у центрах клітинок карти ознак. Карта 16×16 дає 256
+    центрів; карта 38×63 (кадр 600×1000 при кроці 16) — 2 394.</p></div>
+  <div class="step"><span class="lbl">Крок 2 · масштаби</span>
+    <p>У кожному центрі — кілька рамок різного розміру, бо предмети бувають
+    великі й малі. Типово три.</p></div>
+  <div class="step"><span class="lbl">Крок 3 · співвідношення сторін</span>
+    <p>І кожен розмір — у трьох формах: витягнута вертикально, квадратна,
+    витягнута горизонтально. Типово 1:2, 1:1, 2:1.</p>
+    <div class="eq">якорів = клітинок × масштабів × співвідношень</div></div>
+  <div class="step"><span class="lbl">Крок 4 · що передбачає мережа</span>
+    <p>Для кожного якоря — одне число впевненості («предмет / фон») і чотири
+    числа зсуву: наскільки посунути центр по горизонталі й вертикалі та у
+    скільки разів змінити ширину й висоту. Вихід має сталий розмір, а предметів
+    на кадрі може бути скільки завгодно — суперечності немає.</p></div>
+</div>
+
+<p>Тепер порахуємо. На карті 38×63 із девʼятьма якорями на клітинку виходить
+<b>21 546</b> якорів. Це вже багато, але сучасні детектори працюють не з однією
+картою, а з пірамідою карт різної дрібності. Ми взяли справжній генератор якорів
+із <code>fasterrcnn_resnet50_fpn</code> і прогнали його на кадрі 800×1216:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>рівень піраміди</th><th>карта</th><th>клітинок</th><th>якорів</th></tr>
+  <tr><td>P2 (крок 4)</td><td>200×304</td><td>60 800</td><td>182 400</td></tr>
+  <tr><td>P3 (крок 8)</td><td>100×152</td><td>15 200</td><td>45 600</td></tr>
+  <tr><td>P4 (крок 16)</td><td>50×76</td><td>3 800</td><td>11 400</td></tr>
+  <tr><td>P5 (крок 32)</td><td>25×38</td><td>950</td><td>2 850</td></tr>
+  <tr><td>P6 (крок 64)</td><td>13×19</td><td>247</td><td>741</td></tr>
+  <tr class="sumrow"><td>разом</td><td>—</td><td>80 997</td><td>242 991</td></tr>
+</table></div>
+
+<p>Чверть мільйона рамок-кандидатів на один кадр. Проти пів мільйона вікон
+із першого розділу це не таке вже й полегшення — але тепер жодна з них не
+проганяється крізь мережу окремо: усі 242 991 обробляються двома згортками 1×1
+за один прохід.</p>
+
+<h3>Як якір дізнається, що він позитивний</h3>
+
+<p>Щоб навчити RPN, потрібна мітка для кожного якоря. Правило просте й
+спирається на IoU з <a href="../23-detection-setup/lecture.html">теми 23</a>:</p>
+
+<ul>
+  <li>IoU з якоюсь істинною рамкою більший за <b>0.7</b> — якір
+  <b>позитивний</b>, мережа має сказати «предмет»;</li>
+  <li>IoU з усіма істинними менший за <b>0.3</b> — якір <b>негативний</b>, «фон»;</li>
+  <li>між 0.3 і 0.7 — якір <b>ігнорується</b>, у втрату не входить узагалі.</li>
+</ul>
+
+<p>І окремо — рятівне правило: <b>для кожної істинної рамки найкращий якір
+оголошується позитивним завжди</b>, хоч би який низький у нього був IoU. Навіщо
+воно, покаже наступний замір.</p>
+
+<figure>
+  <p class="fig-head">Якорі на нашій сцені: скільки їх і скільки з них позитивні</p>
+  <p class="fig-sub">Сцена 64×64 з трьома предметами, карта ознак 16×16 (крок 4).
+    Пунктир — істинні рамки. Рожеві — якорі, які перетнули поріг. Сірі точки —
+    центри якорів; самі якорі малюються не всі, бо їх дві тисячі.</p>
+  <div class="panel">
+    <canvas id="fig4" width="660" height="374"></canvas>
+    <div>
+      <div class="ctl"><span class="cap">масштаб якоря</span>
+        <div class="seg" id="seg4a">
+          <button data-i="0" aria-pressed="false">8</button>
+          <button data-i="1" aria-pressed="false">12</button>
+          <button data-i="2" aria-pressed="false">18</button>
+          <button data-i="3" aria-pressed="true">усі</button>
+        </div></div>
+      <div class="ctl"><span class="cap">співвідношення сторін</span>
+        <div class="seg" id="seg4b">
+          <button data-i="0" aria-pressed="false">1:2</button>
+          <button data-i="1" aria-pressed="false">1:1</button>
+          <button data-i="2" aria-pressed="false">2:1</button>
+          <button data-i="3" aria-pressed="true">усі</button>
+        </div></div>
+      <div class="ctl"><label>поріг IoU <output id="o4a">0.70</output></label>
+        <input type="range" id="thr4" min="30" max="90" step="5" value="70"></div>
+      <div class="readout">
+        <div class="cellv"><b>якорів</b><i id="v4a">—</i></div>
+        <div class="cellv"><b>позитивних</b><i id="v4b">—</i></div>
+        <div class="cellv"><b>частка</b><i id="v4c">—</i></div>
+        <div class="cellv"><b>фону на 1 предмет</b><i id="v4d">—</i></div>
+      </div>
+      <label class="chk"><input type="checkbox" id="save4">рятівне правило: найкращий
+        якір кожної істини — позитивний</label>
+      <div class="verdict" id="verd4"></div>
+    </div>
+  </div>
+  <figcaption>Сцена взята з датасету теми, IoU рахується прямо в браузері й
+    збігається з <code>box_iou</code> в зошиті. Найкращий якір на цій сцені має
+    IoU <b>0.694</b> з кожною з трьох істин, тож при стандартному порозі 0.7
+    позитивних <b>нуль</b> — без рятівного правила навчати було б нічим.
+    По 200 сценах картина така сама: <b>366</b> позитивних із <b>460 800</b>
+    якорів, тобто <b>0.079 %</b>, і <b>28.3 %</b> істинних рамок не мають жодного
+    якоря з IoU понад 0.7.</figcaption>
+</figure>
+
+<p>Тут три висновки, і кожен важливий окремо.</p>
+
+<p><b>Перший: якорів-фону в тисячу разів більше, ніж якорів-предметів.</b> На
+200 сценах ми дістали 366 позитивних із 460 800, тобто на один позитивний якір
+припадає <b>1 258</b> негативних. Якщо просто скласти втрату по всіх якорях,
+мережа вивчить одну відповідь — «фон» — і матиме 99.9 % правильних відповідей
+при нульовій користі. Це та сама проблема дисбалансу, яку <a href="../23-detection-setup/lecture.html">тема 23</a> показала на
+клітинках сітки. Faster R-CNN лікує її грубо, але дієво: на кожне зображення
+береться вибірка приблизно з 256 якорів, у якій позитивних і негативних
+порівну. Решта у втрату не входить. Тема 26 покаже інший спосіб — переважити
+втрату замість того, щоб викидати приклади.</p>
+
+<p><b>Другий: набір якорів має відповідати даним.</b> Перемкни співвідношення
+сторін і подивись на лічильник. Наші предмети — коло, квадрат і трикутник, і
+рамка в усіх майже квадратна. Тому при порозі 0.7 витягнуті якорі не дають
+<em>жодного</em> позитивного: у зошиті з девʼяти варіантів спрацювали лише два,
+обидва квадратні. Сім із девʼяти якорів на кожній клітинці — мертвий вантаж, і
+вони чесно збільшують час рахунку. На фотографіях вулиці, де є і пішоходи, і
+автобуси, картина інша — але дізнатися це можна лише замірявши, а не
+скопіювавши конфігурацію з чужої статті.</p>
+
+<p><b>Третій: без рятівного правила навчання просто не почалося б.</b> Постав
+поріг 0.7 і вимкни галочку — позитивних нуль. Це не рідкісний випадок: по 200
+сценах <b>28.3 %</b> істинних рамок не мають жодного якоря, який дотягнувся б до
+0.7. Дрібна сітка й дискретний набір розмірів просто не покривають усі можливі
+положення предмета.</p>
+
+<h2 id="s9"><span class="num">09 / Замір</span>RPN на нашій задачі</h2>
+
+<p>Тепер зберемо спрощений RPN самі й перевіримо головне: <b>скільки кандидат-областей
+треба, щоб не втратити предмети</b>. Будова — рівно та, що описана вище:
+згорткове тіло перетворює сцену 64×64 на карту 16×16, спільна згортка 3×3
+готує ознаки, дві згортки 1×1 видають упевненість і зсув для кожного з девʼяти
+якорів у клітинці.</p>
+
+<p>Далі виходи сортуються за впевненістю, проганяються крізь притлумлення
+немаксимумів із порогом 0.7, і беруться перші <b>k</b>. Міряємо повноту: яка
+частка істинних рамок має серед цих k кандидат-областей хоча б одну з достатнім IoU.
+Три зерна, AdamW, швидкість навчання 3e-3, чотирнадцять епох на 400 сценах —
+близько 25 секунд на прогін.</p>
+
+<figure>
+  <p class="fig-head">Скільки кандидат-областей потрібно</p>
+  <p class="fig-sub">Повнота кандидат-областей залежно від їх кількості. Зелена крива —
+    навчений RPN, сіра — стільки ж якорів, узятих навмання без будь-якого
+    навчання. Вісь кількості логарифмічна.</p>
+  <div class="panel">
+    <canvas id="fig5" width="660" height="340"></canvas>
+    <div>
+      <div class="ctl"><label>кандидат-областей <output id="o5a">10</output></label>
+        <input type="range" id="k5" min="0" max="7" step="1" value="3"></div>
+      <div class="ctl"><span class="cap">поріг IoU для зарахування</span>
+        <div class="seg" id="seg5">
+          <button data-i="0" aria-pressed="true">0.50</button>
+          <button data-i="1" aria-pressed="false">0.70</button>
+          <button data-i="2" aria-pressed="false">0.75</button>
+        </div></div>
+      <div class="readout">
+        <div class="cellv"><b>повнота, RPN</b><i id="v5a">—</i></div>
+        <div class="cellv"><b>повнота, навмання</b><i id="v5b">—</i></div>
+        <div class="cellv"><b>розкид по зернах</b><i id="v5c" class="sm">—</i></div>
+        <div class="cellv"><b>час на сцену</b><i id="v5d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="verd5"></div>
+    </div>
+  </div>
+  <figcaption>Числа заміряні в зошиті: 400 навчальних сцен, 120 перевірочних
+    (244 істинні рамки), три зерна на кожну точку. Один прогін RPN на сцені —
+    <b>15.73 мс</b>. Крива «навмання» — це k якорів, вибраних випадково з тих
+    самих 2 304, усереднено по трьох спробах.</figcaption>
+</figure>
+
+<p>Головне число теми — тут. При порозі 0.5 навчений RPN дає повноту
+<b>0.997</b> уже на <b>десяти</b> кандидат-областях; випадковим якорям для тієї самої
+повноти треба <b>тисяча</b>. Це рівно те, за що платять навчанням
+кандидат-областей: <b>у сто разів менше кандидатів при тій самій повноті</b>.
+Перекладаючи на конвеєр із четвертого розділу: 0.57 мс на кандидат-область, десять
+кандидат-областей замість тисячі — це 5.7 мілісекунди замість 570.</p>
+
+<p>Друге, що видно, — <b>стеля</b>. Перемкни поріг на 0.7: повнота росте до 20
+кандидат-областей і далі стоїть на 0.955, скільки б їх не додавати. Ще суворіший
+поріг 0.75 дає 0.861. Отже, додавати кандидат-області понад пʼятдесят на нашій задачі
+безглуздо — вони не приносять нових предметів, а лише годують другий етап
+зайвою роботою. Стеля береться не з кількості, а з точності: регресія зсуву
+здатна підправити якір лише до певної межі.</p>
+
+<div class="note"><b>Задача мусить бути чесною.</b> Наші сцени легкі: до трьох
+предметів, чіткі межі, шум 0.12. Тому повнота 1.000 досягається вже на двадцяти
+кандидат-областях, а справжні детектори беруть 300 — на фотографії з двадцятьма
+предметами, половина з яких перекрита, крива виглядала б інакше. Не перенось
+число «десять» на свої дані — перенось <b>спосіб його дістати</b> — побудувати
+криву повноти від кількості й узяти точку, де вона виходить на полицю.</div>
+
+<h2 id="s10"><span class="num">10 / Розбір</span>Справжня модель по частинах</h2>
+
+<p>Досі ми будували все самі й на іграшкових розмірах. Тепер розберемо
+справжню <code>fasterrcnn_resnet50_fpn</code> із <code>torchvision</code>.
+Її можна зібрати без жодного байта з мережі — <code>weights=None,
+weights_backbone=None</code> дає порожню архітектуру з правильною будовою,
+і ваги в ній можна перерахувати.</p>
+
+<figure>
+  <p class="fig-head">Прогін кадру крізь Faster R-CNN</p>
+  <p class="fig-sub">Шість кроків від пікселів до рамок. Другий повзунок міняє
+    розмір кадру — стеж за двома числами одночасно: скільки ваг у поточному
+    блоці й скільки якорів дає ця сторона кадру.</p>
+  <div class="panel">
+    <canvas id="fig6" width="660" height="330"></canvas>
+    <div>
+      <div class="ctl"><label>крок конвеєра <output id="o6a">1</output></label>
+        <input type="range" id="st6" min="1" max="6" step="1" value="1"></div>
+      <div class="ctl"><label>довга сторона, px <output id="o6b">1216</output></label>
+        <input type="range" id="sz6" min="320" max="1333" step="32" value="1216"></div>
+      <div class="readout">
+        <div class="cellv"><b>карта P2</b><i id="v6a" class="sm">—</i></div>
+        <div class="cellv"><b>якорів на кадр</b><i id="v6b">—</i></div>
+        <div class="cellv"><b>ваг у кроці</b><i id="v6c" class="sm">—</i></div>
+        <div class="cellv"><b>частка ваг</b><i id="v6d">—</i></div>
+      </div>
+      <div class="verdict" id="verd6"></div>
+    </div>
+  </div>
+  <figcaption>Розміри карт і кількість якорів рахуються тією самою формулою, що
+    в <code>torchvision</code>: карта P2 — це округлена вгору чверть сторони,
+    далі кожен рівень удвічі дрібніший, три якорі на клітинку. На кадрі
+    <b>800×1216</b> формула дає рівно <b>242 991</b> — стільки ж, скільки
+    справжній <code>AnchorGenerator</code> у зошиті. Ваги взяті з розбору
+    зібраної моделі.</figcaption>
+</figure>
+
+<p>Ось як 41 808 406 ваг розкладаються по частинах:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>частина</th><th>ваг</th><th>частка</th></tr>
+  <tr><td>хребет: тіло ResNet-50</td><td>23 508 032</td><td>56.23 %</td></tr>
+  <tr><td>хребет: FPN</td><td>3 344 384</td><td>8.00 %</td></tr>
+  <tr class="hot"><td>RPN</td><td>593 935</td><td>1.42 %</td></tr>
+  <tr><td>голова: fc6 і fc7</td><td>13 895 680</td><td>33.24 %</td></tr>
+  <tr><td>голова: клас і рамка</td><td>466 375</td><td>1.12 %</td></tr>
+  <tr class="sumrow"><td>разом</td><td>41 808 406</td><td>100 %</td></tr>
+</table></div>
+
+<p>Три речі варто прочитати з цієї таблиці окремо.</p>
+
+<p><b>RPN — найдешевша частина мережі.</b> 593 935 ваг, тобто 1.42 %. З них
+590 080 — одна згортка 3×3 з 256 каналів у 256; на класифікацію «предмет чи
+фон» іде <b>771</b> вага, на регресію зсуву — <b>3 084</b>. Механізм, який
+замінив дві секунди Selective Search, важить менше відсотка й губиться в
+таблиці. Це рідкісний випадок, коли ідея, а не обчислення, дає весь виграш.</p>
+
+<p><b>Другий етап дорожчий за перший у двадцять чотири рази.</b> 14 362 055
+проти 593 935. І майже все це — один шар: <code>fc6</code>, повнозвʼязний шар
+з 256×7×7 = 12 544 входів у 1 024 виходи, тобто <b>12 846 080</b> ваг. Той самий
+сюжет, який ми бачили в <a href="../13-alexnet-vgg/lecture.html">темі 13</a>:
+ваги збираються там, де карта ознак розгортається в один вектор.</p>
+
+<p><b>Хребет — це дві третини моделі.</b> 26 852 416 із 41 808 406, тобто
+64.23 %. Детекторна частина, заради якої вся тема, — це третина. Ось чому
+перенос навчання з <a href="../12-transfer-learning/lecture.html">теми 12</a>
+для детекції не просто корисний, а обовʼязковий: більшість ваг детектора — це
+класифікаційна мережа, яку вже хтось навчив.</p>
+
+<h2 id="s11"><span class="num">11 / Ціна</span>Чим платять два етапи</h2>
+
+<p>Двоетапні детектори роками лишалися найточнішими, і причина в самій формі
+відповіді. <b>Перший етап відповідає на легше питання</b> — «тут узагалі щось
+є?» — і має право помилятися в бік надлишку. <b>Другий етап дивиться лише на
+кілька сотень уже відібраних місць</b>, і саме тому може дозволити собі дорогу
+голову з тринадцятьма мільйонами ваг: 300 разів на кадр, а не 242 991.</p>
+
+<p>Виходить розумний розподіл праці. Дешеве рішення на всіх кандидатах, дороге —
+на небагатьох. Плюс до того, другий етап бачить рамку <em>після</em> уточнення
+першим, тобто працює з ознаками, вирізаними з правильнішого місця. Це
+подвійне уточнення координат і дає перевагу при суворих порогах IoU.</p>
+
+<p>Платять за це двома речами.</p>
+
+<p><b>Складністю.</b> Порахуй, скільки в цій конструкції рухомих частин:
+генератор якорів, правило зіставлення з двома порогами й рятівним винятком,
+вибірка збалансованого мінібатча, притлумлення немаксимумів між етапами, вибір
+кількості кандидат-областей, друге зіставлення вже для голови, друге притлумлення на
+виході. Кожна має свої гіперпараметри, і кожну можна налаштувати неправильно.
+Одноетапний детектор із теми 25 прибирає половину цього списку.</p>
+
+<p><b>Швидкістю.</b> Другий етап неможливо порахувати «одним махом»: він
+залежить від того, що видав перший. Конвеєр має точку синхронізації посередині,
+а вона погано лягає на паралельне залізо. Порівняймо ваги двох сімейств прямо:</p>
+
+<figure>
+  <p class="fig-head">Куди йдуть ваги: Faster R-CNN проти RetinaNet</p>
+  <p class="fig-sub">Обидві моделі на тому самому хребті ResNet-50 з FPN.
+    Повзунок міняє кількість класів — і саме на ньому видно різницю між
+    головою, що працює по кількох сотнях кандидат-областей, і головою, що працює по
+    всіх якорях одразу.</p>
+  <div class="panel">
+    <canvas id="fig7" width="660" height="330"></canvas>
+    <div>
+      <div class="ctl"><label>класів <output id="o7a">91</output></label>
+        <input type="range" id="nc7" min="2" max="1000" step="1" value="91"></div>
+      <div class="readout">
+        <div class="cellv"><b>Faster R-CNN</b><i id="v7a" class="sm">—</i></div>
+        <div class="cellv"><b>RetinaNet</b><i id="v7b" class="sm">—</i></div>
+        <div class="cellv"><b>хто важча й на скільки</b><i id="v7c" class="sm">—</i></div>
+        <div class="cellv"><b>ваг на клас</b><i id="v7d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="verd7"></div>
+    </div>
+  </div>
+  <figcaption>Числа звірені з реально зібраними моделями в кількох точках:
+    при 91 класі <b>41 808 406</b> проти <b>34 068 119</b>, при 500 —
+    <b>43 904 531</b> проти <b>42 552 824</b>, при 587 RetinaNet уперше стає
+    важчою. У Faster R-CNN клас коштує <b>5 125</b> ваг, у RetinaNet —
+    <b>20 745</b>, бо її голова передбачає клас для кожного з девʼяти якорів у
+    кожній точці згорткою 3×3.</figcaption>
+</figure>
+
+<p>Отже, звична фраза «одноетапні детектори легші» справджується лише в
+звичному діапазоні кількості класів. При 91 класі COCO RetinaNet важить на
+7.7 мільйона менше — це вагомо. При пʼятистах класах різниця майже зникає, а
+десь коло <b>587</b> класів перевертається. Причина в тому, <em>де</em> живе
+голова: у Faster R-CNN вона обробляє 300 векторів по 1 024 числа, у RetinaNet —
+кожну з чверті мільйона точок згорткою. Дорога дискретизація одноетапної
+моделі — не в кількості ваг, а в тому, скільки разів ці ваги застосовуються.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Три вузькі місця, три ходи</h2>
+
+<p>Уся тема вкладається в одну таблицю, і в ній важливий не список назв, а
+стовпчик «що саме прибрали».</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>Крок</th><th>Вузьке місце</th><th>Хід</th></tr>
+  <tr><td>Ковзне вікно</td><td>591 415 вікон на кадр</td><td>—</td></tr>
+  <tr><td>R-CNN</td><td>2 000 проходів мережі на кадр, 126 с</td><td>дешевий генератор кандидат-областей замість перебору</td></tr>
+  <tr><td>Fast R-CNN</td><td>Selective Search на процесорі, дві секунди</td><td>ознаки рахуються раз, вирізаються з карти</td></tr>
+  <tr><td>Faster R-CNN</td><td>—</td><td>кандидат-області теж передбачає мережа</td></tr>
+</table></div>
+
+<p>І окремо — технічна деталь, яка не дає прискорення, зате дає точність:
+<b>RoI-Align</b>. Округлення координат у RoI-пулінгу зсуває вирізані ознаки
+на кілька пікселів, білінійна вибірка не зсуває їх зовсім, і різницю видно
+саме там, де вимога до рамки сувора.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>що заміряно</th><th>число</th></tr>
+  <tr><td>вікон на кадр 1000×600, крок 4</td><td>591 415</td></tr>
+  <tr><td>R-CNN: час на кадр</td><td>126.4 с</td></tr>
+  <tr><td>Fast R-CNN: час на кадр, 2 000 рамок</td><td>1.717 с</td></tr>
+  <tr><td>Fast R-CNN: час на кадр, 300 рамок</td><td>0.757 с</td></tr>
+  <tr><td>зсув від округлення, крок 16</td><td>0.57 … 8.71 px</td></tr>
+  <tr><td>зсув RoI-Align</td><td>0.00 px</td></tr>
+  <tr><td>якорів на кадр 800×1216</td><td>242 991</td></tr>
+  <tr class="hot"><td>позитивних якорів на наших сценах</td><td>0.079 %</td></tr>
+  <tr><td>повнота RPN на 10 кандидат-областях</td><td>0.997</td></tr>
+  <tr><td>повнота випадкових якорів на 10</td><td>0.052</td></tr>
+  <tr><td>ваг у RPN справжньої моделі</td><td>593 935 (1.42 %)</td></tr>
+</table></div>
+
+<p>Лишається питання, яке ця тема поставила, але не закрила. Другий етап — це
+третина ваг і вся складність конвеєра. Він потрібен, бо дає точність. А чи
+потрібен він <em>обовʼязково</em>? Що станеться, якщо мережа передбачатиме клас
+і координати відразу для кожного якоря, без відбору й без другого проходу?</p>
+
+<p>Швидкість зросте очевидно. А от точність, як покаже <b>тема 25 «YOLO»</b>,
+впаде не так сильно, як здається, — і головна причина падіння виявиться не в
+архітектурі, а рівно в тому числі, яке ми щойно заміряли: <b>0.079 %</b>
+позитивних якорів. Одноетапний детектор мусить рахувати втрату по всіх
+кандидатах одразу, і дисбаланс, від якого двоетапний рятувався вибіркою, бʼє
+по ньому на повну. Як із цим упоралися, розберуть теми 25 і 26.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../23-detection-setup/lecture.html"><span class="dir">попередня</span><span class="ttl">23. Постановка детекції</span></a>
+    <a class="next" href="../25-yolo/lecture.html"><span class="dir">наступна</span><span class="ttl">25. YOLO</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+/* відмінок після числівника: «на 1 кандидат-області», «на 10 кандидат-областях» */
+function regionsWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'кандидат-області';
+  return 'кандидат-областях';
+}
+function крат(v){
+  if(Math.abs(v-Math.round(v))<1e-9) return gr(v)+' '+разів(Math.round(v));
+  return v.toFixed(1)+' раза';
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* детермінований генератор — картинка однакова у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)&0x7fffffff; return s/0x7fffffff; };
+}
+/* час у людському вигляді */
+function humanTime(ms){
+  if(ms<1000) return ms.toFixed(0)+' мс';
+  if(ms<60000) return (ms/1000).toFixed(2)+' с';
+  if(ms<3600000) return (ms/60000).toFixed(1)+' хв';
+  if(ms<86400000*2) return (ms/3600000).toFixed(1)+' год';
+  return (ms/86400000).toFixed(1)+' дн';
+}
+/* IoU двох рамок [x1,y1,x2,y2] */
+function iou(a,b){
+  var x1=Math.max(a[0],b[0]), y1=Math.max(a[1],b[1]);
+  var x2=Math.min(a[2],b[2]), y2=Math.min(a[3],b[3]);
+  var iw=x2-x1, ih=y2-y1;
+  if(iw<=0||ih<=0) return 0;
+  var inter=iw*ih;
+  var ua=(a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-inter;
+  return inter/ua;
+}
+/* стрілка між блоками схеми */
+function arrow(g,x1,y,x2,color){
+  g.strokeStyle=color; g.lineWidth=1.4; g.beginPath();
+  g.moveTo(x1,y); g.lineTo(x2-5,y); g.stroke();
+  g.fillStyle=color; g.beginPath();
+  g.moveTo(x2,y); g.lineTo(x2-6,y-3.5); g.lineTo(x2-6,y+3.5); g.closePath(); g.fill();
+}
+/* прямокутник-блок схеми з підписом у два рядки (грабля №12: не переносимо самі) */
+function block(g,x,y,w,h,l1,l2,fill,stroke){
+  rr(g,x,y,w,h,7); g.fillStyle=fill; g.fill();
+  g.strokeStyle=stroke; g.lineWidth=1.3; g.stroke();
+  capt(g,l1,x+w/2,y+(l2?h/2-2:h/2+4),stroke,11.5,true,'center');
+  if(l2) capt(g,l2,x+w/2,y+h/2+13,css('--soft'),10.5,false,'center');
+}
+
+/* ═════════════ 1 · ковзне вікно ═════════════ */
+(function(){
+  var cv=I('fig1'); if(!cv) return;
+  var FW=1000, FH=600;                       /* кадр */
+  var SCALES=[32,48,64,96,128,192,256,384,512];
+  var RATIOS=[0.5,1.0,2.0];
+  var STEPS=[1,2,4,8,16];
+  var T_RESNET=63.2, T_TINY=0.255;           /* мс на один прохід, заміряно */
+
+  function countOne(s,r,step){
+    var w=Math.round(s/Math.sqrt(r)), h=Math.round(s*Math.sqrt(r));
+    if(w>FW||h>FH) return 0;
+    return (Math.floor((FW-w)/step)+1)*(Math.floor((FH-h)/step)+1);
+  }
+  function countScale(s,step){
+    var t=0,k; for(k=0;k<RATIOS.length;k++) t+=countOne(s,RATIOS[k],step);
+    return t;
+  }
+  function countAll(nsc,step){
+    var t=0,k; for(k=0;k<nsc;k++) t+=countScale(SCALES[k],step);
+    return t;
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var size=+I('win1').value, step=+I('step1').value, nsc=+I('sc1').value;
+    I('o1a').textContent=size; I('o1b').textContent=step; I('o1c').textContent=nsc;
+
+    var one=countScale(size,step), all=countAll(nsc,step);
+    I('v1a').textContent=gr(one);
+    I('v1b').textContent=gr(all);
+    I('v1c').textContent=humanTime(all*T_RESNET);
+    I('v1d').textContent=humanTime(all*T_TINY);
+
+    /* ── кадр із вікнами ── */
+    var sc=0.33, ox=18, oy=46;
+    var fw=FW*sc, fh=FH*sc;
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,fw,fh);
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(ox,oy,fw,fh);
+    capt(g,'кадр 1000×600, вікно '+size+'×'+size+', крок '+step,ox,oy-12,css('--soft'),11);
+
+    var w=size, h=size;
+    var nx=Math.floor((FW-w)/step)+1, ny=Math.floor((FH-h)/step)+1;
+    var every=Math.max(1,Math.ceil(Math.sqrt(nx*ny/160)));
+    g.save(); g.beginPath(); g.rect(ox,oy,fw,fh); g.clip();
+    g.strokeStyle=css('--teal'); g.globalAlpha=0.30; g.lineWidth=0.7;
+    var i,j,drawn=0;
+    for(i=0;i<ny;i+=every) for(j=0;j<nx;j+=every){
+      if(drawn>260) break;
+      g.strokeRect(ox+j*step*sc, oy+i*step*sc, w*sc, h*sc); drawn++;
+    }
+    g.globalAlpha=1;
+    g.strokeStyle=css('--rose'); g.lineWidth=2;
+    g.strokeRect(ox+Math.round(nx/2)*step*sc, oy+Math.round(ny/2)*step*sc, w*sc, h*sc);
+    g.restore();
+    capt(g,'показано кожне '+every+'-те вікно з '+gr(nx*ny),ox,oy+fh+16,css('--soft'),10.5);
+
+    /* ── смуги: скільки вікон при різних кроках ── */
+    var bx=372, by=52, bw=178, bh=32;
+    capt(g,'усього вікон при кроці',bx,by-16,css('--soft'),11);
+    var mx=countAll(nsc,1);
+    for(i=0;i<STEPS.length;i++){
+      var v=countAll(nsc,STEPS[i]);
+      var len=mx>0? Math.max(3, bw*Math.log(1+v)/Math.log(1+mx)) : 3;
+      var y=by+i*(bh+10);
+      var hot=STEPS[i]===step;
+      g.fillStyle=hot?css('--rose'):css('--hair');
+      rr(g,bx+30,y,len,bh-12,4); g.fill();
+      capt(g,String(STEPS[i]),bx+22,y+bh-16,hot?css('--rose'):css('--soft'),11.5,hot,'right');
+      capt(g,gr(v),bx+36+len,y+bh-16,hot?css('--ink'):css('--soft'),11,hot,'left');
+    }
+    capt(g,'логарифмічна шкала',bx+30,by+STEPS.length*(bh+10)+8,css('--soft'),10);
+
+    /* вердикт */
+    var tR=all*T_RESNET;
+    if(tR>3600000)
+      verd('verd1','t-no','НЕПРИДАТНО', gr(all)+' вікон на кадр. ResNet-18 обробить їх за '+
+        humanTime(tR)+' — і це один-єдиний кадр.');
+    else if(tR>60000)
+      verd('verd1','t-no','ДУЖЕ ДОВГО', gr(all)+' вікон — '+humanTime(tR)+
+        ' на кадр важкою мережею. Навіть крихітна мережа візьме '+humanTime(all*T_TINY)+'.');
+    else
+      verd('verd1','t-mid','ЗАДОРОГО', gr(all)+' вікон — '+humanTime(tR)+
+        ' на кадр. Дешево лише тому, що ти згрубив крок або прибрав масштаби: рамка тепер '+
+        'лягає на предмет із похибкою '+(step/2).toFixed(1)+' px.');
+  }
+  ['win1','step1','sc1'].forEach(function(id){ on(id,'input',draw); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 2 · R-CNN проти Fast R-CNN ═════════════ */
+(function(){
+  var cv=I('fig2'); if(!cv) return;
+  var T_CROP=63.2;       /* мс, ResNet-18 на шматку 224×224 */
+  var T_BODY=576;        /* мс, тіло по кадру 600×1000 */
+  var T_ROI=0.57;        /* мс на одну кандидат-область */
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv);
+    var K=+I('k2').value;
+    I('o2a').textContent=gr(K);
+    var tR=K*T_CROP, tF=T_BODY+K*T_ROI;
+    I('v2a').textContent=gr(K);
+    I('v2c').textContent=humanTime(tR);
+    I('v2d').textContent=humanTime(tF);
+
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), hair=css('--hair');
+    var rw=css('--rose-w'), tw=css('--teal-w');
+
+    /* ── ряд 1: R-CNN ── */
+    var y=32;
+    capt(g,'R-CNN · тіло мережі працює на кожній кандидат-області',20,y-10,rose,12,true);
+    block(g,20,y,74,58,'кадр','',css('--paper'),hair);
+    arrow(g,96,y+29,120,soft);
+    var i;
+    for(i=3;i>=0;i--){
+      rr(g,122+i*5,y+2+i*5,58,44,4); g.fillStyle=css('--raise'); g.fill();
+      g.strokeStyle=rose; g.lineWidth=1; g.stroke();
+    }
+    arrow(g,192,y+29,216,soft);
+    block(g,218,y,120,58,'CNN','× '+gr(K)+' '+(K===1?'раз':'разів'),rw,rose);
+    arrow(g,340,y+29,364,soft);
+    block(g,366,y,150,58,'класифікатор','+ регресія рамки',css('--paper'),soft);
+    capt(g,gr(K)+' шматків',151,y+76,rose,11,true,'center');
+    capt(g,'три окремі навчання: градієнт від помилки рамки не доходить до згорток',
+         20,y+96,soft,11);
+
+    /* ── ряд 2: Fast R-CNN ── */
+    y=162;
+    capt(g,'Fast R-CNN · тіло працює один раз, кандидат-області беруть готові ознаки',20,y-10,teal,12,true);
+    block(g,20,y,74,58,'кадр','',css('--paper'),hair);
+    arrow(g,96,y+29,120,soft);
+    block(g,122,y,84,58,'CNN','× 1',tw,teal);
+    arrow(g,208,y+29,232,soft);
+    /* карта ознак */
+    var mx=234, my=y+6, cs=8.5, j;
+    for(i=0;i<6;i++) for(j=0;j<6;j++){
+      g.fillStyle=(i+j)%2? css('--paper') : css('--raise');
+      g.fillRect(mx+j*cs,my+i*cs,cs-1,cs-1);
+    }
+    g.strokeStyle=teal; g.lineWidth=1.4; g.strokeRect(mx+cs*1.4,my+cs*0.8,cs*2.6,cs*2.2);
+    arrow(g,292,y+29,316,soft);
+    block(g,318,y,116,58,'RoI-Align','× '+gr(K),tw,teal);
+    arrow(g,436,y+29,460,soft);
+    block(g,462,y,150,58,'голова','клас + рамка',css('--paper'),soft);
+    capt(g,'карта ознак',260,y+76,soft,11,false,'center');
+    capt(g,'одна мережа: градієнт іде від рамки аж до першої згортки',20,y+96,soft,11);
+
+    /* ── смуги часу ── */
+    var by=286, bx=124, bw=400;
+    var mxv=Math.log(1+2000*T_CROP);
+    capt(g,'час на кадр, логарифмічна шкала',20,by-12,soft,11.5,true);
+    var lr=Math.max(4,bw*Math.log(1+tR)/mxv), lf=Math.max(4,bw*Math.log(1+tF)/mxv);
+    g.fillStyle=rose; rr(g,bx,by,lr,16,4); g.fill();
+    capt(g,'R-CNN',bx-8,by+12,rose,11,true,'right');
+    capt(g,humanTime(tR),bx+lr+8,by+12,css('--ink'),11,true);
+    g.fillStyle=teal; rr(g,bx,by+26,lf,16,4); g.fill();
+    capt(g,'Fast R-CNN',bx-8,by+38,teal,11,true,'right');
+    capt(g,humanTime(tF),bx+lf+8,by+38,css('--ink'),11,true);
+
+    var gain=tR/tF;
+    var share=100*T_BODY/tF;
+    if(gain>50)
+      verd('verd2','t-ok','ВИГРАШ '+gain.toFixed(0)+'×','R-CNN: '+gr(K)+
+        ' проходів тіла. Fast R-CNN: один. '+humanTime(tR)+' проти '+humanTime(tF)+
+        '. На тіло припадає '+share.toFixed(0)+' % часу.');
+    else if(gain>10)
+      verd('verd2','t-ok','ВИГРАШ '+gain.toFixed(0)+'×','Кандидатів мало, тож сталий '+
+        'внесок тіла вже помітний: '+share.toFixed(0)+' % часу Fast R-CNN — це один прохід по кадру.');
+    else
+      verd('verd2','t-mid','ВИГРАШ '+gain.toFixed(1)+'×','При такій малій кількості '+
+        'кандидат-областей головна витрата Fast R-CNN — сам прохід тіла ('+share.toFixed(0)+
+        ' %), і скорочувати далі нема чого.');
+  }
+  on('k2','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 3 · RoI-пулінг проти RoI-Align ═════════════ */
+(function(){
+  var cv=I('fig3'); if(!cv) return;
+  var MAP=12, STRIDE=16, OUT=7;
+  var Y1=32, Y2=112, BW=88, X0=36;
+  var mode=0;                       /* 0 — округлення, 1 — білінійна */
+
+  /* карта ознак «пандус»: значення клітинки дорівнює її стовпчику */
+  function val(r,c){ return c; }
+
+  /* RoI-пулінг: округлюємо межі, потім межі комірок */
+  function quantCentre(x1,x2){
+    var qx1=Math.round(x1/STRIDE), qx2=Math.round(x2/STRIDE);
+    var cw=(qx2-qx1)/OUT, tot=0, j, a, b, s, n, c;
+    for(j=0;j<OUT;j++){
+      a=qx1+Math.floor(j*cw); b=qx1+Math.floor((j+1)*cw);
+      if(b<=a) b=a+1;
+      s=0; n=0;
+      for(c=a;c<b;c++){ s+=val(0,c); n++; }
+      tot+=s/n;
+    }
+    return tot/OUT;
+  }
+  /* RoI-Align: жодного округлення, білінійна вибірка 2×2 на комірку */
+  function alignCentre(x1,x2){
+    var a=x1/STRIDE-0.5, b=x2/STRIDE-0.5;
+    var cw=(b-a)/OUT, tot=0, j, ix, xx, x0, lx;
+    for(j=0;j<OUT;j++){
+      var acc=0;
+      for(ix=0;ix<2;ix++){
+        xx=a+j*cw+(ix+0.5)*cw/2;
+        if(xx<0) xx=0; if(xx>MAP-1) xx=MAP-1;
+        x0=Math.floor(xx); lx=xx-x0;
+        if(x0>=MAP-1){ x0=MAP-1; lx=0; }
+        acc+=(1-lx)*val(0,x0)+lx*val(0,Math.min(x0+1,MAP-1));
+      }
+      tot+=acc/2;
+    }
+    return tot/OUT;
+  }
+  function shiftPx(sh){
+    var x1=X0+sh, x2=x1+BW;
+    var truec=(x1+x2)/2/STRIDE-0.5;
+    var got=mode? alignCentre(x1,x2) : quantCentre(x1,x2);
+    return {t:truec, g:got, d:got-truec, px:(got-truec)*STRIDE, x1:x1, x2:x2};
+  }
+
+  function draw(){
+    var g=dpr(cv);
+    var sh=+I('sh3').value;
+    I('o3a').textContent=sh;
+    var r=shiftPx(sh);
+    I('v3a').textContent=r.t.toFixed(4);
+    I('v3b').textContent=r.g.toFixed(4);
+    I('v3c').textContent=(r.d>=0?'+':'')+r.d.toFixed(4);
+    I('v3d').textContent=(r.px>=0?'+':'')+r.px.toFixed(2)+' px';
+
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+    /* ── карта ознак ── */
+    var cs=22, ox=20, oy=48;
+    capt(g,'карта ознак 12×12, значення = номер стовпчика',ox,oy-12,soft,11);
+    var i,j;
+    for(i=0;i<MAP;i++) for(j=0;j<MAP;j++){
+      var t=j/(MAP-1);
+      g.fillStyle='rgba(15,118,110,'+(0.10+0.55*t).toFixed(3)+')';
+      g.fillRect(ox+j*cs,oy+i*cs,cs-1,cs-1);
+    }
+    /* істинна рамка */
+    var bx1=ox+r.x1/STRIDE*cs, bx2=ox+r.x2/STRIDE*cs;
+    var by1=oy+Y1/STRIDE*cs, by2=oy+Y2/STRIDE*cs;
+    g.strokeStyle=ink; g.lineWidth=2; g.setLineDash([4,3]);
+    g.strokeRect(bx1,by1,bx2-bx1,by2-by1); g.setLineDash([]);
+    /* що насправді вирізає обраний спосіб */
+    if(mode===0){
+      var q1=Math.round(r.x1/STRIDE), q2=Math.round(r.x2/STRIDE);
+      g.strokeStyle=rose; g.lineWidth=2;
+      g.strokeRect(ox+q1*cs,oy+Math.round(Y1/STRIDE)*cs,(q2-q1)*cs,
+                   (Math.round(Y2/STRIDE)-Math.round(Y1/STRIDE))*cs);
+      g.strokeStyle=rose; g.lineWidth=0.8; g.globalAlpha=0.6;
+      var cw=(q2-q1)/OUT;
+      for(j=1;j<OUT;j++){
+        var xx=ox+(q1+Math.floor(j*cw))*cs;
+        g.beginPath(); g.moveTo(xx,oy+Math.round(Y1/STRIDE)*cs);
+        g.lineTo(xx,oy+Math.round(Y2/STRIDE)*cs); g.stroke();
+      }
+      g.globalAlpha=1;
+    } else {
+      g.strokeStyle=rose; g.lineWidth=2;
+      g.strokeRect(bx1,by1,bx2-bx1,by2-by1);
+      g.fillStyle=rose;
+      var a=r.x1/STRIDE-0.5, b=r.x2/STRIDE-0.5, cw2=(b-a)/OUT;
+      var ay=Y1/STRIDE-0.5, by=Y2/STRIDE-0.5, ch=(by-ay)/OUT;
+      for(j=0;j<OUT;j++) for(i=0;i<OUT;i++){
+        var px=a+j*cw2+cw2/2, py=ay+i*ch+ch/2;
+        g.beginPath(); g.arc(ox+(px+0.5)*cs,oy+(py+0.5)*cs,1.6,0,6.2832); g.fill();
+      }
+    }
+    /* мітки центрів */
+    var tcx=ox+(r.t+0.5)*cs, gcx=ox+(r.g+0.5)*cs;
+    g.strokeStyle=ink; g.lineWidth=2;
+    g.beginPath(); g.moveTo(tcx,oy-4); g.lineTo(tcx,oy+MAP*cs+4); g.stroke();
+    g.strokeStyle=rose; g.lineWidth=2; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(gcx,oy-4); g.lineTo(gcx,oy+MAP*cs+4); g.stroke();
+    g.setLineDash([]);
+    capt(g,'центр істини',ox,oy+MAP*cs+18,ink,10.5);
+    capt(g,'центр вирізаного',ox,oy+MAP*cs+32,rose,10.5);
+
+    /* ── графік зсуву від положення рамки ── */
+    var gx=330, gy=60, gw=300, gh=190;
+    capt(g,'зсув вирізаного, px',gx,gy-14,soft,11);
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(gx,gy); g.lineTo(gx,gy+gh); g.lineTo(gx+gw,gy+gh); g.stroke();
+    var lo=-11, hi=2;
+    function ypx(v){ return gy+gh*(hi-v)/(hi-lo); }
+    g.strokeStyle=css('--hair'); g.setLineDash([2,3]);
+    g.beginPath(); g.moveTo(gx,ypx(0)); g.lineTo(gx+gw,ypx(0)); g.stroke(); g.setLineDash([]);
+    capt(g,'0',gx-6,ypx(0)+4,soft,10,false,'right');
+    capt(g,'-10',gx-6,ypx(-10)+4,soft,10,false,'right');
+    var k, oldm=mode, pts=[];
+    for(k=0;k<16;k++) pts.push(shiftPx(k).px);
+    g.strokeStyle=rose; g.lineWidth=2; g.beginPath();
+    for(k=0;k<16;k++){
+      var X=gx+gw*k/15, Y=ypx(pts[k]);
+      if(k===0) g.moveTo(X,Y); else g.lineTo(X,Y);
+    }
+    g.stroke();
+    for(k=0;k<16;k++){
+      g.fillStyle=(k===sh)?ink:rose;
+      g.beginPath(); g.arc(gx+gw*k/15,ypx(pts[k]),(k===sh)?4:2.2,0,6.2832); g.fill();
+    }
+    capt(g,'0',gx,gy+gh+16,soft,10.5);
+    capt(g,'15',gx+gw,gy+gh+16,soft,10.5,false,'right');
+    capt(g,'зсув рамки, px',gx+gw/2,gy+gh+32,soft,10.5,false,'center');
+
+    var abs=pts.map(Math.abs);
+    var mn=Math.min.apply(null,abs), mxv=Math.max.apply(null,abs);
+    if(mode===1)
+      verd('verd3','t-ok','ЗСУВУ НЕМАЄ','Білінійна вибірка рахує значення в дробовій точці, '+
+        'а не бере найближчу клітинку. У всіх 16 положеннях рамки зсув рівно 0.00 px.');
+    else
+      verd('verd3','t-no','ЗСУВ '+Math.abs(r.px).toFixed(2)+' PX','Округлення дає сходинку: '+
+        'рамка їде, вирізана ділянка стоїть. По всіх положеннях модуль зсуву гуляє від '+
+        mn.toFixed(2)+' до '+mxv.toFixed(2)+' px — ознаки беруться не звідти, де рамка.');
+  }
+  segment('seg3',function(i){ mode=i; draw(); });
+  on('sh3','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 4 · якорі ═════════════ */
+(function(){
+  var cv=I('fig4'); if(!cv) return;
+  var GRID=16, STRIDE=4;
+  var SCALES=[8,12,18], RATIOS=[0.5,1.0,2.0];
+  var selS=3, selR=3;                       /* 3 = усі */
+  /* сцена 35 датасету теми: трикутник, квадрат, коло */
+  var GT=[[32,23,47,38],[12,30,27,45],[28,5,43,20]];
+  var SHAPE=[2,1,0];
+
+  function anchors(){
+    var out=[], i,j,si,ri;
+    var ss=(selS===3)?SCALES:[SCALES[selS]];
+    var rs=(selR===3)?RATIOS:[RATIOS[selR]];
+    for(i=0;i<GRID;i++) for(j=0;j<GRID;j++){
+      var cy=(i+0.5)*STRIDE, cx=(j+0.5)*STRIDE;
+      for(si=0;si<ss.length;si++) for(ri=0;ri<rs.length;ri++){
+        var s=ss[si], r=rs[ri];
+        var h=s*Math.sqrt(r), w=s/Math.sqrt(r);
+        out.push([cx-w/2,cy-h/2,cx+w/2,cy+h/2]);
+      }
+    }
+    return out;
+  }
+  function stats(A,thr,save){
+    var pos=[], best=[0,0,0], bestIdx=[-1,-1,-1], k,t,v;
+    for(k=0;k<A.length;k++){
+      var m=0;
+      for(t=0;t<GT.length;t++){
+        v=iou(A[k],GT[t]);
+        if(v>best[t]){ best[t]=v; bestIdx[t]=k; }
+        if(v>m) m=v;
+      }
+      if(m>thr) pos.push(k);
+    }
+    if(save) for(t=0;t<GT.length;t++)
+      if(bestIdx[t]>=0 && pos.indexOf(bestIdx[t])<0) pos.push(bestIdx[t]);
+    return {pos:pos, best:best};
+  }
+
+  function draw(){
+    var g=dpr(cv);
+    var thr=+I('thr4').value/100, save=I('save4').checked;
+    I('o4a').textContent=thr.toFixed(2);
+    var A=anchors(), st=stats(A,thr,save);
+    var n=A.length, np=st.pos.length;
+    I('v4a').textContent=gr(n);
+    I('v4b').textContent=gr(np);
+    I('v4c').textContent=(100*np/n).toFixed(3)+' %';
+    I('v4d').textContent=np? gr(Math.round((n-np)/np)) : '∞';
+
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+    /* ── сцена ── */
+    var sc=4.6, ox=18, oy=42;
+    capt(g,'сцена 64×64, сітка якорів 16×16',ox,oy-12,soft,11);
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,64*sc,64*sc);
+    var rnd=LCG(7), i, j;
+    g.fillStyle=css('--hair'); g.globalAlpha=0.45;
+    for(i=0;i<64;i++) for(j=0;j<64;j++) if(rnd()>0.86) g.fillRect(ox+j*sc,oy+i*sc,sc,sc);
+    g.globalAlpha=1;
+    /* предмети */
+    for(i=0;i<GT.length;i++){
+      var b=GT[i], cx=ox+(b[0]+b[2])/2*sc, cy=oy+(b[1]+b[3])/2*sc, R=(b[2]-b[0])/2*sc;
+      g.fillStyle=css('--teal-w'); g.strokeStyle=teal; g.lineWidth=1.6;
+      g.beginPath();
+      if(SHAPE[i]===0) g.arc(cx,cy,R,0,6.2832);
+      else if(SHAPE[i]===1){ g.rect(cx-R,cy-R,2*R,2*R); }
+      else { g.moveTo(cx,cy-R); g.lineTo(cx+R,cy+R); g.lineTo(cx-R,cy+R); g.closePath(); }
+      g.fill(); g.stroke();
+    }
+    /* центри якорів */
+    g.fillStyle=soft; g.globalAlpha=0.30;
+    for(i=0;i<GRID;i++) for(j=0;j<GRID;j++)
+      g.fillRect(ox+((j+0.5)*STRIDE)*sc-0.8, oy+((i+0.5)*STRIDE)*sc-0.8, 1.6,1.6);
+    g.globalAlpha=1;
+    /* позитивні якорі — обрізаємо по кадру (грабля №7): якір може вилізти за межі */
+    g.save(); g.beginPath(); g.rect(ox,oy,64*sc,64*sc); g.clip();
+    g.strokeStyle=rose; g.lineWidth=1.2; g.globalAlpha=0.85;
+    for(i=0;i<st.pos.length && i<400;i++){
+      var a=A[st.pos[i]];
+      g.strokeRect(ox+a[0]*sc,oy+a[1]*sc,(a[2]-a[0])*sc,(a[3]-a[1])*sc);
+    }
+    g.globalAlpha=1; g.restore();
+    /* істинні рамки */
+    g.strokeStyle=ink; g.lineWidth=1.8; g.setLineDash([4,3]);
+    for(i=0;i<GT.length;i++)
+      g.strokeRect(ox+GT[i][0]*sc,oy+GT[i][1]*sc,(GT[i][2]-GT[i][0])*sc,(GT[i][3]-GT[i][1])*sc);
+    g.setLineDash([]);
+    capt(g,'істина — пунктир, позитивні якорі — суцільні',ox,oy+64*sc+16,soft,10.5);
+
+    /* ── крива: позитивних від порога ── */
+    var gx=352, gy=58, gw=280, gh=190;
+    capt(g,'позитивних якорів від порога IoU',gx,gy-14,soft,11);
+    var curve=[], k;
+    for(k=0;k<=12;k++){
+      var t=0.30+0.05*k;
+      curve.push(stats(A,t,save).pos.length);
+    }
+    var mxc=Math.max.apply(null,curve); if(mxc<1) mxc=1;
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(gx,gy); g.lineTo(gx,gy+gh); g.lineTo(gx+gw,gy+gh); g.stroke();
+    g.strokeStyle=rose; g.lineWidth=2; g.beginPath();
+    for(k=0;k<curve.length;k++){
+      var X=gx+gw*k/12, Y=gy+gh-gh*curve[k]/mxc;
+      if(k===0) g.moveTo(X,Y); else g.lineTo(X,Y);
+    }
+    g.stroke();
+    var cur=Math.round((thr-0.30)/0.05);
+    for(k=0;k<curve.length;k++){
+      g.fillStyle=(k===cur)?ink:rose;
+      g.beginPath(); g.arc(gx+gw*k/12, gy+gh-gh*curve[k]/mxc, (k===cur)?4:2.2,0,6.2832); g.fill();
+    }
+    capt(g,gr(mxc),gx-6,gy+8,soft,10,false,'right');
+    capt(g,'0',gx-6,gy+gh+4,soft,10,false,'right');
+    capt(g,'0.30',gx,gy+gh+16,soft,10.5);
+    capt(g,'поріг IoU',gx+gw/2,gy+gh+16,soft,10.5,false,'center');
+    capt(g,'0.90',gx+gw,gy+gh+16,soft,10.5,false,'right');
+    var bs=Math.max(st.best[0],st.best[1],st.best[2]);
+    capt(g,'найкращий IoU на сцені: '+bs.toFixed(3),gx,gy+gh+38,ink,11,true);
+
+    if(np===0)
+      verd('verd4','t-no','ПОЗИТИВНИХ НЕМАЄ','Жоден із '+gr(n)+' якорів не дотягнув до '+
+        thr.toFixed(2)+'. Найкращий має '+bs.toFixed(3)+'. Без рятівного правила навчати нічим.');
+    else if(100*np/n<0.5)
+      verd('verd4','t-no','ФОНУ В '+gr(Math.round((n-np)/np))+'× БІЛЬШЕ','Позитивних '+gr(np)+
+        ' із '+gr(n)+' — '+(100*np/n).toFixed(3)+' %. Проста сума втрати навчить мережу '+
+        'відповідати «фон» і мати '+(100-100*np/n).toFixed(2)+' % правильних відповідей.');
+    else
+      verd('verd4','t-mid','ПОРІГ МʼЯКИЙ','Позитивних '+gr(np)+' із '+gr(n)+' — '+
+        (100*np/n).toFixed(3)+' %. Поріг такий низький, що позитивними стають якорі, '+
+        'які накривають предмет лише наполовину.');
+  }
+  segment('seg4a',function(i){ selS=i; draw(); });
+  segment('seg4b',function(i){ selR=i; draw(); });
+  on('thr4','input',draw);
+  on('save4','change',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 5 · скільки кандидат-областей ═════════════ */
+(function(){
+  var cv=I('fig5'); if(!cv) return;
+  var KS=[1,3,5,10,20,50,100,300];
+  var RPN={
+    '0.50':[0.499,0.904,0.973,0.997,1.000,1.000,1.000,1.000],
+    '0.70':[0.403,0.753,0.862,0.930,0.949,0.954,0.954,0.955],
+    '0.75':[0.354,0.661,0.761,0.831,0.855,0.861,0.861,0.861]
+  };
+  var SD={
+    '0.50':[0.010,0.004,0.005,0.004,0.000,0.000,0.000,0.000],
+    '0.70':[0.018,0.027,0.023,0.009,0.007,0.010,0.010,0.009],
+    '0.75':[0.030,0.037,0.033,0.020,0.008,0.009,0.009,0.009]
+  };
+  var RKS=[1,3,5,10,20,50,100,300,1000,2304];
+  var RND={
+    '0.50':[0.005,0.014,0.038,0.052,0.109,0.217,0.417,0.803,0.999,1.000],
+    '0.70':[0.001,0.001,0.001,0.008,0.008,0.019,0.045,0.134,0.410,0.783],
+    '0.75':[0.001,0.001,0.000,0.003,0.004,0.005,0.012,0.040,0.176,0.344]
+  };
+  var thr='0.50';
+
+  function draw(){
+    var g=dpr(cv);
+    var ki=+I('k5').value, k=KS[ki];
+    I('o5a').textContent=k;
+    var rv=RPN[thr][ki], sd=SD[thr][ki];
+    I('v5a').textContent=rv.toFixed(3);
+    /* повнота випадкових при тій самій кількості */
+    var rr2=RND[thr][RKS.indexOf(k)];
+    I('v5b').textContent=rr2.toFixed(3);
+    I('v5c').textContent='± '+sd.toFixed(3);
+    I('v5d').textContent='15.73 мс';
+
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink'), hair=css('--hair');
+    var gx=60, gy=40, gw=560, gh=228;
+    function X(v){ return gx+gw*Math.log(v)/Math.log(2304); }
+    function Y(v){ return gy+gh-gh*v; }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(gx,gy); g.lineTo(gx,gy+gh); g.lineTo(gx+gw,gy+gh); g.stroke();
+    var t;
+    for(t=0;t<=1.0001;t+=0.25){
+      g.strokeStyle=hair; g.setLineDash([2,4]);
+      g.beginPath(); g.moveTo(gx,Y(t)); g.lineTo(gx+gw,Y(t)); g.stroke(); g.setLineDash([]);
+      capt(g,t.toFixed(2),gx-8,Y(t)+4,soft,10,false,'right');
+    }
+    var ticks=[1,3,10,30,100,300,1000,2304], i;
+    for(i=0;i<ticks.length;i++) capt(g,String(ticks[i]),X(ticks[i]),gy+gh+16,soft,10,false,'center');
+    capt(g,'кількість кандидат-областей, логарифмічна шкала',gx+gw/2,gy+gh+34,soft,10.5,false,'center');
+    capt(g,'повнота',gx-8,gy-10,soft,10.5,false,'right');
+
+    /* крива навмання */
+    g.strokeStyle=soft; g.lineWidth=2; g.globalAlpha=0.55; g.beginPath();
+    for(i=0;i<RKS.length;i++){
+      var Xr=X(RKS[i]), Yr=Y(RND[thr][i]);
+      if(i===0) g.moveTo(Xr,Yr); else g.lineTo(Xr,Yr);
+    }
+    g.stroke(); g.globalAlpha=1;
+    /* крива RPN */
+    g.strokeStyle=teal; g.lineWidth=2.4; g.beginPath();
+    for(i=0;i<KS.length;i++){
+      var Xa=X(KS[i]), Ya=Y(RPN[thr][i]);
+      if(i===0) g.moveTo(Xa,Ya); else g.lineTo(Xa,Ya);
+    }
+    g.stroke();
+    for(i=0;i<KS.length;i++){
+      g.fillStyle=(i===ki)?rose:teal;
+      g.beginPath(); g.arc(X(KS[i]),Y(RPN[thr][i]),(i===ki)?5:2.6,0,6.2832); g.fill();
+    }
+    /* маркер обраної точки */
+    g.strokeStyle=rose; g.lineWidth=1.2; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(X(k),gy); g.lineTo(X(k),gy+gh); g.stroke(); g.setLineDash([]);
+    capt(g,'навчений RPN',X(300)+8,Y(RPN[thr][7])-8,teal,11,true);
+    capt(g,'навмання',X(300)+8,Y(RND[thr][7])+16,soft,11,true);
+
+    /* скільки випадкових потрібно для тієї самої повноти */
+    var need=null;
+    for(i=0;i<RKS.length;i++) if(RND[thr][i]>=rv-0.005){ need=RKS[i]; break; }
+    if(need)
+      verd('verd5','t-ok','У '+Math.round(need/k)+'× МЕНШЕ','Навчений RPN дає повноту '+
+        rv.toFixed(3)+' на '+k+' '+regionsWord(k)+'. Випадковим якорям для тієї самої '+
+        'повноти треба '+gr(need)+'.');
+    else
+      verd('verd5','t-ok','НАВМАННЯ НЕ ДІСТАНЕ','RPN дає '+rv.toFixed(3)+' на '+k+' '+
+        regionsWord(k)+'. Усі '+gr(2304)+' якорі без навчання дають лише '+
+        RND[thr][9].toFixed(3)+' — регресія зсуву робить те, чого сітка не може.');
+  }
+  segment('seg5',function(i){ thr=['0.50','0.70','0.75'][i]; draw(); });
+  on('k5','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 6 · прогін кадру крізь Faster R-CNN ═════════════ */
+(function(){
+  var cv=I('fig6'); if(!cv) return;
+  var TOTAL=41808406;
+  var STEPS=[
+    {n:'кадр',      w:0,        l1:'Зображення масштабується так, щоб довга сторона',
+                                l2:'стала заданою. Ваг тут немає.'},
+    {n:'хребет',    w:23508032, l1:'ResNet-50 дає чотири карти ознак різної дрібності:',
+                                l2:'що глибше, то дрібніша сітка й більше каналів.'},
+    {n:'FPN',       w:3344384,  l1:'Пʼять карт зводяться до однакової товщини 256 каналів,',
+                                l2:'дрібні підмішуються у великі. Дрібні предмети не гинуть.'},
+    {n:'RPN',       w:593935,   l1:'Для кожного якоря — упевненість і зсув. Далі сортування,',
+                                l2:'притлумлення немаксимумів і 300 найкращих кандидат-областей.'},
+    {n:'RoI-Align', w:0,        l1:'Кожна з 300 кандидат-областей перетворюється на 256×7×7 чисел',
+                                l2:'білінійною вибіркою з карти. Ваг у самій операції немає.'},
+    {n:'голова',    w:14362055, l1:'fc6 і fc7 стискають 12 544 числа до 1 024, далі клас',
+                                l2:'і уточнена рамка. Наприкінці — притлумлення по класах.'}
+  ];
+  function pyramid(L){
+    var S=Math.round(L*800/1216);
+    var out=[], h=Math.ceil(S/4), w=Math.ceil(L/4), i;
+    out.push([h,w]);
+    for(i=0;i<4;i++){ h=Math.ceil(h/2); w=Math.ceil(w/2); out.push([h,w]); }
+    return out;
+  }
+  function draw(){
+    var g=dpr(cv);
+    var st=+I('st6').value, L=+I('sz6').value;
+    I('o6a').textContent=st; I('o6b').textContent=L;
+    var P=pyramid(L), i, cells=0;
+    for(i=0;i<P.length;i++) cells+=P[i][0]*P[i][1];
+    var anch=cells*3;
+    var S=STEPS[st-1];
+    I('v6a').textContent=P[0][0]+'×'+P[0][1];
+    I('v6b').textContent=gr(anch);
+    I('v6c').textContent=S.w? gr(S.w) : 'немає';
+    I('v6d').textContent=S.w? (100*S.w/TOTAL).toFixed(2)+' %' : '0 %';
+
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink'), hair=css('--hair');
+    /* ── ланцюг блоків ── */
+    var bw=96, bh=52, gap=8, ox=20, oy=34;
+    for(i=0;i<STEPS.length;i++){
+      var x=ox+i*(bw+gap), hot=(i===st-1);
+      rr(g,x,oy,bw,bh,7);
+      g.fillStyle=hot?css('--rose-w'):css('--raise'); g.fill();
+      g.strokeStyle=hot?rose:hair; g.lineWidth=hot?1.8:1; g.stroke();
+      capt(g,STEPS[i].n,x+bw/2,oy+22,hot?rose:soft,11.5,hot,'center');
+      capt(g,STEPS[i].w? gr(STEPS[i].w) : '—',x+bw/2,oy+39,hot?ink:soft,10.5,false,'center');
+      if(i<STEPS.length-1) arrow(g,x+bw,oy+bh/2,x+bw+gap,soft);
+    }
+    /* пояснення поточного кроку */
+    capt(g,S.l1,ox,oy+bh+30,ink,12);
+    capt(g,S.l2,ox,oy+bh+48,ink,12);
+
+    /* ── піраміда карт ── */
+    var py=170, px=20;
+    capt(g,'карти ознак для кадру '+Math.round(L*800/1216)+'×'+L,px,py-6,soft,11);
+    var names=['P2','P3','P4','P5','P6'], maxw=140;
+    for(i=0;i<P.length;i++){
+      var ww=maxw*P[i][1]/P[0][1], hh=ww*P[i][0]/P[i][1];
+      var bx=px, by=py+8+ (i? 0:0);
+      /* малюємо в ряд */
+      bx=px+i*118;
+      var boxW=Math.max(8,ww*0.62), boxH=Math.max(6,hh*0.62);
+      g.fillStyle=(st>=3)?css('--teal-w'):css('--paper');
+      g.strokeStyle=(st>=3)?teal:hair; g.lineWidth=1.2;
+      g.fillRect(bx,py+96-boxH,boxW,boxH); g.strokeRect(bx,py+96-boxH,boxW,boxH);
+      capt(g,names[i],bx,py+112,soft,11,true);
+      capt(g,P[i][0]+'×'+P[i][1],bx,py+126,ink,10.5);
+      capt(g,gr(P[i][0]*P[i][1]*3)+' якорів',bx,py+140,soft,10);
+    }
+
+    var base=242991;
+    var ratio=anch/base;
+    var cmp = Math.abs(ratio-1)<0.005 ? 'рівно стільки ж, скільки на кадрі 800×1216'
+            : (ratio>1 ? 'у '+ratio.toFixed(2)+' раза більше, ніж на кадрі 800×1216'
+                       : 'у '+(1/ratio).toFixed(2)+' раза менше, ніж на кадрі 800×1216');
+    if(st===4)
+      verd('verd6','t-mid','ЯКОРІВ '+gr(anch),'Дві згортки 1×1 видають відповідь для кожного '+
+        'з '+gr(anch)+' якорів за один прохід. Ваг у RPN — '+gr(593935)+', це 1.42 % моделі.');
+    else if(st===5)
+      verd('verd6','t-ok','ВАГ ТУТ НЕМАЄ','300 кандидат-областей перетворюються на '+gr(300*256*49)+
+        ' чисел білінійною вибіркою. Другий етап далі бачить лише їх, а не '+gr(anch)+' якорів.');
+    else if(st===6)
+      verd('verd6','t-no','ДРУГИЙ ЕТАП ДОРОГИЙ','У голові '+gr(14362055)+' ваг — у 24 рази '+
+        'більше, ніж у RPN. Але вона працює по 300 кандидат-областях, а не по '+gr(anch)+' якорях.');
+    else
+      verd('verd6','t-ok','ВАГИ НЕ ЗАЛЕЖАТЬ ВІД КАДРУ','Модель важить '+gr(TOTAL)+
+        ' при будь-якому розмірі входу, а якорів на кадрі '+gr(anch)+' — це '+cmp+'.');
+  }
+  on('st6','input',draw);
+  on('sz6','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═════════════ 7 · розподіл ваг ═════════════ */
+(function(){
+  var cv=I('fig7'); if(!cv) return;
+  var F={body:23508032, fpn:3344384, rpn:593935, head:13895680, per:5125};
+  var R={body:23508032, fpn:3868672, rpn:0,      head:4803620,  per:20745};
+
+  function draw(){
+    var g=dpr(cv);
+    var nc=+I('nc7').value;
+    I('o7a').textContent=nc;
+    var fa=F.body+F.fpn+F.rpn+F.head+F.per*nc;
+    var ra=R.body+R.fpn+R.head+R.per*nc;
+    I('v7a').textContent=gr(fa);
+    I('v7b').textContent=gr(ra);
+    I('v7c').textContent=(fa>ra?'Faster':'Retina')+' +'+(Math.abs(fa-ra)/1e6).toFixed(2)+' млн';
+    I('v7d').textContent=gr(F.per)+' / '+gr(R.per);
+
+    var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink'), hair=css('--hair');
+    var MAXV=53500000;
+    var gy=44, gh=220, gx=110, colw=110;
+    /* осі */
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(gx-20,gy+gh); g.lineTo(gx+430,gy+gh); g.stroke();
+    var t;
+    for(t=0;t<=50000000;t+=10000000){
+      var yy=gy+gh-gh*t/MAXV;
+      g.strokeStyle=hair; g.setLineDash([2,4]);
+      g.beginPath(); g.moveTo(gx-20,yy); g.lineTo(gx+430,yy); g.stroke(); g.setLineDash([]);
+      capt(g,(t/1000000)+' млн',gx-26,yy+4,soft,10,false,'right');
+    }
+    function stack(x,label,parts){
+      var y=gy+gh, i;
+      for(i=0;i<parts.length;i++){
+        var hgt=gh*parts[i][1]/MAXV;
+        if(hgt<=0) continue;
+        g.fillStyle=parts[i][2];
+        g.fillRect(x,y-hgt,colw,hgt);
+        g.strokeStyle=css('--raise'); g.lineWidth=1; g.strokeRect(x,y-hgt,colw,hgt);
+        if(hgt>15) capt(g,gr(parts[i][1]),x+colw/2,y-hgt/2+4,'#ffffff',10.5,true,'center');
+        y-=hgt;
+      }
+      capt(g,label,x+colw/2,gy+gh+18,ink,11.5,true,'center');
+      capt(g,gr(parts.reduce(function(a,b){return a+b[1];},0)),x+colw/2,gy+gh+34,soft,11,false,'center');
+    }
+    /* Кольори стовпчиків задані літералами свідомо: підписи всередині смуг білі,
+       і тон має лишитись достатньо темним в обох темах. Змінні --teal і --amber
+       у темній темі світлішають, і білий текст на них став би нечитабельним. */
+    var cBody='#5b6b7c', cFpn='#0f766e', cRpn='#c2185b', cHead='#c2620f', cCls='#7c4dff';
+    stack(gx,'Faster R-CNN',[['тіло',F.body,cBody],['FPN',F.fpn,cFpn],['RPN',F.rpn,cRpn],
+      ['голова',F.head,cHead],['на класи',F.per*nc,cCls]]);
+    stack(gx+200,'RetinaNet',[['тіло',R.body,cBody],['FPN',R.fpn,cFpn],
+      ['голова',R.head,cHead],['на класи',R.per*nc,cCls]]);
+
+    /* легенда */
+    var lx=gx+360, ly=gy+16;
+    var leg=[['тіло ResNet-50',cBody],['FPN',cFpn],['RPN',cRpn],['голова, стала',cHead],['голова, на класи',cCls]];
+    var i;
+    for(i=0;i<leg.length;i++){
+      g.fillStyle=leg[i][1]; g.fillRect(lx,ly+i*22-9,11,11);
+      capt(g,leg[i][0],lx+17,ly+i*22,soft,10.5);
+    }
+
+    if(nc<587)
+      verd('verd7','t-ok','RETINANET ЛЕГША НА '+gr(fa-ra),'При '+nc+' класах одноетапна модель '+
+        'важить менше: у неї немає ані RPN, ані повнозвʼязної голови на 13.9 млн ваг.');
+    else if(nc===587)
+      verd('verd7','t-mid','ЗРІВНЯЛИСЬ','Рівно на '+nc+' класах RetinaNet уперше стає важчою. '+
+        'Її щільна голова коштує '+gr(R.per)+' ваг на клас проти '+gr(F.per)+' у Faster R-CNN.');
+    else
+      verd('verd7','t-no','RETINANET ВАЖЧА НА '+gr(ra-fa),'Щільна голова передбачає клас для '+
+        'кожного з девʼяти якорів у кожній точці — '+gr(R.per)+' ваг на клас проти '+
+        gr(F.per)+'. При '+nc+' класах перевага зникла.');
+  }
+  on('nc7','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* перемальовуємо все при зміні теми — кольори беруться з CSS-змінних */
+if(window.matchMedia){
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){
+    window.dispatchEvent(new Event('resize'));
+  });
+}
+})();
+</script>
+</body>
+</html>

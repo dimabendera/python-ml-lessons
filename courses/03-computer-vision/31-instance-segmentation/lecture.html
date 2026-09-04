@@ -1,0 +1,1896 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instance segmentation: маска на кожен предмет</title>
+<meta name="description" content="Семантична маска не рахує предметів: два кола, що торкаються, дають одну пляму. На щільних сценах предмета свого класу торкається 25.0 % предметів, і семантична маска бачить 364 плями замість 420. Звʼязні компоненти відновлюють 1.000 предметів, що ні з ким не торкаються, і лише 0.343 тих, що торкаються. mask AP — це box AP з IoU по масках: на ідеальних рамках із маскою-прямокутником box AP дорівнює 1.0000, а mask AP [.50:.95] — 0.4360; на злиплих плямах навпаки. Маска 28×28 губить деталь, вужчу за клітинку сітки: гребінець із зубцями 3 px падає з 0.9955 до 0.5526. RoI-Align 0.954-0.962 проти 0.774-0.879 у RoI-пулінгу. Голова масок у Mask R-CNN — 2 646 107 ваг, рівно різниця з Faster R-CNN.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* грабля №3: під uppercase латинська N і грецькі літери псуються.
+   Правило .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw{text-transform:none}
+
+/* сітка з двох канв поруч у деяких фігурах */
+.twin{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+@media(max-width:620px){.twin{grid-template-columns:1fr}}
+/* перемикачі рівнів у фігурі «прибрати скіп» */
+.seg.three button{flex:1 1 30%}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 6 · Тема 31</p>
+    <h1>Instance segmentation: маска на кожен предмет</h1>
+    <p class="stand">Семантична маска відповідає «якого класу цей піксель». Але два
+      кола, що торкаються, дадуть одну пляму, і порахувати їх нічим. Instance
+      segmentation питає інакше: <b>якому предмету</b> належить піксель. Питання
+      здається дрібнішим, ніж воно є — від нього тягнеться вся архітектура.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Дві кулі на столі</a></li>
+        <li><a href="#s2">Вихід — список невідомої довжини</a></li>
+        <li><a href="#s3">Наївне лікування: звʼязні компоненти</a></li>
+        <li><a href="#s4">mask AP: чим міряти маски предметів</a></li>
+        <li><a href="#s5">Зверху вниз: спершу рамка, потім маска</a></li>
+        <li><a href="#s6">Маска як окрема гілка</a></li>
+        <li><a href="#s7">Роздільність маски: стеля без навчання</a></li>
+        <li><a href="#s8">RoI-Align: маска і є геометрія</a></li>
+        <li><a href="#s9">Скільки коштує маска в Mask R-CNN</a></li>
+        <li><a href="#s10">Знизу вгору: пікселі голосують за центр</a></li>
+        <li><a href="#s11">Коли що працює</a></li>
+        <li><a href="#s12">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../30-unet/lecture.html">← 30. U-Net</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../32-panoptic-sam/lecture.html">32. Panoptic і SAM →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Уяви два більярдні шари на зеленому сукні. Вони торкаються боками.
+Ти дивишся на фотографію й без жодних зусиль кажеш: тут два шари. Мережа з
+<a href="../30-unet/lecture.html">теми 30</a> цього не скаже. Вона підпише кожен
+піксель словом «шар» — усі до одного правильно — і на цьому її робота
+закінчиться. Питання «скільки їх?» для неї не існує: у семантичної маски немає
+поняття окремого предмета.</p>
+
+<p>Ця тема про те, як це поняття туди повернути, і скільки воно коштує. Спойлер:
+коштує воно не одним новим шаром, а новою постановкою задачі — і саме тому тема
+потрібна окремо.</p>
+
+<h2 id="s1"><span class="num">01 / Проблема</span>Дві кулі на столі</h2>
+
+<p>Почнемо із заміру, а не з означення. У нас є наскрізні сцени блоку: полотно
+64 на 64 пікселі, від одного до кількох предметів трьох класів — коло, квадрат,
+трикутник. Маски в цих сценах істинні за побудовою: саме з них у блоці 5
+виводились рамки.</p>
+
+<p>Візьмімо 120 сцен і порахуймо дві речі. Перша — <b>яка частка предметів
+торкається іншого предмета того самого класу</b>. Друга — скільки <b>звʼязних
+плям</b> дає семантична маска проти справжньої кількості предметів. Звʼязна пляма
+(або звʼязна компонента, connected component) — це група пікселів одного класу,
+яку можна обійти, ходячи тільки по сусідніх пікселях і не відриваючись.</p>
+
+<p>Канонічні сцени блоку кидають на полотно від одного до трьох предметів.
+<a href="../25-yolo/lecture.html">Тема 25</a> вже попереджала, що на таких сценах
+проба замала, тож зробимо ще один набір — <b>щільний</b>, до шести предметів.
+У генераторі змінилося рівно одне число: скільки фігур кидати. Правило «не
+дозволяти новій фігурі перекрити стару більше ніж на 45 % її площі» лишилось
+незмінним.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>на 120 сценах</th><th>рідкі (до 3)</th><th>щільні (до 6)</th></tr>
+<tr><td>предметів</td><td>247</td><td>420</td></tr>
+<tr><td>торкається предмета свого класу</td><td>24 (9.7 %)</td><td>105 (25.0 %)</td></tr>
+<tr><td>торкається будь-якого предмета</td><td>83 (33.6 %)</td><td>245 (58.3 %)</td></tr>
+<tr class="hot"><td>звʼязних плям у семантичній масці</td><td>236</td><td>364</td></tr>
+<tr><td>сцен, де кількість плям збіглася</td><td>107 (89.2 %)</td><td>79 (65.8 %)</td></tr>
+</table></div>
+
+<p>Читаємо таблицю знизу вгору. На щільних сценах <b>кожен четвертий предмет
+злипається із сусідом свого класу</b>, і семантична маска бачить 364 плями там,
+де предметів 420. Порахувати предмети по плямах не можна навіть теоретично: у
+третині сцен відповідь буде хибна.</p>
+
+<div class="note"><b>Числа сходяться самі із собою.</b> На рідких сценах торкаються
+24 предмети — це близько 12 пар, і плям бракує 11 (247 − 236). На щільних
+торкаються 105, тобто близько 52 пар, і плям бракує 56. Кожна пара дотичних
+предметів одного класу коштує приблизно однієї загубленої плями — це прямий
+наслідок означення звʼязності. Точної рівності немає у два боки: ланцюжок із
+трьох дотичних фігур коштує вже двох плям, а фігура, розрізана навпіл чужою,
+навпаки додає зайву.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Одна пляма чи два предмети</p>
+  <p class="fig-sub">Дві фігури на полотні 64×64. Повзунок розсуває їх; перемикач
+    робить їх різними класами. Праворуч — семантична маска й лічильник звʼязних плям.</p>
+  <div class="panel">
+    <div><canvas id="cTouch" width="940" height="330" aria-label="Дві фігури на полотні і поруч їхня семантична маска з підрахунком звʼязних плям"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="gap1">відстань між центрами <output id="gapOut">18</output></label>
+        <input type="range" id="gap1" min="10" max="40" step="1" value="18">
+      </div>
+      <span class="cap">класи фігур</span>
+      <div class="seg" id="segTouch">
+        <button type="button" data-i="0" aria-pressed="true">однакові</button>
+        <button type="button" data-i="1" aria-pressed="false">різні</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>предметів</b><i id="tc1">2</i></div>
+        <div class="cellv"><b>звʼязних плям</b><i id="tc2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>проміжок між фігурами</b><i id="tc3">—</i></div>
+      </div>
+      <div class="verdict" id="tcVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Достатньо одного спільного пікселя.</b> Поки між фігурами є
+    хоч один піксель фону, плям дві. Щойно вони торкнулись — пляма одна, і жодна
+    метрика семантичної сегментації цього не помітить: пікселі ж усі правильні.
+    Перемикач «різні» показує, що річ саме в класі: маска розділяє плями за
+    класом, а не за предметом.</figcaption>
+</figure>
+
+<h2 id="s2"><span class="num">02 / Постановка</span>Вихід — список невідомої довжини</h2>
+
+<p>Сформулюймо різницю точно, бо вона тонша, ніж здається.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">семантична сегментація</span>
+    <p>Вхід — зображення. Вихід — <b>масив того самого розміру</b>, у кожній
+      клітинці якого стоїть номер класу. Форма виходу відома наперед: 64×64 чисел.</p>
+  </div>
+  <div class="step"><span class="lbl">instance segmentation</span>
+    <p>Вхід той самий. Вихід — <b>список</b>: для кожного предмета своя маска,
+      свій клас і своя впевненість. Довжина списку наперед невідома і в кожного
+      зображення своя.</p>
+  </div>
+</div>
+
+<p>Це та сама неприємність, що і в детекції. <a href="../23-detection-setup/lecture.html">Тема
+23</a> уже проходила її з рамками: мережа має видати змінну кількість відповідей,
+а звичайний тензор фіксованої форми цього не вміє. Там знайшлися два обходи —
+кандидат-області з <a href="../24-two-stage/lecture.html">теми 24</a> і фіксована
+сітка позицій із <a href="../26-one-stage/lecture.html">теми 26</a>, після якої
+зайве прибирає NMS.</p>
+
+<p>Є й друга частина неприємності, і вона глибша. У списку предметів <b>немає
+природного порядку</b>. Якщо мережа видала маску кола зліва першою, а кола справа
+другою — це та сама відповідь, що й навпаки. Отже, і втрату не можна рахувати
+«перший вихід проти першої істини»: спершу треба вирішити, який вихід кому
+відповідає. <a href="../27-detr/lecture.html">Тема 27</a> розвʼязувала рівно цю
+задачу угорським зіставленням у DETR. Тут вона повертається слово в слово, тільки
+зіставляти доводиться маски, а не рамки.</p>
+
+<div class="note"><b>Три задачі — три різні виходи.</b> Семантична сегментація:
+масив 64×64 із класами. Instance segmentation: список масок, кожна зі своїм
+класом. Panoptic: одна відповідь, у якій кожен піксель має і клас, і номер
+предмета. <a href="../02-cv-task-map/lecture.html">Тема 02</a> ввела всі три як
+постановки; блок 6 проходить їх по черзі, і panoptic чекає в
+<a href="../32-panoptic-sam/lecture.html">темі 32</a>.</div>
+
+<h2 id="s3"><span class="num">03 / Наївне</span>Наївне лікування: звʼязні компоненти</h2>
+
+<p>Перше, що спадає на думку: у нас же вже є семантична маска. Розберімо її на
+звʼязні плями — і кожна пляма стане предметом. Це чесна базова лінія, і її треба
+поміряти, перш ніж будувати щось складніше.</p>
+
+<p>Алгоритм є в OpenCV одним рядком: <code>cv2.connectedComponents</code>.
+Запускаємо його <b>окремо для кожного класу</b> — інакше коло, що торкається
+квадрата, стане однією плямою.</p>
+
+<div class="eq left">маска класу «коло» → плями 1, 2, 3
+маска класу «квадрат» → плями 4, 5
+маска класу «трикутник» → пляма 6</div>
+
+<p>Результат на наших сценах. Ми питаємо: для скількох істинних предметів
+знайшлася пляма, що збігається з ним хоча б на <code>IoU ≥ 0.5</code> — та сама
+міра збігу, що в <a href="../29-semantic-segmentation/lecture.html">темі 29</a>,
+тільки рахована по масках.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>відновлено предметів</th><th>рідкі сцени</th><th>щільні сцени</th></tr>
+<tr><td>усі предмети</td><td>0.951</td><td>0.836</td></tr>
+<tr><td>ті, що ні з ким не торкаються</td><td>1.000</td><td>1.000</td></tr>
+<tr class="hot"><td>ті, що торкаються свого класу</td><td>0.500</td><td>0.343</td></tr>
+</table></div>
+
+<p>Тут видно все. <b>Предмет, який ні з ким не торкається, звʼязні компоненти
+відновлюють ідеально — усі до одного.</b> Предмет, що торкається сусіда свого
+класу, вони відновлюють у половині випадків на рідких сценах і в третині — на
+щільних. Половина береться просто: коли дві фігури злиплись, спільна пляма ще
+може випадково збігтись із більшою з них, і тоді більша зараховується, а менша
+губиться.</p>
+
+<p>Отже, звʼязні компоненти — це не поганий метод. Це метод, який працює рівно
+доти, доки задача не почалась. Він розвʼязує все, крім єдиного випадку, заради
+якого існує instance segmentation.</p>
+
+<div class="note warn"><b>Не викидай цю базу.</b> Якщо в твоїй задачі предмети
+фізично не можуть торкатись — клітини на розрідженому мазку, літери в рядку,
+машини на паркувальних місцях згори — звʼязні компоненти дадуть 1.000 і
+коштуватимуть один рядок коду. Складна архітектура має вигравати в базової
+лінії, а не в порожнечі.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Компоненти проти істини</p>
+  <p class="fig-sub">Сцена з керованою щільністю. Перемикач показує або істинні
+    предмети (кожен своїм кольором), або звʼязні плями семантичної маски.
+    Табло рахує, скільки предметів злилось.</p>
+  <div class="panel">
+    <div><canvas id="cComp" width="940" height="340" aria-label="Сцена з кількома фігурами: ліворуч істинні предмети різними кольорами, праворуч звʼязні плями семантичної маски"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="dens2">кинути фігур <output id="densOut">6</output></label>
+        <input type="range" id="dens2" min="2" max="9" step="1" value="6">
+      </div>
+      <div class="ctl">
+        <label for="seed2">сцена <output id="sdOut">3</output></label>
+        <input type="range" id="seed2" min="1" max="12" step="1" value="3">
+      </div>
+      <span class="cap">що показувати</span>
+      <div class="seg" id="segComp">
+        <button type="button" data-i="0" aria-pressed="true">істина</button>
+        <button type="button" data-i="1" aria-pressed="false">компоненти</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>предметів</b><i id="cp1">—</i></div>
+        <div class="cellv"><b>плям</b><i id="cp2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>злиплось предметів</b><i id="cp3">—</i></div>
+      </div>
+      <div class="verdict" id="cpVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Помилка зʼявляється не поступово, а стрибком.</b> Доки фігури
+    розкидані, обидві картинки однакові. Варто двом фігурам одного класу
+    зійтись — і праворуч плям стає менше, а ліворуч предметів стільки ж.
+    Саме цей стрибок і дає 0.343 на щільних сценах.</figcaption>
+</figure>
+<h2 id="s4"><span class="num">04 / Метрика</span>mask AP: чим міряти маски предметів</h2>
+
+<p>Перш ніж будувати модель, потрібна метрика. І тут гарна новина: винаходити
+нічого не треба. <b>mask AP — це точнісінько box AP із
+<a href="../23-detection-setup/lecture.html">теми 23</a>, у якій IoU рахується не
+по рамках, а по масках.</b> Уся інша механіка та сама.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · збіг двох масок</span>
+    <p>IoU двох масок — це кількість спільних пікселів, поділена на кількість
+      пікселів, зайнятих хоч однією з них. Символ ∩ означає «спільні»,
+      ∪ — «усі разом».</p>
+    <div class="eq">IoU = |A ∩ B| ÷ |A ∪ B|</div>
+    <p>Рахуємо руками. Коло радіуса 5 займає 81 піксель. Його рамка — квадрат
+      11×11, тобто 121 піксель. Коло цілком лежить усередині рамки, тож спільних
+      пікселів 81, а разом їх 121. IoU = 81 ÷ 121 = <b>0.669</b>.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · зіставлення</span>
+    <p>Прогнози сортуємо за спаданням упевненості. Кожен по черзі забирає собі
+      найкращу ще вільну істину, якщо збіг не менший за поріг. Забрана істина
+      більше нікому не дістанеться — саме тому дублікат другої рамки на тому
+      самому предметі рахується помилкою.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · AP</span>
+    <p>Далі — площа під огинальною кривої точність-повнота, окремо для кожного
+      класу, і середнє по класах. Жодної відмінності від теми 23 тут немає.</p>
+  </div>
+</div>
+
+<p>Тепер найцікавіше: наскільки різні числа дають дві метрики <b>на тих самих
+передбаченнях</b>. Візьмімо передбачення, у якому рамки <b>ідеальні</b>, а маска
+кожного предмета — це просто <b>весь прямокутник його рамки</b>. Так поводиться
+детектор без гілки маски, якщо змусити його видати маску.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>передбачення</th><th>box AP@0.5</th><th>box@0.75</th><th>box [.50:.95]</th><th>mask AP@0.5</th><th>mask@0.75</th><th>mask [.50:.95]</th></tr>
+<tr><td>ідеальні маски</td><td>1.0000</td><td>1.0000</td><td>1.0000</td><td>1.0000</td><td>1.0000</td><td>1.0000</td></tr>
+<tr class="hot"><td>маска = вся рамка</td><td>1.0000</td><td>1.0000</td><td>1.0000</td><td>0.8943</td><td>0.2912</td><td>0.4360</td></tr>
+<tr><td>зсув форми на 1 px</td><td>0.9967</td><td>0.6455</td><td>0.5747</td><td>0.9701</td><td>0.4134</td><td>0.4872</td></tr>
+<tr><td>зсув форми на 2 px</td><td>0.9675</td><td>0.0000</td><td>0.2659</td><td>0.6966</td><td>0.0000</td><td>0.1599</td></tr>
+<tr><td>звʼязні компоненти</td><td>0.7640</td><td>0.6553</td><td>0.6768</td><td>0.8144</td><td>0.6727</td><td>0.7021</td></tr>
+</table></div>
+
+<p>Другий рядок — головний. Рамки ідеальні до пікселя, тому box AP дорівнює
+<b>рівно одиниці при будь-якому порозі</b>: кращого передбачення рамок не буває.
+А mask AP при суворому порозі падає до <b>0.2912</b>, і в середньому по порогах
+дає <b>0.4360</b>. Одне й те саме передбачення: за рамками — бездоганне, за
+масками — удвічі гірше за половину.</p>
+
+<p>Чому саме так, видно з геометрії. Прямокутник рамки збігається з фігурою
+по-різному залежно від того, що це за фігура:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>фігура</th><th>IoU «маска = рамка»</th><th>звідки</th></tr>
+<tr><td>квадрат</td><td>0.9453</td><td>квадрат майже і є своя рамка</td></tr>
+<tr><td>коло</td><td>0.6731</td><td>площа кола ≈ 0.785 площі описаного квадрата</td></tr>
+<tr class="hot"><td>трикутник</td><td>0.4969</td><td>трикутник — рівно половина рамки</td></tr>
+</table></div>
+
+<p>Трикутник займає половину своєї рамки, тож його «маска-прямокутник» має
+IoU 0.4969 — нижче за поріг 0.5, і при порозі 0.75 такий прогноз не зараховується
+взагалі. Ось звідки береться падіння: <b>рамка не бачить форми, а маска — тільки
+форму й бачить</b>.</p>
+
+<div class="note warn"><b>Але «маска суворіша» — не закон.</b> Останній рядок
+таблиці показує зворотне: у звʼязних компонент mask AP (0.8144) <b>вища</b> за
+box AP (0.7640). Причина в тому, яка саме помилка сталася. Коли дві фігури
+злиплись в одну пляму, її рамка — це великий прямокутник довкола обох, і з
+рамкою окремої фігури він збігається погано, бо в нього ще й порожні кути. А сама
+пляма щільно облягає обидві фігури, тож із маскою більшої з них збігається краще.
+<b>Правильне формулювання: рамка пробачає неправильну форму, маска пробачає
+неправильні межі предмета.</b> Яка метрика виявиться суворішою, залежить від
+того, яку помилку робить твоя модель.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Та сама відповідь, дві метрики</p>
+  <p class="fig-sub">Перемикач обирає, як зіпсовано передбачення. Смуги —
+    box AP і mask AP при трьох порогах. Числа з зошита, 120 щільних сцен.</p>
+  <div class="panel">
+    <div><canvas id="cAp" width="940" height="360" aria-label="Приклад передбачення й дві групи стовпчиків: box AP і mask AP при порогах 0.5, 0.75 і в середньому"></canvas></div>
+    <div>
+      <span class="cap">що не так із передбаченням</span>
+      <div class="seg wrap" id="segAp">
+        <button type="button" data-i="0" aria-pressed="false">ідеальні маски</button>
+        <button type="button" data-i="1" aria-pressed="true">маска = вся рамка</button>
+        <button type="button" data-i="2" aria-pressed="false">зсув 1 px</button>
+        <button type="button" data-i="3" aria-pressed="false">зсув 2 px</button>
+        <button type="button" data-i="4" aria-pressed="false">звʼязні плями</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>box AP@0.5</b><i id="ap1">—</i></div>
+        <div class="cellv"><b>mask AP@0.5</b><i id="ap2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>box [.50:.95]</b><i id="ap3" class="sm">—</i></div>
+        <div class="cellv"><b>mask [.50:.95]</b><i id="ap4" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="apVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Дві метрики міряють різні помилки.</b> На «маска = вся рамка»
+    box AP не втрачає нічого, а mask AP валиться. На «звʼязних плямах» усе
+    навпаки. Не існує однієї метрики, суворішої завжди — існує метрика, що
+    відповідає твоїй помилці.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Зверху вниз</span>Зверху вниз: спершу рамка, потім маска</h2>
+
+<p>Розвʼязків історично два сімейства, і вони протилежні за напрямком думки.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>підхід</th><th>порядок дій</th><th>звідки береться кількість предметів</th></tr>
+<tr><td>зверху вниз<br>top-down</td><td>знайти предмет рамкою, потім намалювати маску всередині цієї рамки</td><td>з детектора: скільки рамок, стільки предметів</td></tr>
+<tr><td>знизу вгору<br>bottom-up</td><td>підписати кожен піксель, потім згрупувати пікселі в предмети</td><td>з групування: скільки груп, стільки предметів</td></tr>
+</table></div>
+
+<p>Класичний представник першого сімейства — <b>Mask R-CNN</b> (2017). Ідея в
+одному реченні: візьми готовий детектор Faster R-CNN із
+<a href="../24-two-stage/lecture.html">теми 24</a> й додай до нього третю гілку,
+яка для кожної знайденої рамки малює маску.</p>
+
+<p>Чому це працює, хоч і виглядає як обхідний маневр? Тому що <b>всередині рамки
+задача знову стає семантичною</b>. Рамка вже виділила один предмет; усередині
+неї треба відповісти лише «цей піксель належить предметові чи ні»: сусід
+залишився за краєм рамки або принаймні не «головний». Важку частину —
+розділити предмети — виконав детектор, а
+маску малює маленька мережа тієї самої форми, що U-Net із
+<a href="../30-unet/lecture.html">теми 30</a>, тільки на крихітному вході.</p>
+
+<div class="note"><b>Ланцюжок повний.</b> <a href="../23-detection-setup/lecture.html">Тема
+23</a> дала рамки й mAP, <a href="../24-two-stage/lecture.html">тема 24</a> —
+двоетапну схему й RoI-Align, <a href="../26-one-stage/lecture.html">тема 26</a> —
+anchor-free голову, <a href="../29-semantic-segmentation/lecture.html">тема 29</a>
+й <a href="../30-unet/lecture.html">тема 30</a> — як мережа малює маску. Instance
+segmentation зверху вниз — це не нова ідея, а <b>складання вже відомих</b>. Саме
+тому Mask R-CNN зʼявився так швидко після Faster R-CNN.</div>
+
+<p>Слабке місце теж видно одразу. Якщо детектор предмет проґавив, маски не буде
+нізвідки: гілка маски працює тільки в межах уже знайденої рамки. <b>Стеля
+підходу зверху вниз дорівнює якості детектора.</b></p>
+<h2 id="s6"><span class="num">06 / Гілка</span>Маска як окрема гілка</h2>
+
+<p>Побудуймо це самі — на найменшому детекторі, який у нас є. Беремо anchor-free
+голову з <a href="../26-one-stage/lecture.html">теми 26</a>: карта 8×8, у кожній
+позиції три числа класу, чотири відстані до країв рамки й одне число centerness.
+Нічого в ній не міняємо. Додаємо третю гілку:</p>
+
+<div class="eq left">карта ознак 16×16 (32 канали)
+        │
+        ├─ RoI-Align 14×14 за рамкою предмета
+        │
+        ├─ Conv 3×3 → ReLU → Conv 3×3 → ReLU
+        ├─ ConvTranspose 2×2 крок 2   ← 14×14 стає 28×28
+        └─ Conv 1×1 → три канали, по одному на клас</div>
+
+<p>Це Mask R-CNN у мініатюрі: ділянка карти ознак під рамкою, кілька згорток,
+одне подвоєння роздільності й окремий канал на кожен клас. Навчаємо на істинних
+рамках (так само, як у статті), а на перевірці подаємо гілці ті рамки, які видав
+сам детектор. Три зерна, AdamW, 240 щільних сцен.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>частина</th><th>параметрів</th></tr>
+<tr><td>тіло</td><td>60 576</td></tr>
+<tr><td>голова рамок (клас + відстані + centerness)</td><td>4 616</td></tr>
+<tr class="hot"><td>голова масок, канал на клас</td><td>22 723</td></tr>
+<tr><td>голова масок, один канал на всіх</td><td>22 657</td></tr>
+<tr class="sumrow"><td>усього</td><td>87 915</td></tr>
+</table></div>
+
+<p>Результат на 120 щільних перевірних сценах:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>гілка масок</th><th>box AP@0.5</th><th>mask AP@0.5</th><th>mask AP[.50:.95]</th></tr>
+<tr class="hot"><td>канал на клас</td><td>0.8810 ±0.0979</td><td>0.8678 ±0.0874</td><td>0.4622</td></tr>
+<tr><td>один канал</td><td>0.8076 ±0.2779</td><td>0.8725 ±0.0476</td><td>0.4484</td></tr>
+</table></div>
+
+<p>Перше й головне: <b>маска працює</b>. mask AP 0.8678 на сценах, де кожен
+четвертий предмет із кимось злипся, — це помітно більше за 0.8144 у звʼязних
+компонент, і, що важливіше, це число тепер росте разом із детектором, а не
+впирається в геометрію плям.</p>
+
+<p>Друге: перевіримо себе на рідких сценах. Візьмімо одну модель — ту, що з
+зерна 0, — і прожену її крізь обидва набори. На щільних сценах вона дає
+box AP 0.9053 і mask AP 0.8807, на рідких — <b>box AP 0.9372 і mask AP 0.9190</b>.
+У <a href="../26-one-stage/lecture.html">темі 26</a> та сама anchor-free голова —
+без гілки маски й без centerness — дала на рідких сценах 0.9187. Числа не можна
+прикладати одне до одного впритул, бо голови трохи різні, але висновок із них
+однозначний: <b>гілка маски рамкам не зашкодила</b>, а просідання дають саме
+щільні сцени, а не маска.</p>
+
+<div class="note warn"><b>Знахідка, якої я не чекав: маска стабільніша за рамку.</b>
+У варіанті з одним каналом розкид box AP між зернами дорівнює <b>0.2779</b> —
+одне зерно дало 0.6366 проти 0.9145 в іншого, — а розкид mask AP на тих самих
+трьох прогонах усього <b>0.0476</b>, у 5.8 раза менший. Причина в тому, що
+<b>маска виправляє рамку</b>: навіть коли рамка вийшла завеликою, голова масок
+зафарбує всередині лише сам предмет, і після порогу 0.5 маска щільно облягає
+фігуру. За рамкою такий прогноз — промах, за маскою — влучання. Не цитуй цю пару
+чисел як доказ, що один канал гірший: гірша тут <b>рамка</b>, і саме в одному
+прогоні з трьох.</div>
+
+<p>Третє, і воно теж не збіглося з очікуванням. Різниця між «каналом на клас» і
+«одним каналом» у mask AP дорівнює −0.0047 при розкиді 0.0874. <b>Різниці немає
+взагалі</b> — вона у вісімнадцять разів менша за розкид, та ще й у «неправильний»
+бік. І це логічно: у нас три класи простих фігур, які мережа розрізняє впевнено,
+тож розчіплювати клас і форму нема від чого. Виграш від окремих каналів
+зʼявляється там, де класи схожі за формою й модель у них плутається, — а це COCO
+з вісімдесятьма класами, а не три геометричні фігури. <b>Правильне формулювання:
+канал на клас коштує майже нічого (66 ваг у нас, 0.05 % у Mask R-CNN) і не
+шкодить, тому його беруть за замовчуванням, — але доводити його користь треба на
+складному датасеті, а не на нашому.</b></p>
+<h2 id="s7"><span class="num">07 / Стеля</span>Роздільність маски: стеля без навчання</h2>
+
+<p>Mask R-CNN передбачає маску розміру <b>28×28</b> — і цей розмір не залежить від
+того, наскільки великий предмет. Маска слона й маска мурахи однаково складаються
+з 784 чисел, які потім розтягуються під розмір рамки.</p>
+
+<p>Скільки на цьому втрачається, можна порахувати <b>без жодного навчання</b>.
+Беремо істинну маску, стискаємо її до 14×14, 28×28 або 56×56, розтягуємо назад
+під розмір рамки й міряємо IoU з оригіналом. Це стеля методу: краще за це не
+вийде навіть у бездоганної мережі.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>сторона предмета</th><th>маска 7×7</th><th>14×14</th><th>28×28</th><th>56×56</th></tr>
+<tr><td>16 px</td><td>0.9113</td><td>1.0000</td><td>1.0000</td><td>1.0000</td></tr>
+<tr><td>28 px</td><td>0.9224</td><td>0.9784</td><td>1.0000</td><td>1.0000</td></tr>
+<tr><td>56 px</td><td>0.9326</td><td>0.9643</td><td>0.9925</td><td>1.0000</td></tr>
+<tr><td>112 px</td><td>0.9336</td><td>0.9694</td><td>0.9829</td><td>0.9970</td></tr>
+<tr class="hot"><td>224 px</td><td>0.9357</td><td>0.9695</td><td>0.9852</td><td>0.9918</td></tr>
+</table></div>
+
+<p>Перше, що впадає в око: колонки <b>не спадають</b>. Предмет у 224 пікселі
+втрачає на масці 28×28 приблизно стільки ж, скільки предмет у 56 пікселів —
+близько півтора відсотка. Причина проста, і її варто проговорити: помилка
+стискання живе на <b>смузі вздовж межі</b> фігури, і ширина цієї смуги росте
+разом із фігурою. Відносна втрата лишається сталою.</p>
+
+<p>Отже, для гладкої опуклої фігури 28×28 — не обмеження, а розумний компроміс.
+Обмеження зʼявляється в іншому місці.</p>
+
+<h3>Де 28×28 справді ламається</h3>
+
+<p>Візьмімо фігуру з <b>тонкою деталлю сталої ширини</b> — гребінець із зубцями
+завширшки 3 пікселі. Коли гребінець невеликий, три пікселі — це багато клітинок
+маски. Коли гребінець великий, три пікселі перетворюються на частку клітинки.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>гребінець</th><th>зубців</th><th>маска 14×14</th><th>28×28</th><th>56×56</th></tr>
+<tr><td>28 px</td><td>4</td><td>0.9463</td><td>1.0000</td><td>1.0000</td></tr>
+<tr><td>56 px</td><td>9</td><td>0.5756</td><td>0.9955</td><td>1.0000</td></tr>
+<tr class="hot"><td>112 px</td><td>18</td><td>0.5421</td><td>0.5526</td><td>0.9873</td></tr>
+<tr><td>224 px</td><td>37</td><td>0.5604</td><td>0.5336</td><td>0.5474</td></tr>
+</table></div>
+
+<p>Ось воно. Доки предмет не більший за 56 пікселів, маска 28×28 тримає
+0.9955. На предметі 112 пікселів вона провалюється до <b>0.5526</b>: одна клітинка
+маски накриває чотири пікселі, а зубець завширшки три — зубці зливаються в суцільну
+пластину. І 56×56 рятує лише на крок, до наступного подвоєння розміру.</p>
+
+<div class="note"><b>Правило, яке з цього випливає.</b> Маска 28×28 губить деталь,
+<b>вужчу за одну клітинку сітки маски</b>. Клітинка — це сторона предмета,
+поділена на 28. Пальці на руці людини, стовп дорожнього знака, ніжка стільця,
+дріт — усе це деталі шириною в кілька пікселів на предметі в сотні пікселів, і
+всі вони на масці 28×28 зникають. Саме тому пізніші моделі підняли роздільність
+голови маски, а не глибину.</div>
+
+<p>На наших сценах предмети маленькі — сторона рамки від 3 до 21 пікселя, у
+середньому 16.7. Тому:</p>
+
+<div class="eq left">маска  7×7  → IoU 0.9215
+маска 14×14 → IoU 0.9927
+маска 28×28 → IoU 1.0000   ← стискання немає, є розтягування
+маска 56×56 → IoU 1.0000</div>
+
+<p>Тобто у <b>нашому</b> зошиті 28×28 не коштує нічого: предмет менший за маску,
+і стискати нема чого. Саме тому таблиці вище рахувались на штучних фігурах
+різного розміру: стеля методу залежить від розміру предмета, а на дрібних
+предметах її просто немає.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Скільки маска втрачає при стисканні</p>
+  <p class="fig-sub">Ліворуч — істинна фігура, праворуч — вона ж після стискання
+    до маски R×R і розтягування назад. Число рахується просто зараз, тим самим
+    двопрохідним білінійним перетворенням, що в зошиті. У таблиці вище числа
+    усереднені по трьох фігурах, тут — по одній обраній, тож вони не мусять
+    збігатися до знака.</p>
+  <div class="panel">
+    <div><canvas id="cRes" width="940" height="330" aria-label="Ліворуч істинна фігура, праворуч та сама фігура після стискання до маски заданого розміру й розтягування назад"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="mres">сторона маски <output id="mresOut">28</output></label>
+        <input type="range" id="mres" min="0" max="3" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="osize">сторона предмета <output id="osizeOut">112</output></label>
+        <input type="range" id="osize" min="0" max="3" step="1" value="2">
+      </div>
+      <span class="cap">фігура</span>
+      <div class="seg" id="segRes">
+        <button type="button" data-i="0" aria-pressed="true">коло</button>
+        <button type="button" data-i="1" aria-pressed="false">трикутник</button>
+        <button type="button" data-i="2" aria-pressed="false">гребінець</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>IoU з оригіналом</b><i id="rs1">—</i></div>
+        <div class="cellv"><b>клітинка маски</b><i id="rs2" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="rsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Гладку фігуру 28×28 тримає, тонку деталь — ні.</b> Переведи
+    фігуру на «гребінець» і збільшуй предмет: доки клітинка маски вужча за зубець,
+    IoU близький до одиниці, а щойно клітинка стала ширшою — зубці зливаються,
+    і IoU падає майже до 0.5.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Вирівнювання</span>RoI-Align: маска і є геометрія</h2>
+
+<p><a href="../24-two-stage/lecture.html">Тема 24</a> уже показувала різницю між
+RoI-пулінгом і RoI-Align: перший <b>округлює координати рамки</b> до цілих
+клітинок карти ознак, другий читає значення в дробових координатах через
+білінійну інтерполяцію. Там ішлося про ознаки, і зсув у пів пікселя виглядав
+дрібницею.</p>
+
+<p>Для маски це не дрібниця, а суть справи. <b>Маска — це і є геометрія.</b> Якщо
+ділянка, з якої читає голова, зсунута відносно рамки, у яку маску потім
+вклеюють, то маска приїде зсунутою — і це видно на кожному пікселі межі.</p>
+
+<p>Поміряймо. Для кожного предмета беремо його рамку, зсунуту на δ пікселів
+(справжній детектор ніколи не видає цілих координат), витягуємо маску 28×28
+двома способами й порівнюємо з еталоном, порахованим руками: значення істинної
+маски в центрі кожної з 28×28 клітинок.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>зсув рамки δ</th><th>RoI-Align</th><th>RoI-пулінг</th><th>різниця</th></tr>
+<tr><td>0.00 px</td><td>0.9617</td><td>0.8354</td><td>+0.1263</td></tr>
+<tr><td>0.25 px</td><td>0.9543</td><td>0.8788</td><td>+0.0755</td></tr>
+<tr class="hot"><td>0.50 px</td><td>0.9570</td><td>0.7738</td><td>+0.1832</td></tr>
+<tr><td>0.75 px</td><td>0.9546</td><td>0.8082</td><td>+0.1464</td></tr>
+</table></div>
+
+<p>Читаємо. Колонка RoI-Align <b>рівна</b>: 0.954-0.962 при будь-якому зсуві.
+Колонка RoI-пулінгу <b>стрибає</b> між 0.77 і 0.88 залежно від того, куди саме
+округлились координати. Це і є головна ознака квантування: результат залежить не
+від якості моделі, а від того, чи пощастило рамці лягти близько до цілого числа.</p>
+
+<p>Різниця розкладається на дві частини, і корисно бачити обидві:</p>
+
+<ul>
+  <li><b>Округлення координат.</b> Рамка з <code>x = 12.6</code> читається як
+    <code>x = 13</code>. Це прямий зсув маски. Видно з того, що при δ = 0.5
+    пулінг падає найнижче: округлювати ніде так не боляче, як рівно посередині.</li>
+  <li><b>Максимум замість середнього.</b> RoI-пулінг бере в кожній клітинці
+    максимум, і на бінарній масці максимум означає «є хоч один піксель предмета».
+    Маска від цього <b>роздувається</b>. Саме тому навіть при цілій рамці
+    (δ = 0) пулінг дає лише 0.8354, а не одиницю.</li>
+</ul>
+
+<div class="note warn"><b>Грабля з округленням, яку легко не помітити.</b>
+У Python <code>round(0.5)</code> дорівнює <b>0</b>, а не 1: вбудоване округлення
+банкірське, «до парного». У C, у JavaScript і всередині <code>roi_pool</code>
+округлення інше — «половина вгору», тобто 1. Половини — це рівно ті значення, що
+виникають при квантуванні координат, тож своя реалізація на Python і бібліотечна
+розійдуться саме там, де це найпомітніше. Пиши <code>math.floor(x + 0.5)</code>
+явно.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Звідки читає кожен спосіб</p>
+  <p class="fig-sub">Рамка предмета зсунута на дробову величину. Сітка показує,
+    де саме беруться значення: RoI-Align — у дробових точках, RoI-пулінг — у
+    клітинках округленої рамки.</p>
+  <div class="panel">
+    <div><canvas id="cRoi" width="940" height="350" aria-label="Фігура з накладеною сіткою вибірки: точки RoI-Align у дробових координатах і клітинки RoI-пулінгу після округлення рамки"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="dlt">зсув рамки <output id="dltOut">0.50</output></label>
+        <input type="range" id="dlt" min="0" max="3" step="1" value="2">
+      </div>
+      <span class="cap">спосіб вибірки</span>
+      <div class="seg" id="segRoi">
+        <button type="button" data-i="0" aria-pressed="true">RoI-Align</button>
+        <button type="button" data-i="1" aria-pressed="false">RoI-пулінг</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>IoU з еталоном</b><i id="ri1">—</i></div>
+        <div class="cellv"><b>рамка читання</b><i id="ri2" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="riVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Число з таблиці, картинка з тієї самої причини.</b> У RoI-Align
+    сітка вибірки їде разом із рамкою й лишається всередині фігури. У RoI-пулінгу
+    вона стрибає на ціле число й читає з іншого місця — при δ = 0.50 промах
+    найбільший.</figcaption>
+</figure>
+<h2 id="s9"><span class="num">09 / Ціна</span>Скільки коштує маска в Mask R-CNN</h2>
+
+<p>Тепер розберемо справжню модель. У <code>torchvision</code> є і детектор, і його
+версія з масками, тож ціну гілки маски можна дістати прямим відніманням. Обидві
+збираємо офлайн, без ваг:</p>
+
+<div class="eq left">fasterrcnn_resnet50_fpn(weights=None, weights_backbone=None) → 41 808 406
+maskrcnn_resnet50_fpn  (weights=None, weights_backbone=None) → 44 454 513
+                                                     різниця →  2 646 107</div>
+
+<p>А тепер розкладемо Mask R-CNN на частини:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>частина</th><th>параметрів</th><th>частка</th><th>що робить</th></tr>
+<tr><td>тіло ResNet-50</td><td>23 508 032</td><td>52.9 %</td><td>перетворює картинку на карти ознак</td></tr>
+<tr><td>FPN</td><td>3 344 384</td><td>7.5 %</td><td>зшиває карти різних масштабів</td></tr>
+<tr><td>RPN</td><td>593 935</td><td>1.3 %</td><td>пропонує кандидат-області</td></tr>
+<tr><td>голова рамок</td><td>14 362 055</td><td>32.3 %</td><td>клас і уточнення рамки</td></tr>
+<tr class="hot"><td>голова масок</td><td>2 646 107</td><td>6.0 %</td><td>маска 28×28 у кожній рамці</td></tr>
+<tr class="sumrow"><td>усього</td><td>44 454 513</td><td>100 %</td><td></td></tr>
+</table></div>
+
+<p>Три висновки, і жоден не очевидний наперед.</p>
+
+<p><b>Перший: різниця між двома моделями дорівнює голові масок точно, до одиниці.</b>
+44 454 513 − 41 808 406 = 2 646 107, і це рівно
+<code>mask_head</code> (2 360 320) плюс <code>mask_predictor</code> (285 787).
+Тобто Mask R-CNN — це буквально Faster R-CNN плюс одна гілка; тіло, FPN, RPN і
+голова рамок не змінились жодним параметром.</p>
+
+<p><b>Другий: маска коштує 6.0 % моделі, а рамки — 32.3 %.</b> Голова рамок у
+5.4 раза важча за голову масок. Причина в тому, що голова рамок починається з
+двох повнозвʼязних шарів на 1024 нейрони, а голова масок — суцільно згорткова.
+Це, до речі, і пояснює, чому маска зберігає геометрію: у ній немає жодного шару,
+який перемішав би пікселі між собою.</p>
+
+<p><b>Третій: маска передбачається для кожного класу окремо, і це майже безкоштовно.</b>
+Останній шар голови масок — <code>Conv2d(256, 91, 1)</code>: 91 канал на
+91 клас COCO. Кожен клас коштує 257 ваг (256 множень плюс зсув), усі 91 разом —
+23 387. З 44 мільйонів це <b>0.05 %</b>. Для порівняння, у голові рамок клас коштує
+5125 ваг — у 20 разів дорожче.</p>
+
+<div class="note"><b>Навіщо маска на кожен клас, якщо клас уже відомий?</b> Щоб
+розчепити дві задачі. Якби канал був один, той самий вихід мусив би одночасно
+означати «це кіт» і «ось де межа кота»: сигмоїда однієї маски бореться і за
+клас, і за форму. Коли каналів багато, класифікацію робить окрема гілка, а
+кожен канал маски вчиться лише формі свого класу й ніколи не змагається з
+іншими. У статті це називають розчепленням маски й класу, і саме воно дало
+головний приріст Mask R-CNN над попередниками. Коштує це, як ми щойно
+порахували, 0.05 % ваг.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Із чого складається Mask R-CNN</p>
+  <p class="fig-sub">Перемикач прибирає гілку масок і показує чистий Faster R-CNN.
+    Повзунок міняє кількість класів у датасеті — і видно, яка голова від цього
+    росте, а яка ні.</p>
+  <div class="panel">
+    <div><canvas id="cParts" width="940" height="380" aria-label="Стовпчики параметрів Mask R-CNN: тіло, FPN, RPN, голова рамок і голова масок"></canvas></div>
+    <div>
+      <span class="cap">модель</span>
+      <div class="seg" id="segParts">
+        <button type="button" data-i="0" aria-pressed="false">Faster R-CNN</button>
+        <button type="button" data-i="1" aria-pressed="true">Mask R-CNN</button>
+      </div>
+      <div class="ctl">
+        <label for="ncls">класів у датасеті <output id="nclsOut">91</output></label>
+        <input type="range" id="ncls" min="1" max="91" step="1" value="91">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>усього ваг</b><i id="pt1">—</i></div>
+        <div class="cellv"><b>голова масок</b><i id="pt2" class="sm">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ціна класу в рамках</b><i id="pt3" class="sm">—</i></div>
+        <div class="cellv"><b>ціна класу в масці</b><i id="pt4" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="ptVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Числа зібрані з <code>named_children()</code> справжньої моделі.</b>
+    Зсунь повзунок класів до одиниці: голова масок схудне на 23 130 ваг, а
+    голова рамок — на 461 250. Клас у масці в 20 разів дешевший за клас у рамці,
+    бо маска — це один канал 28×28, а рамка — чотири числа й повнозвʼязний шар.</figcaption>
+</figure>
+<h2 id="s10"><span class="num">10 / Знизу вгору</span>Знизу вгору: пікселі голосують за центр</h2>
+
+<p>Другий шлях думки: не шукати предмет цілком, а попросити <b>кожен піксель
+сказати, до кого він належить</b>. Найпростіший спосіб це виразити — хай кожен
+піксель показує стрілкою на центр свого предмета.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">що передбачає мережа</span>
+    <p>Два виходи того самого розміру, що й картинка. Перший — клас пікселя,
+      як у семантичній сегментації. Другий — <b>два числа на піксель</b>:
+      наскільки треба зсунутись праворуч і вниз, щоб потрапити в центр свого
+      предмета.</p>
+  </div>
+  <div class="step"><span class="lbl">що робимо з виходом</span>
+    <p>Для кожного пікселя предмета додаємо його координати й передбачений зсув —
+      виходить <b>голос</b> за точку. Пікселі одного предмета голосують приблизно
+      за ту саму точку, пікселі різних — за різні.</p>
+  </div>
+  <div class="step"><span class="lbl">групування</span>
+    <p>Зводимо голоси в сітку 64×64, злегка розмиваємо й беремо локальні
+      максимуми — це й будуть центри предметів. Далі кожен піксель приписуємо до
+      найближчого до його голосу центра. Скільки центрів — стільки предметів.</p>
+  </div>
+</div>
+
+<p>Зверни увагу на головне: <b>кількість предметів тут ніхто не задавав</b>. Вона
+випала з даних — стільки, скільки виявилось піків. Це і є відповідь на питання
+з розділу 2 про список невідомої довжини, тільки з іншого боку, ніж у детекції.</p>
+
+<p>Мережа — маленький U-Net на два рівні стискання, зі скіпами
+(<a href="../30-unet/lecture.html">тема 30</a> показала, що при двох рівнях
+скіпи ще майже нічого не дають, але вони й не коштують). 118 710 параметрів,
+вісім епох, три зерна.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>спосіб</th><th>щільні: mask AP@0.5</th><th>щільні: AP[.50:.95]</th><th>рідкі: mask AP@0.5</th><th>рідкі: AP[.50:.95]</th></tr>
+<tr><td>звʼязні плями</td><td>0.8144</td><td>0.7021</td><td>0.9515</td><td>0.8855</td></tr>
+<tr><td>зверху вниз</td><td>0.8678 ±0.0874</td><td>0.4622</td><td>0.9190</td><td>0.5705</td></tr>
+<tr class="hot"><td>знизу вгору</td><td>0.9553 ±0.0189</td><td>0.7600</td><td>0.9611 ±0.0384</td><td>0.8355</td></tr>
+</table></div>
+
+<p>Розкид у таблиці — по трьох зернах. У звʼязних плям його немає, бо там нічого
+не навчається; у рядку «зверху вниз» на рідких сценах його теж немає, бо там
+працює один і той самий детектор, навчений на щільних сценах, — ми просто
+подивились, як він поводиться на легших даних.</p>
+
+<p>На щільних сценах групування дає <b>0.9553 проти 0.8678</b> при розкиді 0.0874
+у підходу зверху вниз — тобто виграш рівно на межі розкиду, і саме так це й треба
+назвати. А от при суворому усередненні по порогах
+різниця стає безсоромною: <b>0.7600 проти 0.4622</b>, тобто в 1.6 раза, і жодним
+розкидом її вже не пояснити.</p>
+
+<p>Звідки такий розрив саме на суворих порогах? Ось причина, і вона пояснює
+половину теми. <b>Зверху вниз малює маску не на зображенні, а всередині рамки.</b>
+Маска народжується як клаптик 28×28, потім розтягується під рамку, потім
+вклеюється. Кожен із цих кроків додає похибку в один-два пікселі на межі — і при
+порозі 0.5 це нікого не турбує, а при порозі 0.9 зʼїдає все. <b>Знизу вгору
+працює прямо на пікселях</b>: маска предмета складається з тих самих пікселів,
+які мережа й підписувала, тому її межа точна за побудовою.</p>
+
+<p>Той самий механізм пояснює й дивний рядок «звʼязні плями»: там, де вони не
+злиплись, вони точні до пікселя — і тому при суворих порогах обходять навчений
+детектор.</p>
+
+<div class="note warn"><b>Не роби з цього загального висновку.</b> Наші сцени
+ідеально влаштовані для голосування: предмети опуклі, дрібні, з очевидним
+центром. Візьми довгий вигнутий предмет — змію, ланцюг, дорогу — і його
+геометричний центр опиниться поза предметом, а пікселі з двох кінців
+голосуватимуть за різні точки. Саме тому у великих датасетах підходи зверху вниз
+досі попереду: детектор працює з формою будь-якої складності, а голосування — ні.
+Наш замір чесно каже інше: <b>на дрібних опуклих предметах, що торкаються,
+групування краще</b>. Це і є та межа застосовності, яку варто памʼятати.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Три способи на одній сцені</p>
+  <p class="fig-sub">Та сама сцена, три різні способи знайти предмети.
+    Стовпчики — mask AP із зошита, по три навчання на кожен навчений спосіб.</p>
+  <div class="panel">
+    <div><canvas id="cWay" width="940" height="360" aria-label="Сцена, розібрана на предмети трьома способами, і стовпчики mask AP для кожного способу на рідких і щільних сценах"></canvas></div>
+    <div>
+      <span class="cap">спосіб</span>
+      <div class="seg wrap" id="segWay">
+        <button type="button" data-i="0" aria-pressed="true">звʼязні плями</button>
+        <button type="button" data-i="1" aria-pressed="false">зверху вниз</button>
+        <button type="button" data-i="2" aria-pressed="false">знизу вгору</button>
+      </div>
+      <span class="cap">сцени</span>
+      <div class="seg" id="segWayD">
+        <button type="button" data-i="0" aria-pressed="false">рідкі</button>
+        <button type="button" data-i="1" aria-pressed="true">щільні</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>mask AP@0.5</b><i id="wy1">—</i></div>
+        <div class="cellv"><b>AP[.50:.95]</b><i id="wy2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>розкид по зернах</b><i id="wy3" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="wyVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Порядок місць міняється разом із порогом.</b> При IoU 0.5
+    зверху вниз і звʼязні плями майже рівні. При суворому усередненні
+    [.50:.95] звʼязні плями раптом обходять зверху вниз — бо там, де вони не
+    помилились, маска в них точна до пікселя, а зверху вниз щоразу перемальовує
+    маску з клаптика 28×28.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Вибір</span>Коли що працює</h2>
+
+<p>Зберімо все в одну таблицю, з якої можна вибирати.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>спосіб</th><th>бери, коли</th><th>ламається на</th></tr>
+<tr><td>звʼязні плями</td><td>предмети фізично не можуть торкатись: клітини на розрідженому мазку, деталі на конвеєрі, будинки на аерознімку</td><td>будь-якому дотику двох предметів свого класу</td></tr>
+<tr><td>зверху вниз<br>Mask R-CNN</td><td>предмети різнорідні за формою й розміром, є готовий детектор, потрібна проста й передбачувана схема</td><td>пропущеній рамці — маски не буде; точності межі; сильному перекритті, коли в одну рамку влазять два предмети</td></tr>
+<tr><td>знизу вгору<br>групування</td><td>предметів багато, вони дрібні, схожі й торкаються; потрібна точна межа</td><td>предметах без очевидного центра: довгих, вигнутих, кільцевих, розірваних на частини</td></tr>
+</table></div>
+
+<p>І одне практичне правило понад таблицею. <b>Спершу поміряй, скільки предметів
+у тебе взагалі злипається.</b> Ми почали тему саме з цього числа й не випадково:
+на рідких сценах усі три способи дають 0.92-0.96 і вибирати майже нема з чого,
+а на щільних вони розʼїжджаються на 0.14 за AP@0.5 і на 0.30 за AP[.50:.95]. Якщо в твоєму датасеті дотиків 2 %, то
+instance segmentation тобі, найімовірніше, не потрібна — вистачить семантичної
+маски й <code>cv2.connectedComponents</code>.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Підсумок і місток далі</h2>
+
+<p>Що варто забрати з теми.</p>
+
+<ul>
+  <li><b>Різниця в питанні, а не в архітектурі.</b> Семантична сегментація питає
+    «якого класу цей піксель», instance — «якому предмету». Друге питання робить
+    вихід списком невідомої довжини, а це та сама складність, що в детекції
+    (<a href="../23-detection-setup/lecture.html">тема 23</a>) і в DETR
+    (<a href="../27-detr/lecture.html">тема 27</a>).</li>
+  <li><b>Головне число теми — скільки предметів злипається.</b> У нас 9.7 % на
+    рідких сценах і 25.0 % на щільних. Від нього залежить, чи потрібна тема
+    взагалі.</li>
+  <li><b>Звʼязні плями — чесна база, а не солома.</b> Вони відновлюють 1.000
+    предметів, що ні з ким не торкаються, і 0.343 тих, що торкаються. Твоя
+    модель має вигравати саме в цього числа.</li>
+  <li><b>mask AP — це box AP з іншим IoU.</b> На тих самих ідеальних рамках із
+    маскою-прямокутником box AP дорівнює 1.0000, а mask AP [.50:.95] — 0.4360.
+    Але суворість не однобічна: на злиплих плямах mask AP вища за box AP.</li>
+  <li><b>Маска 28×28 губить деталь, вужчу за клітинку сітки маски.</b> Гладка
+    фігура втрачає стало ≈1.5 % при будь-якому розмірі; гребінець із зубцями 3 px
+    падає з 0.9955 до 0.5526, щойно предмет переростає 56 пікселів.</li>
+  <li><b>RoI-Align для маски критичніший, ніж для ознак.</b> 0.954-0.962 проти
+    0.774-0.879, і головне — стало проти стрибків.</li>
+  <li><b>Маска коштує 6.0 % ваг Mask R-CNN</b>, а окремий канал на кожен клас —
+    0.05 %.</li>
+  <li><b>Спосіб, що працює прямо на пікселях, точніший на межі.</b> Групування
+    знизу вгору дало AP[.50:.95] = 0.7600 проти 0.4622 у підходу зверху вниз,
+    хоч при порозі 0.5 вони майже рівні.</li>
+</ul>
+
+<p>І тепер про те, чого ми досі <b>не</b> вміємо. У нас є дві різні відповіді на
+одну картинку. Семантична мережа з <a href="../29-semantic-segmentation/lecture.html">теми
+29</a> добре фарбує фон — небо, дорогу, траву, — але не рахує предметів. Модель
+цієї теми добре знаходить предмети, але фон її не цікавить зовсім: вона видає
+список масок, і те, що між ними, лишається нічиїм. Гірше: маски двох предметів
+можуть перекриватись, і питання «а цей піксель чий?» відповіді не має.</p>
+
+<p>Виходить, щоб описати одну картинку повністю, треба запустити <b>дві різні
+моделі</b> і якось зшити їхні відповіді. <a href="../32-panoptic-sam/lecture.html">Тема
+32</a> береться саме за це: одна відповідь, у якій кожен піксель має і клас, і
+номер предмета, — і сегментація за підказкою, де предмет узагалі не треба
+називати наперед.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../30-unet/lecture.html"><span class="dir">попередня</span><span class="ttl">30. U-Net</span></a>
+    <a class="next" href="../32-panoptic-sam/lecture.html"><span class="dir">наступна</span><span class="ttl">32. Panoptic і SAM</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+/* «1 предмет», «2 предмети», «5 предметів» */
+function objWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' предмет';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' предмети';
+  return n+' предметів';
+}
+function clsWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' клас';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' класи';
+  return n+' класів';
+}
+function mergedWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' предмет злився';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' предмети злилися';
+  return n+' предметів злилося';
+}
+function blobWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return n+' пляма';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return n+' плями';
+  return n+' плям';
+}
+/* детермінований генератор: та сама картинка у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)>>>0; return s/4294967296; };
+}
+
+/* ═══════ числа теми — усі надруковані зошитом practice.ipynb ═══════ */
+var D={
+  scenes:{
+    sparse:{objects:247, sameTouch:24, anyTouch:83, blobs:236, exact:107},
+    dense:{objects:420, sameTouch:105, anyTouch:245, blobs:364, exact:79},
+    total:120
+  },
+  cc:{sparse:{all:0.951, free:1.000, touch:0.500},
+      dense:{all:0.836, free:1.000, touch:0.343}},
+  ap:[
+    {name:'ідеальні маски', box:[1.0000,1.0000,1.0000], mask:[1.0000,1.0000,1.0000],
+     note:'Це перевірка самої реалізації: якщо тут не одиниця — помилка в коді, а не в моделі.'},
+    {name:'маска = вся рамка', box:[1.0000,1.0000,1.0000], mask:[0.8943,0.2912,0.4360],
+     note:'Рамки ідеальні, тож box AP не бачить жодної помилки. mask AP при порозі 0.75 падає до 0.2912, бо трикутник займає рівно половину своєї рамки.'},
+    {name:'зсув форми на 1 px', box:[0.9967,0.6455,0.5747], mask:[0.9701,0.4134,0.4872],
+     note:'Один піксель зсуву майже не заважає при порозі 0.5 і майже все ламає при 0.75. Обидві метрики страждають, маска трохи сильніше.'},
+    {name:'зсув форми на 2 px', box:[0.9675,0.0000,0.2659], mask:[0.6966,0.0000,0.1599],
+     note:'Два пікселі на фігурі завширшки 16 — це вже інша фігура. При порозі 0.75 не лишається жодного влучання.'},
+    {name:'звʼязні плями', box:[0.7640,0.6553,0.6768], mask:[0.8144,0.6727,0.7021],
+     note:'Тут навпаки: mask AP вища за box AP. Рамка злиплої плями — великий прямокутник із порожніми кутами, а сама пляма щільно облягає фігури.'}
+  ],
+  res:{
+    sizes:[16,28,56,112,224], masks:[7,14,28,56],
+    smooth:[[0.9113,1.0000,1.0000,1.0000],
+            [0.9224,0.9784,1.0000,1.0000],
+            [0.9326,0.9643,0.9925,1.0000],
+            [0.9336,0.9694,0.9829,0.9970],
+            [0.9357,0.9695,0.9852,0.9918]],
+    comb:{sizes:[28,56,112,224], vals:[[0.9463,1.0000,1.0000],[0.5756,0.9955,1.0000],
+                                       [0.5421,0.5526,0.9873],[0.5604,0.5336,0.5474]]},
+    ours:[0.9215,0.9927,1.0000,1.0000]
+  },
+  roi:{deltas:[0,0.25,0.50,0.75],
+       align:[0.9617,0.9543,0.9570,0.9546],
+       pool:[0.8354,0.8788,0.7738,0.8082]},
+  ways:{
+    dense:[{n:'звʼязні плями', ap:0.8144, rng:0.7021, sd:null, note:'без навчання'},
+           {n:'зверху вниз',   ap:0.8678, rng:0.4622, sd:0.0874},
+           {n:'знизу вгору',   ap:0.9553, rng:0.7600, sd:0.0189}],
+    sparse:[{n:'звʼязні плями', ap:0.9515, rng:0.8855, sd:null, note:'без навчання'},
+            {n:'зверху вниз',   ap:0.9190, rng:0.5705, sd:null, note:'одне зерно'},
+            {n:'знизу вгору',   ap:0.9611, rng:0.8355, sd:0.0384}]
+  },
+  parts:{body:23508032, fpn:3344384, rpn:593935,
+         boxFixed:13895680, boxPerClass:5125,
+         maskFixed:2360320+262400, maskPerClass:257}
+};
+
+/* ═══════════════ спільне: растеризація фігур і сітка ═══════════════ */
+var GS=64;                                    /* полотно сцен 64×64 */
+function circleAt(field, cx, cy, r, val){
+  var x,y; for(y=0;y<GS;y++) for(x=0;x<GS;x++)
+    if((x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r) field[y*GS+x]=val;
+}
+function squareAt(field, cx, cy, r, val){
+  var x,y; for(y=0;y<GS;y++) for(x=0;x<GS;x++)
+    if(Math.abs(x-cx)<=r && Math.abs(y-cy)<=r) field[y*GS+x]=val;
+}
+function triangleAt(field, cx, cy, r, val){
+  var x,y; for(y=0;y<GS;y++) for(x=0;x<GS;x++)
+    if(y-cy+r>=0 && y-cy<=r && Math.abs(x-cx)<=(y-cy+r)/2) field[y*GS+x]=val;
+}
+function paint(field, kind, cx, cy, r, val){
+  if(kind===0) circleAt(field,cx,cy,r,val);
+  else if(kind===1) squareAt(field,cx,cy,r,val);
+  else triangleAt(field,cx,cy,r,val);
+}
+/* звʼязні компоненти 8-звʼязністю, окремо в кожному класі */
+function components(seg, classes){
+  var mark=new Int32Array(GS*GS), next=1, stack=[], c,i,x,y,k,dx,dy,nx,ny,ni;
+  for(c=1;c<=classes;c++){
+    for(i=0;i<GS*GS;i++){
+      if(seg[i]!==c || mark[i]!==0) continue;
+      stack.length=0; stack.push(i); mark[i]=next;
+      while(stack.length){
+        k=stack.pop(); x=k%GS; y=(k-x)/GS;
+        for(dy=-1;dy<=1;dy++) for(dx=-1;dx<=1;dx++){
+          nx=x+dx; ny=y+dy;
+          if(nx<0||ny<0||nx>=GS||ny>=GS) continue;
+          ni=ny*GS+nx;
+          if(seg[ni]===c && mark[ni]===0){ mark[ni]=next; stack.push(ni); }
+        }
+      }
+      next++;
+    }
+  }
+  return {mark:mark, count:next-1};
+}
+/* палітра предметів. Літерали тут потрібні: колірних змінних теми на девʼять
+   предметів не вистачає. Тому два набори — світлий і темний, і вибір за
+   яскравістю --paper, інакше в темній темі половина фігур зникає. */
+var PAL_LIGHT=['#c2185b','#0f766e','#c2620f','#3b5bdb','#7048e8','#0b7285','#a61e4d','#5c940d','#d9480f'];
+var PAL_DARK =['#f06292','#2dd4bf','#f5a524','#748ffc','#b197fc','#66d9e8','#ff8787','#a9e34b','#ffa94d'];
+function isDark(){
+  var c=css('--paper').replace('#','');
+  if(c.length<6) return false;
+  var r=parseInt(c.substr(0,2),16), gg=parseInt(c.substr(2,2),16), b=parseInt(c.substr(4,2),16);
+  return (0.299*r+0.587*gg+0.114*b) < 128;
+}
+function pal(i){ var p=isDark()?PAL_DARK:PAL_LIGHT; return p[i%p.length]; }
+function drawField(g, field, x0, y0, cell, colorOf){
+  var x,y,v;
+  for(y=0;y<GS;y++) for(x=0;x<GS;x++){
+    v=field[y*GS+x];
+    var col=colorOf(v);
+    if(col===null) continue;
+    g.fillStyle=col; g.fillRect(x0+x*cell, y0+y*cell, cell, cell);
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(x0-0.5, y0-0.5, GS*cell+1, GS*cell+1);
+}
+
+/* ═══════════════ 1 · дві кулі на столі ═══════════════ */
+var gapV=18, sameCls=0;
+function drawTouch(){
+  var cv=I('cTouch'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=4, side=GS*cell, top=44, gapX=(W-3*side)/4;
+  var img=new Int32Array(GS*GS), seg=new Int32Array(GS*GS), inst=new Int32Array(GS*GS);
+  var r=8, cx1=Math.round(32-gapV/2), cx2=Math.round(32+gapV/2);
+  paint(inst,0,cx1,32,r,1); paint(seg,0,cx1,32,r,1);
+  if(sameCls===0){ paint(inst,0,cx2,32,r,2); paint(seg,0,cx2,32,r,1); }
+  else { paint(inst,1,cx2,32,r,2); paint(seg,1,cx2,32,r,2); }
+  var k; for(k=0;k<GS*GS;k++) img[k]=inst[k]?1:0;
+  var comp=components(seg,3);
+
+  /* найкоротший проміжок між фігурами по горизонталі в рядку 32 */
+  var right1=-1, left2=GS;
+  var x; for(x=0;x<GS;x++){ if(inst[32*GS+x]===1) right1=x; }
+  for(x=GS-1;x>=0;x--){ if(inst[32*GS+x]===2) left2=x; }
+  var gapPx=left2-right1-1;
+
+  var soft=css('--soft'), ink=css('--ink');
+  capt(g,'СЦЕНА 64×64',gapX,26,soft,11,true);
+  capt(g,'СЕМАНТИЧНА МАСКА',gapX*2+side,26,soft,11,true);
+  capt(g,'ЗВʼЯЗНІ ПЛЯМИ',gapX*3+2*side,26,soft,11,true);
+
+  drawField(g,img,gapX,top,cell,function(v){return v?ink:css('--paper');});
+  drawField(g,seg,gapX*2+side,top,cell,function(v){
+    if(v===0) return css('--paper');
+    return v===1?css('--rose'):css('--teal');
+  });
+  drawField(g,comp.mark,gapX*3+2*side,top,cell,function(v){
+    return v===0?css('--paper'):pal(v-1);
+  });
+  capt(g, sameCls===0?'обидві фігури — клас «коло»':'коло і квадрат — різні класи',
+       gapX*2+side, top+side+18, soft, 11);
+  capt(g, blobWord(comp.count), gapX*3+2*side, top+side+18, comp.count<2?css('--rose'):css('--teal'), 12, true);
+
+  I('gapOut').textContent=gapV;
+  I('tc1').textContent='2';
+  I('tc2').textContent=String(comp.count);
+  I('tc3').textContent=(gapPx<=0?'торкаються':gapPx+' px');
+  if(comp.count<2)
+    verd('tcVd','t-no','ЗЛИПЛИСЬ','Плям '+comp.count+', предметів 2. Семантична маска правильна до пікселя, але порахувати по ній предмети вже не можна.');
+  else if(comp.count>2)
+    verd('tcVd','t-mid','РОЗРІЗАЛО','Плям '+comp.count+', предметів 2. Верхня фігура затулила нижню посередині, і та розпалась на дві частини. Помилка в інший бік, але теж помилка.');
+  else if(sameCls===1)
+    verd('tcVd','t-ok','РІЗНІ КЛАСИ','Плям 2 навіть при дотику: маска рахує плями окремо в кожному класі, а фігури тут різних класів. Проблема виникає лише між предметами <b>одного</b> класу.');
+  else
+    verd('tcVd','t-ok','РОЗДІЛИЛИСЬ','Між фігурами '+gapPx+' px фону, і плям теж 2. Зсунь повзунок вліво: щойно проміжок зникне, плям стане одна.');
+}
+
+/* ═══════════════ 2 · компоненти проти істини ═══════════════ */
+var densV=6, seedV=3, showComp=0;
+function buildScene(count, seed){
+  var rnd=LCG(seed*7919+13), seg=new Int32Array(GS*GS), inst=new Int32Array(GS*GS);
+  var taken=[], i, tries, r, cx, cy, kind, j, ow, oh, ok;
+  for(i=0;i<count;i++){
+    ok=false;
+    for(tries=0;tries<60;tries++){
+      r=6+Math.floor(rnd()*5); cx=r+1+Math.floor(rnd()*(GS-2*r-2));
+      cy=r+1+Math.floor(rnd()*(GS-2*r-2)); kind=Math.floor(rnd()*3);
+      /* те саме правило, що в генераторі зошита: не більше 45 % площі нового */
+      ok=true;
+      for(j=0;j<taken.length;j++){
+        ow=Math.max(0, Math.min(cx+r, taken[j][0]+taken[j][2]) - Math.max(cx-r, taken[j][0]-taken[j][2]));
+        oh=Math.max(0, Math.min(cy+r, taken[j][1]+taken[j][2]) - Math.max(cy-r, taken[j][1]-taken[j][2]));
+        if(ow*oh > 0.45*(2*r)*(2*r)){ ok=false; break; }
+      }
+      if(ok) break;
+    }
+    if(!ok) continue;
+    taken.push([cx,cy,r]);
+    paint(inst,kind,cx,cy,r,i+1); paint(seg,kind,cx,cy,r,kind+1);
+  }
+  /* лишились лише видимі пікселі: пізніші фігури затуляють ранніх */
+  var alive={}, k;
+  for(k=0;k<GS*GS;k++) if(inst[k]) alive[inst[k]]=1;
+  var live=0; for(k in alive) if(alive.hasOwnProperty(k)) live++;
+  return {seg:seg, inst:inst, objects:live};
+}
+function drawComp(){
+  var cv=I('cComp'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=4, side=GS*cell, top=44, gapX=(W-2*side)/3;
+  var sc=buildScene(densV, seedV), comp=components(sc.seg,3);
+  var soft=css('--soft'), ink=css('--ink');
+  capt(g,'СЦЕНА',gapX,26,soft,11,true);
+  capt(g, showComp? 'ЗВʼЯЗНІ ПЛЯМИ' : 'ІСТИННІ ПРЕДМЕТИ', gapX*2+side,26,soft,11,true);
+  var img=new Int32Array(GS*GS), k;
+  for(k=0;k<GS*GS;k++) img[k]=sc.inst[k]?1:0;
+  drawField(g,img,gapX,top,cell,function(v){return v?ink:css('--paper');});
+  var field=showComp?comp.mark:sc.inst;
+  drawField(g,field,gapX*2+side,top,cell,function(v){
+    return v===0?css('--paper'):pal(v-1);
+  });
+  var lost=sc.objects-comp.count;
+  capt(g, showComp? blobWord(comp.count) : objWord(sc.objects),
+       gapX*2+side, top+side+18, showComp&&lost>0?css('--rose'):css('--teal'), 12, true);
+  capt(g, 'перемкни, щоб порівняти', gapX, top+side+18, soft, 11);
+
+  I('densOut').textContent=densV;
+  I('sdOut').textContent=seedV;
+  I('cp1').textContent=String(sc.objects);
+  I('cp2').textContent=String(comp.count);
+  I('cp3').textContent=(lost>0? lost : '0');
+  if(lost>0)
+    verd('cpVd','t-no','ПОМИЛКА','Предметів '+sc.objects+', плям '+comp.count+'. '+mergedWord(lost)+
+      ' із сусідом свого класу, і жоден лічильник плям їх уже не розділить.');
+  else if(comp.count>sc.objects)
+    verd('cpVd','t-mid','РОЗРІЗАЛО','Плям більше, ніж предметів: одна фігура затулена посередині чужою і розпалась на дві частини. Помилка в інший бік, але теж помилка.');
+  else
+    verd('cpVd','t-ok','ЗБІГЛОСЬ','Плям стільки ж, скільки предметів. На цій сцені жодні дві фігури одного класу не торкаються — і звʼязних компонент цілком досить.');
+}
+
+/* ═══════════════ 3 · дві метрики на тій самій відповіді ═══════════════ */
+var apV=1;
+function drawAp(){
+  var cv=I('cAp'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var row=D.ap[apV];
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair');
+
+  /* ліворуч: приклад однієї фігури — істина обведенням, прогноз заливкою */
+  var cell=4, side=GS*cell, x0=26, y0=46;
+  var truth=new Int32Array(GS*GS), pred=new Int32Array(GS*GS), k,x,y;
+  paint(truth,2,32,32,12,1);                       /* трикутник — найгірший випадок */
+  if(apV===0) paint(pred,2,32,32,12,1);
+  else if(apV===1){ for(y=20;y<=44;y++) for(x=20;x<=44;x++) pred[y*GS+x]=1; }
+  else if(apV===2){ for(k=0;k<GS*GS;k++){x=k%GS;y=(k-x)/GS; if(x>0&&y>0&&truth[(y-1)*GS+(x-1)]) pred[k]=1;} }
+  else if(apV===3){ for(k=0;k<GS*GS;k++){x=k%GS;y=(k-x)/GS; if(x>1&&y>1&&truth[(y-2)*GS+(x-2)]) pred[k]=1;} }
+  else { paint(pred,2,32,32,12,1); paint(pred,2,50,32,10,1); }
+  capt(g,'ПРОГНОЗ (заливка) І ІСТИНА (контур)',x0,28,soft,11,true);
+  drawField(g,pred,x0,y0,cell,function(v){return v?css('--rose-w'):css('--paper');});
+  g.fillStyle=rose;
+  for(k=0;k<GS*GS;k++) if(pred[k]){x=k%GS;y=(k-x)/GS; g.fillRect(x0+x*cell,y0+y*cell,cell,cell);}
+  g.strokeStyle=ink; g.lineWidth=1.6;
+  for(k=0;k<GS*GS;k++) if(truth[k]){
+    x=k%GS; y=(k-x)/GS;
+    if(!truth[k-1]||x===0){g.beginPath();g.moveTo(x0+x*cell,y0+y*cell);g.lineTo(x0+x*cell,y0+(y+1)*cell);g.stroke();}
+    if(!truth[k+1]||x===GS-1){g.beginPath();g.moveTo(x0+(x+1)*cell,y0+y*cell);g.lineTo(x0+(x+1)*cell,y0+(y+1)*cell);g.stroke();}
+    if(y===0||!truth[k-GS]){g.beginPath();g.moveTo(x0+x*cell,y0+y*cell);g.lineTo(x0+(x+1)*cell,y0+y*cell);g.stroke();}
+    if(y===GS-1||!truth[k+GS]){g.beginPath();g.moveTo(x0+x*cell,y0+(y+1)*cell);g.lineTo(x0+(x+1)*cell,y0+(y+1)*cell);g.stroke();}
+  }
+
+  /* праворуч: три пари стовпчиків */
+  var bx=x0+side+70, bw=W-bx-30, base=H-56, hgt=base-70;
+  var labels=['поріг 0.50','поріг 0.75','[.50:.95]'];
+  var i, gw=bw/3, bwid=Math.min(52, gw/3);
+  capt(g,'AP ЗА РАМКАМИ (рожевий) І ЗА МАСКАМИ (бірюзовий)',bx,28,soft,11,true);
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(i=0;i<=4;i++){ var yy=base-hgt*i/4; g.beginPath(); g.moveTo(bx,yy); g.lineTo(bx+bw,yy); g.stroke();
+    capt(g,f2(i/4),bx-8,yy+4,soft,10,false,'right'); }
+  for(i=0;i<3;i++){
+    var cxg=bx+gw*i+gw/2;
+    g.fillStyle=rose; g.fillRect(cxg-bwid-3, base-hgt*row.box[i], bwid, hgt*row.box[i]);
+    g.fillStyle=teal; g.fillRect(cxg+3, base-hgt*row.mask[i], bwid, hgt*row.mask[i]);
+    capt(g,f4(row.box[i]),cxg-bwid/2-3,base-hgt*row.box[i]-7,rose,10.5,true,'center');
+    capt(g,f4(row.mask[i]),cxg+bwid/2+3,base-hgt*row.mask[i]-7,teal,10.5,true,'center');
+    capt(g,labels[i],cxg,base+18,soft,11,false,'center');
+  }
+  g.strokeStyle=css('--ink'); g.lineWidth=1.2;
+  g.beginPath(); g.moveTo(bx,base); g.lineTo(bx+bw,base); g.stroke();
+
+  I('ap1').textContent=f4(row.box[0]);
+  I('ap2').textContent=f4(row.mask[0]);
+  I('ap3').textContent=f4(row.box[2]);
+  I('ap4').textContent=f4(row.mask[2]);
+  var d=row.box[2]-row.mask[2];
+  if(Math.abs(d)<0.0005)
+    verd('apVd','t-ok','ОДНАКОВО','Обидві метрики дають '+f4(row.box[2])+'. '+row.note);
+  else if(d>0)
+    verd('apVd','t-no','МАСКА СУВОРІША','box '+f4(row.box[2])+' проти mask '+f4(row.mask[2])+
+      ' — різниця '+f4(d)+'. '+row.note);
+  else
+    verd('apVd','t-mid','РАМКА СУВОРІША','box '+f4(row.box[2])+' проти mask '+f4(row.mask[2])+
+      ' — маска на '+f4(-d)+' вища. '+row.note);
+}
+
+/* ═══════════════ 4 · стеля роздільності маски ═══════════════ */
+/* білінійне перетворення, узгоджене з F.interpolate(align_corners=False) */
+function resizeBilinear(src, sw, sh, dw, dh){
+  if(sw===dw && sh===dh) return src.slice();
+  var out=new Float64Array(dw*dh), sx=sw/dw, sy=sh/dh, i, j;
+  for(i=0;i<dh;i++){
+    var fy=sy*(i+0.5)-0.5; if(fy<0) fy=0;
+    var y0=Math.floor(fy); if(y0>sh-1) y0=sh-1;
+    var ly=fy-y0, y1=Math.min(y0+1,sh-1);
+    for(j=0;j<dw;j++){
+      var fx=sx*(j+0.5)-0.5; if(fx<0) fx=0;
+      var x0=Math.floor(fx); if(x0>sw-1) x0=sw-1;
+      var lx=fx-x0, x1=Math.min(x0+1,sw-1);
+      var a=src[y0*sw+x0], b=src[y0*sw+x1], c=src[y1*sw+x0], d=src[y1*sw+x1];
+      out[i*dw+j]=(a*(1-lx)+b*lx)*(1-ly)+(c*(1-lx)+d*lx)*ly;
+    }
+  }
+  return out;
+}
+function shapeSquare(kind, side){
+  var m=new Float64Array(side*side), r=(side-1)/2, cx=r, cy=r, x, y, v;
+  for(y=0;y<side;y++) for(x=0;x<side;x++){
+    if(kind===0) v=((x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r);
+    else if(kind===1) v=((y-cy+r>=0)&&(y-cy<=r)&&(Math.abs(x-cx)<=(y-cy+r)/2));
+    else { v=true; if(Math.floor(x/3)%2===1) v=false; if(y<Math.floor(side/4)) v=true; }
+    m[y*side+x]=v?1:0;
+  }
+  return m;
+}
+var resM=2, resS=2, resK=0;
+var MSIDES=[7,14,28,56], OSIDES=[28,56,112,224];
+function drawRes(){
+  var cv=I('cRes'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var R=MSIDES[resM], S=OSIDES[resS];
+  var src=shapeSquare(resK,S);
+  var small=resizeBilinear(src,S,S,R,R);
+  var back=resizeBilinear(small,R,R,S,S);
+  var inter=0, uni=0, k, a, b;
+  for(k=0;k<src.length;k++){ a=src[k]>0; b=back[k]>=0.5; if(a&&b) inter++; if(a||b) uni++; }
+  var iou=uni?inter/uni:0;
+
+  var box=228, x1=40, x2=x1+box+56, x3=x2+box+56, top=48;
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), teal=css('--teal');
+  capt(g,'ІСТИННА ФІГУРА',x1,30,soft,11,true);
+  capt(g,'МАСКА '+R+'×'+R,x2,30,soft,11,true);
+  capt(g,'ПОВЕРНУЛИ НАЗАД',x3,30,soft,11,true);
+
+  function plot(px, data, side, thr, color){
+    var cell=box/side, i, j, v, t;
+    g.fillStyle=css('--paper'); g.fillRect(px, top, box, box);
+    for(i=0;i<side;i++) for(j=0;j<side;j++){
+      v=data[i*side+j];
+      if(thr){
+        if(v<0.5) continue;
+        g.fillStyle=color;
+      } else {
+        t=Math.max(0,Math.min(1,v));
+        if(t<=0.001) continue;
+        g.globalAlpha=t; g.fillStyle=color;
+      }
+      g.fillRect(px+j*cell, top+i*cell, cell+0.5, cell+0.5);
+      g.globalAlpha=1;
+    }
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.strokeRect(px-0.5, top-0.5, box+1, box+1);
+  }
+  plot(x1, src, S, true, ink);
+  plot(x2, small, R, false, rose);
+  plot(x3, back, S, true, iou>0.9?teal:rose);
+  capt(g, S+'×'+S+' пікселів', x1, top+box+20, soft, 11);
+  capt(g, 'одна клітинка = '+f2(S/R)+' px', x2, top+box+20, soft, 11);
+  capt(g, 'IoU '+f4(iou), x3, top+box+20, iou>0.9?teal:rose, 12, true);
+
+  I('mresOut').textContent=R;
+  I('osizeOut').textContent=S;
+  I('rs1').textContent=f4(iou);
+  I('rs2').textContent=f2(S/R)+' px';
+  var cellPx=S/R;
+  if(iou>=0.99)
+    verd('rsVd','t-ok','ВТРАТ НЕМАЄ','IoU '+f4(iou)+'. Клітинка маски — '+f2(cellPx)+' px, і форма проходить крізь стискання без шкоди.');
+  else if(iou>=0.95)
+    verd('rsVd','t-mid','ТОНКА СМУГА','IoU '+f4(iou)+'. Втрата живе на межі фігури завширшки приблизно одну клітинку маски ('+f2(cellPx)+' px).');
+  else if(iou>=0.80)
+    verd('rsVd','t-no','ГРУБО','IoU '+f4(iou)+'. Клітинка маски ('+f2(cellPx)+' px) зʼїдає межу помітним шматком.');
+  else
+    verd('rsVd','t-no','ДЕТАЛЬ ЗНИКЛА','IoU '+f4(iou)+'. Клітинка маски ('+f2(cellPx)+' px) '+
+      (resK===2? 'ширша за зубець (3 px), тож зубці зливаються в суцільну пластину.'
+               : 'завелика для цієї фігури: від форми лишився обрис.'));
+}
+
+/* ═══════════════ 5 · звідки читає кожен спосіб ═══════════════ */
+var roiD=2, roiMode=0;
+function drawRoi(){
+  var cv=I('cRoi'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var delta=D.roi.deltas[roiD];
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair');
+
+  /* фігура 20×20 у полі 28×28, рамка зсунута на delta */
+  var N=28, cell=9, x0=40, y0=52, box=N*cell;
+  var field=new Float64Array(N*N), x, y, r=9, cx=13, cy=13;
+  for(y=0;y<N;y++) for(x=0;x<N;x++)
+    field[y*N+x]=((x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r)?1:0;
+  /* малюємо поле */
+  for(y=0;y<N;y++) for(x=0;x<N;x++){
+    g.fillStyle=field[y*N+x]? css('--ink') : css('--paper');
+    g.fillRect(x0+x*cell, y0+y*cell, cell, cell);
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(x=0;x<=N;x++){ g.beginPath(); g.moveTo(x0+x*cell,y0); g.lineTo(x0+x*cell,y0+box); g.stroke(); }
+  for(y=0;y<=N;y++){ g.beginPath(); g.moveTo(x0,y0+y*cell); g.lineTo(x0+box,y0+y*cell); g.stroke(); }
+
+  var bx0=4+delta, by0=4+delta, bx1=23+delta, by1=23+delta;
+  var rx0=Math.round(bx0), ry0=Math.round(by0), rx1=Math.round(bx1), ry1=Math.round(by1);
+  /* справжня рамка */
+  g.strokeStyle=teal; g.lineWidth=2.4;
+  g.strokeRect(x0+bx0*cell, y0+by0*cell, (bx1-bx0)*cell, (by1-by0)*cell);
+  if(roiMode===1){
+    g.strokeStyle=rose; g.lineWidth=2.4; g.setLineDash([6,4]);
+    g.strokeRect(x0+rx0*cell, y0+ry0*cell, (rx1-rx0)*cell, (ry1-ry0)*cell);
+    g.setLineDash([]);
+  }
+  /* точки вибірки: 7×7 замість 28×28, щоб було видно */
+  var K=7, i, j, sx, sy;
+  for(i=0;i<K;i++) for(j=0;j<K;j++){
+    if(roiMode===0){ sx=bx0+(j+0.5)*(bx1-bx0)/K; sy=by0+(i+0.5)*(by1-by0)/K; g.fillStyle=teal; }
+    else { sx=rx0+(j+0.5)*(rx1-rx0)/K; sy=ry0+(i+0.5)*(ry1-ry0)/K;
+           sx=Math.floor(sx)+0.5; sy=Math.floor(sy)+0.5; g.fillStyle=rose; }
+    g.beginPath(); g.arc(x0+sx*cell, y0+sy*cell, 2.6, 0, 6.284); g.fill();
+  }
+  capt(g,'СІТКА ВИБІРКИ 7×7',x0,30,soft,11,true);
+  capt(g, roiMode===0? 'RoI-Align читає в дробових точках'
+                     : 'RoI-пулінг округлив рамку і читає в центрах цілих клітинок',
+       x0, y0+box+22, roiMode===0?teal:rose, 11.5, true);
+
+  /* праворуч: числа */
+  var px=x0+box+64, base=y0+40;
+  capt(g,'IoU З ЕТАЛОНОМ, 120 СЦЕН',px,30,soft,11,true);
+  var vals=[D.roi.align[roiD], D.roi.pool[roiD]], names=['RoI-Align','RoI-пулінг'];
+  var cols=[teal,rose], w=W-px-40;
+  for(i=0;i<2;i++){
+    var yy=base+i*74;
+    capt(g,names[i],px,yy-8,ink,12,true);
+    g.fillStyle=css('--hair'); g.fillRect(px, yy, w, 20);
+    g.fillStyle=cols[i]; g.fillRect(px, yy, w*vals[i], 20);
+    capt(g,f4(vals[i]),px+w,yy+35,cols[i],14,true,'right');
+    if(i===roiMode){ g.strokeStyle=cols[i]; g.lineWidth=2; g.strokeRect(px-4, yy-24, w+8, 62); }
+  }
+  capt(g,'зсув рамки δ = '+f2(delta)+' px',px,base+168,soft,11.5);
+
+  I('dltOut').textContent=f2(delta);
+  I('ri1').textContent=f4(vals[roiMode]);
+  I('ri2').textContent=(roiMode===0? f2(bx0)+'…'+f2(bx1) : rx0+'…'+rx1);
+  var d=D.roi.align[roiD]-D.roi.pool[roiD];
+  if(roiMode===0)
+    verd('riVd','t-ok','ЧИТАЄ ТАМ, ДЕ РАМКА','Сітка вибірки їде разом із рамкою: δ = '+f2(delta)+
+      ' px нічого не міняє, IoU лишається '+f4(vals[0])+'. Тому колонка RoI-Align у таблиці рівна.');
+  else if(delta===0)
+    verd('riVd','t-mid','РАМКА ЦІЛА, А ВТРАТА Є','Округлювати нічого — рамка вже ціла, — але IoU лише '+
+      f4(vals[1])+'. Це друга причина втрати: пулінг бере в клітинці <b>максимум</b>, і маска роздувається.');
+  else
+    verd('riVd','t-no','ЧИТАЄ НЕ ЗВІДТИ','Рамка '+f2(bx0)+'…'+f2(bx1)+' округлилась до '+rx0+'…'+rx1+
+      ', і маска приїде зсунутою. IoU '+f4(vals[1])+' проти '+f4(vals[0])+' у RoI-Align — різниця '+f4(d)+'.');
+}
+
+/* ═══════════════ 6 · три способи на одній сцені ═══════════════ */
+var wayV=0, wayDense=1;
+function drawWay(){
+  var cv=I('cWay'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var set=wayDense? D.ways.dense : D.ways.sparse;
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair');
+
+  /* ліворуч: сцена, розібрана обраним способом (схематично) */
+  var cell=4, side=GS*cell, x0=26, y0=48;
+  var sc=buildScene(wayDense?6:2, 5), comp=components(sc.seg,3);
+  var field, cap;
+  if(wayV===0){ field=comp.mark; cap='кожна пляма — окремий предмет'; }
+  else if(wayV===1){ field=sc.inst; cap='кожна рамка дає одну маску всередині себе'; }
+  else { field=sc.inst; cap='кожен піксель голосує за центр свого предмета'; }
+  capt(g,'СЦЕНА, РОЗІБРАНА НА ПРЕДМЕТИ',x0,30,soft,11,true);
+  drawField(g,field,x0,y0,cell,function(v){return v===0?css('--paper'):pal(v-1);});
+  if(wayV===1){
+    /* домальовуємо рамки */
+    var b={}, k, x, y, id;
+    for(k=0;k<GS*GS;k++){ id=sc.inst[k]; if(!id) continue; x=k%GS; y=(k-x)/GS;
+      if(!b[id]) b[id]=[x,y,x,y];
+      else { if(x<b[id][0])b[id][0]=x; if(y<b[id][1])b[id][1]=y;
+             if(x>b[id][2])b[id][2]=x; if(y>b[id][3])b[id][3]=y; } }
+    g.strokeStyle=ink; g.lineWidth=1.4;
+    for(id in b) if(b.hasOwnProperty(id))
+      g.strokeRect(x0+b[id][0]*cell, y0+b[id][1]*cell,
+                   (b[id][2]-b[id][0]+1)*cell, (b[id][3]-b[id][1]+1)*cell);
+  }
+  if(wayV===2){
+    /* домальовуємо стрілки до центрів */
+    var cen={}, cnt={}, kk, xx, yy, ii;
+    for(kk=0;kk<GS*GS;kk++){ ii=sc.inst[kk]; if(!ii) continue; xx=kk%GS; yy=(kk-xx)/GS;
+      if(!cen[ii]){cen[ii]=[0,0]; cnt[ii]=0;} cen[ii][0]+=xx; cen[ii][1]+=yy; cnt[ii]++; }
+    g.strokeStyle=ink; g.lineWidth=1;
+    for(kk=0;kk<GS*GS;kk+=137){ ii=sc.inst[kk]; if(!ii) continue; xx=kk%GS; yy=(kk-xx)/GS;
+      g.beginPath(); g.moveTo(x0+(xx+0.5)*cell, y0+(yy+0.5)*cell);
+      g.lineTo(x0+(cen[ii][0]/cnt[ii]+0.5)*cell, y0+(cen[ii][1]/cnt[ii]+0.5)*cell); g.stroke(); }
+    for(ii in cen) if(cen.hasOwnProperty(ii)){
+      g.fillStyle=ink; g.beginPath();
+      g.arc(x0+(cen[ii][0]/cnt[ii]+0.5)*cell, y0+(cen[ii][1]/cnt[ii]+0.5)*cell, 3.2, 0, 6.284); g.fill(); }
+  }
+  capt(g, cap, x0, y0+side+20, soft, 11);
+
+  /* праворуч: стовпчики */
+  var bx=x0+side+74, bw=W-bx-34, base=H-64, hgt=base-72, i;
+  capt(g,'MASK AP@0.5 (суцільний) І AP[.50:.95] (світлий)',bx,30,soft,11,true);
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(i=0;i<=4;i++){ var gy=base-hgt*i/4; g.beginPath(); g.moveTo(bx,gy); g.lineTo(bx+bw,gy); g.stroke();
+    capt(g,f2(i/4),bx-8,gy+4,soft,10,false,'right'); }
+  var gw=bw/3, bwid=Math.min(46,gw/3.2);
+  for(i=0;i<3;i++){
+    var cxg=bx+gw*i+gw/2, hot=(i===wayV);
+    g.globalAlpha=hot?1:0.35;
+    g.fillStyle=rose; g.fillRect(cxg-bwid-3, base-hgt*set[i].ap, bwid, hgt*set[i].ap);
+    g.fillStyle=teal; g.fillRect(cxg+3, base-hgt*set[i].rng, bwid, hgt*set[i].rng);
+    g.globalAlpha=1;
+    capt(g,f4(set[i].ap),cxg-bwid/2-3,base-hgt*set[i].ap-7,hot?rose:soft,10.5,hot,'center');
+    capt(g,f4(set[i].rng),cxg+bwid/2+3,base-hgt*set[i].rng-7,hot?teal:soft,10.5,hot,'center');
+    capt(g,set[i].n,cxg,base+18,hot?ink:soft,11,hot,'center');
+  }
+  g.strokeStyle=ink; g.lineWidth=1.2;
+  g.beginPath(); g.moveTo(bx,base); g.lineTo(bx+bw,base); g.stroke();
+  capt(g, wayDense? '120 щільних сцен, 420 предметів' : '120 рідких сцен, 247 предметів',
+       bx, base+40, soft, 11);
+
+  var cur=set[wayV];
+  I('wy1').textContent=f4(cur.ap);
+  I('wy2').textContent=f4(cur.rng);
+  I('wy3').textContent=(cur.sd===null? cur.note : '±'+f4(cur.sd));
+  var best=0, j; for(j=1;j<3;j++) if(set[j].rng>set[best].rng) best=j;
+  var why=['Пляма — це самі пікселі маски, тому там, де вона не помилилась, вона точна до пікселя; але злиплих предметів вона не розділить ніколи.',
+           'Зверху вниз перемальовує маску з клаптика 28×28 усередині рамки, і на суворих порогах ця подорож коштує все.',
+           'Групування працює прямо на пікселях, тому межа маски точна за побудовою; ціна — предмети мають мати очевидний центр.'];
+  if(wayV===best)
+    verd('wyVd','t-ok','НАЙКРАЩИЙ ТУТ','AP[.50:.95] = '+f4(cur.rng)+' — найвище з трьох на цих сценах. '+why[wayV]);
+  else
+    verd('wyVd','t-mid','НЕ НАЙКРАЩИЙ','AP[.50:.95] = '+f4(cur.rng)+' проти '+f4(set[best].rng)+
+      ' у способу «'+set[best].n+'». '+why[wayV]);
+}
+
+/* ═══════════════ 7 · із чого складається Mask R-CNN ═══════════════ */
+var withMask=1, nCls=91;
+function drawParts(){
+  var cv=I('cParts'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var P=D.parts;
+  var boxHead=P.boxFixed+P.boxPerClass*nCls;
+  var maskHead=withMask? (P.maskFixed+P.maskPerClass*nCls) : 0;
+  var vals=[P.body, P.fpn, P.rpn, boxHead, maskHead];
+  var names=['тіло ResNet-50','FPN','RPN','голова рамок','голова масок'];
+  var total=vals[0]+vals[1]+vals[2]+vals[3]+vals[4];
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), teal=css('--teal'),
+      amber=css('--amber'), hair=css('--hair');
+  var cols=[soft, amber, hair, rose, teal];
+
+  capt(g,'ПАРАМЕТРИ ЗА ЧАСТИНАМИ',34,30,soft,11,true);
+  var x0=190, bw=W-x0-190, top=54, rowH=52, i;
+  var maxv=P.body;
+  for(i=0;i<5;i++){
+    var yy=top+i*rowH;
+    if(vals[i]===0){
+      capt(g,names[i],x0-14,yy+20,soft,12,false,'right');
+      capt(g,'немає в Faster R-CNN',x0,yy+20,soft,11.5,false);
+      continue;
+    }
+    capt(g,names[i],x0-14,yy+20,i>=3?ink:soft,12,i>=3,'right');
+    var barw=bw*vals[i]/maxv;
+    g.fillStyle=css('--paper'); g.fillRect(x0,yy,bw,26);
+    g.fillStyle=cols[i]; g.fillRect(x0,yy,barw,26);
+    capt(g,gr(vals[i]),x0+bw+16,yy+19,i>=3?ink:soft,12.5,i>=3,'left');
+    var share=(Math.round(1000*vals[i]/total)/10).toFixed(1)+' %';
+    if(barw>bw-80) capt(g,share,x0+barw-10,yy+19,css('--paper'),11,true,'right');
+    else capt(g,share,x0+barw+8,yy+19,soft,11,false,'left');
+  }
+  var by=top+5*rowH+16;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-160,by); g.lineTo(W-40,by); g.stroke();
+  capt(g,'усього',x0-14,by+26,ink,12,true,'right');
+  capt(g,gr(total),x0+bw+12,by+26,ink,13,true,'left');
+  capt(g, (withMask? 'Mask R-CNN, ' : 'Faster R-CNN, ')+clsWord(nCls),
+       x0, by+26, soft, 11.5, false);
+
+  I('nclsOut').textContent=nCls;
+  I('pt1').textContent=gr(total);
+  I('pt2').textContent=withMask? gr(maskHead) : 'немає';
+  I('pt3').textContent=gr(P.boxPerClass)+' ваг';
+  I('pt4').textContent=withMask? gr(P.maskPerClass)+' ваг' : '—';
+  if(!withMask)
+    verd('ptVd','t-mid','БЕЗ МАСОК','Faster R-CNN на '+clsWord(nCls)+' — '+gr(total)+
+      ' ваг. Увімкни маски: додасться рівно голова масок, решта не зміниться жодним параметром.');
+  else if(nCls===91)
+    verd('ptVd','t-ok','ЦІНА МАСОК','Голова масок — '+gr(maskHead)+' ваг, тобто '+
+      (Math.round(1000*maskHead/total)/10).toFixed(1)+
+      ' % моделі. Різниця 44 454 513 − 41 808 406 = 2 646 107 дорівнює їй точно.');
+  else
+    verd('ptVd','t-ok','КЛАС У МАСЦІ ДЕШЕВИЙ','На '+clsWord(nCls)+' голова масок важить '+
+      gr(maskHead)+', голова рамок — '+gr(boxHead)+'. Кожен клас коштує масці '+P.maskPerClass+
+      ' ваг, а рамці '+gr(P.boxPerClass)+' — у 20 разів більше.');
+}
+
+/* ═══════════════ звʼязування ═══════════════ */
+on('gap1','input',function(e){gapV=+e.target.value; drawTouch();});
+segment('segTouch',function(i){sameCls=i; drawTouch();});
+on('dens2','input',function(e){densV=+e.target.value; drawComp();});
+on('seed2','input',function(e){seedV=+e.target.value; drawComp();});
+segment('segComp',function(i){showComp=i; drawComp();});
+segment('segAp',function(i){apV=i; drawAp();});
+on('mres','input',function(e){resM=+e.target.value; drawRes();});
+on('osize','input',function(e){resS=+e.target.value; drawRes();});
+segment('segRes',function(i){resK=i; drawRes();});
+on('dlt','input',function(e){roiD=+e.target.value; drawRoi();});
+segment('segRoi',function(i){roiMode=i; drawRoi();});
+segment('segWay',function(i){wayV=i; drawWay();});
+segment('segWayD',function(i){wayDense=i; drawWay();});
+segment('segParts',function(i){withMask=i; drawParts();});
+on('ncls','input',function(e){nCls=+e.target.value; drawParts();});
+
+function drawAll(){
+  drawTouch(); drawComp(); drawAp(); drawRes(); drawRoi(); drawWay(); drawParts();
+}
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+})();
+</script>
+
+</body>
+</html>

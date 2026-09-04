@@ -1,0 +1,2179 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Класичні ознаки: гістограми, HOG, SIFT і ORB</title>
+<meta name="description" content="Класичні придумані ознаки: гістограма яскравості, просторова піраміда, HOG побудований руками з градієнтів, кути Гарріса, SIFT і ORB, тест співвідношення Лоу й RANSAC. Виміряно на OpenCV 5, де HOGDescriptor і CascadeClassifier уже викинуто. Де придумана ознака виграє, де ламається — і чому наступний крок це навчити ознаку з даних.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:inherit; font-size:15px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 1 · Тема 05</p>
+    <h1>Класичні ознаки</h1>
+    <p class="stand">Тридцять років люди вигадували, яке саме число описує зображення.
+      Виходило добре рівно доти, доки було точно відомо, що саме шукаємо.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Чому не можна порівняти пікселі</a></li>
+        <li><a href="#s2">Три вимоги до ознаки</a></li>
+        <li><a href="#s3">Гістограма яскравості</a></li>
+        <li><a href="#s4">Куди дівається простір</a></li>
+        <li><a href="#s5">Градієнти замість яскравості</a></li>
+        <li><a href="#s6">HOG по кроках</a></li>
+        <li><a href="#s7">Кутові точки</a></li>
+        <li><a href="#s8">SIFT: масштаб і поворот</a></li>
+        <li><a href="#s9">ORB: швидко й бінарно</a></li>
+        <li><a href="#s10">Зіставлення: тут класика виграє</a></li>
+        <li><a href="#s11">Де вона ламається</a></li>
+        <li><a href="#s12">Кінець блоку 1</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../04-convolution-by-hand/lecture.html">← 04. Згортка вручну</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../06-why-not-dense/lecture.html">06. Чому повнозвʼязна мережа не годиться →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У попередній темі ми зробили згортку руками й дійшли до Собеля й Кенні:
+з картинки виходить інша картинка, де світяться межі. Це вже не сира яскравість, але це
+досі зображення — тисячі чисел. А для більшості задач потрібно щось інше: <strong>коротке
+число, за яким два знімки можна порівняти</strong>. Це і зветься ознакою (feature), і вся
+ця тема — про те, як її вигадували руками.</p>
+
+<p>Слово «вигадували» тут не образа. Придумані ознаки зробили те, що працює й досі:
+панорами в телефоні, стабілізація відео, навігація робота по камері. Але той самий підхід
+програв у розпізнаванні, і програв нищівно. Ця тема — про обидві половини історії, бо без
+другої не зрозуміти, навіщо знадобився наступний блок. Сцена та сама, що в темах 01 і 02:
+«фото товару з дошки оголошень», телефон на столі, на екрані сітка іконок, і ми його
+<a href="../01-image-as-data/lecture.html">малюємо формулами</a>.</p>
+
+<h2 id="s1"><span class="num">01 / Задача</span>Чому не можна порівняти пікселі</h2>
+
+<p>Здається, що порівняти два зображення просто: відніми одне від одного й подивись, чи
+близький результат до нуля. Спробуй — і воно розсиплеться на першому ж прикладі. Візьми
+знімок і зсунь його на <strong>один</strong> піксель праворуч. Око не побачить різниці
+взагалі. А порівняння піксель у піксель побачить: на кожній межі, де яскравість стрибала
+зі 60 на 230, тепер стоїть чуже значення, і різниця там 170 рівнів. Формально знімки
+«різні» — настільки ж різні, наскільки два зовсім різні фото.</p>
+
+<div class="note"><b>Що таке піксель у піксель.</b> Береш перше число першого зображення
+й перше число другого, віднімаєш, підносиш до квадрата; те саме для другої пари, третьої
+й так усі 20 480 разів; додаєш і ділиш на кількість. Вийде одне число — середня квадратична
+різниця. Нуль означає «побайтово однакові».</div>
+
+<p>Далі ще гірше. Ввімкнули лампу яскравіше — усі числа поїхали вгору, різниця величезна,
+предмет той самий. Повернули телефон на пʼять градусів — так само. Відійшли на крок далі —
+знову. Пряме порівняння реагує на все, крім того єдиного, що нас цікавить: чи це той самий
+предмет.</p>
+
+<p>Звідси задача теми. Потрібне перетворення, яке з масиву на 20 тисяч чисел робить
+короткий вектор — скажімо, на 32 або на 128 чисел — так, щоб <em>у нього не потрапила
+дрібниця, а потрапила суть</em>. Цей короткий вектор і зветься ознакою, або дескриптором
+(descriptor), а перетворення — виділенням ознак (feature extraction).</p>
+
+<h2 id="s2"><span class="num">02 / Мірило</span>Три вимоги до ознаки</h2>
+
+<p>Перш ніж вигадувати ознаки, домовимось, чим їх міряти. Вимог рівно три, і далі кожна
+ознака в темі складатиме іспит саме за цими трьома.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Вимога</th><th>Що означає</th><th>Як перевіряємо</th></tr></thead>
+  <tbody>
+    <tr><td>Стійкість</td><td>Спотворили знімок — вектор майже не змінився. Спотворення:
+      зсув, поворот, масштаб, освітлення, шум.</td>
+      <td>Порахувати вектор до і після й поміряти, наскільки вони близькі</td></tr>
+    <tr><td>Розрізняльність</td><td>Два <em>різні</em> предмети дають <em>різні</em>
+      вектори. Ознака, стійка до всього на світі, стійка й до зміни предмета — і тому
+      нікчемна.</td>
+      <td>Порахувати вектор для іншого предмета й переконатись, що він далеко</td></tr>
+    <tr><td>Компактність</td><td>Вектор коротший за саме зображення: місце, час порівняння
+      й памʼять залежать від його довжини.</td>
+      <td>Просто подивитись на довжину</td></tr>
+  </tbody>
+</table></div>
+
+<p>Головне про ці три вимоги: <strong>вони тягнуть у різні боки</strong>. Найстійкіша
+ознака у світі — константа: вона однакова для будь-якого зображення, а отже, нічого не
+розрізняє. Найрозрізняльніша — саме зображення: унікальне, але не стійке ні до чого й не
+коротке. Уся історія придуманих ознак — це пошук точки між цими крайнощами.</p>
+
+<p>Як міряти «близькість» двох векторів, домовимось теж один раз: перемнож їх поелементно,
+додай добутки й поділи на добуток довжин самих векторів. Виходить число від −1 до 1:
+<strong>1 — вектори дивляться в один бік (збіг), 0 — нічого спільного</strong>. Це косинусна
+близькість (cosine similarity), і саме її показують табло в інтерактивах нижче.</p>
+
+<h2 id="s3"><span class="num">03 / Гістограма</span>Гістограма яскравості</h2>
+
+<p>Найпростіша ознака, яку взагалі можна вигадати: полічити, скільки в зображенні
+пікселів кожної яскравості. Отримаємо 256 чисел — по одному на кожен рівень від 0 до 255.
+Це <a href="../01-image-as-data/lecture.html">гістограма</a>, і ми вже бачили її в темі 01.</p>
+
+<div class="eq">гістограма[<span class="raw">v</span>] = скільки пікселів мають яскравість рівно <span class="raw">v</span></div>
+
+<p>Три вимоги вона складає нерівномірно. Компактність чудова: 20 480 чисел стиснулись у
+256, а якщо групувати по 8 рівнів у корзину (bin), то й у 32. Стійкість теж чудова — і
+саме тут пастка. Гістограма стійка до зсуву, повороту, дзеркального відбиття й навіть до
+повного перемішування пікселів, бо взагалі <strong>не знає, де саме кожен піксель
+лежав</strong>: вона рахує тільки, скільки їх якого відтінку.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Що саме викидає гістограма</p>
+  <p class="fig-sub">Угорі — «фото» після перетворення. Унизу — його гістограма, накладена на гістограму оригіналу. Перемкни перетворення й подивись, чи стовпчики зрушили хоч на волосину.</p>
+  <div class="panel">
+    <div><canvas id="cHist" width="940" height="430" aria-label="Синтетичне фото телефона до і після перетворення та дві накладені гістограми яскравості"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">перетворення</span>
+        <div class="seg wrap" id="hSeg">
+          <button type="button" data-i="0" aria-pressed="true">оригінал</button>
+          <button type="button" data-i="1" aria-pressed="false">перевернути</button>
+          <button type="button" data-i="2" aria-pressed="false">зсунути</button>
+          <button type="button" data-i="3" aria-pressed="false">перемішати блоки</button>
+          <button type="button" data-i="4" aria-pressed="false">притемнити ×0.7</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>корзин збіглося</b><i id="hSame">—</i></div>
+        <div class="cellv"><b>з них усього</b><i id="hAll">256</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>косинус із оригіналом</b><i id="hCos">—</i></div>
+      </div>
+      <div class="verdict" id="hVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Перші три перетворення дають побітовий збіг: 256 корзин із 256.</b>
+    Перемішування блоків зруйнувало зображення до невпізнанності — гістограма й на це не
+    зреагувала. І тільки притемнення, яке око майже пробачає, зсунуло всі стовпчики
+    ліворуч і зламало ознаку.</figcaption>
+</figure>
+
+<p>Це перевірено запуском: <code>cv2.calcHist</code> для перевернутого згори вниз знімка
+збігається з гістограмою оригіналу <strong>побітово</strong>, і те саме дають дзеркальне
+відбиття, циклічний зсув і навіть повне перемішування пікселів. У практиці ти повториш
+цю перевірку сам.</p>
+
+<p>Отже, розрізняльність слабка, а ламається гістограма там, де людина ламатись не чекає —
+від зміни освітлення. Тому в реальних системах беруть гістограму не яскравості, а
+<strong>тону</strong>: переводять знімок у HSV і будують гістограму по каналах H і S,
+викидаючи канал V, який і є яскравістю. Порівнює їх <code>cv2.compareHist</code>, і
+на нашій сцені після множення яскравості на 0.6 виходить близькість <b>0.999</b> — світло
+таку гістограму майже не турбує. Але перевернутий згори вниз кадр дає <b>1.000</b>:
+простору вона все одно не бачить, лише перестала боятись лампи.</p>
+
+<h2 id="s4"><span class="num">04 / Простір</span>Куди дівається простір</h2>
+
+<p>Слабкість гістограми названа точно: вона викинула координати. Напрошується перше
+компромісне рішення, і воно справді так і робиться. Розріж зображення сіткою на клітинки
+і <strong>візьми гістограму окремо в кожній клітинці</strong>, а потім склей їх в один
+довгий вектор: тепер він знає не тільки «скільки темного», а й «темне було в лівому
+нижньому куті». Це просторова піраміда (spatial pyramid).</p>
+
+<p>Ціна очевидна з арифметики. Було 16 корзин на весь знімок; стало 16 корзин на кожну з
+<span class="raw">n</span> × <span class="raw">n</span> клітинок, тобто при сітці 8 × 8 —
+1024 числа, у 64 рази довше. І зʼявилась нова слабкість: якщо предмет зсунеться на пів
+клітинки, гістограми поїдуть у сусідні клітинки, і вектор зміниться.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Просторова піраміда</p>
+  <p class="fig-sub">Повзунок ділить кадр сіткою. Ліворуч — клітинки на «фото», праворуч — довжина вектора й дві близькості: до зсунутого кадру (стійкість) і до перевернутого (розрізняльність).</p>
+  <div class="panel">
+    <div><canvas id="cPyr" width="940" height="400" aria-label="Фото телефона з накладеною сіткою клітинок і стовпчики довжини вектора, стійкості до зсуву та розрізняльності"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="pyrN">клітинок по стороні <output id="pyrNv">1</output></label>
+        <input type="range" id="pyrN" min="1" max="8" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>довжина вектора</b><i id="pyrLen">16</i></div>
+        <div class="cellv"><b>клітинок</b><i id="pyrCells">1</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зсув на 6 пікселів</b><i id="pyrShift">—</i></div>
+        <div class="cellv"><b>перевернутий кадр</b><i id="pyrFlip">—</i></div>
+      </div>
+      <div class="verdict" id="pyrVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Прожени повзунок від 1 до 8.</b> Довжина вектора росте з 16 до 1024;
+    близькість до перевернутого кадру падає з <b>1.000</b> до приблизно <b>0.5</b> —
+    ознака нарешті бачить різницю. Але й близькість до зсунутого кадру сповзає з
+    <b>1.000</b> приблизно до <b>0.87</b>: за розрізняльність заплачено стійкістю.</figcaption>
+</figure>
+
+<p>Запамʼятай форму цього компромісу: <strong>щоб ознака почала розрізняти, у неї довелося
+повернути частину просторової інформації, і рівно настільки вона стала крихкішою</strong>.
+Далі ми повторимо цей хід ще двічі — у HOG і в SIFT.</p>
+
+<h2 id="s5"><span class="num">05 / Градієнти</span>Градієнти замість яскравості</h2>
+
+<p>Гістограму ламає освітлення. Виправлення підказує <a
+href="../04-convolution-by-hand/lecture.html">попередня тема</a>: рахувати не яскравість, а
+<strong>градієнт</strong> — на скільки яскравість змінюється від пікселя до сусіда. Собель
+із теми 04 дає <span class="raw">g<span class="sub">x</span></span> (зміна вправо) і
+<span class="raw">g<span class="sub">y</span></span> (зміна вниз), а з них — модуль і
+напрямок.</p>
+
+<div class="eq">|g| = √( g<span class="sub">x</span><span class="sup">2</span> + g<span class="sub">y</span><span class="sup">2</span> ) &nbsp;&nbsp;·&nbsp;&nbsp; напрямок = atan2( g<span class="sub">y</span>, g<span class="sub">x</span> )</div>
+
+<p>Словами: модуль — наскільки різко змінюється яскравість у цій точці, тобто «наскільки
+тут межа». Напрямок — куди саме вона змінюється найшвидше, тобто під яким кутом ця межа
+лежить. Символ <span class="raw">atan2</span> — це функція, яка з двох катетів прямокутного
+трикутника повертає кут; вона є в кожній мові й у NumPy зветься <code>np.arctan2</code>.</p>
+
+<p>Тепер найважливіше — чому це рятує від освітлення. Світло на знімку змінюється двома
+типовими способами.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1 — лампа світить рівномірніше</span>
+    <p>До кожного пікселя додалося одне й те саме число: було 100 і 160, стало 140 і 200.
+    Різниця сусідів була 60 і лишилась 60 — доданок скоротився при відніманні.
+    <strong>Градієнт не змінився взагалі</strong>, ні модуль, ні напрямок.</p>
+    <div class="eq">(b + 40) − (a + 40) = b − a</div>
+  </div>
+  <div class="step"><span class="lbl">Крок 2 — лампу пригасили вдвічі</span>
+    <p>Кожен піксель помножився на 0.5: було 100 і 160, стало 50 і 80. Різниця була 60,
+    стала 30 — модуль градієнта помножився на ті самі 0.5. Але <span class="raw">g<span
+    class="sub">x</span></span> і <span class="raw">g<span class="sub">y</span></span>
+    помножились на 0.5 <em>обидва</em>, а кут залежить лише від їхнього
+    <strong>відношення</strong>. Відношення не змінилось — <strong>напрямок лишився той
+    самий до останнього знака</strong>.</p>
+    <div class="eq">atan2( 0.5·g<span class="sub">y</span>, 0.5·g<span class="sub">x</span> ) = atan2( g<span class="sub">y</span>, g<span class="sub">x</span> )</div>
+  </div>
+  <div class="step"><span class="lbl">Крок 3 — де це ламається</span>
+    <p>Один-єдиний виняток, і він практичний: якщо множник більший за одиницю, світлі
+    пікселі впираються в стелю 255 і далі не ростуть. Межа, яка була різкою, стає плоскою,
+    і напрямок у цих місцях таки пливе. Виміряно на нашій сцені: поки не вигоряє жоден
+    піксель, відхилення напрямку — <b>0.000°</b>, тобто нуль до останнього знака. При
+    множнику 1.8 у стелю впираються <b>96 250</b> пікселів зі 128 000, і напрямок
+    відхиляється в середньому вже на <b>4.35°</b>.</p>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Яскравість поїхала, напрямок ні</p>
+  <p class="fig-sub">Повзунок множить усі пікселі на коефіцієнт. Стрілки показують напрямок градієнта в девʼяти точках; праворуч — три числа до й після.</p>
+  <div class="panel">
+    <div><canvas id="cGrad" width="940" height="400" aria-label="Два знімки різної яскравості зі стрілками напрямку градієнта та порівняння середньої яскравості й модуля градієнта"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="grK">множник яскравості <output id="grKv">1.00</output></label>
+        <input type="range" id="grK" min="0.3" max="2" step="0.05" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>середня яскравість</b><i id="grB">—</i></div>
+        <div class="cellv"><b>середній модуль</b><i id="grM">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>відхилення напрямку</b><i id="grA">—</i></div>
+        <div class="cellv"><b>пікселів у стелі</b><i id="grS">—</i></div>
+      </div>
+      <div class="verdict" id="grVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Веди повзунок ліворуч від одиниці.</b> Яскравість і модуль градієнта
+    падають разом, а відхилення напрямку тримається на <b>0.00°</b> — рівно нуль, а не
+    «майже нуль». Праворуч від одиниці пікселі починають упиратись у 255, і саме звідти
+    напрямок починає пливти.</figcaption>
+</figure>
+
+<p>Ось звідки правило, на якому стоїть уся класична робота із зображеннями:
+<strong>напрямок градієнта — найдешевша ознака, стійка до освітлення</strong>. Модуль
+теж корисний, але його треба нормувати; напрямок — ні. Лишається зібрати з напрямків
+щось компактне.</p>
+
+<h2 id="s6"><span class="num">06 / HOG</span>HOG по кроках</h2>
+
+<p>Найвідоміша придумана ознака в історії зору зветься HOG — Histogram of Oriented
+Gradients, «гістограма орієнтованих градієнтів». Вона зроблена рівно з того, що ми щойно
+отримали, і будується в чотири кроки.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1 — комірки</span>
+    <p>Розрізаємо вікно сіткою на квадратні комірки (cell) 8 × 8 пікселів. Це те саме
+    компромісне рішення, що в просторовій піраміді: усередині комірки координати
+    втрачаються, між комірками — зберігаються.</p></div>
+  <div class="step"><span class="lbl">Крок 2 — гістограма напрямків</span>
+    <p>У кожній комірці заводимо 9 корзин: 0–20°, 20–40°, …, 160–180°. Чому 180, а не 360?
+    Бо межа, темна зліва й світла справа, і та сама межа навпаки — це одна й та сама межа;
+    напрямок беремо без знака. Кожен із 64 пікселів комірки кидає свій голос у ту корзину,
+    куди потрапив його напрямок.</p></div>
+  <div class="step"><span class="lbl">Крок 3 — зважування модулем</span>
+    <p>Голос не одиничний: піксель голосує <strong>своїм модулем градієнта</strong>. Так
+    різка межа важить багато, а шумовий тремт на рівному фоні — майже нічого. Це рятує
+    ознаку від шуму без жодного порога.</p></div>
+  <div class="step"><span class="lbl">Крок 4 — нормування по блоках</span>
+    <p>Беремо квадрат 2 × 2 сусідні комірки — це блок (block), разом 4 × 9 = 36 чисел.
+    Ділимо всі 36 на довжину цього вектора з 36 чисел, тобто на корінь із суми їхніх
+    квадратів. Тепер у блоці важать не абсолютні величини, а <em>співвідношення</em>
+    напрямків. Блоки беруть із перекриттям: кожна комірка потрапляє в кілька блоків і
+    щоразу нормується по-різному.</p>
+    <div class="eq">v<span class="sub">норм</span> = v ÷ √( v<span class="sub">1</span><span class="sup">2</span> + v<span class="sub">2</span><span class="sup">2</span> + … + v<span class="sub">36</span><span class="sup">2</span> )</div>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · HOG по кроках</p>
+  <p class="fig-sub">Тисни «наступний крок» і дивись, як із сирої яскравості виростає вектор ознаки. На третьому кроці кожна комірка малюється «зірочкою»: довжина променя — сила напрямку.</p>
+  <div class="panel">
+    <div><canvas id="cHog" width="940" height="420" aria-label="Чотири кроки побудови HOG: вікно, градієнти, зірочки напрямків у комірках і нормування блоку"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">крок</span>
+        <div class="seg wrap" id="hogSeg">
+          <button type="button" data-i="0" aria-pressed="true">1 · вікно</button>
+          <button type="button" data-i="1" aria-pressed="false">2 · градієнти</button>
+          <button type="button" data-i="2" aria-pressed="false">3 · комірки</button>
+          <button type="button" data-i="3" aria-pressed="false">4 · блок</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>чисел на цьому кроці</b><i id="hogN">—</i></div>
+        <div class="cellv"><b>проти сирого вікна</b><i id="hogR" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="hogVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Чотири кроки — і 10 240 чисел вікна перетворились на вектор,
+    у якому лишились тільки напрямки меж.</b> Класичне вікно детектора пішоходів —
+    64 × 128 пікселів: 8 × 16 комірок, 7 × 15 = 105 блоків по 36 чисел,
+    разом <b>3780</b> чисел. Це число ти отримаєш у практиці власною реалізацією.</figcaption>
+</figure>
+
+<p>Тепер найцікавіше в темі, і це не теорія, а факт із командного рядка. Класична
+демонстрація HOG — детектор пішоходів, який лежить у кожному підручнику двома рядками:
+створити <code>cv2.HOGDescriptor</code>, підвантажити готові ваги. <strong>В OpenCV 5
+класу <code>HOGDescriptor</code> більше немає</strong> — не «немає файлу з вагами», а немає
+самого класу. Разом із ним викинуто <code>CascadeClassifier</code>, тобто й виявлення
+облич каскадами Хаара, другу безсмертну демонстрацію підручників.</p>
+
+<div class="note warn"><b>Перевірено імпортом, не з памʼяті.</b> У <code>cv2</code> версії
+5.0 <code>hasattr(cv2, "HOGDescriptor")</code> дає <code>False</code>. Так само зникли
+<code>AKAZE_create</code> і <code>BRISK_create</code>. Лишилися <code>SIFT_create</code>
+і <code>ORB_create</code> — на них і побудована решта теми.</div>
+
+<p>Бібліотека не викидає класи з примхи — вона викидає те, чим перестали користуватися. І
+це найкоротша відповідь на питання теми: <strong>придуманий детектор пішоходів зник із
+головної бібліотеки зору, бо його замінили, а SIFT лишився, бо його не замінили</strong>.
+Пояснювати HOG від цього не менш потрібно: це головна придумана ознака в історії, і без
+неї не зрозуміти, що саме навчилися робити мережі.</p>
+
+<h2 id="s7"><span class="num">07 / Кути</span>Кутові точки</h2>
+
+<p>HOG описує ціле вікно одним вектором. Але часто потрібне інше: не «що на знімку», а
+«де саме на другому знімку та сама точка, що й на першому». Панорама, стабілізація,
+навігація робота — це задачі про <em>точки</em>, а не про картинку цілком. Які точки
+годяться? Уяви, що дивишся на знімок крізь маленьке віконце й можеш посунути його на
+кілька пікселів у будь-який бік. Три випадки:</p>
+
+<ul>
+  <li><strong>Рівна пляма</strong> — усередині однотонної ділянки. Куди не посунь, у
+    віконці те саме. Знайти цю точку на другому знімку неможливо: таких точок там
+    тисячі.</li>
+  <li><strong>Межа</strong> — віконце сидить на краю іконки. Посунеш упоперек межі — усе
+    зміниться. Посунеш <em>уздовж</em> — нічого не зміниться. Точку можна знайти з
+    точністю до положення на лінії, але не точніше.</li>
+  <li><strong>Кут</strong> — там, де сходяться дві межі. Посунь у будь-який бік — вміст
+    віконця зміниться. Ця точка визначена однозначно.</li>
+</ul>
+
+<p>Це і є ідея Гарріса (Harris corner detector): цікава та точка, у якої <strong>навіть
+найменша зміна по всіх напрямках велика</strong>. Не найбільша — саме найменша. У межі
+найбільша зміна теж велика, тому дивитись треба на найгірший напрямок.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Кут проти межі проти плями</p>
+  <p class="fig-sub">Обери місце й покрути напрямок зсуву віконця. Пелюстка праворуч — наскільки змінюється вміст віконця в кожному напрямку; вирішує найкоротший промінь.</p>
+  <div class="panel">
+    <div><canvas id="cCor" width="940" height="400" aria-label="Фото телефона з віконцем у трьох місцях і полярна діаграма зміни вмісту віконця за напрямком зсуву"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">де стоїть віконце</span>
+        <div class="seg" id="corSeg">
+          <button type="button" data-i="0" aria-pressed="true">пляма</button>
+          <button type="button" data-i="1" aria-pressed="false">межа</button>
+          <button type="button" data-i="2" aria-pressed="false">кут</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="corA">напрямок зсуву <output id="corAv">0°</output></label>
+        <input type="range" id="corA" min="0" max="345" step="15" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зміна в цей бік</b><i id="corNow">—</i></div>
+        <div class="cellv"><b>найгірший напрямок</b><i id="corMin">—</i></div>
+      </div>
+      <div class="verdict" id="corVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Дивись на праву цифру, а не на ліву.</b> У плями найгірший напрямок дає
+    <b>12</b>, у межі — <b>18</b> (уздовж лінії нічого не змінюється), у кута —
+    <b>5054</b>. Різниця в чотириста разів, і саме її Гарріс перетворює на одне число
+    відгуку.</figcaption>
+</figure>
+
+<p>Перебирати всі напрямки не треба. Гарріс показав, що зміну вмісту вікна при малому
+зсуві можна виразити через три суми добутків градієнтів у вікні —
+<span class="raw">g<span class="sub">x</span></span>², <span class="raw">g<span
+class="sub">y</span></span>² і <span class="raw">g<span class="sub">x</span>g<span
+class="sub">y</span></span> — і з них одразу дістати одне число відгуку. В OpenCV це
+<code>cv2.cornerHarris</code>, а на практиці частіше беруть обгортку
+<code>cv2.goodFeaturesToTrack</code>: вона рахує відгук, відкидає слабкі точки й розганяє
+решту, щоб вони не тіснились. На нашій сцені вона знаходить <b>158</b> точок.</p>
+
+<h2 id="s8"><span class="num">08 / SIFT</span>SIFT: масштаб і поворот</h2>
+
+<p>Кут ми знайшли. Але щоб зіставити його з кутом на іншому знімку, потрібен ще
+<em>дескриптор</em> — короткий вектор, який описує околицю точки. І тут проблема, якої не
+було в HOG: на другому знімку той самий кут може бути повернутий і вдвічі більший. SIFT
+(Scale-Invariant Feature Transform) розвʼязує це трьома ідеями, і кожна з них потім
+повторилась у мережах.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Ідея 1 — масштабний простір</span>
+    <p>Розмиваємо знімок гаусовим ядром дедалі сильніше й складаємо стосик картинок від
+    різкої до дуже мутної. Це масштабний простір (scale space): нижні шари бачать дрібні
+    деталі, верхні — тільки великі плями. Точку шукають по всьому стосику одразу й
+    <strong>запамʼятовують, на якому шарі вона знайшлась</strong> — це і є її розмір.
+    Коли на другому знімку предмет удвічі більший, та сама точка знайдеться на шарі вдвічі
+    мутнішому, і дескриптор порахують з околиці вдвічі більшої. Розмір скоротився.</p></div>
+  <div class="step"><span class="lbl">Ідея 2 — власна орієнтація</span>
+    <p>Навколо точки будують гістограму напрямків градієнта (усі 360°, тепер зі знаком) і
+    беруть напрямок найвищого стовпчика. Це «північ» цієї точки. Далі всі координати й усі
+    напрямки в дескрипторі відлічують <strong>від цієї півночі</strong>. Повернули знімок
+    на 30° — північ повернулась на ті самі 30°, і дескриптор не змінився.</p></div>
+  <div class="step"><span class="lbl">Ідея 3 — сітка гістограм</span>
+    <p>Околицю точки, уже нормовану за розміром і поворотом, ріжуть на 4 × 4 підкомірки й
+    у кожній будують гістограму з 8 напрямків. Разом <strong>128</strong> чисел. Вектор
+    нормують на довжину, обрізають усе більше за 0.2 (щоб один блиск не переважив усе)
+    і нормують ще раз.</p>
+    <div class="eq">4 × 4 підкомірки × 8 напрямків = 128 чисел, тип float32</div>
+  </div>
+</div>
+
+<p>Придивись до третьої ідеї: це <em>той самий</em> хід, що в просторовій піраміді й у
+HOG — сітка клітинок, у кожній гістограма напрямків. Різниця в тому, що сітка тепер не
+прибита до кадру, а привʼязана до точки: до її розміру й до її півночі.</p>
+
+<h2 id="s9"><span class="num">09 / ORB</span>ORB: швидко й бінарно</h2>
+
+<p>SIFT точний, але дорогий: 128 чисел типу <code>float32</code> — це 512 байтів на
+точку, а порівняння двох дескрипторів — 128 множень. Для телефона, який зшиває панораму в
+реальному часі, це багато. Тому придумали ORB (Oriented FAST and Rotated BRIEF).</p>
+
+<p>Замість гістограм ORB робить 256 <strong>порівнянь пар пікселів</strong>: узяти два
+наперед визначені пікселі околиці й записати один біт — лівий яскравіший за правий чи ні.
+256 бітів — це 32 байти типу <code>uint8</code>. Відстань між двома такими дескрипторами
+рахують <strong>підрахунком розбіжних бітів</strong> — це відстань Гемінга (Hamming
+distance), і процесор робить її однією інструкцією <span class="raw">popcount</span>.</p>
+
+<p>Числа заміряні на нашій сцені, і ти повториш замір у практиці. Час залежить від
+машини — важливе тут співвідношення, а не абсолютна величина:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>Дескриптор</th><th>точок</th><th>байтів на точку</th><th>тип</th><th>час, мс</th><th>усього байтів</th></tr></thead>
+  <tbody>
+    <tr><td>SIFT</td><td>69</td><td>512</td><td>float32</td><td>35.9</td><td>35 328</td></tr>
+    <tr><td>ORB</td><td>411</td><td>32</td><td>uint8</td><td>2.1</td><td>13 152</td></tr>
+  </tbody>
+</table></div>
+
+<p>ORB знайшов у шість разів більше точок, витратив на кожну в шістнадцять разів менше
+памʼяті й упорався <strong>більш ніж на порядок швидше</strong>. Платить він точністю
+кожної окремої пари — але коли точок ушестеро більше, це часто вигідний обмін. Правило
+вибору просте: телефон або кадр відео — ORB; максимальна надійність зіставлення без
+тиску часу — SIFT.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Жодна ознака не виграє всюди</p>
+  <p class="fig-sub">Перемкни спотворення й ознаку. Число — косинусна близькість між ознакою оригіналу й ознакою спотвореного кадру; 1.000 означає повний збіг.</p>
+  <div class="panel">
+    <div><canvas id="cInv" width="940" height="410" aria-label="Таблиця близькості трьох ознак під шістьма спотвореннями та зображення до і після спотворення"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">спотворення</span>
+        <div class="seg wrap" id="invD">
+          <button type="button" data-i="0" aria-pressed="true">поворот 20°</button>
+          <button type="button" data-i="1" aria-pressed="false">поворот 45°</button>
+          <button type="button" data-i="2" aria-pressed="false">масштаб 0.7</button>
+          <button type="button" data-i="3" aria-pressed="false">масштаб 1.4</button>
+          <button type="button" data-i="4" aria-pressed="false">яскравість 0.6</button>
+          <button type="button" data-i="5" aria-pressed="false">шум</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span class="cap">ознака</span>
+        <div class="seg" id="invF">
+          <button type="button" data-i="0" aria-pressed="true">гістограма</button>
+          <button type="button" data-i="1" aria-pressed="false">HOG</button>
+          <button type="button" data-i="2" aria-pressed="false">SIFT-подібна</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>близькість</b><i id="invC">—</i></div>
+        <div class="cellv"><b>довжина вектора</b><i id="invL">—</i></div>
+      </div>
+      <div class="verdict" id="invVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Прожени всі вісімнадцять комбінацій — і побачиш точну дзеркальність.</b>
+    Гістограма переживає поворот (<b>0.998</b>) і гине від яскравості (<b>0.363</b>).
+    HOG навпаки: яскравість <b>1.000</b>, поворот <b>0.237</b>. Ознака з нормованим
+    кадром тримається скрізь, але ніде не дає ідеального збігу.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Зіставлення</span>Зіставлення: тут класика виграє</h2>
+
+<p>Дійшли до задачі, заради якої SIFT і ORB живі досі: два знімки того самого предмета з
+різних боків, треба знайти пари «ця точка на першому — та сама, що ця на другому».</p>
+
+<p>Перший підхід очевидний і поганий: для кожної точки першого знімка знайти найближчий
+дескриптор на другому. Погано тому, що <strong>у кожної точки завжди є найближчий
+сусід</strong>, навіть якщо на другому знімку цієї точки немає — вона затулена або вийшла
+за кадр. Такий пошук повертає повний список пар, і половина з них вигадана.</p>
+
+<p>Рятує <strong>тест співвідношення Лоу</strong> (Lowe's ratio test), дивовижно простий.
+Знайди не одного, а <em>двох</em> найближчих сусідів на другому знімку й прийми пару,
+тільки якщо перший помітно ближчий за другого:</p>
+
+<div class="eq">відстань до першого &lt; поріг × відстань до другого</div>
+
+<p>Логіка: якщо точка справді впізнана, її дескриптор близький до одного-єдиного кандидата
+й далекий від решти. Якщо ж два кандидати однаково близькі, точка невиразна — так буває в
+повторюваних візерунках і в шумі, — і краще її викинути, ніж загадувати. Класичний поріг
+Лоу — 0.75.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Тест співвідношення Лоу</p>
+  <p class="fig-sub">Той самий предмет, знятий під іншим кутом і при слабшому світлі. Повзунок — поріг. Зелені лінії — пари, що справді відповідають одна одній; рожеві — хибні.</p>
+  <div class="panel">
+    <div><canvas id="cMat" width="940" height="430" aria-label="Два знімки того самого телефона з лініями між зіставленими точками, правильні зелені, хибні рожеві"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="matR">поріг співвідношення <output id="matRv">0.75</output></label>
+        <input type="range" id="matR" min="0.5" max="1" step="0.05" value="0.75">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пар прийнято</b><i id="matN">—</i></div>
+        <div class="cellv"><b>з них правильних</b><i id="matOk">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>частка правильних</b><i id="matP">—</i></div>
+      </div>
+      <div class="verdict" id="matVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Веди повзунок від 0.50 до 1.00.</b> При 0.50 пар мало, зате всі до
+    єдиної правильні. При 1.00 тест вимкнено — пар шістдесят, і більш ніж половина
+    вигадана. Компроміс «повнота проти чистоти» тут видно голими очима.</figcaption>
+</figure>
+
+<p>Після Лоу лишається другий фільтр, геометричний. Якщо на обох знімках один жорсткий
+предмет, усі правильні пари мусять узгоджуватись <strong>однією</strong> геометричною
+відповідністю. Алгоритм <code>RANSAC</code> шукає її навмання: бере чотири випадкові пари,
+будує по них перетворення, дивиться, скільки решти пар у нього вкладається, і повторює
+сотні разів, лишаючи найкращий варіант. Пари, що вклались, звуться внутрішніми (inliers),
+решта викидається.</p>
+
+<p>Заміряно на синтетичній сцені, поворот 27° і масштаб 0.75:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>Етап</th><th>пар</th><th>правильних</th><th>частка</th></tr></thead>
+  <tbody>
+    <tr><td>усі найближчі сусіди</td><td>69</td><td>50</td><td>72 %</td></tr>
+    <tr><td>після тесту Лоу, поріг 0.75</td><td>51</td><td>49</td><td>96 %</td></tr>
+    <tr class="sumrow"><td>після RANSAC</td><td>49</td><td>49</td><td>100 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Сто відсотків. Не «майже» — усі 49 пар, які пройшли RANSAC, виявились правильними, і
+обидві відкинуті ним пари були хибними. <strong>Це той випадок, де придумана ознака не програла й не
+збирається програвати</strong>, і причину варто назвати прямо: у задачі «знайди ту саму точку
+на двох кадрах» є <em>геометрична</em> відповідь. Ту саму точку визначає будова
+поверхні, а не статистика класу. Тому SIFT і сьогодні стоїть у зшивачах панорам,
+у фотограмметрії й у SLAM — системах, де робот будує карту приміщення по камері.</p>
+
+<h2 id="s11"><span class="num">11 / Межа</span>Де вона ламається</h2>
+
+<p>А тепер друга половина історії. Змінімо задачу з «той самий предмет» на «той самий
+<strong>клас</strong> предметів»: другий знімок — теж телефон на столі, але інша модель,
+світлий чохол, темна тема, інша сітка іконок. Людина скаже «телефон» за чверть секунди.
+Ознаки міряють інше.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>Порівнюємо</th><th>SIFT, пар</th><th>HOG, близькість</th></tr></thead>
+  <tbody>
+    <tr><td>той самий телефон, поворот 27° і масштаб 0.75</td><td>51</td><td>—</td></tr>
+    <tr><td>той самий телефон, поворот 20°</td><td>—</td><td>0.396</td></tr>
+    <tr class="sumrow"><td>інша модель телефона, та сама поза</td><td>3</td><td>0.475</td></tr>
+  </tbody>
+</table></div>
+
+<p>Прочитай ці числа уважно, бо вони і є вирок.</p>
+
+<p><strong>SIFT: 51 пара проти трьох.</strong> Той самий апарат, повернутий і зменшений,
+дає 51 узгоджену пару; інший апарат того ж класу — три, тобто випадковість. SIFT
+робить свою роботу бездоганно, просто робота в нього інша: він упізнає <em>екземпляр</em>,
+а не <em>клас</em>. Для панорами це саме те, що треба; для питання «чи є на фото телефон» —
+не годиться взагалі.</p>
+
+<p><strong>HOG: 0.475 проти 0.396.</strong> Ще гірше. Інша модель телефона схожа на нашу
+<em>більше</em> (0.475), ніж наш власний телефон, повернутий на двадцять градусів (0.396).
+Тобто жоден поріг не розділить ці два випадки: постав його між ними — і власний
+повернутий телефон опиниться в чужих. Придумана ознака помірялась не з тим, з чим ми
+хотіли.</p>
+
+<p>Це не поодинока невдача, а закономірність, яку видно ще в інтерактиві 6: гістограма
+переживає поворот (0.998) і гине від світла (0.363), HOG навпаки — світло 1.000, поворот 0.237.
+<strong>Кожна придумана ознака стійка рівно до того, що її автор вирішив викинути</strong>
+— і сліпа рівно до того ж. Автор гістограми викинув координати, автор HOG — абсолютну
+яскравість; обидва вгадали для своєї задачі й не вгадали для чужої.</p>
+
+<p>Звідси й практика тих років. Ознака під пішоходів не годиться під дорожні знаки, під
+знаки — під обличчя, під обличчя — під літери. Щоразу окрема інженерна робота на місяці:
+придумати, чим саме цей клас відрізняється від усього іншого, запрограмувати вручну,
+поміряти, переробити. І кожна така ознака лишалась крихкою до того, чого автор не
+передбачив: незвичного ракурсу, тіні, затулення, іншого фону.</p>
+
+<div class="note"><b>Ще один рядок із тієї самої бібліотеки.</b> В OpenCV 5 замість
+викинутих класів зʼявились <code>ALIKED</code> і <code>DISK</code> — детектори ознак, які
+не придумані, а <strong>навчені на даних</strong>. Показати їх у зошиті не вийде:
+<code>ALIKED.create()</code> вимагає обовʼязковий шлях до файлу моделі, а самого файлу в
+пакеті немає й тягнути його з мережі ми не будемо. Але сам факт варто прочитати двічі: у
+тій самій бібліотеці, яка викинула HOG і каскади Хаара, місце придуманих детекторів
+зайняли навчені.</div>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Кінець блоку 1</h2>
+
+<p>Блок 1 закінчено. Тема 01 показала, що зображення — це масив чисел. Тема 02 розклала
+задачі зору за формою відповіді. Тема 03 дала OpenCV як інструмент. Тема 04 зробила
+згортку руками й довела її до Собеля й Кенні. Ця тема взяла результат згортки й побудувала
+з нього ознаку — коротке число, за яким знімки можна порівнювати.</p>
+
+<p>Що лишається з тобою назавжди:</p>
+
+<ul>
+  <li><strong>Три вимоги конфліктують.</strong> Стійкість, розрізняльність і компактність
+    не бувають максимальними одночасно; будь-яка ознака — точка компромісу.</li>
+  <li><strong>Напрямок градієнта — найдешевша стійкість до світла</strong>, і на ньому
+    стоїть половина класичного зору.</li>
+  <li><strong>Сітка гістограм</strong> — той самий прийом, повторений у просторовій
+    піраміді, у HOG і в SIFT: викинути координати всередині клітинки, зберегти між ними.</li>
+  <li><strong>Придумана ознака виграє там, де ти точно знаєш, що шукаєш</strong>, і
+    програє там, де відповідь статистична, а не геометрична.</li>
+</ul>
+
+<p>І тепер питання, з якого починається наступний блок. Цілу тему ми <em>вручну</em>
+вирішували, що саме викинути з зображення й що лишити: викинути координати, лишити
+відтінки; викинути яскравість, лишити напрямки; викинути абсолютні числа в блоці, лишити
+їхні співвідношення. Кожне таке рішення — здогад інженера, перевірений потім числом.</p>
+
+<p>Але ж у нас є числа <strong>наперед</strong>: тисячі розмічених знімків, де відомо, що
+на них зображено. І в курсі машинного навчання ми вже вміємо робити з даних те, що інакше
+довелося б угадувати руками. Питання звучить так: <strong>а чи не можна замість того, щоб
+вигадувати перетворення й перевіряти його на даних, просто вивчити саме перетворення з
+даних?</strong></p>
+
+<p>Можна. Ядро згортки з теми 04 — це набір чисел; замість Собеля туди можна поставити
+параметри й навчити їх градієнтним спуском, як будь-яку іншу вагу. Мережа сама вирішить,
+що викинути й що лишити, — і зробить це не для «зображень узагалі», а для тієї задачі, яку
+ти їй дав. Саме звідси починається блок 2, і починається він із питання, чому для зображень
+не годиться звичайна повнозвʼязна мережа.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти побудуєш власну
+гістограму й звіриш її з <code>cv2.calcHist</code> через <code>np.allclose</code>;
+зробиш HOG руками з градієнтів — комірки, гістограми, нормування блоків — і отримаєш ті
+самі 3780 чисел; заміряєш SIFT і ORB на синтетичній сцені (точки, розмір дескриптора,
+час); зіставиш два види предмета з тестом Лоу й порахуєш правильні пари геометрично; і
+наприкінці проведеш чесний негативний дослід — покажеш числом, як ознака, що переживає
+одне спотворення, гине від іншого.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../04-convolution-by-hand/lecture.html"><span class="dir">попередня</span><span class="ttl">04. Згортка вручну</span></a>
+    <a class="next" href="../06-why-not-dense/lecture.html"><span class="dir">наступна</span><span class="ttl">06. Чому повнозвʼязна мережа не годиться</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function sans(px){return '600 '+px+'px Unbounded,system-ui,sans-serif';}
+/* 20480 → «20 480»: нерозривний пробіл між тисячами */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* «1 пара», «2 пари», «5 пар» */
+function пар(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'пара';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'пари';
+  return 'пар';
+}
+
+/* «1 клітинку», «2 клітинки», «5 клітинок» */
+function клітинок(n){
+  var d = n%10, dd = n%100;
+  if(d===1 && dd!==11) return 'клітинку';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'клітинки';
+  return 'клітинок';
+}
+
+/* «у 1 раз», «у 3 рази», «у 12 разів» */
+function разів(n){
+  var d = n%10, dd = n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+
+/* сегментний перемикач: кнопки з data-i, повертає обраний індекс через fn */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function segIndex(id){
+  var all=I(id).querySelectorAll('button'), k;
+  for(k=0;k<all.length;k++) if(all[k].getAttribute('aria-pressed')==='true') return k;
+  return 0;
+}
+
+/* ═══════ ядро теми: синтетична сцена й самі ознаки ═══════ */
+
+var SW = 128, SH = 160;                 /* ширина й висота «фото» */
+
+/* детермінований шум: значення визначається номером пікселя, тому
+   картинка побайтово однакова в усіх браузерах */
+function noiseAt(i){
+  var v = ((i + 1) * 16807) % 2147483647;
+  v = (v ^ (v >> 13)) >>> 0;
+  v = (v * 48271) % 2147483647;
+  return (v % 11) - 5;
+}
+
+/* дванадцять іконок: у кожної свій розмір і своя яскравість, тому кожен
+   ріг має неповторне оточення — інакше зіставлення губиться серед копій */
+var ICON = [
+  {c:0, r:0, w:19, h:16, v:214}, {c:1, r:0, w:14, h:21, v: 96}, {c:2, r:0, w:18, h:13, v:244},
+  {c:0, r:1, w:13, h:19, v:128}, {c:1, r:1, w:20, h:14, v:176}, {c:2, r:1, w:15, h:20, v: 70},
+  {c:0, r:2, w:18, h:20, v:232}, {c:1, r:2, w:16, h:13, v:150}, {c:2, r:2, w:12, h:18, v:108},
+  {c:0, r:3, w:15, h:14, v:250}, {c:1, r:3, w:19, h:19, v:190}, {c:2, r:3, w:13, h:16, v: 60}
+];
+
+/* «фото телефона на деревʼяному столі» у відтінках сірого, 0..255 */
+function scene(){
+  var img = new Float64Array(SW * SH), x, y, i, v, k;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    i = y * SW + x;
+    /* стільниця з прожилками */
+    v = 176 + Math.sin(x * 0.42 + Math.sin(y * 0.09) * 3) * 8
+            + Math.sin(x * 1.3 + y * 0.05) * 4 - 18 * y / SH;
+    /* тінь під корпусом */
+    if(x > 24 && x < 112 && y > 20 && y < 148) v *= 0.80;
+    /* корпус */
+    if(x >= 22 && x < 106 && y >= 16 && y < 142) v = 62 + 10 * (1 - y / SH);
+    /* екран */
+    if(x >= 27 && x < 101 && y >= 22 && y < 136)
+      v = 40 + 70 * ((x - 27) / 74 * 0.5 + (y - 22) / 114 * 0.5);
+    /* іконки різних розмірів */
+    for(k = 0; k < ICON.length; k++){
+      var it = ICON[k], lx = 31 + it.c * 24, ly = 27 + it.r * 27;
+      if(x >= lx && x < lx + it.w && y >= ly && y < ly + it.h){ v = it.v; break; }
+    }
+    /* коса смуга «графіка» внизу екрана — джерело неповторних кутів */
+    if(x >= 31 && x < 97 && y >= 118 && y < 133){
+      var line = (x - 31) * 0.35 + 118;
+      if(y > line + 2 && y < line + 8) v = 236;
+    }
+    /* відблиск на склі */
+    if(x >= 27 && x < 101 && y >= 22 && y < 136){
+      var band = (x - 27) * 0.8 + (y - 22) * 0.55 - 42;
+      var gl = Math.max(0, 1 - Math.abs(band) / 22);
+      v += gl * gl * 55;
+    }
+    v += noiseAt(i);
+    img[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+  }
+  return img;
+}
+
+/* білінійна вибірка з повтором крайнього пікселя за межами кадру */
+function sample(img, x, y){
+  if(x < 0) x = 0; if(y < 0) y = 0;
+  if(x > SW - 1) x = SW - 1; if(y > SH - 1) y = SH - 1;
+  var x0 = Math.floor(x), y0 = Math.floor(y);
+  var x1 = Math.min(x0 + 1, SW - 1), y1 = Math.min(y0 + 1, SH - 1);
+  var fx = x - x0, fy = y - y0;
+  return img[y0 * SW + x0] * (1 - fx) * (1 - fy) + img[y0 * SW + x1] * fx * (1 - fy)
+       + img[y1 * SW + x0] * (1 - fx) * fy      + img[y1 * SW + x1] * fx * fy;
+}
+
+/* поворот навколо центру + масштаб + множник яскравості + шум */
+function distort(img, angDeg, scl, mul, sigma){
+  var out = new Float64Array(SW * SH);
+  var t = -angDeg * Math.PI / 180, c = Math.cos(t) / scl, s = Math.sin(t) / scl;
+  var cx = SW / 2, cy = SH / 2, x, y, i, v, dx, dy;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    dx = x - cx; dy = y - cy;
+    v = sample(img, cx + dx * c - dy * s, cy + dx * s + dy * c) * mul;
+    if(sigma > 0){ i = y * SW + x; v += (noiseAt(i * 7 + 3) / 5) * sigma; }
+    out[y * SW + x] = v < 0 ? 0 : (v > 255 ? 255 : v);
+  }
+  return out;
+}
+
+/* модуль і напрямок градієнта оператором Собеля; напрямок у 0..180 */
+function sobel(img){
+  var mag = new Float64Array(SW * SH), ang = new Float64Array(SW * SH), x, y, i, gx, gy;
+  function px(xx, yy){
+    if(xx < 0) xx = 0; if(yy < 0) yy = 0;
+    if(xx > SW - 1) xx = SW - 1; if(yy > SH - 1) yy = SH - 1;
+    return img[yy * SW + xx];
+  }
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    gx = px(x+1,y-1) + 2*px(x+1,y) + px(x+1,y+1) - px(x-1,y-1) - 2*px(x-1,y) - px(x-1,y+1);
+    gy = px(x-1,y+1) + 2*px(x,y+1) + px(x+1,y+1) - px(x-1,y-1) - 2*px(x,y-1) - px(x+1,y-1);
+    i = y * SW + x;
+    mag[i] = Math.sqrt(gx*gx + gy*gy);
+    var a = Math.atan2(gy, gx) * 180 / Math.PI;
+    ang[i] = ((a % 180) + 180) % 180;
+  }
+  return {mag:mag, ang:ang};
+}
+
+/* гістограма яскравості: bins корзин, нормована на суму */
+function histI(img, bins){
+  var h = new Float64Array(bins), i, k, n = img.length;
+  for(i = 0; i < n; i++){
+    k = Math.floor(img[i] * bins / 256);
+    if(k > bins - 1) k = bins - 1; if(k < 0) k = 0;
+    h[k]++;
+  }
+  for(i = 0; i < bins; i++) h[i] /= n;
+  return h;
+}
+
+/* просторова піраміда: n × n клітинок, у кожній своя гістограма на bins корзин */
+function pyramid(img, n, bins){
+  var out = new Float64Array(n * n * bins), r, c, x, y, k, s;
+  for(r = 0; r < n; r++) for(c = 0; c < n; c++){
+    var y0 = Math.floor(r * SH / n), y1 = Math.floor((r + 1) * SH / n);
+    var x0 = Math.floor(c * SW / n), x1 = Math.floor((c + 1) * SW / n);
+    var base = (r * n + c) * bins; s = 0;
+    for(y = y0; y < y1; y++) for(x = x0; x < x1; x++){
+      k = Math.floor(img[y * SW + x] * bins / 256);
+      if(k > bins - 1) k = bins - 1;
+      out[base + k]++; s++;
+    }
+    for(k = 0; k < bins; k++) out[base + k] /= s;
+  }
+  return out;
+}
+
+/* косинус між векторами: 1 — збіг, 0 — нічого спільного */
+function cosSim(a, b){
+  var d = 0, na = 0, nb = 0, i;
+  for(i = 0; i < a.length; i++){ d += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  if(na === 0 || nb === 0) return 0;
+  return d / Math.sqrt(na * nb);
+}
+
+/* зсув кадру на dx, dy з повтором краю */
+function shiftImg(img, dx, dy){
+  var out = new Float64Array(SW * SH), x, y;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++)
+    out[y*SW+x] = sample(img, x - dx, y - dy);
+  return out;
+}
+/* циклічний зсув: пікселі не зникають і не додаються, тільки їдуть по колу */
+function rollImg(img, dx, dy){
+  var out = new Float64Array(SW*SH), x, y, sx, sy;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    sx = ((x - dx) % SW + SW) % SW; sy = ((y - dy) % SH + SH) % SH;
+    out[y*SW+x] = img[sy*SW+sx];
+  }
+  return out;
+}
+function flipV(img){
+  var out = new Float64Array(SW*SH), x, y;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++) out[y*SW+x] = img[(SH-1-y)*SW+x];
+  return out;
+}
+/* перемішати блоки 16 × 16 за сталою перестановкою */
+function shuffleBlocks(img){
+  var B = 16, nx = Math.floor(SW/B), ny = Math.floor(SH/B), n = nx*ny;
+  var perm = [], i, k = 7;
+  for(i = 0; i < n; i++) perm.push(i);
+  for(i = n - 1; i > 0; i--){ k = (k * 48271) % 2147483647; var j = k % (i+1);
+    var t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+  var out = new Float64Array(SW*SH), b, x, y;
+  for(b = 0; b < n; b++){
+    var sy = Math.floor(perm[b]/nx)*B, sx = (perm[b]%nx)*B;
+    var dy = Math.floor(b/nx)*B, dx = (b%nx)*B;
+    for(y = 0; y < B; y++) for(x = 0; x < B; x++)
+      out[(dy+y)*SW + dx+x] = img[(sy+y)*SW + sx+x];
+  }
+  return out;
+}
+
+/* ── HOG на прямокутному вікні ───────────────────────────────────── */
+/* cell — сторона комірки, bins — корзин напрямку, rotate — на скільки
+   градусів циклічно зсунути корзини (нормування за орієнтацією) */
+function hogWindow(img, x0, y0, w, h, cell, bins, rotate){
+  var g = sobel(img);
+  var cx = Math.floor(w/cell), cy = Math.floor(h/cell);
+  var cells = new Float64Array(cx*cy*bins), r, c, x, y, i, k;
+  var shift = rotate ? rotate : 0;
+  for(r = 0; r < cy; r++) for(c = 0; c < cx; c++){
+    for(y = 0; y < cell; y++) for(x = 0; x < cell; x++){
+      i = (y0 + r*cell + y) * SW + (x0 + c*cell + x);
+      if(i < 0 || i >= SW*SH) continue;
+      var a = g.ang[i] - shift; a = ((a % 180) + 180) % 180;
+      k = Math.floor(a * bins / 180); if(k > bins-1) k = bins-1;
+      cells[(r*cx + c)*bins + k] += g.mag[i];
+    }
+  }
+  /* нормування по блоках 2 × 2 комірки */
+  var out = [], nb = 0;
+  for(r = 0; r < cy-1; r++) for(c = 0; c < cx-1; c++){
+    var v = [], s = 0, rr, cc;
+    for(rr = 0; rr < 2; rr++) for(cc = 0; cc < 2; cc++)
+      for(k = 0; k < bins; k++){ var q = cells[((r+rr)*cx + c+cc)*bins + k]; v.push(q); s += q*q; }
+    s = Math.sqrt(s + 1e-6);
+    for(k = 0; k < v.length; k++) out.push(v[k]/s);
+    nb++;
+  }
+  return {vec: Float64Array.from(out), cells: cells, cx: cx, cy: cy, blocks: nb};
+}
+
+/* переважний напрямок градієнта у вікні — те, чим SIFT ловить поворот */
+function dominantAngle(img, x0, y0, w, h){
+  var g = sobel(img), bins = 36, hist = new Float64Array(bins), x, y, i, k;
+  for(y = y0; y < y0+h; y++) for(x = x0; x < x0+w; x++){
+    i = y*SW + x; if(i < 0 || i >= SW*SH) continue;
+    k = Math.floor(g.ang[i] * bins / 180); if(k > bins-1) k = bins-1;
+    hist[k] += g.mag[i];
+  }
+  var best = 0;
+  for(k = 1; k < bins; k++) if(hist[k] > hist[best]) best = k;
+  return (best + 0.5) * 180 / bins;
+}
+
+/* ── кути: відгук Гарріса й вибір найкращих точок ────────────────── */
+function harris(img){
+  var g = sobel(img), n = SW*SH;
+  var ixx = new Float64Array(n), iyy = new Float64Array(n), ixy = new Float64Array(n);
+  var x, y, i;
+  function px(a, xx, yy){
+    if(xx < 0) xx = 0; if(yy < 0) yy = 0;
+    if(xx > SW-1) xx = SW-1; if(yy > SH-1) yy = SH-1;
+    return a[yy*SW+xx];
+  }
+  var gx = new Float64Array(n), gy = new Float64Array(n);
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    i = y*SW+x;
+    gx[i] = (px(img,x+1,y) - px(img,x-1,y)) / 2;
+    gy[i] = (px(img,x,y+1) - px(img,x,y-1)) / 2;
+  }
+  for(i = 0; i < n; i++){ ixx[i] = gx[i]*gx[i]; iyy[i] = gy[i]*gy[i]; ixy[i] = gx[i]*gy[i]; }
+  var R = new Float64Array(n), W = 2;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    var a = 0, b = 0, c = 0, dx, dy;
+    for(dy = -W; dy <= W; dy++) for(dx = -W; dx <= W; dx++){
+      a += px(ixx,x+dx,y+dy); b += px(ixy,x+dx,y+dy); c += px(iyy,x+dx,y+dy);
+    }
+    R[y*SW+x] = a*c - b*b - 0.04*(a+c)*(a+c);
+  }
+  return R;
+}
+
+function pickCorners(R, count, minDist, margin){
+  var list = [], x, y;
+  for(y = margin; y < SH-margin; y++) for(x = margin; x < SW-margin; x++)
+    if(R[y*SW+x] > 0) list.push({x:x, y:y, r:R[y*SW+x]});
+  list.sort(function(a,b){ return b.r - a.r; });
+  var out = [], i, j, ok;
+  for(i = 0; i < list.length && out.length < count; i++){
+    ok = true;
+    for(j = 0; j < out.length; j++){
+      var dx = out[j].x - list[i].x, dy = out[j].y - list[i].y;
+      if(dx*dx + dy*dy < minDist*minDist){ ok = false; break; }
+    }
+    if(ok) out.push(list[i]);
+  }
+  return out;
+}
+
+/* дескриптор точки: 4 × 4 підкомірки × 8 напрямків, кадр повернуто
+   на переважний напрямок — спрощена ідея SIFT.
+   Напрямок тут повний, 0..360: без знака градієнта світлий кут на темному
+   тлі не відрізнити від темного на світлому, і зіставлення губиться. */
+function descPoint(img, gx, gy, px, py, rad){
+  var bins = 8, sub = 4, D = new Float64Array(sub*sub*bins);
+  var x, y, i, k, m, a;
+  var oh = new Float64Array(36), sig2 = 2*(rad*0.6)*(rad*0.6);
+  for(y = -rad; y <= rad; y++) for(x = -rad; x <= rad; x++){
+    var xx = px+x, yy = py+y;
+    if(xx < 1 || yy < 1 || xx >= SW-1 || yy >= SH-1) continue;
+    i = yy*SW+xx;
+    m = Math.sqrt(gx[i]*gx[i] + gy[i]*gy[i]) * Math.exp(-(x*x+y*y)/sig2);
+    a = ((Math.atan2(gy[i], gx[i])*180/Math.PI) + 360) % 360;
+    k = Math.floor(a*36/360); if(k > 35) k = 35;
+    oh[k] += m;
+  }
+  var best = 0; for(k = 1; k < 36; k++) if(oh[k] > oh[best]) best = k;
+  /* вершину параболи між трьома сусідніми корзинами — інакше напрямок
+     стрибає на цілу корзину й дескриптор «пливе» при малому повороті */
+  var lo = oh[(best + 35) % 36], hi = oh[(best + 1) % 36];
+  var den = lo - 2*oh[best] + hi;
+  var off = den === 0 ? 0 : 0.5*(lo - hi)/den;
+  if(off > 0.5) off = 0.5; if(off < -0.5) off = -0.5;
+  var theta = ((best + 0.5 + off) * 10 + 360) % 360;  /* градуси, 0..360 */
+  var t = theta*Math.PI/180, ct = Math.cos(t), st = Math.sin(t);
+  for(y = -rad; y <= rad; y++) for(x = -rad; x <= rad; x++){
+    var u =  x*ct + y*st, v = -x*st + y*ct;           /* координати в кадрі точки */
+    var cu = Math.floor((u + rad) * sub / (2*rad + 1));
+    var cv = Math.floor((v + rad) * sub / (2*rad + 1));
+    if(cu < 0 || cv < 0 || cu >= sub || cv >= sub) continue;
+    var xx = px+x, yy = py+y;
+    if(xx < 1 || yy < 1 || xx >= SW-1 || yy >= SH-1) continue;
+    i = yy*SW+xx;
+    m = Math.sqrt(gx[i]*gx[i] + gy[i]*gy[i]) * Math.exp(-(x*x+y*y)/sig2);
+    a = ((Math.atan2(gy[i], gx[i])*180/Math.PI) - theta + 720) % 360;
+    k = Math.floor(a*bins/360); if(k > bins-1) k = bins-1;
+    D[(cv*sub + cu)*bins + k] += m;
+  }
+  var s = 0; for(i = 0; i < D.length; i++) s += D[i]*D[i];
+  s = Math.sqrt(s) + 1e-9;
+  for(i = 0; i < D.length; i++) D[i] = Math.min(D[i]/s, 0.2);   /* обрізка як у SIFT */
+  s = 0; for(i = 0; i < D.length; i++) s += D[i]*D[i];
+  s = Math.sqrt(s) + 1e-9;
+  for(i = 0; i < D.length; i++) D[i] /= s;
+  return D;
+}
+
+function describeAll(img, pts, rad){
+  var n = SW*SH, gx = new Float64Array(n), gy = new Float64Array(n), x, y, i;
+  function px(xx, yy){
+    if(xx < 0) xx = 0; if(yy < 0) yy = 0;
+    if(xx > SW-1) xx = SW-1; if(yy > SH-1) yy = SH-1;
+    return img[yy*SW+xx];
+  }
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    i = y*SW+x;
+    gx[i] = px(x+1,y-1)+2*px(x+1,y)+px(x+1,y+1)-px(x-1,y-1)-2*px(x-1,y)-px(x-1,y+1);
+    gy[i] = px(x-1,y+1)+2*px(x,y+1)+px(x+1,y+1)-px(x-1,y-1)-2*px(x,y-1)-px(x+1,y-1);
+  }
+  var out = [];
+  for(i = 0; i < pts.length; i++) out.push(descPoint(img, gx, gy, pts[i].x, pts[i].y, rad));
+  return out;
+}
+
+function l2(a, b){ var s = 0, i; for(i = 0; i < a.length; i++){ var d = a[i]-b[i]; s += d*d; } return Math.sqrt(s); }
+
+/* зіставлення з тестом співвідношення Лоу */
+function matchLowe(dA, dB, ratio){
+  var out = [], i, j;
+  for(i = 0; i < dA.length; i++){
+    var b1 = 1e9, b2 = 1e9, bi = -1;
+    for(j = 0; j < dB.length; j++){
+      var d = l2(dA[i], dB[j]);
+      if(d < b1){ b2 = b1; b1 = d; bi = j; } else if(d < b2) b2 = d;
+    }
+    if(bi >= 0 && b1 < ratio * b2) out.push({a:i, b:bi, d:b1});
+  }
+  return out;
+}
+
+/* ── «SIFT-подібна» ознака: HOG у нормованому кадрі ──────────────────
+   Кадр рахується з самого зображення: центр — центр ваги градієнтної
+   енергії, розмір — її розкид, поворот — переважний напрямок градієнта.
+   Саме це й робить SIFT інваріантним до масштабу й повороту. */
+function normFrame(img){
+  var g = sobel(img), x, y, i, w, sw = 0, sx = 0, sy = 0;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    i = y*SW+x; w = g.mag[i]; sw += w; sx += w*x; sy += w*y;
+  }
+  if(sw === 0) return {cx:SW/2, cy:SH/2, r:20, th:0};
+  var cx = sx/sw, cy = sy/sw, s2 = 0;
+  for(y = 0; y < SH; y++) for(x = 0; x < SW; x++){
+    i = y*SW+x; w = g.mag[i]; s2 += w*((x-cx)*(x-cx) + (y-cy)*(y-cy));
+  }
+  var r = Math.sqrt(s2/sw);
+  var oh = new Float64Array(36), k;
+  for(i = 0; i < SW*SH; i++){
+    k = Math.floor(g.ang[i]*36/180); if(k > 35) k = 35;
+    oh[k] += g.mag[i];
+  }
+  var best = 0; for(k = 1; k < 36; k++) if(oh[k] > oh[best]) best = k;
+  return {cx:cx, cy:cy, r:r, th:(best+0.5)*180/36, g:g};
+}
+
+/* HOG у цьому кадрі: patch × patch зразків, крок — частка від r */
+function normDesc(img){
+  var f = normFrame(img), N = 32, cell = 8, bins = 9;
+  var step = 2.2*f.r/N, t = f.th*Math.PI/180, ct = Math.cos(t), st = Math.sin(t);
+  var patch = new Float64Array(N*N), x, y;
+  for(y = 0; y < N; y++) for(x = 0; x < N; x++){
+    var u = (x - N/2 + 0.5)*step, v = (y - N/2 + 0.5)*step;
+    patch[y*N+x] = sample(img, f.cx + u*ct - v*st, f.cy + u*st + v*ct);
+  }
+  /* градієнти всередині вирізаного кадру */
+  var mag = new Float64Array(N*N), ang = new Float64Array(N*N), i, gx, gy;
+  function p(xx, yy){
+    if(xx < 0) xx = 0; if(yy < 0) yy = 0;
+    if(xx > N-1) xx = N-1; if(yy > N-1) yy = N-1;
+    return patch[yy*N+xx];
+  }
+  for(y = 0; y < N; y++) for(x = 0; x < N; x++){
+    gx = p(x+1,y-1)+2*p(x+1,y)+p(x+1,y+1)-p(x-1,y-1)-2*p(x-1,y)-p(x-1,y+1);
+    gy = p(x-1,y+1)+2*p(x,y+1)+p(x+1,y+1)-p(x-1,y-1)-2*p(x,y-1)-p(x+1,y-1);
+    i = y*N+x; mag[i] = Math.sqrt(gx*gx+gy*gy);
+    ang[i] = ((Math.atan2(gy,gx)*180/Math.PI % 180) + 180) % 180;
+  }
+  var nc = N/cell, cells = new Float64Array(nc*nc*bins), r, c, k;
+  for(r = 0; r < nc; r++) for(c = 0; c < nc; c++)
+    for(y = 0; y < cell; y++) for(x = 0; x < cell; x++){
+      i = (r*cell+y)*N + c*cell+x;
+      k = Math.floor(ang[i]*bins/180); if(k > bins-1) k = bins-1;
+      cells[(r*nc+c)*bins+k] += mag[i];
+    }
+  var out = [];
+  for(r = 0; r < nc-1; r++) for(c = 0; c < nc-1; c++){
+    var v = [], s = 0, rr, cc;
+    for(rr = 0; rr < 2; rr++) for(cc = 0; cc < 2; cc++)
+      for(k = 0; k < bins; k++){ var q = cells[((r+rr)*nc+c+cc)*bins+k]; v.push(q); s += q*q; }
+    s = Math.sqrt(s+1e-6);
+    for(k = 0; k < v.length; k++) out.push(v[k]/s);
+  }
+  return {vec: Float64Array.from(out), frame: f, patch: patch, N: N};
+}
+
+/* ═══════ малювання зображення на канві ═══════
+   Грабля №1: putImageData ігнорує setTransform, тому пікселі кладемо
+   в offscreen-канву й виводимо на екран через drawImage. */
+function drawImg(g, img, x, y, scale){
+  var _off = document.createElement('canvas');
+  _off.width = SW; _off.height = SH;
+  var og = _off.getContext('2d');
+  var d = og.createImageData(SW, SH), i, v;
+  for(i = 0; i < SW*SH; i++){
+    v = Math.round(img[i]);
+    d.data[i*4] = v; d.data[i*4+1] = v; d.data[i*4+2] = v; d.data[i*4+3] = 255;
+  }
+  og.putImageData(d, 0, 0);
+  g.imageSmoothingEnabled = false;
+  g.drawImage(_off, x, y, SW*scale, SH*scale);
+  g.imageSmoothingEnabled = true;
+}
+/* підпис над картинкою */
+function capt(g, txt, x, y){
+  g.fillStyle = css('--soft'); g.font = mono(11, false); g.textAlign = 'left';
+  g.fillText(txt, x, y);
+}
+function frame(g, x, y, w, h, color){
+  g.strokeStyle = color; g.lineWidth = 1; g.strokeRect(x-0.5, y-0.5, w+1, h+1);
+}
+
+/* ═══════ спільна сцена всіх інтерактивів ═══════ */
+var BASE = scene();
+var SC = 1.5;                                  /* у скільки разів збільшуємо «фото» */
+
+/* ═════ Інтерактив 1 · що викидає гістограма ═════ */
+(function(){
+  var cv = I('cHist'); if(!cv) return;
+  var VARIANTS = [
+    {name:'оригінал',            f:function(){ return BASE; }},
+    {name:'перевернуте',         f:function(){ return flipV(BASE); }},
+    {name:'зсунуте на 11 і 7',   f:function(){ return rollImg(BASE, 11, 7); }},
+    {name:'блоки перемішані',    f:function(){ return shuffleBlocks(BASE); }},
+    {name:'притемнене ×0.7',     f:function(){ return distort(BASE, 0, 1, 0.7, 0); }}
+  ];
+  var h0 = histI(BASE, 256), cur = 0;
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), img = VARIANTS[cur].f();
+    var h1 = histI(img, 256), same = 0, k;
+    for(k = 0; k < 256; k++) if(Math.abs(h0[k] - h1[k]) < 1e-12) same++;
+    var cs = cosSim(h0, h1);
+
+    var iw = SW*SC, ih = SH*SC, y0 = 30;
+    capt(g, 'оригінал', 24, y0 - 10);
+    drawImg(g, BASE, 24, y0, SC);
+    frame(g, 24, y0, iw, ih, css('--hair'));
+    capt(g, VARIANTS[cur].name, 24 + iw + 34, y0 - 10);
+    drawImg(g, img, 24 + iw + 34, y0, SC);
+    frame(g, 24 + iw + 34, y0, iw, ih, cur === 0 ? css('--hair') : css('--rose'));
+
+    /* гістограми одна поверх одної */
+    var gx = 24 + 2*iw + 78, gw = W - gx - 24, gy = y0, gh = ih;
+    var mx = 0;
+    for(k = 0; k < 256; k++){ if(h0[k] > mx) mx = h0[k]; if(h1[k] > mx) mx = h1[k]; }
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(gx, gy + gh + 0.5); g.lineTo(gx + gw, gy + gh + 0.5); g.stroke();
+    var bw = gw/256;
+    g.fillStyle = css('--teal');
+    for(k = 0; k < 256; k++) g.fillRect(gx + k*bw, gy + gh - h0[k]/mx*gh, Math.max(bw, 1), h0[k]/mx*gh);
+    g.fillStyle = css('--rose'); g.globalAlpha = 0.65;
+    for(k = 0; k < 256; k++) g.fillRect(gx + k*bw, gy + gh - h1[k]/mx*gh, Math.max(bw, 1), h1[k]/mx*gh);
+    g.globalAlpha = 1;
+    capt(g, 'гістограма: бірюзова — оригінал, рожева — після перетворення', gx, gy - 10);
+    g.fillStyle = css('--soft'); g.font = mono(10, false); g.textAlign = 'center';
+    g.fillText('0', gx, gy + gh + 16);
+    g.fillText('яскравість', gx + gw/2, gy + gh + 16);
+    g.fillText('255', gx + gw, gy + gh + 16);
+    g.textAlign = 'left';
+
+    /* три числа під картинками */
+    g.font = mono(12, false); g.fillStyle = css('--soft');
+    g.fillText('пікселів у кадрі: ' + gr(SW*SH), 24, y0 + ih + 26);
+    g.fillText('корзин збіглося точно: ' + same + ' з 256', 24, y0 + ih + 46);
+
+    I('hSame').textContent = same;
+    I('hCos').textContent = cs.toFixed(4);
+    if(same === 256)
+      verd('hVd','t-no','ГІСТОГРАМА НЕ ПОМІТИЛА',
+        'Усі 256 корзин збіглися <b>побітово</b>. Зображення інше — ознака та сама. '+
+        'Гістограма не зберігає ані координат, ані сусідства.');
+    else if(cur === 0)
+      verd('hVd','t-ok','ЦЕ ОРИГІНАЛ','Порівнюємо кадр сам із собою: 256 із 256 корзин, косинус 1.0000.');
+    else
+      verd('hVd','t-no','А ОСЬ ЦЕ ЗЛАМАЛО',
+        'Збіглося лише ' + same + ' корзин із 256, косинус ' + cs.toFixed(3) + '. '+
+        'Око різницю майже пробачає, ознака — ні: усі стовпчики просто поїхали ліворуч.');
+  }
+  segment('hSeg', function(i){ cur = i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 2 · просторова піраміда ═════ */
+(function(){
+  var cv = I('cPyr'); if(!cv) return;
+  var SHIFTED = rollImg(BASE, 6, 4), FLIPPED = flipV(BASE);
+  var BINS = 16, rows = [], n;
+  for(n = 1; n <= 8; n++){
+    var v = pyramid(BASE, n, BINS);
+    rows.push({n:n, len:v.length,
+      sh:cosSim(v, pyramid(SHIFTED, n, BINS)),
+      fl:cosSim(v, pyramid(FLIPPED, n, BINS))});
+  }
+  function draw(){
+    var g = dpr(cv), W = LW(cv), n = +I('pyrN').value, r = rows[n-1];
+    I('pyrNv').textContent = n;
+    var iw = SW*SC, ih = SH*SC, y0 = 34;
+    drawImg(g, BASE, 24, y0, SC);
+    g.strokeStyle = css('--amber'); g.lineWidth = 1.2;
+    var k;
+    for(k = 1; k < n; k++){
+      g.beginPath(); g.moveTo(24 + k*iw/n, y0); g.lineTo(24 + k*iw/n, y0 + ih); g.stroke();
+      g.beginPath(); g.moveTo(24, y0 + k*ih/n); g.lineTo(24 + iw, y0 + k*ih/n); g.stroke();
+    }
+    frame(g, 24, y0, iw, ih, css('--hair'));
+    capt(g, 'кадр, розрізаний на ' + (n*n) + ' ' + клітинок(n*n), 24, y0 - 10);
+
+    /* графік: дві криві по n */
+    var px = 24 + iw + 70, pw = W - px - 40, py = y0 + 8, ph = ih - 40;
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(px, py); g.lineTo(px, py + ph); g.lineTo(px + pw, py + ph); g.stroke();
+    var i;
+    for(i = 0; i <= 4; i++){
+      var yy = py + ph - i*ph/4;
+      g.strokeStyle = css('--hair'); g.globalAlpha = 0.5;
+      g.beginPath(); g.moveTo(px, yy); g.lineTo(px + pw, yy); g.stroke(); g.globalAlpha = 1;
+      g.fillStyle = css('--soft'); g.font = mono(10, false); g.textAlign = 'right';
+      g.fillText((0.4 + i*0.15).toFixed(2), px - 6, yy + 3);
+    }
+    g.textAlign = 'center';
+    for(i = 0; i < 8; i++)
+      g.fillText(String(i+1), px + i*pw/7, py + ph + 16);
+    g.fillText('клітинок по стороні кадру', px + pw/2, py + ph + 34);
+    g.textAlign = 'left';
+    function curve(key, color, lbl){
+      g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+      for(i = 0; i < 8; i++){
+        var xx = px + i*pw/7, yy = py + ph - (rows[i][key] - 0.4)/0.6*ph;
+        if(i === 0) g.moveTo(xx, yy); else g.lineTo(xx, yy);
+      }
+      g.stroke();
+      for(i = 0; i < 8; i++){
+        var xx = px + i*pw/7, yy = py + ph - (rows[i][key] - 0.4)/0.6*ph;
+        g.fillStyle = color; g.beginPath();
+        g.arc(xx, yy, i === n-1 ? 5 : 2.5, 0, 6.284); g.fill();
+      }
+      g.fillStyle = color; g.font = mono(11, true);
+      g.fillText(lbl, px + pw + 6 - 0, py + ph - (rows[7][key] - 0.4)/0.6*ph + 4);
+    }
+    g.save(); g.beginPath(); g.rect(px, py - 10, pw + 4, ph + 14); g.clip();
+    curve('sh', css('--teal'), '');
+    curve('fl', css('--rose'), '');
+    g.restore();
+    /* легенда стоїть під графіком: усередині вона лягала просто на криву */
+    g.font = mono(11, true); g.textAlign = 'left';
+    g.fillStyle = css('--teal'); g.fillRect(px, py + ph + 48, 22, 3);
+    g.fillText('стійкість: зсув на 6 пікселів', px + 30, py + ph + 52);
+    g.fillStyle = css('--rose'); g.fillRect(px, py + ph + 68, 22, 3);
+    g.fillText('розрізняльність: перевернутий кадр', px + 30, py + ph + 72);
+
+    I('pyrLen').textContent = gr(r.len);
+    I('pyrCells').textContent = n*n;
+    I('pyrShift').textContent = r.sh.toFixed(3);
+    I('pyrFlip').textContent = r.fl.toFixed(3);
+    if(n === 1)
+      verd('pyrVd','t-no','ПРОСТОРУ НЕМАЄ ЗОВСІМ',
+        'Одна клітинка — це звичайна гістограма: 16 чисел. Перевернутий кадр дає '+
+        r.fl.toFixed(3) + ', тобто ознака його не відрізняє.');
+    else if(n <= 3)
+      verd('pyrVd','t-mid','ПОЧАЛА РОЗРІЗНЯТИ',
+        'Вектор виріс до ' + gr(r.len) + ' чисел, перевернутий кадр упав до ' + r.fl.toFixed(3) +
+        '. Зсув поки коштує дешево: ' + r.sh.toFixed(3) + '.');
+    else
+      verd('pyrVd','t-ok','РОЗРІЗНЯЄ, АЛЕ КРИХКІША',
+        'Перевернутий кадр — ' + r.fl.toFixed(3) + ': ознака його впевнено відрізняє. '+
+        'Заплачено стійкістю: зсув на 6 пікселів дає вже ' + r.sh.toFixed(3) +
+        ' замість 1.000, а вектор став у ' + Math.round(r.len/16) + ' разів довшим.');
+  }
+  on('pyrN','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 3 · градієнт проти яскравості ═════ */
+(function(){
+  var cv = I('cGrad'); if(!cv) return;
+  var G0 = sobel(BASE), PTS = [], x, y;
+  /* девʼять точок із помітним градієнтом, розкиданих по кадру */
+  for(y = 1; y <= 3; y++) for(x = 1; x <= 3; x++){
+    var bx = Math.round(x*SW/4), by = Math.round(y*SH/4), best = -1, bi = -1, dx, dy;
+    for(dy = -6; dy <= 6; dy++) for(dx = -6; dx <= 6; dx++){
+      var i = (by+dy)*SW + bx+dx;
+      if(i < 0 || i >= SW*SH) continue;
+      if(G0.mag[i] > best){ best = G0.mag[i]; bi = i; }
+    }
+    PTS.push({x: bi % SW, y: Math.floor(bi/SW)});
+  }
+  var sel = []; for(var q = 0; q < SW*SH; q++) if(G0.mag[q] > 60) sel.push(q);
+  var base0 = 0; for(q = 0; q < SW*SH; q++) base0 += BASE[q]; base0 /= SW*SH;
+  var mag0 = 0; for(q = 0; q < sel.length; q++) mag0 += G0.mag[sel[q]]; mag0 /= sel.length;
+
+  function arrows(g, ang, x0, y0, color){
+    g.strokeStyle = color; g.lineWidth = 2; g.lineCap = 'round';
+    for(var k = 0; k < PTS.length; k++){
+      var i = PTS[k].y*SW + PTS[k].x, a = ang[i]*Math.PI/180;
+      var cx = x0 + (PTS[k].x + 0.5)*SC, cy = y0 + (PTS[k].y + 0.5)*SC, L = 13;
+      g.beginPath();
+      g.moveTo(cx - Math.cos(a)*L, cy - Math.sin(a)*L);
+      g.lineTo(cx + Math.cos(a)*L, cy + Math.sin(a)*L);
+      g.stroke();
+      g.fillStyle = color; g.beginPath(); g.arc(cx, cy, 2.5, 0, 6.284); g.fill();
+    }
+  }
+  function draw(){
+    var g = dpr(cv), W = LW(cv), k = +I('grK').value;
+    I('grKv').textContent = k.toFixed(2);
+    var img = distort(BASE, 0, 1, k, 0), G = sobel(img), i;
+    var b = 0; for(i = 0; i < SW*SH; i++) b += img[i]; b /= SW*SH;
+    var m = 0; for(i = 0; i < sel.length; i++) m += G.mag[sel[i]]; m /= sel.length;
+    var d = 0; for(i = 0; i < sel.length; i++){
+      var q = Math.abs(G.ang[sel[i]] - G0.ang[sel[i]]);
+      d += Math.min(q, 180 - q);
+    }
+    d /= sel.length;
+    var sat = 0; for(i = 0; i < SW*SH; i++) if(BASE[i]*k > 255) sat++;
+
+    var iw = SW*SC, ih = SH*SC, y0 = 34;
+    capt(g, 'оригінал', 24, y0 - 10);
+    drawImg(g, BASE, 24, y0, SC); arrows(g, G0.ang, 24, y0, css('--teal'));
+    frame(g, 24, y0, iw, ih, css('--hair'));
+    capt(g, 'помножено на ' + k.toFixed(2), 24 + iw + 30, y0 - 10);
+    drawImg(g, img, 24 + iw + 30, y0, SC); arrows(g, G.ang, 24 + iw + 30, y0, css('--rose'));
+    frame(g, 24 + iw + 30, y0, iw, ih, css('--hair'));
+
+    /* два стовпчики порівняння */
+    var bx = 24 + 2*iw + 76, bw = W - bx - 30, bh = 42;
+    function pair(lbl, v0, v1, unit, yy, maxv){
+      g.fillStyle = css('--soft'); g.font = mono(11, false); g.textAlign = 'left';
+      g.fillText(lbl, bx, yy - 8);
+      g.fillStyle = css('--teal');
+      g.fillRect(bx, yy, Math.max(v0/maxv*bw*0.72, 1), 16);
+      g.fillStyle = css('--rose');
+      g.fillRect(bx, yy + 20, Math.max(v1/maxv*bw*0.72, 1), 16);
+      g.font = mono(12, true); g.fillStyle = css('--ink');
+      g.fillText(v0.toFixed(1) + unit, bx + bw*0.74, yy + 13);
+      g.fillText(v1.toFixed(1) + unit, bx + bw*0.74, yy + 33);
+    }
+    pair('середня яскравість кадру', base0, b, '', y0 + 18, 255);
+    pair('середній модуль градієнта', mag0, m, '', y0 + 108, 320);
+    pair('середній напрямок відхилився на', 0, d, '°', y0 + 198, 20);
+    g.fillStyle = css('--soft'); g.font = mono(11, false);
+    g.fillText('бірюзове — оригінал, рожеве — після множення', bx, y0 + ih + 26);
+
+    I('grB').textContent = b.toFixed(1);
+    I('grM').textContent = m.toFixed(1);
+    I('grA').textContent = d.toFixed(2) + '°';
+    I('grS').textContent = gr(sat);
+    if(d < 0.005)
+      verd('grVd','t-ok','НАПРЯМОК НЕ ЗРУШИВ',
+        'Яскравість ' + base0.toFixed(1) + ' → ' + b.toFixed(1) + ', модуль ' +
+        mag0.toFixed(1) + ' → ' + m.toFixed(1) + ' — обидва поїхали. Напрямок відхилився на ' +
+        d.toFixed(2) + '°, тобто рівно нуль: множник скоротився у відношенні.');
+    else
+      verd('grVd','t-mid','У СТЕЛЮ ВПЕРЛИСЬ ' + gr(sat),
+        'Пікселів яскравіших за 255 не буває, тому ' + gr(sat) + ' із ' + gr(SW*SH) +
+        ' зрізало. Різкі межі там стали плоскими — і напрямок поплив на ' + d.toFixed(2) + '°.');
+  }
+  on('grK','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 4 · HOG по кроках ═════ */
+(function(){
+  var cv = I('cHog'); if(!cv) return;
+  var X0 = 24, Y0 = 16, WW = 80, HH = 128, CELL = 8, BINS = 9;
+  var H = hogWindow(BASE, X0, Y0, WW, HH, CELL, BINS, 0), G = sobel(BASE);
+  var step = 0, S = 2.2;                        /* збільшення вікна на канві */
+
+  function draw(){
+    var g = dpr(cv), W = LW(cv), x, y, r, c, k;
+    var ox = 24, oy = 40;
+    /* вікно у збільшенні (окрема offscreen-канва, грабля №1) */
+    var _off = document.createElement('canvas');
+    _off.width = WW; _off.height = HH;
+    var og = _off.getContext('2d'), d = og.createImageData(WW, HH), v;
+    for(y = 0; y < HH; y++) for(x = 0; x < WW; x++){
+      v = Math.round(BASE[(Y0+y)*SW + X0+x]);
+      var i = (y*WW + x)*4;
+      d.data[i] = v; d.data[i+1] = v; d.data[i+2] = v; d.data[i+3] = 255;
+    }
+    og.putImageData(d, 0, 0);
+    g.imageSmoothingEnabled = false;
+    g.drawImage(_off, ox, oy, WW*S, HH*S);
+    g.imageSmoothingEnabled = true;
+    if(step >= 1) { g.globalAlpha = 0.45; g.fillStyle = css('--paper');
+      g.fillRect(ox, oy, WW*S, HH*S); g.globalAlpha = 1; }
+    frame(g, ox, oy, WW*S, HH*S, css('--hair'));
+    capt(g, 'вікно ' + WW + ' × ' + HH + ' пікселів', ox, oy - 12);
+
+    /* крок 2: стрілки градієнтів */
+    if(step === 1){
+      g.strokeStyle = css('--teal'); g.lineWidth = 1.4; g.lineCap = 'round';
+      for(y = 2; y < HH; y += 5) for(x = 2; x < WW; x += 5){
+        var i = (Y0+y)*SW + X0+x, m = G.mag[i];
+        if(m < 40) continue;
+        var a = G.ang[i]*Math.PI/180, L = Math.min(m/60, 1)*6;
+        var cx = ox + (x+0.5)*S, cy = oy + (y+0.5)*S;
+        g.beginPath();
+        g.moveTo(cx - Math.cos(a)*L, cy - Math.sin(a)*L);
+        g.lineTo(cx + Math.cos(a)*L, cy + Math.sin(a)*L);
+        g.stroke();
+      }
+    }
+    /* крок 3 і 4: сітка комірок і «зірочки» */
+    if(step >= 2){
+      g.strokeStyle = css('--amber'); g.lineWidth = 0.8; g.globalAlpha = 0.7;
+      for(c = 0; c <= H.cx; c++){
+        g.beginPath(); g.moveTo(ox + c*CELL*S, oy); g.lineTo(ox + c*CELL*S, oy + HH*S); g.stroke();
+      }
+      for(r = 0; r <= H.cy; r++){
+        g.beginPath(); g.moveTo(ox, oy + r*CELL*S); g.lineTo(ox + WW*S, oy + r*CELL*S); g.stroke();
+      }
+      g.globalAlpha = 1;
+      var mx = 0;
+      for(k = 0; k < H.cells.length; k++) if(H.cells[k] > mx) mx = H.cells[k];
+      g.strokeStyle = css('--teal'); g.lineWidth = 1.6;
+      for(r = 0; r < H.cy; r++) for(c = 0; c < H.cx; c++){
+        var cx2 = ox + (c + 0.5)*CELL*S, cy2 = oy + (r + 0.5)*CELL*S;
+        for(k = 0; k < BINS; k++){
+          var w = H.cells[(r*H.cx + c)*BINS + k]/mx;
+          if(w < 0.02) continue;
+          var a2 = (k + 0.5)*Math.PI/BINS, L2 = w*CELL*S*0.5;
+          g.beginPath();
+          g.moveTo(cx2 - Math.cos(a2)*L2, cy2 - Math.sin(a2)*L2);
+          g.lineTo(cx2 + Math.cos(a2)*L2, cy2 + Math.sin(a2)*L2);
+          g.stroke();
+        }
+      }
+    }
+    /* крок 4: підсвітити блок 2 × 2 і показати нормування */
+    var BR = 3, BC = 2;
+    if(step === 3){
+      g.strokeStyle = css('--rose'); g.lineWidth = 2.5;
+      g.strokeRect(ox + BC*CELL*S, oy + BR*CELL*S, 2*CELL*S, 2*CELL*S);
+    }
+
+    /* права колонка: пояснення кроку */
+    var tx = ox + WW*S + 46, tw = W - tx - 26;
+    var TITLES = ['1 · сире вікно', '2 · модуль і напрямок градієнта',
+                  '3 · гістограма напрямків у кожній комірці', '4 · нормування блоку 2 × 2'];
+    g.fillStyle = css('--ink'); g.font = sans(15); g.textAlign = 'left';
+    g.fillText(TITLES[step], tx, oy + 4);
+    g.font = mono(12, false); g.fillStyle = css('--soft');
+    var LINES = [
+      ['Яскравість як є: 80 × 128 = 10 240 чисел.', 'Порівнювати такі вікна напряму марно —', 'зсув на піксель зробить їх «різними».'],
+      ['Собель із теми 04 дає в кожній точці', 'модуль і напрямок. Напрямок не залежить', 'від того, як яскраво світить лампа.'],
+      ['Кадр ріжеться на комірки 8 × 8. У кожній', '9 корзин напрямку, голос кожного пікселя', 'важить його модулем. Промінь зірочки —', 'сила цієї корзини.'],
+      ['Сусідні 2 × 2 комірки утворюють блок:', '4 × 9 = 36 чисел, поділених на власну', 'довжину. Блоки перекриваються, тому', 'кожна комірка нормується кілька разів.']
+    ];
+    var ln;
+    for(ln = 0; ln < LINES[step].length; ln++)
+      g.fillText(LINES[step][ln], tx, oy + 30 + ln*18);
+
+    /* стовпчики блоку до й після нормування */
+    if(step === 3){
+      var raw = [], rr2, cc2;
+      for(rr2 = 0; rr2 < 2; rr2++) for(cc2 = 0; cc2 < 2; cc2++)
+        for(k = 0; k < BINS; k++) raw.push(H.cells[((BR+rr2)*H.cx + BC+cc2)*BINS + k]);
+      var s = 0; for(k = 0; k < raw.length; k++) s += raw[k]*raw[k];
+      s = Math.sqrt(s + 1e-6);
+      var mr = 0; for(k = 0; k < raw.length; k++) if(raw[k] > mr) mr = raw[k];
+      var bx = tx, by = oy + 128, bw2 = tw, bh2 = 62, sw2 = bw2/36;
+      g.fillStyle = css('--soft'); g.font = mono(11, false);
+      g.fillText('36 чисел блоку до нормування', bx, by - 8);
+      g.fillStyle = css('--amber');
+      for(k = 0; k < 36; k++) g.fillRect(bx + k*sw2, by + bh2 - raw[k]/mr*bh2, sw2 - 1.5, raw[k]/mr*bh2);
+      g.fillStyle = css('--soft');
+      g.fillText('ті самі 36 після ділення на довжину ' + s.toFixed(0), bx, by + bh2 + 26);
+      var mn = 0; for(k = 0; k < 36; k++) if(raw[k]/s > mn) mn = raw[k]/s;
+      g.fillStyle = css('--teal');
+      for(k = 0; k < 36; k++)
+        g.fillRect(bx + k*sw2, by + bh2 + 34 + bh2 - raw[k]/s/mn*bh2, sw2 - 1.5, raw[k]/s/mn*bh2);
+      g.fillStyle = css('--soft'); g.font = mono(10, false);
+      g.fillText('форма та сама, абсолютна величина зникла', bx, by + 2*bh2 + 52);
+    }
+
+    var NUMS = [WW*HH, WW*HH*2, H.cx*H.cy*BINS, H.blocks*4*BINS];
+    I('hogN').textContent = gr(NUMS[step]);
+    I('hogR').textContent = (NUMS[step] === WW*HH ? '—'
+      : (NUMS[step] > WW*HH ? (NUMS[step]/(WW*HH)).toFixed(1) + ' × більше'
+                            : ((WW*HH)/NUMS[step]).toFixed(1) + ' × менше'));
+    var VD = [
+      ['t-no','ЩЕ НЕ ОЗНАКА','10 240 чисел яскравості. Стійкості нуль: помінялось світло — помінялось усе.'],
+      ['t-mid','ЧИСЕЛ УДВІЧІ БІЛЬШЕ','Модуль і напрямок у кожній точці — 20 480 чисел. Ознака стала стійкою до світла, але довшою за саме вікно. Далі стискаємо.'],
+      ['t-mid','160 КОМІРОК ПО 9 КОРЗИН','1440 чисел замість 10 240 — стиснення в сім разів. Усередині комірки координати втрачені, між комірками збережені.'],
+      ['t-ok','ОСЬ ЦЕ ВЖЕ HOG','' ]
+    ];
+    if(step === 3)
+      verd('hogVd','t-ok','ОСЬ ЦЕ ВЖЕ HOG',
+        H.blocks + ' блоків по 36 чисел — разом ' + gr(H.blocks*36) + '. У класичному вікні ' +
+        '64 × 128 виходить рівно <b>3780</b>. Це і є вектор, який дальші кроки порівнюють між знімками.');
+    else
+      verd('hogVd', VD[step][0], VD[step][1], VD[step][2]);
+  }
+  segment('hogSeg', function(i){ step = i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 5 · кут проти межі ═════ */
+(function(){
+  var cv = I('cCor'); if(!cv) return;
+  var SPOTS = [{n:'пляма', x:40, y:35}, {n:'межа', x:31, y:35}, {n:'кут', x:31, y:27}];
+  var cur = 0, WIN = 4, STEP = 3;
+  function ssd(p, dx, dy){
+    var s = 0, n = 0, x, y, a, b;
+    for(y = -WIN; y <= WIN; y++) for(x = -WIN; x <= WIN; x++){
+      a = sample(BASE, p.x + x, p.y + y);
+      b = sample(BASE, p.x + x + dx, p.y + y + dy);
+      s += (a - b)*(a - b); n++;
+    }
+    return s/n;
+  }
+  function draw(){
+    var g = dpr(cv), W = LW(cv), p = SPOTS[cur], k;
+    var deg = +I('corA').value;
+    I('corAv').textContent = deg + '°';
+    var rose = [], mn = 1e9, mx = 0;
+    for(k = 0; k < 24; k++){
+      var t = k*Math.PI/12, v = ssd(p, STEP*Math.cos(t), STEP*Math.sin(t));
+      rose.push(v); if(v < mn) mn = v; if(v > mx) mx = v;
+    }
+    var now = ssd(p, STEP*Math.cos(deg*Math.PI/180), STEP*Math.sin(deg*Math.PI/180));
+
+    var S2 = 2.0, iw = SW*S2, ih = SH*S2, y0 = 34;
+    drawImg(g, BASE, 24, y0, S2);
+    frame(g, 24, y0, iw, ih, css('--hair'));
+    capt(g, 'віконце 9 × 9 стоїть на місці «' + p.n + '»', 24, y0 - 10);
+    /* віконце й стрілка зсуву */
+    var wx = 24 + (p.x - WIN)*S2, wy = y0 + (p.y - WIN)*S2, ws = (2*WIN + 1)*S2;
+    g.strokeStyle = css('--teal'); g.lineWidth = 2; g.strokeRect(wx, wy, ws, ws);
+    var t2 = deg*Math.PI/180;
+    g.strokeStyle = css('--rose'); g.lineWidth = 2;
+    g.strokeRect(wx + STEP*Math.cos(t2)*S2, wy + STEP*Math.sin(t2)*S2, ws, ws);
+
+    /* збільшене віконце */
+    var zx = 24 + iw + 40, zy = y0, ZS = 9;
+    var _off = document.createElement('canvas');
+    _off.width = 2*WIN + 1; _off.height = 2*WIN + 1;
+    var og = _off.getContext('2d'), d = og.createImageData(2*WIN + 1, 2*WIN + 1), x, y;
+    for(y = 0; y <= 2*WIN; y++) for(x = 0; x <= 2*WIN; x++){
+      var v = Math.round(sample(BASE, p.x - WIN + x, p.y - WIN + y)), i = (y*(2*WIN+1) + x)*4;
+      d.data[i] = v; d.data[i+1] = v; d.data[i+2] = v; d.data[i+3] = 255;
+    }
+    og.putImageData(d, 0, 0);
+    g.imageSmoothingEnabled = false;
+    g.drawImage(_off, zx, zy, (2*WIN+1)*ZS, (2*WIN+1)*ZS);
+    g.imageSmoothingEnabled = true;
+    frame(g, zx, zy, (2*WIN+1)*ZS, (2*WIN+1)*ZS, css('--teal'));
+    capt(g, 'що бачить віконце', zx, zy - 10);
+
+    /* полярна пелюстка */
+    var px = W - 190, py = y0 + 118, R = 100;
+    g.strokeStyle = css('--hair'); g.lineWidth = 1;
+    for(k = 1; k <= 3; k++){
+      g.beginPath(); g.arc(px, py, R*k/3, 0, 6.284); g.stroke();
+    }
+    var scale = Math.max(mx, 1);
+    g.strokeStyle = css('--rose'); g.lineWidth = 2; g.beginPath();
+    for(k = 0; k <= 24; k++){
+      var kk = k % 24, t3 = kk*Math.PI/12;
+      var rad = Math.sqrt(rose[kk]/scale)*R;
+      var xx = px + Math.cos(t3)*rad, yy = py + Math.sin(t3)*rad;
+      if(k === 0) g.moveTo(xx, yy); else g.lineTo(xx, yy);
+    }
+    g.stroke();
+    g.fillStyle = css('--rose'); g.globalAlpha = 0.18;
+    g.fill(); g.globalAlpha = 1;
+    var radn = Math.sqrt(now/scale)*R;
+    g.strokeStyle = css('--teal'); g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(px, py);
+    g.lineTo(px + Math.cos(t2)*radn, py + Math.sin(t2)*radn); g.stroke();
+    g.fillStyle = css('--soft'); g.font = mono(11, false); g.textAlign = 'center';
+    g.fillText('зміна вмісту віконця', px, y0 - 10);
+    g.fillText('за напрямком зсуву', px, y0 + 6);
+    g.textAlign = 'left';
+
+    I('corNow').textContent = now < 100 ? now.toFixed(1) : gr(now);
+    I('corMin').textContent = mn < 100 ? mn.toFixed(1) : gr(mn);
+    if(cur === 0)
+      verd('corVd','t-no','ТОЧКА НЕ ГОДИТЬСЯ',
+        'Найгірший напрямок дає ' + mn.toFixed(1) + ' — куди не зсунь, у віконці те саме. '+
+        'На другому знімку таких точок тисячі й жодну не впізнати.');
+    else if(cur === 1)
+      verd('corVd','t-mid','ТІЛЬКИ ПОПЕРЕК',
+        'Упоперек межі зміна доходить до ' + gr(mx) + ', а вздовж падає до ' + mn.toFixed(1) +
+        '. Точку знайдемо з точністю до положення на лінії — і не точніше.');
+    else
+      verd('corVd','t-ok','ОСЬ ЦЕ КУТ',
+        'Навіть найгірший напрямок дає ' + gr(mn) + ' — у ' + gr(mn/12) + ' ' +
+        разів(Math.round(mn/12)) + ' більше, ніж у плями (там 12). ' +
+        'Саме це число Гарріс і перетворює на відгук.');
+  }
+  segment('corSeg', function(i){ cur = i; draw(); });
+  on('corA','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 6 · жодна ознака не виграє всюди ═════ */
+(function(){
+  var cv = I('cInv'); if(!cv) return;
+  var X0 = 24, Y0 = 16, WW = 80, HH = 128;
+  var DIST = [
+    {n:'поворот 20°',   a:20, s:1,   m:1,   z:0},
+    {n:'поворот 45°',   a:45, s:1,   m:1,   z:0},
+    {n:'масштаб 0.7',   a:0,  s:0.7, m:1,   z:0},
+    {n:'масштаб 1.4',   a:0,  s:1.4, m:1,   z:0},
+    {n:'яскравість 0.6',a:0,  s:1,   m:0.6, z:0},
+    {n:'шум',           a:0,  s:1,   m:1,   z:20}
+  ];
+  var FEAT = ['гістограма', 'HOG', 'SIFT-подібна'];
+  function featOf(kind, im){
+    if(kind === 0) return histI(im, 32);
+    if(kind === 1) return hogWindow(im, X0, Y0, WW, HH, 8, 9, 0).vec;
+    return normDesc(im).vec;
+  }
+  var REF = [featOf(0, BASE), featOf(1, BASE), featOf(2, BASE)];
+  var IMGS = [], TAB = [[],[],[]], di, fi;
+  for(di = 0; di < DIST.length; di++){
+    IMGS.push(distort(BASE, DIST[di].a, DIST[di].s, DIST[di].m, DIST[di].z));
+    for(fi = 0; fi < 3; fi++) TAB[fi].push(cosSim(REF[fi], featOf(fi, IMGS[di])));
+  }
+  var cd = 0, cf = 0;
+  function draw(){
+    var g = dpr(cv), W = LW(cv), r, c;
+    var S2 = 1.4, iw = SW*S2, ih = SH*S2, y0 = 34;
+    capt(g, 'оригінал', 24, y0 - 10);
+    drawImg(g, BASE, 24, y0, S2);
+    frame(g, 24, y0, iw, ih, css('--hair'));
+    capt(g, DIST[cd].n, 24 + iw + 26, y0 - 10);
+    drawImg(g, IMGS[cd], 24 + iw + 26, y0, S2);
+    frame(g, 24 + iw + 26, y0, iw, ih, css('--rose'));
+
+    /* табло 3 × 6 */
+    /* підписи рядків живуть у власній колонці ліворуч від табла,
+       інакше вони лягають просто на клітинки з числами */
+    var tx = 24 + 2*iw + 46, tw = W - tx - 24, lab = 92;
+    var cw = (tw - lab)/6, chh = 46, ty = y0 + 30, gx0 = tx + lab;
+    g.font = mono(10, false); g.textAlign = 'center';
+    for(c = 0; c < 6; c++){
+      g.fillStyle = c === cd ? css('--ink') : css('--soft');
+      var w1 = DIST[c].n.split(' ');
+      g.fillText(w1[0], gx0 + c*cw + cw/2, ty - 18);
+      g.fillText(w1[1] || '', gx0 + c*cw + cw/2, ty - 6);
+    }
+    for(r = 0; r < 3; r++){
+      g.textAlign = 'right'; g.font = mono(11, r === cf);
+      g.fillStyle = r === cf ? css('--ink') : css('--soft');
+      g.fillText(FEAT[r], tx + lab - 10, ty + r*chh + 21);
+      for(c = 0; c < 6; c++){
+        var v = TAB[r][c];
+        var col = v >= 0.9 ? css('--teal') : (v >= 0.7 ? css('--amber') : css('--rose'));
+        var bx = gx0 + c*cw + 3, by = ty + r*chh, bw = cw - 6, bh = 32;
+        g.globalAlpha = (r === cf && c === cd) ? 0.30 : 0.11;
+        g.fillStyle = col; g.fillRect(bx, by, bw, bh); g.globalAlpha = 1;
+        if(r === cf && c === cd){ g.strokeStyle = col; g.lineWidth = 2; g.strokeRect(bx, by, bw, bh); }
+        g.fillStyle = col; g.font = mono(13, r === cf && c === cd);
+        g.textAlign = 'center';
+        g.fillText(v.toFixed(3), bx + bw/2, by + 21);
+      }
+    }
+    /* грабля №12: у канві рядок не переноситься — ріжемо легенду руками */
+    g.textAlign = 'left'; g.font = mono(11, false); g.fillStyle = css('--soft');
+    g.fillText('бірюзове — збіг (0.90 і вище), бурштин — частковий,', tx, ty + 3*chh + 24);
+    g.fillText('рожеве — ознака не впізнала той самий предмет', tx, ty + 3*chh + 42);
+
+    var v = TAB[cf][cd];
+    I('invC').textContent = v.toFixed(3);
+    I('invL').textContent = gr(REF[cf].length);
+    if(v >= 0.9)
+      verd('invVd','t-ok','ЗБІГ',
+        'Ознака «' + FEAT[cf] + '» пережила «' + DIST[cd].n + '»: ' + v.toFixed(3) +
+        '. Тепер перемкни спотворення, не міняючи ознаки, — і подивись на сусідні клітинки рядка.');
+    else if(v >= 0.7)
+      verd('invVd','t-mid','ЧАСТКОВО',
+        'Близькість ' + v.toFixed(3) + ': кадр упізнано, але вже не впевнено. '+
+        'Такий рівень ще годиться для пошуку кандидатів і вже не годиться для рішення.');
+    else
+      verd('invVd','t-no','НЕ ВПІЗНАЛА',
+        'Близькість ' + v.toFixed(3) + ' — той самий предмет ознака вважає чужим. '+
+        'І це не поломка: автор цієї ознаки саме те, що тут змінилось, вирішив не зберігати.');
+  }
+  segment('invD', function(i){ cd = i; draw(); });
+  segment('invF', function(i){ cf = i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 7 · тест співвідношення Лоу ═════ */
+(function(){
+  var cv = I('cMat'); if(!cv) return;
+  var ANG = 30, MUL = 0.85, NOISE = 4, RAD = 11;
+  var VIEW = distort(BASE, ANG, 1, MUL, NOISE);
+  var pA = pickCorners(harris(BASE), 60, 7, 12);
+  var pB = pickCorners(harris(VIEW), 60, 7, 12);
+  var dA = describeAll(BASE, pA, RAD), dB = describeAll(VIEW, pB, RAD);
+  function proj(p){
+    var t = ANG*Math.PI/180, c = Math.cos(t), s = Math.sin(t);
+    var dx = p.x - SW/2, dy = p.y - SH/2;
+    return {x: SW/2 + dx*c - dy*s, y: SH/2 + dx*s + dy*c};
+  }
+  function draw(){
+    var g = dpr(cv), W = LW(cv), ratio = +I('matR').value, k;
+    I('matRv').textContent = ratio.toFixed(2);
+    var m = matchLowe(dA, dB, ratio), ok = 0;
+    var S2 = 1.55, iw = SW*S2, ih = SH*S2, y0 = 40;
+    var ax = 30, bx = W - iw - 30;
+    capt(g, 'знімок 1', ax, y0 - 12);
+    drawImg(g, BASE, ax, y0, S2); frame(g, ax, y0, iw, ih, css('--hair'));
+    /* грабля №12: підпис не переноситься й вилітав за правий край канви */
+    g.fillStyle = css('--soft'); g.font = mono(11, false); g.textAlign = 'right';
+    g.fillText('знімок 2: поворот 30°, темніше, шум', bx + iw, y0 - 12);
+    g.textAlign = 'left';
+    drawImg(g, VIEW, bx, y0, S2); frame(g, bx, y0, iw, ih, css('--hair'));
+
+    g.globalAlpha = 0.85;
+    for(k = 0; k < m.length; k++){
+      var a = pA[m[k].a], b = pB[m[k].b], q = proj(a);
+      var dx = q.x - b.x, dy = q.y - b.y, good = (dx*dx + dy*dy) < 36;
+      if(good) ok++;
+      g.strokeStyle = good ? css('--teal') : css('--rose');
+      g.lineWidth = good ? 1.1 : 1.6;
+      g.beginPath();
+      g.moveTo(ax + (a.x + 0.5)*S2, y0 + (a.y + 0.5)*S2);
+      g.lineTo(bx + (b.x + 0.5)*S2, y0 + (b.y + 0.5)*S2);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    for(k = 0; k < pA.length; k++){
+      g.fillStyle = css('--amber');
+      g.beginPath(); g.arc(ax + (pA[k].x + 0.5)*S2, y0 + (pA[k].y + 0.5)*S2, 2, 0, 6.284); g.fill();
+    }
+    for(k = 0; k < pB.length; k++){
+      g.fillStyle = css('--amber');
+      g.beginPath(); g.arc(bx + (pB[k].x + 0.5)*S2, y0 + (pB[k].y + 0.5)*S2, 2, 0, 6.284); g.fill();
+    }
+    g.fillStyle = css('--soft'); g.font = mono(11, false); g.textAlign = 'center';
+    g.fillText('бурштинові точки — кути Гарріса, по 60 на знімок;', W/2, y0 + ih + 24);
+    g.fillText('бірюзові лінії — правильні пари, рожеві — хибні', W/2, y0 + ih + 42);
+    g.textAlign = 'left';
+
+    var share = m.length ? ok/m.length*100 : 0;
+    I('matN').textContent = m.length;
+    I('matOk').textContent = ok;
+    I('matP').textContent = m.length ? share.toFixed(0) + ' %' : '—';
+    if(m.length === 0)
+      verd('matVd','t-no','ЖОДНОЇ ПАРИ','Поріг такий суворий, що не пройшла жодна пара. Повнота нульова.');
+    else if(share >= 95)
+      verd('matVd','t-ok','ЧИСТО, АЛЕ МАЛО',
+        m.length + ' ' + пар(m.length) + ', і всі до єдиної правильні. Поріг ' + ratio.toFixed(2) +
+        ' пропускає лише точки, у яких другий кандидат далеко.');
+    else if(share >= 75)
+      verd('matVd','t-ok','РОБОЧИЙ РЕЖИМ',
+        m.length + ' ' + пар(m.length) + ', правильних ' + ok + ' — ' + share.toFixed(0) +
+        ' %. Класичний поріг Лоу 0.75 стоїть саме тут: пар уже достатньо, сміття ще мало.');
+    else if(share >= 50)
+      verd('matVd','t-mid','СМІТТЯ ВЖЕ ПОМІТНО',
+        'Пар ' + m.length + ', правильних ' + ok + ' — ' + share.toFixed(0) +
+        ' %. Пар побільшало, але кожна третя вигадана: далі поріг тільки шкодить.');
+    else
+      verd('matVd','t-no','ХИБНИХ ПАР БІЛЬШЕ, НІЖ ПРАВИЛЬНИХ',
+        'Пар ' + m.length + ', правильних лише ' + ok + ' (' + share.toFixed(0) +
+        ' %). При порозі 1.00 тест вимкнено зовсім: кожна точка дістає найближчого сусіда, ' +
+        'навіть якщо на другому знімку її немає.');
+  }
+  on('matR','input',draw); draw();
+  window.addEventListener('resize', draw);
+})();
+
+})();
+</script>
+</body>
+</html>

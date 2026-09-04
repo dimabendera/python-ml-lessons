@@ -1,0 +1,2064 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Навчання CNN: нормалізація, батчнорм, швидкість і криві діагностики</title>
+<meta name="description" content="Що вмикати й за чим стежити, навчаючи згорткову мережу: нормалізація входу, ініціалізація Хе, батч-нормалізація, швидкість навчання та її розклад, розмір батча, регуляризація. Заміряно: масштаб входу зсуває вікно робочих швидкостей на порядок; батчнорм дає 0.90 за 2 епохи замість 7 і піднімає стелю швидкості вдвічі; дропаут у згортках зашкодив. Чотири типові криві навчання й діагноз за кожною.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap, pre.arch{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.hot td{background:var(--rose-w)}
+.nums tr.good td{background:var(--teal-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* блок коду в тексті: моноширинний, зі збереженням відступів */
+pre.arch{font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.6;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 18px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow)}
+pre.arch b{color:var(--rose); font-weight:700}
+pre.arch i{color:var(--soft); font-style:normal}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 2 · Тема 11</p>
+    <h1>Навчання CNN</h1>
+    <p class="stand">Мережа зібрана, дані готові. Лишилось найважче: зрозуміти, що
+      ввімкнути, за чим стежити — і як за двома кривими побачити, що саме пішло не так.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Досі воно просто працювало</a></li>
+        <li><a href="#s2">Нормалізація входу</a></li>
+        <li><a href="#s3">Ініціалізація</a></li>
+        <li><a href="#s4">Батчнорм</a></li>
+        <li><a href="#s5">Швидкість навчання</a></li>
+        <li><a href="#s6">Розклад швидкості</a></li>
+        <li><a href="#s7">Розмір батча</a></li>
+        <li><a href="#s8">Регуляризація в зорі</a></li>
+        <li><a href="#s9">Криві як діагностика</a></li>
+        <li><a href="#s10">Помилки без повідомлення</a></li>
+        <li><a href="#s11">Відтворюваність</a></li>
+        <li><a href="#s12">Підсумок</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../10-augmentation/lecture.html">← 10. Аугментація даних</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../12-transfer-learning/lecture.html">12. Перенос навчання →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Мережу ми зібрали в <a href="../09-cnn-complete/lecture.html">темі 09</a>,
+дані підготували в <a href="../10-augmentation/lecture.html">темі 10</a>. Здавалось би,
+лишилось написати цикл і чекати. Але саме тут курс уперше стикається з тим, що
+<strong>той самий код на тих самих даних дає точність 1.000 або 0.167 залежно від
+дрібниць</strong>, які ніде не викликають помилки.</p>
+
+<p>Ця тема — про ці дрібниці. Не про градієнтний спуск і не про те, як працює
+<code>Adam</code>, а про специфічне саме для згорткових мереж: у якому масштабі подавати
+пікселі, навіщо між згорткою й <code>ReLU</code> зʼявився ще один шар, чому одне й те
+саме число швидкості навчання буває і замалим, і завеликим — і як прочитати діагноз із
+двох кривих.</p>
+
+<div class="note"><b>Що тут не повторюється.</b> Градієнтний спуск,
+<a href="../../02-ai-ml/34-backpropagation/lecture.html">зворотне поширення</a>,
+<a href="../../02-ai-ml/36-optimizers/lecture.html">оптимізатори</a> та
+<a href="../../02-ai-ml/37-nn-regularization/lecture.html">регуляризацію нейромереж</a>
+розібрано в курсі машинного навчання — тут ми на них спираємось.</div>
+
+<div class="note"><b>Наскрізний приклад теми.</b> Той самий, що в усьому блоці 2: фігури
+28×28, шість класів (коло, квадрат, ромб, кільце, хрест, трикутник), намальовані
+формулами. Мережа теж та сама — три блоки <code>Conv → ReLU → Pool</code> і голова з двох
+повнозвʼязних шарів, 24 774 параметри. Усі числа нижче заміряні на ній.</div>
+
+<h2 id="s1"><span class="num">01 / Зведення</span>Досі воно просто працювало</h2>
+
+<p>Скажімо чесно: у темах 06-09 навчання щоразу спрацьовувало з першого разу — і не
+тому, що ми все робили правильно, а тому, що задача крихітна: шість намальованих
+формулами фігур, майже без шуму, мережа на двадцять чотири тисячі параметрів. На
+справжніх даних так не буває. Ось приклад — та сама мережа, ті самі дані, змінене
+<strong>одне</strong> число:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>швидкість навчання</th><th>точність на перевірці</th><th>що видно на кривій</th></tr></thead>
+  <tbody>
+    <tr><td>0.0003</td><td>0.273</td><td>втрата стоїть на 1.79 всі вісім епох</td></tr>
+    <tr class="good"><td>0.03</td><td>0.917</td><td>втрата спадає до 0.04</td></tr>
+    <tr class="hot"><td>1.0</td><td>0.167</td><td>втрата злітає до 10<span class="sup">32</span></td></tr>
+  </tbody>
+</table></div>
+
+<p>0.167 — це рівно 1/6, рівень вгадування на шести класах: мережа не навчилась нічого.
+І — важливо — <strong>жоден із трьох прогонів не викинув помилки</strong>. Тому тема
+відповідає на два питання: <strong>що ввімкнути</strong>, щоб такі провали стали
+рідкістю, і <strong>як їх розпізнати</strong>, коли вони все одно трапляться.</p>
+
+<h2 id="s2"><span class="num">02 / Вхід</span>Нормалізація входу</h2>
+
+<p>Зображення з файлу — це цілі числа від 0 до 255. Ваги свіжої мережі — це числа
+порядку сотих. Помнож одне на друге, і побачиш, у чому проблема.</p>
+
+<p>Візьмемо нашу мережу одразу після створення й подивимось на два числа: типовий
+розмір ваги першої згортки й розмах того, що ця згортка видає.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>вхід</th><th>середнє</th><th>відхилення</th><th>відгук згортки: розмах</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>0 … 255</td><td>54.97</td><td>93.44</td><td>−364.5 … 282.2</td></tr>
+    <tr><td>0 … 1</td><td>0.216</td><td>0.366</td><td>−1.14 … 1.15</td></tr>
+    <tr class="good"><td>нормалізований</td><td>0.000</td><td>1.000</td><td>−2.81 … 2.34</td></tr>
+  </tbody>
+</table></div>
+
+<p>Ваги в усіх трьох рядках ті самі — мережа одна, зерно одне: стандартне відхилення
+<code>0.190</code>, межі ±0.33. А розмах відгуку на сирому вході більший, ніж на
+нормалізованому, у <strong>104 рази</strong> (66.6 проти 0.64 за стандартним
+відхиленням). Далі відгук іде в градієнт, градієнт множиться на швидкість навчання — і
+виходить, що <strong>масштаб даних тихо помножив твою швидкість навчання</strong> на
+невідоме число.</p>
+
+<h3>Що саме ламається</h3>
+
+<p>Найпоширеніше пояснення — «без нормалізації мережа не навчиться» — неправдиве, і
+легко спростовується заміром: три масштаби входу × чотири швидкості навчання, по шість
+епох на 360 прикладах, однакове зерно.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Масштаб входу зсуває вікно робочих швидкостей</p>
+  <p class="fig-sub">Ліворуч — розподіл значень, які приходять у мережу: форма та сама, змінюється лише шкала осі й місце нуля. Праворуч — крива втрат. Перемкни масштаб і пройди повзунком усі чотири швидкості: робоче значення щоразу інше.</p>
+  <div class="panel">
+    <div><canvas id="cNorm" width="940" height="380" aria-label="Гістограма значень входу для трьох масштабів і крива втрат по епохах для обраної швидкості навчання"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">масштаб входу</span>
+        <div class="seg" id="normSeg">
+          <button type="button" data-i="0" aria-pressed="false">0…255</button>
+          <button type="button" data-i="1" aria-pressed="false">0…1</button>
+          <button type="button" data-i="2" aria-pressed="true">норм.</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="normLr">швидкість навчання <output id="normLrv">0.03</output></label>
+        <input type="range" id="normLr" min="0" max="3" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>середнє входу</b><i id="normMean">—</i></div>
+        <div class="cellv"><b>розмах</b><i id="normRange">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>точність на перевірці</b><i id="normAcc">—</i></div>
+      </div>
+      <div class="verdict" id="normVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно: SGD із моментом 0.9, 6 епох, 360 прикладів, шість класів.</b>
+    Рівень вгадування — 0.167. Сирий вхід <code>0…255</code> найкраще працює при швидкості
+    0.003, нормалізований — при 0.03, а <code>0…1</code> не дійшов до пристойної точності
+    в жодному з чотирьох значень. Одне й те саме число буває і замалим, і завеликим —
+    залежно лише від того, як ти поділив пікселі.</figcaption>
+</figure>
+
+<p>Результат несподіваний двічі. По-перше, <strong>сирий вхід <code>0…255</code> чудово
+навчився</strong> — 1.000 при швидкості 0.003; твердження «без нормалізації нічого не
+вийде» замір не підтверджує. По-друге, найгіршим виявився нібито безпечний
+<code>0…1</code>: жодне з чотирьох значень не дало навіть 0.6.</p>
+
+<p>Читай таблицю не по рядках, а по <strong>вікнах</strong>: у кожного масштабу свій
+проміжок робочих швидкостей, і проміжки майже не перекриваються. Візьми звичну для
+нормалізованих даних 0.03 і подай сирі пікселі — точність упаде до 0.167. Візьми 0.003,
+ідеальну для сирих, і подай нормалізовані — мережа доповзе лише до 0.343.</p>
+
+<p>Ось точне формулювання, заради якого й потрібен цей розділ: <strong>нормалізація не
+робить навчання можливим — вона робить швидкість навчання переносною</strong>. Число з
+чужого репозиторію спрацює й у тебе, якщо ви обидва подаєте дані з нульовим середнім і
+одиничним відхиленням. Інакше ви говорите різними мовами.</p>
+
+<div class="note"><b>Чому саме зображення.</b> У табличних даних колонки мають різний
+масштаб, і ти нормалізуєш їх окремо — це вже було в курсі ML. У зображень масштаб
+однаковий у всіх пікселів, тому й здається, що нормалізувати нічого. Проблема тут не в
+різниці між пікселями, а в <strong>спільному зсуві всіх 784 чисел</strong>: вони всі
+невідʼємні й усі великі, тому градієнти всіх ваг одного нейрона мають однаковий знак і
+крокують разом.</div>
+
+<h3>Два числа й одне правило</h3>
+
+<p>Нормалізація зображення — це два кроки на канал: відняти середнє, поділити на
+стандартне відхилення.</p>
+
+<div class="eq">x′ = ( x − <span class="raw">μ</span><span class="sub">канал</span> ) / <span class="raw">σ</span><span class="sub">канал</span></div>
+
+<p>Тут <span class="raw">x</span> — значення пікселя,
+<span class="raw">μ</span><span class="sub">канал</span> — середнє всіх пікселів цього
+каналу по всіх зображеннях, <span class="raw">σ</span><span class="sub">канал</span> —
+їхнє типове відхилення від цього середнього. Після дії середнє стає нулем, а відхилення —
+одиницею.</p>
+
+<p>Для кольорового зображення чисел буде по три — середнє червоного, зеленого й синього
+окремо. Усереднення йде по прикладах, висоті й ширині, <strong>але не по каналах</strong>:</p>
+
+<pre class="arch">channel_mean = train_images.mean(dim=(<b>0, 2, 3</b>), keepdim=True)   <i># приклади, висота, ширина</i>
+channel_std  = train_images.std(dim=(<b>0, 2, 3</b>), keepdim=True)</pre>
+
+<p>На нашому датасеті вийшло <code>μ = 54.97</code> і <code>σ = 93.44</code>. Числа
+конкретні, і саме вони мусять поїхати разом із моделлю.</p>
+
+<div class="note warn"><b>Правило, яке порушують найчастіше.</b> Обидва числа рахуються
+<strong>по навчальній вибірці</strong> — і потім тими самими застосовуються до
+перевірочної та до всіх майбутніх даних. Порахувати середнє «по всьому датасету» — це
+дати моделі підказку про розподіл перевірочних даних. Помилка тиха: вона не ламає
+навчання, а завищує оцінку.</div>
+
+<p>Наслідок, який кусає вже після навчання: <strong>ці два числа — частина
+моделі</strong>. Зберіг ваги, а <code>μ</code> і <code>σ</code> лишились у зошиті — модель
+у продакшені працюватиме погано й без жодного повідомлення про помилку. Зберігай їх
+поруч із вагами.</p>
+
+<h2 id="s3"><span class="num">03 / Старт</span>Ініціалізація</h2>
+
+<p>Ваги теж не беруться абиякими — це вже розібрано в темі
+<a href="../../02-ai-ml/35-activations-init/lecture.html">про активації й ініціалізацію</a>.
+Тут — два факти, які стосуються згорток.</p>
+
+<p><strong>Перший: усі ваги нулями — це не «нейтральний старт», а поломка.</strong> Якщо
+всі ядра однієї згортки однакові, то й відгуки однакові, і градієнти однакові — і вони
+лишаться однаковими назавжди. Вісім каналів першої згортки будуть вісьмома копіями
+одного. Випадковість початкових ваг тут не прикраса, а єдине, що розрізняє нейрони.</p>
+
+<p><strong>Другий: для <code>ReLU</code> беруть ініціалізацію Хе (He).</strong> Розмах
+початкових ваг обирають так, щоб сигнал не згасав і не вибухав, проходячи крізь десяток
+шарів. <code>ReLU</code> обнуляє половину значень, тому дисперсію ваг беруть удвічі
+більшою, ніж дала б звична ініціалізація Ксавʼє (Xavier).</p>
+
+<div class="eq"><span class="raw">σ</span><span class="sup">2</span> = 2 / n<span class="sub">вх</span>,&nbsp;&nbsp; де n<span class="sub">вх</span> = C<span class="sub">вх</span> × k × k</div>
+
+<p>Для згортки <span class="raw">n</span><span class="sub">вх</span> — не кількість
+вхідних каналів, а кількість чисел, які ядро перемножує на одну вихідну клітинку: канали
+× площа ядра. Для другої згортки нашої мережі це 8 × 3 × 3 = 72, тобто
+<span class="raw">σ</span> ≈ 0.167.</p>
+
+<div class="note"><b>Хороша новина.</b> <code>nn.Conv2d</code> у PyTorch уже
+ініціалізується за Хе (варіант <code>kaiming_uniform</code>) — робити це окремо не треба.
+Знати треба: зустрівши чужий код із <code>nn.init.normal_(w, std=0.01)</code> для глибокої
+мережі з <code>ReLU</code>, ти зрозумієш, чому вона не вчиться.</div>
+
+<h2 id="s4"><span class="num">04 / Батчнорм</span>Батчнорм</h2>
+
+<p>Нормалізація входу привела до ладу числа на вході. Але після першої ж згортки вони
+знову розповзаються: розподіл усередині мережі залежить від ваг, а ваги міняються на
+кожному кроці. <strong>Батч-нормалізація</strong> (batch normalization, батчнорм) — шар,
+який робить із проміжними числами те саме, що ми зробили з входом, і робить це на
+кожному кроці. Формула та сама, з двома додатковими вагами:</p>
+
+<div class="eq">y = <span class="raw">γ</span> · ( x − <span class="raw">μ</span><span class="sub">батч</span> ) / <span class="raw">σ</span><span class="sub">батч</span> + <span class="raw">β</span></div>
+
+<p>Спершу число приводять до нульового середнього й одиничного відхилення — це
+<span class="raw">μ</span><span class="sub">батч</span> і
+<span class="raw">σ</span><span class="sub">батч</span> по поточному батчу. Потім
+результат множать на <span class="raw">γ</span> і додають <span class="raw">β</span> —
+дві <em>вивчувані</em> ваги на канал. Вони дають мережі змогу при потребі скасувати
+нормалізацію, якщо шару вигідніший інший масштаб.</p>
+
+<h3>Чому в CNN нормалізують по каналу, а не по елементу</h3>
+
+<p>Це головна відмінність батчнорму в згортковій мережі. Візьмемо карту ознак після нашої
+першої згортки: 8 каналів по 28×28, батч із 32 зображень — разом 200 704 числа. Скільки
+пар (<span class="raw">μ</span>, <span class="raw">σ</span>) рахувати?</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Варіант, який здається природним</span>
+    <p>Своя пара чисел на кожну клітинку карти: для позиції (0, 0), для (0, 1) і так
+    далі — вийде 8 × 28 × 28 = <b>6 272</b> пари. І це неправильно. Канал згортки — це
+    <em>одне ядро, застосоване в кожній точці</em>, тому відгук у (0, 0) і відгук у
+    (14, 14) — те саме вимірювання тієї самої прикмети, просто в іншому місці.</p>
+  </div>
+  <div class="step"><span class="lbl">Як роблять насправді</span>
+    <p>Пара чисел на <strong>канал</strong>: усереднюємо по батчу, по висоті й по ширині
+    разом. Вийде <b>8</b> пар — по одній на вивчену прикмету.</p>
+    <div class="eq left">mean(dim=(0, 2, 3))   <span class="raw">→</span>   8 чисел замість 6 272</div>
+    <p>Кожне середнє порахуване по 25 088 значеннях, тому воно стійке. У варіанті «по
+    елементу» кожне спиралось би на 32 числа — і шуміло б.</p>
+  </div>
+</div>
+
+<p>Саме тому шар зветься <code>nn.BatchNorm2d(8)</code>: єдиний його аргумент — кількість
+каналів, а параметрів у ньому рівно <code>2 × 8 = 16</code>. У всій нашій мережі батчнорм
+додає 112 ваг до 24 774 — менш ніж пів відсотка.</p>
+
+<h3>Що це дає: замір</h3>
+
+<p>Ставимо <code>nn.BatchNorm2d</code> між згорткою й <code>ReLU</code> — повний сучасний
+блок виглядає як <code>Conv → BatchNorm → ReLU → Pool</code> — і порівнюємо з тією самою
+мережею без нього. Однакове зерно, 8 епох, 360 прикладів, SGD із моментом 0.9.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>швидкість 0.02</th><th>епох до 0.90</th><th>точність наприкінці</th></tr></thead>
+  <tbody>
+    <tr><td>без батчнорму</td><td>7</td><td>0.983</td></tr>
+    <tr class="good"><td>з батчнормом</td><td><b>2</b></td><td>1.000</td></tr>
+  </tbody>
+</table></div>
+
+<p>Це і є перший результат: <strong>з батчнормом мережа дійшла до 0.90 за дві епохи
+замість семи</strong>. Не «трохи швидше» — у три з половиною рази менше роботи до того
+самого результату.</p>
+
+<h3>Головне практичне: наскільки більший крок можна взяти</h3>
+
+<p>Але не заради прискорення батчнорм ставлять у кожну сучасну мережу, а заради ось
+цього: він піднімає стелю швидкості навчання. Ту саму пару мереж проганяємо по пʼяти
+значеннях.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>швидкість</th><th>без батчнорму</th><th>з батчнормом</th></tr></thead>
+  <tbody>
+    <tr><td>0.05</td><td>0.960</td><td>0.980</td></tr>
+    <tr><td>0.10</td><td>0.913</td><td>0.993</td></tr>
+    <tr class="good"><td>0.15</td><td><b>0.167</b></td><td><b>0.997</b></td></tr>
+    <tr class="good"><td>0.20</td><td>0.167</td><td>0.937</td></tr>
+    <tr class="hot"><td>0.30</td><td>0.167</td><td>0.167</td></tr>
+  </tbody>
+</table></div>
+
+<p>Без батчнорму навчання розвалюється між 0.10 і 0.15; з батчнормом — між 0.20 і 0.30.
+<strong>Стеля піднялась приблизно вдвічі.</strong> Найчіткіше це видно в рядку 0.15: те
+саме число, той самий датасет, те саме зерно — і 0.167 проти 0.997.</p>
+
+<p>Є й другий, менш помітний ефект. При швидкості 0.1 мережа без батчнорму формально теж
+дійшла до 0.90 — але її точність по епохах
+<code>0.50 0.63 0.51 0.91 0.69 0.74 0.74 0.91</code> не вчиться, а стрибає. З батчнормом
+на тій самій швидкості після четвертої епохи крива стає монотонною.</p>
+
+<div class="note"><b>А чому він узагалі допомагає — питання відкрите.</b> Оригінальна
+стаття 2015 року пояснювала ефект «внутрішнім зсувом розподілів» (internal covariate
+shift), і це пояснення розійшлося по всіх підручниках. У 2018-му його перевірили
+експериментом і <strong>не підтвердили</strong>: зсув розподілів можна навмисно
+відновити, і батчнорм усе одно допомагає. Чинне пояснення інше — батчнорм робить
+поверхню втрат гладшою, тому більший крок перестає бути небезпечним. Саме це ми й
+поміряли таблицею вище: не «швидше», а «вища стеля».</div>
+
+<div class="note warn"><b>Чесно про стелю.</b> Стеля піднялась, але не зникла: при 0.30
+батчнорм <strong>не врятував</strong> — 0.167, той самий рівень вгадування, що й без
+нього. Твердження «з батчнормом можна брати будь-яку швидкість» неправдиве, і
+спростовується одним прогоном. Правильне формулювання — «можна брати приблизно вдвічі
+більшу, і це варто перевірити на своїх даних».</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Батчнорм і стеля швидкості навчання</p>
+  <p class="fig-sub">Дві криві точності на одній сітці: та сама мережа з батчнормом і без. Пересунь повзунок швидкості й подивись, де кожна з них ламається.</p>
+  <div class="panel">
+    <div><canvas id="cBn" width="940" height="380" aria-label="Дві криві точності по епохах: мережа з батчнормом і без нього при обраній швидкості навчання"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="bnLr">швидкість навчання <output id="bnLrv">0.02</output></label>
+        <input type="range" id="bnLr" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>без батчнорму</b><i id="bnPlain">—</i></div>
+        <div class="cellv"><b>з батчнормом</b><i id="bnWith">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>епох до 0.90 без</b><i id="bnEpPlain">—</i></div>
+        <div class="cellv"><b>епох до 0.90 з</b><i id="bnEpWith">—</i></div>
+      </div>
+      <div class="verdict" id="bnVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно: 8 епох, 360 прикладів, SGD із моментом 0.9, нормалізований
+    вхід, зерно 0.</b> Пунктир — рівень вгадування 0.167. При 0.02 виграш батчнорму —
+    у швидкості (2 епохи проти 7). При 0.15 — уже не у швидкості, а в самому факті: без
+    нього мережа не вчиться зовсім.</figcaption>
+</figure>
+
+<h3>Пастка: у режимі перевірки батчнорм працює інакше</h3>
+
+<p>Коли мережа рахує відповідь для нового зображення, батча немає — є одна картинка. По
+чому тоді рахувати <span class="raw">μ</span><span class="sub">батч</span> і
+<span class="raw">σ</span><span class="sub">батч</span>? Ні по чому. Тому під час навчання
+батчнорм веде <strong>окремий бухгалтерський запис</strong> — біжучі середнє й дисперсію
+по всіх батчах, які бачив, — а в режимі перевірки бере їх замість статистик поточного
+батча. Це принципова різниця: <em>один шар рахує дві різні формули залежно від
+режиму</em>.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Режим</th><th>Що бере батчнорм</th><th>Наслідок</th></tr></thead>
+  <tbody>
+    <tr><td>навчання (<code>model.train()</code>)</td><td>середнє й відхилення поточного батча</td><td>відповідь на одне зображення залежить від того, які зображення лежать поруч у батчі</td></tr>
+    <tr><td>перевірка (<code>model.eval()</code>)</td><td>накопичені біжучі середнє й відхилення</td><td>відповідь залежить лише від самого зображення</td></tr>
+  </tbody>
+</table></div>
+
+<p>А тепер найважливіше: забути <code>model.eval()</code> — не помилка часу виконання.
+Мережа не впаде, не попередить і чесно надрукує точність. Просто не ту.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Забутий <code>model.eval()</code></p>
+  <p class="fig-sub">Одна навчена мережа з батчнормом, один і той самий перевірочний набір із 300 зображень. Міняється лише розмір батча, яким його прогнали — і те, чи згадали про режим.</p>
+  <div class="panel">
+    <div><canvas id="cEval" width="940" height="360" aria-label="Стовпчики точності в режимі перевірки й у режимі навчання для чотирьох розмірів батча"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">батч на перевірці</span>
+        <div class="seg wrap" id="evalSeg">
+          <button type="button" data-i="0" aria-pressed="true">1</button>
+          <button type="button" data-i="1" aria-pressed="false">4</button>
+          <button type="button" data-i="2" aria-pressed="false">32</button>
+          <button type="button" data-i="3" aria-pressed="false">300</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>з eval()</b><i id="evOk">—</i></div>
+        <div class="cellv"><b>без eval()</b><i id="evBad">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>ціна помилки</b><i id="evGap">—</i></div>
+      </div>
+      <div class="verdict" id="evVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно на мережі з батчнормом, навченій 8 епох при швидкості 0.05.</b>
+    Та сама мережа без батчнорму й без дропауту дає 0.960 в обох режимах — рівно нуль
+    різниці. Помилка існує тільки там, де є шар, який поводиться в режимах по-різному.</figcaption>
+</figure>
+
+<p>Спершу зверни увагу на бірюзові стовпчики: з <code>model.eval()</code> точність
+<strong>однакова при будь-якому батчі</strong> — рівно 0.980. Це і є сенс режиму
+перевірки: відповідь на зображення не залежить від того, які картинки лежать поруч.</p>
+
+<p>А тепер рожеві. При батчі 300 забутий <code>eval()</code> дає навіть трохи більше —
+0.990, різниця в одне відсоткове очко: помилки не видно взагалі. При батчі 1 та сама
+помилка коштує <strong>13 відсоткових пунктів</strong> — бо батчнорм у режимі навчання
+нормалізує кожне зображення саме собою, і після цього від нього мало що лишається.</p>
+
+<p>Висновок жорсткий: <strong>помилка, якої не видно на великому батчі, зʼявляється саме
+в продакшені</strong>, де зображення приходять по одному. Локально все було добре, на
+сервері точність упала — і жоден лог нічого не показав.</p>
+
+<div class="note"><b>Те саме з дропаутом, тільки тихіше.</b> Забувши <code>eval()</code>
+у мережі з дропаутом, ти отримаєш точність, яка <em>міняється від виміру до виміру</em>:
+пʼять прогонів на тих самих даних дали 0.973, 0.977, 0.983, 0.983, 0.973 замість
+стабільної 1.000. Різниця маленька, зате відтворюваність зникає зовсім.</div>
+
+<h2 id="s5"><span class="num">05 / Крок</span>Швидкість навчання</h2>
+
+<p>Швидкість навчання (learning rate) — множник, на який домножується градієнт перед
+зміною ваги. У згорткових мережах вона важить <em>більше за все інше разом узяте</em>:
+жодне інше число не перетворює 1.000 на 0.167 такою легкою рукою. Замір: та сама мережа
+без батчнорму, 8 епох, SGD із моментом 0.9, міняється лише швидкість.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>швидкість</th><th>втрата, епоха 1</th><th>втрата, епоха 8</th><th>точність</th><th>режим</th></tr></thead>
+  <tbody>
+    <tr><td>0.0003</td><td>1.79</td><td>1.79</td><td>0.273</td><td>повзе</td></tr>
+    <tr><td>0.003</td><td>1.79</td><td>1.76</td><td>0.320</td><td>повзе</td></tr>
+    <tr class="good"><td>0.03</td><td>1.79</td><td>0.14</td><td><b>0.917</b></td><td>збігається</td></tr>
+    <tr class="hot"><td>0.3</td><td>1.80</td><td>1.81</td><td>0.167</td><td>розходиться</td></tr>
+    <tr class="hot"><td>1.0</td><td>1.86</td><td>1.85</td><td>0.167</td><td>вибухає</td></tr>
+  </tbody>
+</table></div>
+
+<p>Три режими видно з першої колонки чисел, і кожен має свій характерний слід.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Повзе</span>
+    <p>Втрата спадає так повільно, що на графіку виглядає прямою: при 0.0003 вона за
+    вісім епох не зрушила з 1.79 у третьому знаку. <b>Що робити:</b> збільшити швидкість
+    у 3-10 разів. Не в 1.5 — на цій шкалі півтора рази не видно.</p>
+  </div>
+  <div class="step"><span class="lbl">Збігається</span>
+    <p>Втрата спадає впевнено: 1.79 → 1.77 → 1.68 → 1.11 → 0.89 → 0.22 → 0.04. Дрібні
+    коливання наприкінці (0.04 → 0.14) — норма, це шум батчів.</p>
+  </div>
+  <div class="step"><span class="lbl">Розходиться</span>
+    <p>Найпідступніший режим, бо виглядає майже як «повзе». При 0.3 втрата теж стоїть
+    близько 1.8 — але вона там не <em>ще</em>, а <em>вже</em>: перші кроки викинули ваги
+    так далеко, що мережа видає всім класам однакову відповідь. Число
+    <code>ln 6 = 1.792</code> — це рівно те, що дає рівномірний розподіл на шести класах.</p>
+    <p><b>Як відрізнити від «повзе»:</b> при замалій швидкості втрата спадає нехай і на
+    соті. При завеликій вона спершу <strong>підстрибує вгору</strong> — при 0.3 з 1.80 до
+    2.03, — а вже потім осідає на плато.</p>
+  </div>
+  <div class="step"><span class="lbl">Вибухає</span>
+    <p>Крайній випадок того самого: при 1.0 середня втрата за другу епоху дорівнює
+    <b>1.1 × 10<span class="sup">32</span></b>. Далі числа переповнюються — тут уже нема
+    чого діагностувати.</p>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Три режими на одній кривій</p>
+  <p class="fig-sub">Крива втрат по епохах для обраної швидкості навчання. Шкала втрат логарифмічна — інакше вибух при 1.0 розчавив би решту кривих у пряму лінію.</p>
+  <div class="panel">
+    <div><canvas id="cLr" width="940" height="380" aria-label="Крива втрат по епохах у логарифмічній шкалі для обраної швидкості навчання"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="lrPick">швидкість <output id="lrPickv">0.03</output></label>
+        <input type="range" id="lrPick" min="0" max="4" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label class="chk" for="lrAll"><input type="checkbox" id="lrAll"> показати всі пʼять разом</label>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>втрата на кінець</b><i id="lrLoss">—</i></div>
+        <div class="cellv"><b>точність</b><i id="lrAcc">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>режим</b><i id="lrMode" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="lrVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно: 8 епох, 360 прикладів, SGD із моментом 0.9, нормалізований
+    вхід.</b> Сіра пунктирна лінія — рівень <code>ln 6 = 1.792</code>: стільки коштує
+    відповідь «не знаю, всі класи однаково ймовірні». Крива, що лежить на ній, означає
+    мертву мережу незалежно від причини.</figcaption>
+</figure>
+
+<div class="note"><b>Практичне правило пошуку.</b> Шукай швидкість не додаванням, а
+множенням: 0.0001, 0.001, 0.01, 0.1. Знайшовши те значення, при якому мережа ще
+вчиться, а наступне вже ламається, візьми <strong>утричі менше</strong> за нього — і матимеш
+запас на те, що на повних даних поведінка буде трохи іншою.</div>
+
+<h2 id="s6"><span class="num">06 / Розклад</span>Розклад швидкості</h2>
+
+<p>Одне число на все навчання — не обовʼязково: швидкість можна змінювати по ходу. На
+початку ваги випадкові, і треба великими кроками дійти до потрібної області; наприкінці
+мережа вже майже там, і великий крок лише перестрибує мінімум. Спершу швидко, потім
+повільно.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Розклад</th><th>Як міняється швидкість</th><th>Коли брати</th></tr></thead>
+  <tbody>
+    <tr><td>Стала</td><td>ніяк</td><td>коли треба просто перевірити, що мережа вчиться</td></tr>
+    <tr><td>Сходинковий (step)</td><td>ділиться на 10 у заздалегідь названі моменти</td><td>класика; вимагає вгадати, коли саме ділити</td></tr>
+    <tr><td>Косинусний (cosine)</td><td>плавно спадає до нуля за чвертю косинусоїди</td><td>замовчування для більшості сучасних робіт: нічого не треба вгадувати, крім довжини навчання</td></tr>
+    <tr><td>З розігрівом (warmup)</td><td>перші кілька відсотків кроків швидкість росте від нуля</td><td>коли початкова швидкість велика — розігрів не дає першим крокам зруйнувати ваги</td></tr>
+  </tbody>
+</table></div>
+
+<p>Замір: 10 епох, початкова швидкість <strong>0.1</strong> у всіх чотирьох випадках.
+Число обране навмисно на межі — саме там розклад і має значення.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>розклад</th><th>точність наприкінці</th><th>найкраща за навчання</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>стала</td><td>0.167</td><td>0.913</td></tr>
+    <tr><td>сходинки</td><td>0.993</td><td>0.993</td></tr>
+    <tr class="good"><td>косинус</td><td><b>1.000</b></td><td>1.000</td></tr>
+    <tr class="good"><td>розігрів + косинус</td><td><b>1.000</b></td><td>1.000</td></tr>
+  </tbody>
+</table></div>
+
+<p>Перший рядок — найцікавіший. Зі сталою швидкістю мережа дійшла до 0.913 на девʼятій
+епосі, а на десятій розвалилась: середня втрата злетіла з 0.17 до <b>77.25</b>. Це типова
+смерть наприкінці навчання — ваги вже великі, градієнти теж, і крок, стерпний на початку,
+стає завеликим. Будь-який спадний розклад цю смерть скасовує.</p>
+
+<p>Зверни увагу й на те, чого <em>не</em> сталося: розігрів нічого не додав до косинуса,
+обидва дали 1.000. Розігрів потрібен не завжди, а тоді, коли початкова швидкість дуже
+велика або мережа глибока.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Чотири розклади швидкості</p>
+  <p class="fig-sub">Угорі — як міняється швидкість по кроках навчання, унизу — крива втрат, яка з цього вийшла. Початкова швидкість у всіх однакова: 0.1.</p>
+  <div class="panel">
+    <div><canvas id="cSch" width="940" height="400" aria-label="Графік швидкості навчання по кроках і відповідна крива втрат для обраного розкладу"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">розклад</span>
+        <div class="seg wrap" id="schSeg">
+          <button type="button" data-i="0" aria-pressed="true">стала</button>
+          <button type="button" data-i="1" aria-pressed="false">сходинки</button>
+          <button type="button" data-i="2" aria-pressed="false">косинус</button>
+          <button type="button" data-i="3" aria-pressed="false">розігрів</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>швидкість на кінець</b><i id="schEnd">—</i></div>
+        <div class="cellv"><b>втрата на кінець</b><i id="schLoss">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>точність наприкінці</b><i id="schAcc">—</i></div>
+      </div>
+      <div class="verdict" id="schVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно: 10 епох, 360 прикладів, 12 кроків на епоху, SGD із моментом
+    0.9, початкова швидкість 0.1.</b> Верхній графік малює точну формулу розкладу по
+    кроках; нижній — заміряну середню втрату за епоху.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Батч</span>Розмір батча</h2>
+
+<p>Батч — скільки зображень мережа дивиться перед тим, як один раз змінити ваги. Число
+впливає одразу на три речі, і вони тягнуть у різні боки.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Що</th><th>При більшому батчі</th></tr></thead>
+  <tbody>
+    <tr><td>Памʼять</td><td>росте прямо пропорційно: активації всіх шарів множаться на розмір батча</td></tr>
+    <tr><td>Швидкість</td><td>епоха коштує дешевше: менше кроків, а кожен краще використовує процесор</td></tr>
+    <tr><td>Шум градієнта</td><td>падає: градієнт усереднений по більшій кількості прикладів, тому точніший — і тому крок стає обережнішим, ніж міг би бути</td></tr>
+  </tbody>
+</table></div>
+
+<p>Перші два пункти очевидні, третій — ні, і саме він найчастіше псує результат.
+Спершу час; замір на 1200 прикладах, дві епохи:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>батч</th><th>кроків за епоху</th><th>час епохи</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>8</td><td>150</td><td>4.76 с</td></tr>
+    <tr><td>32</td><td>38</td><td>2.97 с</td></tr>
+    <tr><td>128</td><td>10</td><td>2.58 с</td></tr>
+    <tr class="good"><td>512</td><td>3</td><td>2.17 с</td></tr>
+  </tbody>
+</table></div>
+
+<p>Від 8 до 512 епоха подешевшала <strong>у 2.2 раза</strong>, і це на процесорі; на
+відеокарті різниця буває десятикратною. Здавалось би, бери найбільший, що влазить у
+памʼять. Але ось що при цьому стається з якістю — 360 прикладів, 8 епох, швидкість
+навчання <strong>однакова</strong>, 0.03:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>батч</th><th>точність наприкінці</th><th>найкраща за навчання</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>8</td><td>0.167</td><td>0.883</td></tr>
+    <tr class="good"><td>32</td><td>0.917</td><td>0.983</td></tr>
+    <tr class="hot"><td>128</td><td>0.373</td><td>0.447</td></tr>
+  </tbody>
+</table></div>
+
+<p>Провалилися обидва краї, і <em>з різних причин</em>. Батч 8 дає вчетверо більше змін
+ваг при тій самій швидкості — навчання розхитується: точність доходить до 0.883 на
+четвертій епосі, а далі падає до вгадування. Батч 128 навпаки: за вісім епох мережа
+зробила 80 кроків замість 304 і просто не дійшла.</p>
+
+<div class="note"><b>Правило лінійного масштабування.</b> Змінюєш батч у
+<span class="raw">k</span> разів — зміни й швидкість навчання в
+<span class="raw">k</span> разів. Перевіримо на нашому провалі: батч 8 при швидкості
+0.03/4 = <code>0.0075</code> дав <strong>1.000</strong> замість 0.167. Правило
+спрацювало.</div>
+
+<p>І одразу чесна межа: у зворотний бік воно <strong>не</strong> спрацювало — батч 128
+при швидкості 0.12 дав 0.167, тобто ще гірше, ніж без виправлення. Правило емпіричне,
+добре працює у вузькому діапазоні й ламається на краях. Тут ми край і побачили.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Розмір батча: три речі одночасно</p>
+  <p class="fig-sub">Три смуги: скільки коштує епоха, наскільки шумний градієнт і яка вийшла точність. Праворуч — перемикач, чи підправляти швидкість навчання під батч.</p>
+  <div class="panel">
+    <div><canvas id="cBs" width="940" height="360" aria-label="Три горизонтальні смуги: час епохи, шум градієнта і точність для обраного розміру батча"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="bsSize">розмір батча <output id="bsSizev">32</output></label>
+        <input type="range" id="bsSize" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="ctl">
+        <span class="cap">швидкість навчання</span>
+        <div class="seg" id="bsSeg">
+          <button type="button" data-i="0" aria-pressed="true">стала 0.03</button>
+          <button type="button" data-i="1" aria-pressed="false">пропорційна</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кроків за епоху</b><i id="bsSteps">—</i></div>
+        <div class="cellv"><b>час епохи</b><i id="bsTime">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>точність</b><i id="bsAcc">—</i></div>
+      </div>
+      <div class="verdict" id="bsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Час епохи заміряно на 1200 прикладах, точність — на 360 за 8 епох.</b>
+    Батч 512 у колонці точності позначено прочерком: на 360 прикладах він дав би один крок
+    за епоху, і порівняння втратило б сенс. Шум градієнта показано як
+    1/√<span class="raw">B</span> — саме так спадає похибка середнього при зростанні
+    вибірки.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Регуляризація</span>Регуляризація в зорі</h2>
+
+<p>Перенавчання й регуляризацію ти вже проходив у курсі машинного навчання
+(<a href="../../02-ai-ml/37-nn-regularization/lecture.html">тема 37</a>). Тут — лише те,
+що в зорі поводиться інакше. Три інструменти, у порядку корисності для зображень.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Інструмент</th><th>Що робить</th><th>Місце в зорі</th></tr></thead>
+  <tbody>
+    <tr><td>Аугментація</td><td>показує ту саму картинку в новому вигляді: повернуту, зсунуту, освітлену інакше</td><td><b>Головний засіб.</b> Це єдиний спосіб додати мережі інформації, а не лише обмежити її. Розібрано в <a href="../10-augmentation/lecture.html">темі 10</a></td></tr>
+    <tr><td>Weight decay</td><td>додає до втрати штраф за великі ваги — по суті L2-регуляризація</td><td>Ставлять майже завжди, значення 1e-4 … 1e-2. Дешевий і нешкідливий</td></tr>
+    <tr><td>Дропаут</td><td>випадково вимикає частину нейронів на кожному кроці навчання</td><td><b>Тільки в голові</b>, і навіть там не завжди. Чому — нижче</td></tr>
+  </tbody>
+</table></div>
+
+<h3>Чому дропаут у згортках працює гірше</h3>
+
+<p>Причина геометрична. Дропаут вимикає <em>окремі числа</em>. У повнозвʼязному шарі
+кожне число — окрема ознака, і вимкнути її означає справді позбавити мережу інформації:
+доведеться шукати запасну. У згортковій карті сусідні клітинки — це відгуки того самого
+ядра на майже той самий шматок зображення, тобто сильно корельовані.</p>
+
+<p>Вимкнувши клітинку (5, 5), ти майже нічого не приховав: сусідки (5, 4) і (5, 6) несуть
+ту саму інформацію, і мережа просто читає сусіда. Регуляризації не вийшло, а шуму в
+градієнт додалося сповна.</p>
+
+<div class="note"><b>Що ставлять замість.</b> Для згорткових карт придумали
+<code>DropBlock</code> і <code>SpatialDropout</code>: вони вимикають не окрему клітинку, а
+цілий квадрат або цілий канал — тобто щось, що справді не можна прочитати в сусіда. Але
+на практиці найчастіше просто не ставлять дропаут у тілі взагалі, поклавшись на
+аугментацію й батчнорм.</p></div>
+
+<h3>Замір: чи допоміг дропаут на нашому датасеті</h3>
+
+<p>Щоб було що регуляризувати, потрібне справжнє перенавчання: беремо
+<strong>60 прикладів</strong> на шість класів і піднімаємо шум до 0.45. Тепер мережа
+справді запамʼятовує навчальну вибірку — 0.933 на ній проти 0.713 на перевірочній.
+25 епох, <code>Adam</code> зі швидкістю 0.003, однакове зерно.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>дропаут</th><th>на навчальній</th><th>на перевірочній</th><th>розрив</th></tr></thead>
+  <tbody>
+    <tr class="good"><td>немає</td><td>0.933</td><td><b>0.713</b></td><td>0.220</td></tr>
+    <tr class="hot"><td>у згортках 0.25</td><td>0.683</td><td>0.567</td><td>0.117</td></tr>
+    <tr><td>у голові 0.5</td><td>0.917</td><td>0.697</td><td>0.220</td></tr>
+    <tr class="good"><td>у голові 0.3</td><td>0.933</td><td><b>0.717</b></td><td>0.217</td></tr>
+    <tr class="hot"><td>скрізь</td><td>0.633</td><td>0.520</td><td>0.113</td></tr>
+  </tbody>
+</table></div>
+
+<p>Скажу прямо: <strong>дропаут тут не допоміг ніяк</strong>. Найкращий результат —
+0.717 з дропаутом 0.3 у голові — відрізняється від 0.713 без дропауту на чотири тисячні,
+тобто на одне зображення з трьохсот. Це не покращення, це шум.</p>
+
+<p>А дропаут у згортках <strong>зашкодив</strong>: 0.567 замість 0.713. Зверни увагу, як
+саме він «зменшив розрив» — із 0.220 до 0.117. Формально розрив скоротився, фактично
+мережа стала гіршою в обидві сторони. Це важливий урок про сам показник «розрив»: його
+можна покращити, зіпсувавши модель. Weight decay теж нічого не дав: 0.001 — ті самі
+0.713, а 0.01 — уже 0.663.</p>
+
+<div class="note warn"><b>Чому так.</b> Перенавчання тут викликане не надлишком
+параметрів (24 774 на шість простих класів — це небагато), а <strong>браком даних</strong>:
+по десять картинок на клас. Такий брак лікується не регуляризацією, а даними — тому
+головний засіб у зорі це аугментація
+(<a href="../10-augmentation/lecture.html">тема 10</a>), а на малій вибірці ще й перенос
+навчання (<a href="../12-transfer-learning/lecture.html">тема 12</a>).</div>
+
+<p>Правило, яке з цього випливає: <strong>спершу постав діагноз, потім став ліки</strong>.
+Дропаут і weight decay лікують перенавчання від надлишку параметрів; від браку даних вони
+не лікують і, як показує таблиця, можуть погіршити.</p>
+
+<h2 id="s9"><span class="num">09 / Діагностика</span>Криві як діагностика</h2>
+
+<p>Це головний практичний розділ теми: усе попереднє було про те, що ввімкнути, а цей —
+про те, як зрозуміти, що саме зламалось. Інструмент один: <strong>дві криві на одному
+графіку</strong> — точність на навчальній вибірці й на перевірочній, по епохах, плюс
+крива втрати. Пʼять типових картинок, які з них складаються, покривають майже все, що
+трапляється насправді.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Пʼять діагнозів за кривими</p>
+  <p class="fig-sub">Ліворуч — втрата на навчанні, праворуч — точність на навчальній і перевірочній вибірках. Усі пʼять картинок заміряні на нашому датасеті, а не намальовані.</p>
+  <div class="panel">
+    <div><canvas id="cDiag" width="940" height="400" aria-label="Крива втрат і пара кривих точності для обраного діагнозу"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показати</span>
+        <div class="seg wrap" id="diagSeg">
+          <button type="button" data-i="0" aria-pressed="true">норма</button>
+          <button type="button" data-i="1" aria-pressed="false">недонавчання</button>
+          <button type="button" data-i="2" aria-pressed="false">перенавчання</button>
+          <button type="button" data-i="3" aria-pressed="false">завелика швидкість</button>
+          <button type="button" data-i="4" aria-pressed="false">витік</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>навчальна</b><i id="dgTrain">—</i></div>
+        <div class="cellv"><b>перевірочна</b><i id="dgTest">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розрив</b><i id="dgGap">—</i></div>
+        <div class="cellv"><b>втрата на кінець</b><i id="dgLoss">—</i></div>
+      </div>
+      <div class="verdict" id="dgVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Усі пʼять станів заміряні на фігурах 28×28.</b> «Норма» — повне навчання
+    на 1200 прикладах із батчнормом і косинусним розкладом. «Недонавчання» — швидкість
+    0.0003. «Перенавчання» — 60 прикладів із шумом 0.45. «Завелика швидкість» — 0.3.
+    «Витік» — те саме перенавчання, але 60 навчальних прикладів потрапили в перевірочну
+    вибірку з 300.</figcaption>
+</figure>
+
+<p>Розберемо кожен стан і, головне, що з ним робити.</p>
+
+<h3>Норма</h3>
+
+<p>Втрата спадає монотонно майже до нуля, дві криві точності ростуть разом і лишаються
+поруч: 1.000 і 1.000. Головна ознака здорового навчання — не висока точність, а те, що
+<strong>обидві криві рухаються разом</strong>. Що робити: нічого; якщо точності мало —
+брати більшу мережу або більше даних.</p>
+
+<h3>Недонавчання</h3>
+
+<p>Втрата стоїть: 1.795 на першій епосі, 1.790 на десятій. Обидві криві точності низькі —
+0.286 і 0.287 — і теж поруч, але внизу. Ознака: <strong>мережа погана навіть на тих
+даних, які бачила</strong>.</p>
+
+<p><b>Що робити:</b> збільшити швидкість (у нас саме це й було), навчати довше, взяти
+більшу мережу, перевірити нормалізацію входу. Регуляризацію тут, навпаки, треба
+<em>прибрати</em>: вона робить те саме, тільки навмисно.</p>
+
+<h3>Перенавчання</h3>
+
+<p>Втрата спадає нормально — 1.81 → 0.27. Але криві точності розходяться: навчальна йде
+до 0.933, перевірочна зупиняється на 0.713. Ознака — не сам розрив (невеликий розрив
+нормальний), а те, що він <strong>росте з епохами</strong>.</p>
+
+<p><b>Що робити:</b> перш ніж хапатись за дропаут, спитай, звідки перенавчання. Якщо від
+браку даних (у нас — 10 прикладів на клас) — потрібні дані:
+<a href="../10-augmentation/lecture.html">аугментація</a> або
+<a href="../12-transfer-learning/lecture.html">перенос навчання</a>. Якщо від надлишку
+параметрів — weight decay, дропаут у голові, менша мережа, рання зупинка. Розділ 8
+показав, що переплутати ці два випадки означає зробити модель гіршою.</p>
+
+<h3>Завелика швидкість</h3>
+
+<p>Найхарактерніша картинка з усіх. Втрата на першій епосі 1.80, на другій
+<strong>падає</strong> до 1.62 — і на третій <strong>підстрибує</strong> до 2.03. Далі
+лягає на 1.81 до кінця, а точність — на 0.167. Ознака подвійна: <strong>початок був
+непоганим, а потім усе провалилось у рівне плато на рівні
+<code>ln(кількість класів)</code></strong> — для шести класів це 1.792.
+<b>Що робити:</b> зменшити швидкість у 3-10 разів; або додати батчнорм, спадний розклад
+і розігрів.</p>
+
+<div class="note"><b>Як не переплутати з недонавчанням.</b> Обидва дають рівну лінію.
+Різниця в тому, <em>звідки</em> ця лінія взялась. При замалій швидкості втрата
+підповзає до плато повільно й монотонно. При завеликій вона спершу смикається — падає,
+потім стрибає вище, ніж була, — і лише тоді лягає. Дивись на перші дві-три епохи, а не
+на останні.</div>
+
+<h3>Витік даних</h3>
+
+<p>Найтихіший стан. Втрата спадає, обидві криві ростуть, розрив помірний — усе виглядає
+як звичайне перенавчання. Різниця в одному числі: перевірочна точність
+<strong>0.767 замість 0.713</strong>. Це і є вся видима ціна витоку —
+<strong>5.4 відсоткових пункти</strong>, при тому що пʼята частина перевірочної вибірки
+насправді навчальна. Він не ламає графік, він його трохи прикрашає — тому й живе в
+проєктах роками.</p>
+
+<p><b>Що робити:</b> рахувати перетин вибірок явно, а не дивитись на око. Ділити
+<em>до</em> будь-якої обробки. І памʼятати, що з реальними зображеннями буває гірше: два
+кадри з одного відео — формально різні файли, фактично той самий приклад.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Що видно</th><th>Діагноз</th><th>Перше, що спробувати</th></tr></thead>
+  <tbody>
+    <tr><td>Обидві криві високо й поруч</td><td>норма</td><td>нічого; більша мережа або більше даних, якщо треба вище</td></tr>
+    <tr><td>Обидві криві низько й поруч, втрата стоїть</td><td>недонавчання</td><td>більша швидкість, довше навчання, більша мережа</td></tr>
+    <tr><td>Криві розходяться, розрив росте</td><td>перенавчання</td><td>дані й аугментація; регуляризація — лише якщо мережа завелика</td></tr>
+    <tr><td>Втрата смикнулась і лягла на <code>ln K</code></td><td>завелика швидкість</td><td>поділити швидкість на 3-10; батчнорм; розклад</td></tr>
+    <tr><td>Усе підозріло добре</td><td>витік</td><td>порахувати перетин вибірок; перевірити, коли саме ділили</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="s10"><span class="num">10 / Тиша</span>Помилки без повідомлення</h2>
+
+<p>Окремий список — для помилок, які <strong>не дають traceback</strong>: кожна дає
+програмі відпрацювати до кінця й надрукувати число. Просто не те.</p>
+
+<h3>1. Забутий <code>model.eval()</code></h3>
+
+<p>Розібрано в розділі 4. Ціна — до 13 відсоткових пунктів, і залежить від розміру батча:
+на великому помилки не видно взагалі (там режим без <code>eval()</code> дає навіть на
+одне очко більше), а в продакшені вона проявляється сповна. <b>Як ловити:</b> зроби функцію оцінювання, яка сама викликає
+<code>model.eval()</code> першим рядком, і не пиши цикл перевірки вручну.</p>
+
+<h3>2. Перевірку нормалізували іншими числами</h3>
+
+<p>Середнє й відхилення порахували двічі — окремо для навчальної вибірки й окремо для
+перевірочної. Виглядає логічно («кожен набір нормалізуємо сам по собі»), а насправді це
+два різні перетворення: модель училась на одному розподілі, а перевіряється на іншому.
+<b>Як ловити:</b> тримати <code>μ</code> і <code>σ</code> в одній змінній; два виклики
+<code>.mean()</code> для одного й того самого — уже підозра.</p>
+
+<h3>3. Перемішали дані після поділу на вибірки</h3>
+
+<p>Точніше — поділили те, що вже перетинається. Ціна на нашому датасеті — 5.4 пункти
+(розділ 9); на реальних даних більше: кадри з одного відео, кілька фотографій того самого
+товару, аугментовані копії. <b>Як ловити:</b> порахувати перетин явно — два зрізи
+<code>[:600]</code> і <code>[300:]</code> виглядають як поділ рівно доти, доки не
+порахуєш, скільки в них спільного.</p>
+
+<h3>4. Аугментували перевірочну вибірку</h3>
+
+<p>Аугментація (<a href="../10-augmentation/lecture.html">тема 10</a>) навмисне псує
+зображення, щоб мережа побачила більше варіантів. Застосована до перевірки, вона одразу
+<strong>занижує</strong> оцінку (модель міряють на спотвореннях, яких у житті не буде) і
+робить її <strong>невідтворюваною</strong>. <b>Як ловити:</b> тримати два набори
+перетворень окремо — <code>train_transform</code> з аугментацією й
+<code>eval_transform</code> без неї.</p>
+
+<div class="note warn"><b>Спільна риса всіх чотирьох.</b> Жодна не змінює форму
+тензорів, тому PyTorch мовчить, і всі вони псують <em>оцінку</em>, а не навчання — тому
+й виявляються найпізніше. Якщо результат виглядає дивно добре або дивно погано, спершу
+шукай тут, а не в архітектурі.</div>
+
+<h2 id="s11"><span class="num">11 / Повтор</span>Відтворюваність</h2>
+
+<p>Усі числа в цій темі супроводжувались словами «те саме зерно». Чому цього все одно
+мало.</p>
+
+<p>Випадковості в навчанні щонайменше три: початкові ваги, порядок перемішування
+прикладів по батчах і випадковість самих шарів (дропаут, аугментація). Усі три
+фіксуються двома рядками:</p>
+
+<pre class="arch">torch.manual_seed(0)                 <i># ваги, дропаут, перемішування в PyTorch</i>
+rng = np.random.default_rng(42)      <i># усе, що генерує numpy — у нас це сам датасет</i></pre>
+
+<p>Із фіксованими зернами <strong>повторний запуск дає побітово ті самі числа</strong> —
+це перевірено, і саме тому числа в лекції збігаються з тими, які отримаєш ти.</p>
+
+<h3>Чому результат усе одно плаває</h3>
+
+<p>Бо зерно фіксує <em>одну</em> траєкторію з мільйона можливих, а не робить її
+типовою. Змінюєш зерно — змінюються початкові ваги — навчання йде іншим шляхом і
+приходить в іншу точку.</p>
+
+<p>Замір робимо на <strong>важкій</strong> версії задачі — тій самій, що в розділі 8.
+На легкій міряти немає сенсу: там усі зерна впираються в 1.000, і розкид виходить 0.003.
+Різницю між зернами видно рівно там, де задача складна.</p>
+
+<div class="scroll-x"><table class="nums" id="seedTable">
+  <thead><tr><th>зерно</th><th>точність на перевірці</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td>0.713</td></tr>
+    <tr><td>1</td><td>0.727</td></tr>
+    <tr><td>2</td><td>0.783</td></tr>
+    <tr><td>3</td><td>0.723</td></tr>
+    <tr><td>4</td><td>0.783</td></tr>
+    <tr class="sumrow"><td>розкид</td><td>0.070</td></tr>
+  </tbody>
+</table></div>
+
+<p>Сім відсоткових пунктів — від однієї лише зміни початкових ваг. Тепер згадай таблицю
+дропауту з розділу 8: найкращий варіант дав 0.717 проти 0.713 без дропауту. Різниця —
+чотири тисячні при розкиді сімдесят тисячних.</p>
+
+<p>Ось практичний висновок, заради якого цей розділ узагалі є:
+<strong>різниця між двома моделями, менша за розкид від зерна, — це не різниця</strong>.
+Якщо архітектура A дала 0.760, а архітектура B — 0.735, а сам лише вибір зерна гуляє на
+0.070, то ти нічого не довів.</p>
+
+<p>Що роблять на практиці: запускають кожен варіант <strong>три-пʼять разів із різними
+зернами</strong> й порівнюють середні, а не окремі числа. Інакше половина твоїх
+«покращень» виявиться перевибором зерна.</p>
+
+<div class="note"><b>Ще одна причина, менш очевидна.</b> Навіть при однаковому зерні дві
+машини можуть дати трохи різні числа: багатопотокові операції складають числа з рухомою
+комою в різному порядку, а <code>a + b + c</code> у різному порядку дає різний останній
+знак.</div>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Підсумок</h2>
+
+<p>Коротко — що вмикати й за чим стежити, коли навчаєш згорткову мережу.</p>
+
+<div class="scroll-x"><table class="plain">
+  <thead><tr><th>Крок</th><th>Що зробити</th><th>Чому</th></tr></thead>
+  <tbody>
+    <tr><td>Вхід</td><td>відняти середнє, поділити на відхилення; обидва числа — по навчальній вибірці, по каналах</td><td>щоб швидкість навчання означала те саме, що в чужому коді</td></tr>
+    <tr><td>Блок</td><td><code>Conv → BatchNorm → ReLU → Pool</code></td><td>у три з половиною рази менше епох до тієї самої точності й удвічі вища стеля швидкості</td></tr>
+    <tr><td>Швидкість</td><td>шукати множенням на десять; узяти втричі менше за ту, що ще працює</td><td>це єдине число, яке саме по собі перетворює 1.000 на 0.167</td></tr>
+    <tr><td>Розклад</td><td>косинусний спад до нуля</td><td>рятує від смерті наприкінці навчання й нічого не коштує</td></tr>
+    <tr><td>Батч</td><td>найбільший, що влазить у памʼять; при зміні — міняти й швидкість</td><td>більший батч дешевший за епоху, але робить менше кроків</td></tr>
+    <tr><td>Регуляризація</td><td>аугментація завжди; weight decay майже завжди; дропаут — тільки в голові й тільки якщо допомагає</td><td>у згортках дропаут ламає більше, ніж лікує</td></tr>
+    <tr><td>Перевірка</td><td>окрема функція, яка сама кличе <code>model.eval()</code></td><td>інакше помилка проявиться лише в продакшені</td></tr>
+    <tr><td>Кожен раз</td><td>дивитись на дві криві точності, а не на одне фінальне число</td><td>діагноз читається з форми кривих, а не з результату</td></tr>
+  </tbody>
+</table></div>
+
+<p>Головна думка теми, якщо лишати одну: навчання ламається тихо — жодна з розібраних
+поломок не викидає винятку. Тому <strong>єдиний робочий інструмент — дивитись на
+криві</strong>. Не на фінальну точність, не на втрату останнього батча, а на пару кривих
+по епохах.</p>
+
+<h3>Місток до наступної теми</h3>
+
+<p>Усе сказане мовчки передбачає одну річ: <strong>ти вчиш мережу з нуля</strong>, від
+випадкових ваг, на своїх даних. Саме тому нас так хвилювали ініціалізація, розігрів і
+стеля швидкості.</p>
+
+<p>Але подивись іще раз на замір із розділу 8: шістдесят прикладів на шість класів — і
+жодна регуляризація не допомогла, бо лікувати треба було не мережу, а брак даних. А що,
+як хтось уже навчив схожу мережу на мільйоні зображень і готовий поділитися вагами? Тоді
+починати з випадкових чисел — марнотратство. Про це —
+<a href="../12-transfer-learning/lecture.html">наступна тема</a>, і там на нас чекає
+розворот: перенос навчання виграє, поки цільових даних мало, і <strong>програє</strong>,
+коли їх стає досить.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти повториш усі
+пʼять замірів своїми руками, звіриш власну нормалізацію по каналах із
+<code>transforms.Normalize</code> і побачиш, скільки коштує забутий
+<code>model.eval()</code> при різних розмірах батча.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../10-augmentation/lecture.html"><span class="dir">попередня</span><span class="ttl">10. Аугментація даних</span></a>
+    <a class="next" href="../12-transfer-learning/lecture.html"><span class="dir">наступна</span><span class="ttl">12. Перенос навчання</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function sans(px){return '600 '+px+'px Unbounded,system-ui,sans-serif';}
+/* сегментний перемикач: кнопки з data-i, повертає обраний індекс через fn */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* «1 епоха», «2 епохи», «5 епох» */
+function епох(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'епоха';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'епохи';
+  return 'епох';
+}
+/* «за 1 епоху», «за 2 епохи», «за 5 епох» — знахідний */
+function заЕпох(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'епоху';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'епохи';
+  return 'епох';
+}
+/* «1 пункт», «2 пункти», «5 пунктів» */
+function пунктів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'пункт';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'пункти';
+  return 'пунктів';
+}
+/* «у 2.2 раза» / «у 3 рази» */
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+function крат(v){
+  if(Math.abs(v-Math.round(v))<1e-9) return v.toFixed(0)+' '+разів(Math.round(v));
+  return v.toFixed(1)+' раза';
+}
+/* рамка графіка з підписами осей; повертає функції перетворення координат */
+function axes(g, box, opt){
+  var x0=box.x, y0=box.y, w=box.w, h=box.h;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(x0+0.5, y0+0.5, w-1, h-1);
+  /* горизонтальні лінії сітки */
+  var k, ticks=opt.yticks||[];
+  g.font=mono(9.5,false); g.fillStyle=css('--soft'); g.textAlign='right';
+  for(k=0;k<ticks.length;k++){
+    var yy=y0+h-(ticks[k].v-opt.ymin)/(opt.ymax-opt.ymin)*h;
+    if(yy<y0-1 || yy>y0+h+1) continue;
+    g.strokeStyle=css('--hair'); g.globalAlpha=.55;
+    g.beginPath(); g.moveTo(x0+1,yy); g.lineTo(x0+w-1,yy); g.stroke();
+    g.globalAlpha=1;
+    g.fillText(ticks[k].t, x0-6, yy+3);
+  }
+  /* підпис осі x */
+  if(opt.xlabel){
+    g.font=mono(10,false); g.fillStyle=css('--soft'); g.textAlign='center';
+    g.fillText(opt.xlabel, x0+w/2, y0+h+34);
+  }
+  if(opt.ylabel){
+    g.font=mono(10,false); g.fillStyle=css('--soft'); g.textAlign='left';
+    g.fillText(opt.ylabel, x0, y0-9);
+  }
+  return {
+    X: function(v){ return x0 + (v-opt.xmin)/(opt.xmax-opt.xmin)*w; },
+    Y: function(v){ return y0 + h - (v-opt.ymin)/(opt.ymax-opt.ymin)*h; }
+  };
+}
+/* ламана по масиву значень; індекс масиву — координата x */
+function polyline(g, T, values, color, width, dots){
+  var k, started=false;
+  g.strokeStyle=color; g.lineWidth=width||2; g.beginPath();
+  for(k=0;k<values.length;k++){
+    var v=values[k];
+    if(!isFinite(v)) { started=false; continue; }
+    var px=T.X(k+1), py=T.Y(v);
+    if(!started){ g.moveTo(px,py); started=true; } else g.lineTo(px,py);
+  }
+  g.stroke();
+  if(dots){
+    g.fillStyle=color;
+    for(k=0;k<values.length;k++){
+      if(!isFinite(values[k])) continue;
+      g.beginPath(); g.arc(T.X(k+1), T.Y(values[k]), 2.8, 0, 6.2832); g.fill();
+    }
+  }
+}
+function dashed(g, T, value, color, x1, x2, label){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1.2;
+  g.beginPath(); g.moveTo(x1, T.Y(value)); g.lineTo(x2, T.Y(value)); g.stroke();
+  g.restore();
+  if(label){
+    g.font=mono(9.5,false); g.fillStyle=color; g.textAlign='left';
+    g.fillText(label, x1+4, T.Y(value)-5);
+  }
+}
+function head(g, txt, x, y){
+  g.font=sans(12.5); g.fillStyle=css('--ink'); g.textAlign='left'; g.fillText(txt, x, y);
+}
+/* легенда одним рядком, вирівняна по правому краю; малюється НАД полем графіка,
+   інакше при якомусь положенні керування крива обовʼязково під неї заповзе */
+function legendRow(g, items, xRight, y){
+  var k, w=0;
+  g.font=mono(10.5,false);
+  for(k=0;k<items.length;k++) w += 14 + g.measureText(items[k].t).width + 18;
+  var x = xRight - w + 18;
+  for(k=0;k<items.length;k++){
+    g.fillStyle=items[k].c; g.fillRect(x, y-8, 10, 3);
+    g.fillStyle=css('--soft'); g.textAlign='left';
+    g.fillText(items[k].t, x+14, y-2);
+    x += 14 + g.measureText(items[k].t).width + 18;
+  }
+}
+
+/* ═════ Інтерактив 1 · масштаб входу × швидкість навчання ═════ */
+(function(){
+  var cv=I('cNorm'); if(!cv) return;
+  /* заміряно: SGD momentum 0.9, 6 епох, 360 прикладів, зерно 0 */
+  var LRS=[0.0003, 0.003, 0.03, 0.3];
+  var SCALES=[
+    {name:'0…255', mean:'54.97', range:'0 … 255', lo:0, hi:255, zero:0,
+     loss:[[2.00,1.24,0.75,0.37,0.19,0.13],[2.14,1.47,0.54,0.25,0.08,0.01],
+           [4.48,1.80,1.79,1.82,1.55,2.22],[NaN,1.91,1.87,1.82,1.83,1.83]],
+     acc:[0.977,1.000,0.167,0.167]},
+    {name:'0…1', mean:'0.216', range:'0 … 1', lo:0, hi:1, zero:0,
+     loss:[[1.79,1.79,1.79,1.79,1.79,1.79],[1.79,1.79,1.79,1.79,1.79,1.79],
+           [1.80,1.79,1.79,1.78,1.77,1.72],[1.81,1.81,1.82,1.83,1.83,1.83]],
+     acc:[0.167,0.277,0.530,0.167]},
+    {name:'норм.', mean:'0.000', range:'−0.59 … 2.14', lo:-0.59, hi:2.14, zero:0,
+     loss:[[1.79,1.79,1.79,1.79,1.79,1.79],[1.79,1.79,1.79,1.78,1.78,1.77],
+           [1.79,1.77,1.68,1.11,0.89,0.22],[1.80,1.62,2.03,1.88,1.84,1.83]],
+     acc:[0.277,0.343,0.977,0.167]}
+  ];
+  /* гістограма значень однакова для всіх трьох — міняється лише шкала осі */
+  var HIST=[0.5363,0.1096,0.0779,0.0464,0.0236,0.0099,0.0039,0.0011,0.0003,
+            0.0001,0,0,0,0,0,0.0001,0.0002,0.0009,0.0024,0.0054,0.0112,0.0182,
+            0.0262,0.1264];
+  var si=2, li=2;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), S=SCALES[si], k;
+    I('normLrv').textContent=LRS[li];
+    I('normMean').textContent=S.mean;
+    I('normRange').textContent=S.range;
+    I('normAcc').textContent=S.acc[li].toFixed(3);
+
+    /* ── ліва панель: гістограма значень входу ── */
+    var bx=58, by=54, bw=350, bh=H-118;
+    head(g,'значення на вході мережі',bx,by-18);
+    var maxBar=0;
+    for(k=0;k<HIST.length;k++) if(HIST[k]>maxBar) maxBar=HIST[k];
+    g.strokeStyle=css('--hair'); g.lineWidth=1; g.strokeRect(bx+0.5,by+0.5,bw-1,bh-1);
+    var bwid=bw/HIST.length;
+    for(k=0;k<HIST.length;k++){
+      var hh=Math.max(1, HIST[k]/maxBar*(bh-14));
+      g.fillStyle = si===2 ? css('--teal') : css('--rose');
+      g.globalAlpha=.75;
+      g.fillRect(bx+k*bwid+1, by+bh-hh-1, bwid-2, hh);
+      g.globalAlpha=1;
+    }
+    /* позначка нуля: для нормалізованого він усередині, для решти — на краю */
+    var zx = bx + (S.zero - S.lo)/(S.hi - S.lo)*bw;
+    g.save(); g.setLineDash([4,3]); g.strokeStyle=css('--ink'); g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(zx, by+2); g.lineTo(zx, by+bh-2); g.stroke(); g.restore();
+    g.font=mono(9.5,true); g.fillStyle=css('--ink'); g.textAlign='left';
+    g.fillText('нуль', Math.min(zx+4, bx+bw-34), by+13);
+    g.font=mono(10,false); g.fillStyle=css('--soft');
+    g.textAlign='left';  g.fillText(String(S.lo), bx, by+bh+18);
+    g.textAlign='right'; g.fillText(String(S.hi), bx+bw, by+bh+18);
+    g.textAlign='center';
+    g.fillText('форма розподілу та сама — міняється лише шкала', bx+bw/2, by+bh+38);
+
+    /* ── права панель: крива втрат ── */
+    var px=520, py=54, pw=W-px-46, ph=H-118;
+    head(g,'втрата на навчанні, 6 епох',px,py-18);
+    var T=axes(g,{x:px,y:py,w:pw,h:ph},{
+      xmin:0.6, xmax:6.4, ymin:0, ymax:3,
+      yticks:[{v:0,t:'0'},{v:1,t:'1'},{v:1.79,t:'1.79'},{v:3,t:'3'}],
+      xlabel:'епоха'
+    });
+    dashed(g,T,1.792,css('--soft'),px+1,px+pw-1,null);
+    var series=S.loss[li].map(function(v){ return isFinite(v)? Math.min(v,3) : NaN; });
+    var color = S.acc[li]>=0.9 ? css('--teal') : (S.acc[li]<=0.2 ? css('--rose') : css('--amber'));
+    polyline(g,T,series,color,2.4,true);
+    /* значення, що вилетіли за стелю графіка, підписуємо словами */
+    for(k=0;k<S.loss[li].length;k++){
+      if(!isFinite(S.loss[li][k])){
+        g.font=mono(10,true); g.fillStyle=css('--rose'); g.textAlign='center';
+        g.fillText('вибух', T.X(k+1), py+18);
+      } else if(S.loss[li][k]>3){
+        g.font=mono(9.5,true); g.fillStyle=css('--rose'); g.textAlign='center';
+        g.fillText(S.loss[li][k].toFixed(1), T.X(k+1), py+30);
+      }
+    }
+    g.font=mono(10,false); g.fillStyle=css('--soft'); g.textAlign='right';
+    g.fillText('1.79 = «не знаю»', px+pw-4, T.Y(1.792)-6);
+
+    var a=S.acc[li];
+    if(a>=0.9)
+      verd('normVd','t-ok','ЦЕ РОБОЧЕ ВІКНО',
+        'Масштаб '+S.name+' і швидкість '+LRS[li]+' підходять одне одному: точність '+
+        a.toFixed(3)+'. Саме тому число швидкості не можна переносити окремо від того, '+
+        'у якому вигляді ти подаєш пікселі.');
+    else if(a<=0.2)
+      verd('normVd','t-no','МЕРЕЖА НЕ НАВЧИЛАСЬ',
+        'Точність '+a.toFixed(3)+' — це рівень вгадування на шести класах (0.167). '+
+        'Швидкість '+LRS[li]+' для масштабу '+S.name+' завелика: втрата лягла на 1.79 і '+
+        'не зрушила.');
+    else
+      verd('normVd','t-mid','ПОВЗЕ АБО НЕ ДОЇХАЛА',
+        'Точність '+a.toFixed(3)+' — вище вгадування, але це не робоча модель. Для '+
+        'масштабу '+S.name+' швидкість '+LRS[li]+' замала: за шість епох мережа не встигла.');
+  }
+  segment('normSeg', function(i){ si=i; draw(); });
+  on('normLr','input',function(){ li=+I('normLr').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 2 · батчнорм і стеля швидкості ═════ */
+(function(){
+  var cv=I('cBn'); if(!cv) return;
+  /* заміряно: 8 епох, 360 прикладів, SGD momentum 0.9, нормалізований вхід, зерно 0 */
+  var RUNS=[
+    {lr:0.02, plain:[0.343,0.543,0.170,0.590,0.630,0.857,0.980,0.983],
+              bn:   [0.890,1.000,0.927,1.000,0.997,1.000,1.000,1.000]},
+    {lr:0.05, plain:[0.417,0.237,0.350,0.747,0.937,0.993,0.993,0.960],
+              bn:   [0.693,0.633,0.990,0.683,0.850,0.997,0.930,0.980]},
+    {lr:0.1,  plain:[0.503,0.627,0.513,0.910,0.687,0.737,0.737,0.913],
+              bn:   [0.450,0.413,0.200,0.603,0.963,0.990,1.000,0.993]},
+    {lr:0.15, plain:[0.320,0.567,0.697,0.333,0.113,0.167,0.167,0.167],
+              bn:   [0.333,0.483,0.663,0.640,0.917,1.000,0.990,0.997]},
+    {lr:0.2,  plain:[0.270,0.167,0.167,0.167,0.167,0.167,0.167,0.167],
+              bn:   [0.227,0.333,0.450,0.477,0.553,0.710,0.850,0.937]}
+  ];
+  var cur=0;
+  function reach(arr){
+    var k; for(k=0;k<arr.length;k++) if(arr[k]>=0.90) return k+1;
+    return null;
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var R=RUNS[cur];
+    var ep1=reach(R.plain), ep2=reach(R.bn);
+    I('bnLrv').textContent=R.lr;
+    I('bnPlain').textContent=R.plain[7].toFixed(3);
+    I('bnWith').textContent=R.bn[7].toFixed(3);
+    I('bnEpPlain').textContent= ep1 ? ep1 : 'не дійшла';
+    I('bnEpWith').textContent= ep2 ? ep2 : 'не дійшла';
+
+    var bx=74, by=54, bw=W-bx-44, bh=H-124;
+    head(g,'точність на перевірочній вибірці по епохах',bx,by-18);
+    var T=axes(g,{x:bx,y:by,w:bw,h:bh},{
+      xmin:0.6, xmax:8.4, ymin:0, ymax:1.05,
+      yticks:[{v:0,t:'0'},{v:0.167,t:'0.167'},{v:0.5,t:'0.5'},{v:0.9,t:'0.90'},{v:1,t:'1.0'}],
+      xlabel:'епоха'
+    });
+    dashed(g,T,0.167,css('--soft'),bx+1,bx+bw-1,null);
+    dashed(g,T,0.90,css('--amber'),bx+1,bx+bw-1,null);
+    polyline(g,T,R.plain,css('--rose'),2.4,true);
+    polyline(g,T,R.bn,css('--teal'),2.4,true);
+    legendRow(g,[{t:'без батчнорму',c:css('--rose')},
+                 {t:'з батчнормом',c:css('--teal')}], bx+bw, by-14);
+    g.fillStyle=css('--amber'); g.font=mono(9.5,false); g.textAlign='right';
+    g.fillText('ціль 0.90', bx+bw-4, T.Y(0.90)-6);
+    g.fillStyle=css('--soft'); g.textAlign='left';
+    g.fillText('вгадування 0.167', bx+6, T.Y(0.167)-6);
+
+    if(ep1 && ep2 && ep2 < ep1)
+      verd('bnVd','t-ok', ep1 >= 2*ep2 ? 'ШВИДШЕ В РАЗИ' : 'ШВИДШЕ',
+        'При швидкості '+R.lr+' батчнорм доходить до 0.90 за '+ep2+' '+заЕпох(ep2)+
+        ', а без нього треба '+ep1+'. Кінцева точність: '+R.bn[7].toFixed(3)+
+        ' проти '+R.plain[7].toFixed(3)+'.');
+    else if(ep2 && !ep1)
+      verd('bnVd','t-ok','БЕЗ НЬОГО ВЖЕ НЕ ВЧИТЬСЯ',
+        'Швидкість '+R.lr+' — за стелею мережі без батчнорму: '+R.plain[7].toFixed(3)+
+        ', тобто вгадування. З батчнормом та сама швидкість дає '+R.bn[7].toFixed(3)+
+        '. Це і є підняття стелі приблизно вдвічі.');
+    else if(ep1 && ep2)
+      verd('bnVd','t-mid','ОБИДВІ ДОХОДЯТЬ',
+        'При швидкості '+R.lr+' обидві мережі дійшли до 0.90 (на '+ep1+' і '+ep2+
+        ' епосі). Але подивись на форму кривих: без батчнорму вона стрибає, з ним — '+
+        'вирівнюється й лишається нагорі.');
+    else
+      verd('bnVd','t-no','НЕ ДІЙШЛА ЖОДНА',
+        'Швидкість '+R.lr+' завелика для обох. Батчнорм піднімає стелю, але не знімає її.');
+  }
+  on('bnLr','input',function(){ cur=+I('bnLr').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 3 · забутий model.eval() ═════ */
+(function(){
+  var cv=I('cEval'); if(!cv) return;
+  /* заміряно на мережі з батчнормом, 8 епох, lr=0.05, 300 перевірочних зображень */
+  var ROWS=[
+    {b:1,   ok:0.980, bad:0.847},
+    {b:4,   ok:0.980, bad:0.937},
+    {b:32,  ok:0.980, bad:0.987},
+    {b:300, ok:0.980, bad:0.990}
+  ];
+  var cur=0;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), k;
+    var R=ROWS[cur];
+    I('evOk').textContent=R.ok.toFixed(3);
+    I('evBad').textContent=R.bad.toFixed(3);
+    var gap=R.ok-R.bad;
+    I('evGap').textContent=(gap>0?'−':'+')+Math.abs(gap*100).toFixed(1)+' п.';
+
+    var bx=70, by=52, bw=W-bx-40, bh=H-112;
+    head(g,'точність на тих самих 300 зображеннях',bx,by-18);
+    var T=axes(g,{x:bx,y:by,w:bw,h:bh},{
+      xmin:0, xmax:4, ymin:0.7, ymax:1.02,
+      yticks:[{v:0.7,t:'0.70'},{v:0.8,t:'0.80'},{v:0.9,t:'0.90'},{v:1.0,t:'1.00'}],
+      xlabel:'розмір батча, яким прогнали перевірку'
+    });
+    legendRow(g,[{t:'з model.eval()',c:css('--teal')},
+                 {t:'без нього',c:css('--rose')}], bx+bw, by-14);
+    var slot=bw/4;
+    for(k=0;k<4;k++){
+      var cx=bx+slot*k, sel=(k===cur);
+      var w1=slot*0.28;
+      g.globalAlpha = sel ? 1 : 0.34;
+      g.fillStyle=css('--teal');
+      var y1=T.Y(ROWS[k].ok);
+      g.fillRect(cx+slot*0.14, y1, w1, by+bh-y1);
+      g.fillStyle=css('--rose');
+      var y2=T.Y(ROWS[k].bad);
+      g.fillRect(cx+slot*0.55, y2, w1, by+bh-y2);
+      g.globalAlpha=1;
+      g.font=mono(11, sel); g.fillStyle= sel? css('--ink') : css('--soft');
+      g.textAlign='center';
+      g.fillText(String(ROWS[k].b), cx+slot/2, by+bh+16);
+      if(sel){
+        g.font=mono(10,true); g.fillStyle=css('--teal');
+        g.fillText(ROWS[k].ok.toFixed(3), cx+slot*0.14+w1/2, y1-6);
+        g.fillStyle=css('--rose');
+        g.fillText(ROWS[k].bad.toFixed(3), cx+slot*0.55+w1/2, y2-6);
+      }
+    }
+
+    if(gap>=0.04)
+      verd('evVd','t-no','ПОМИЛКА КОШТУЄ ДОРОГО',
+        'На батчі '+R.b+' забутий eval() відбирає '+(gap*100).toFixed(1)+' '+
+        пунктів(Math.round(gap*100))+'. Батчнорм рахує середнє по '+R.b+
+        ' зображенням замість накопиченого — і при такому малому батчі це майже шум.');
+    else if(gap>0)
+      verd('evVd','t-mid','ПОМИЛКА ЩЕ ВИДНА',
+        'На батчі '+R.b+' різниця '+(gap*100).toFixed(1)+' '+
+        пунктів(Math.round(gap*100))+' — уже маленька, але ще помітна. '+
+        'Чим більший батч, тим ближчі статистики батча до накопичених.');
+    else
+      verd('evVd','t-no','ПОМИЛКА ЗНИКЛА З ОЧЕЙ',
+        'На батчі '+R.b+' режим без eval() дав навіть трохи більше: '+R.bad.toFixed(3)+
+        ' проти '+R.ok.toFixed(3)+'. Помилка нікуди не поділась — її просто не видно. '+
+        'У продакшені зображення підуть по одному, і вона повернеться. Зверни увагу: '+
+        'бірюзовий стовпчик однаковий при кожному батчі — саме так і має бути.');
+  }
+  segment('evalSeg', function(i){ cur=i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 4 · три режими швидкості навчання ═════ */
+(function(){
+  var cv=I('cLr'); if(!cv) return;
+  /* заміряно: 8 епох, 360 прикладів, SGD momentum 0.9, нормалізований вхід */
+  var RUNS=[
+    {lr:0.0003, acc:0.273, mode:'повзе',
+     loss:[1.79,1.79,1.79,1.79,1.79,1.79,1.79,1.79]},
+    {lr:0.003, acc:0.320, mode:'повзе',
+     loss:[1.79,1.79,1.79,1.78,1.78,1.77,1.77,1.76]},
+    {lr:0.03, acc:0.917, mode:'збігається',
+     loss:[1.79,1.77,1.68,1.11,0.89,0.22,0.04,0.14]},
+    {lr:0.3, acc:0.167, mode:'розходиться',
+     loss:[1.80,1.62,2.03,1.88,1.84,1.83,1.83,1.81]},
+    {lr:'1.0', acc:0.167, mode:'вибухає',
+     loss:[1.86,1.1e32,5.43,2.75,2.17,1.89,1.93,1.85]}
+  ];
+  var cur=2, all=false;
+  /* логарифмічна шкала: малюємо log10(втрата) */
+  function lg(v){ return Math.log(v)/Math.LN10; }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), k, j;
+    var R=RUNS[cur];
+    I('lrPickv').textContent=R.lr;
+    I('lrLoss').textContent = R.loss[R.loss.length-1].toFixed(2);
+    I('lrAcc').textContent = R.acc.toFixed(3);
+    I('lrMode').textContent = R.mode;
+
+    var bx=74, by=52, bw=W-bx-44, bh=H-112;
+    head(g,'втрата на навчанні, логарифмічна шкала',bx,by-18);
+    var T=axes(g,{x:bx,y:by,w:bw,h:bh},{
+      xmin:0.6, xmax:8.4, ymin:-2, ymax:4,
+      yticks:[{v:-2,t:'0.01'},{v:-1,t:'0.1'},{v:lg(1.792),t:'1.79'},
+              {v:1,t:'10'},{v:2,t:'100'},{v:4,t:'10⁴+'}],
+      xlabel:'епоха'
+    });
+    dashed(g,T,lg(1.792),css('--soft'),bx+1,bx+bw-1,null);
+
+    function series(run){
+      return run.loss.map(function(v){ return Math.min(lg(Math.max(v,0.005)), 4); });
+    }
+    if(all){
+      for(j=0;j<RUNS.length;j++){
+        var c = RUNS[j].acc>=0.9 ? css('--teal') : (RUNS[j].acc<=0.2 ? css('--rose') : css('--amber'));
+        g.globalAlpha = (j===cur) ? 1 : 0.34;
+        polyline(g,T,series(RUNS[j]),c,(j===cur)?2.6:1.6,j===cur);
+        g.globalAlpha=1;
+      }
+    } else {
+      var color = R.acc>=0.9 ? css('--teal') : (R.acc<=0.2 ? css('--rose') : css('--amber'));
+      polyline(g,T,series(R),color,2.6,true);
+    }
+    /* підпис вибуху окремим рядком, щоб не наїхав на криву */
+    if(cur===4 || all){
+      g.font=mono(10,true); g.fillStyle=css('--rose'); g.textAlign='left';
+      g.fillText('1.1 × 10³² на другій епосі', T.X(2)+6, by+20);
+    }
+    g.font=mono(10,false); g.fillStyle=css('--soft'); g.textAlign='right';
+    g.fillText('рівень «не знаю»', bx+bw-4, T.Y(lg(1.792))-6);
+
+    if(R.mode==='збігається')
+      verd('lrVd','t-ok','ЗБІГАЄТЬСЯ',
+        'Швидкість '+R.lr+': втрата спадає з 1.79 до '+R.loss[R.loss.length-1].toFixed(2)+
+        ', точність '+R.acc.toFixed(3)+'. Дрібне коливання наприкінці — норма, це шум батчів.');
+    else if(R.mode==='повзе')
+      verd('lrVd','t-mid','ПОВЗЕ',
+        'Швидкість '+R.lr+' замала: за вісім епох втрата зрушила з 1.79 лише до '+
+        R.loss[R.loss.length-1].toFixed(2)+', точність '+R.acc.toFixed(3)+
+        '. Лікується збільшенням у 3-10 разів, а не в півтора.');
+    else if(R.mode==='розходиться')
+      verd('lrVd','t-no','РОЗХОДИТЬСЯ',
+        'Швидкість '+R.lr+' завелика. Підпис: на другій епосі втрата впала до 1.62, '+
+        'а на третій підстрибнула до 2.03 — і лягла на 1.79 назавжди. Точність '+
+        R.acc.toFixed(3)+' — це вгадування.');
+    else
+      verd('lrVd','t-no','ВИБУХАЄ',
+        'Швидкість '+R.lr+': середня втрата за другу епоху — 1.1 × 10³². Числа '+
+        'переповнюються, ваги вилітають у нескінченність. Тут нема чого діагностувати.');
+  }
+  on('lrPick','input',function(){ cur=+I('lrPick').value; draw(); });
+  on('lrAll','change',function(){ all=I('lrAll').checked; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 5 · чотири розклади швидкості ═════ */
+(function(){
+  var cv=I('cSch'); if(!cv) return;
+  var BASE=0.1, STEPS=120;          /* 12 кроків на епоху × 10 епох */
+  var SCH=[
+    {name:'стала', acc:0.167, best:0.913,
+     loss:[1.79,1.62,0.81,0.85,0.91,0.79,0.38,0.34,0.17,77.25],
+     f:function(s){ return BASE; }},
+    {name:'сходинки', acc:0.993, best:0.993,
+     loss:[1.79,1.62,0.81,0.89,0.46,0.27,0.14,0.10,0.09,0.08],
+     f:function(s){ return BASE*Math.pow(0.1, Math.floor(s/41)); }},
+    {name:'косинус', acc:1.000, best:1.000,
+     loss:[1.79,1.63,0.91,0.48,0.10,0.001,0.001,0.001,0.001,0.001],
+     f:function(s){ return BASE*0.5*(1+Math.cos(Math.PI*s/STEPS)); }},
+    {name:'розігрів + косинус', acc:1.000, best:1.000,
+     loss:[1.79,1.69,1.47,1.13,1.03,0.25,0.05,0.02,0.001,0.001],
+     f:function(s){
+        var warm=12;
+        if(s<warm) return BASE*(s+1)/warm;
+        return BASE*0.5*(1+Math.cos(Math.PI*(s-warm)/(STEPS-warm)));
+     }}
+  ];
+  var cur=0;
+  function lg(v){ return Math.log(Math.max(v,0.0005))/Math.LN10; }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), k;
+    var S=SCH[cur];
+    var endLr = S.f(STEPS-1);
+    I('schEnd').textContent = endLr < 0.0005 ? 'майже 0' : endLr.toFixed(4);
+    I('schLoss').textContent = S.loss[S.loss.length-1].toFixed(2);
+    I('schAcc').textContent = S.acc.toFixed(3);
+
+    /* верхня панель — швидкість по кроках */
+    var bx=74, by=44, bw=W-bx-44, bh=112;
+    head(g,'швидкість навчання по кроках',bx,by-16);
+    var T1=axes(g,{x:bx,y:by,w:bw,h:bh},{
+      xmin:0, xmax:STEPS, ymin:0, ymax:0.115,
+      yticks:[{v:0,t:'0'},{v:0.05,t:'0.05'},{v:0.1,t:'0.10'}],
+      xlabel:null
+    });
+    g.strokeStyle=css('--rose'); g.lineWidth=2.2; g.beginPath();
+    for(k=0;k<STEPS;k++){
+      var px=T1.X(k), py=T1.Y(S.f(k));
+      if(k===0) g.moveTo(px,py); else g.lineTo(px,py);
+    }
+    g.stroke();
+    g.font=mono(9.5,false); g.fillStyle=css('--soft'); g.textAlign='right';
+    g.fillText('крок 120', bx+bw, by+bh+14);
+    g.textAlign='left'; g.fillText('крок 0', bx, by+bh+14);
+
+    /* нижня панель — втрата по епохах */
+    var cy=by+bh+52, ch=H-cy-56;
+    head(g,'втрата на навчанні по епохах',bx,cy-16);
+    var T2=axes(g,{x:bx,y:cy,w:bw,h:ch},{
+      xmin:0.6, xmax:10.4, ymin:-3, ymax:2,
+      yticks:[{v:-3,t:'0.001'},{v:-2,t:'0.01'},{v:-1,t:'0.1'},{v:0,t:'1'},{v:2,t:'100'}],
+      xlabel:'епоха'
+    });
+    var color = S.acc>=0.9 ? css('--teal') : css('--rose');
+    polyline(g,T2,S.loss.map(lg),color,2.4,true);
+    if(cur===0){
+      g.font=mono(10,true); g.fillStyle=css('--rose'); g.textAlign='left';
+      g.fillText('остання епоха: 77.25', bx+10, cy+18);
+    }
+
+    if(S.acc>=0.99)
+      verd('schVd','t-ok','ДОВІВ ДО КІНЦЯ',
+        'Розклад «'+S.name+'»: швидкість спала з 0.1 до '+
+        (endLr < 0.0005 ? 'майже нуля' : endLr.toFixed(4))+
+        ', точність '+S.acc.toFixed(3)+'. Крок наприкінці малий, тому мережа осідає '+
+        'у мінімум, а не перестрибує його.');
+    else if(S.acc>=0.9)
+      verd('schVd','t-ok','ПРАЦЮЄ',
+        'Розклад «'+S.name+'»: точність '+S.acc.toFixed(3)+
+        '. Ділення на десять двічі рятує навчання, але момент ділення доводиться вгадувати.');
+    else
+      verd('schVd','t-no','ПОМЕРЛО НАПРИКІНЦІ',
+        'Стала швидкість 0.1: на девʼятій епосі було 0.913, а на десятій середня втрата '+
+        'злетіла до 77.25 і точність упала до '+S.acc.toFixed(3)+
+        '. Крок, стерпний на початку, стає завеликим, коли ваги вже великі.');
+  }
+  segment('schSeg', function(i){ cur=i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 6 · розмір батча ═════ */
+(function(){
+  var cv=I('cBs'); if(!cv) return;
+  /* час епохи — на 1200 прикладах; точність — на 360 за 8 епох */
+  var ROWS=[
+    {b:8,   steps:150, time:4.76, accConst:0.167, accScaled:1.000, lrScaled:0.0075},
+    {b:32,  steps:38,  time:2.97, accConst:0.917, accScaled:0.917, lrScaled:0.03},
+    {b:128, steps:10,  time:2.58, accConst:0.373, accScaled:0.167, lrScaled:0.12},
+    {b:512, steps:3,   time:2.17, accConst:null,  accScaled:null,  lrScaled:0.48}
+  ];
+  var cur=1, scaled=false;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv), k;
+    var R=ROWS[cur];
+    var acc = scaled ? R.accScaled : R.accConst;
+    I('bsSizev').textContent=R.b;
+    I('bsSteps').textContent=R.steps;
+    I('bsTime').textContent=R.time.toFixed(2)+' с';
+    I('bsAcc').textContent = acc===null ? '—' : acc.toFixed(3);
+
+    var bx=190, bw=W-bx-150, top=48, gapY=88;
+    var bars=[
+      {t:'час епохи', v:R.time/4.76, txt:R.time.toFixed(2)+' с', c:css('--amber')},
+      {t:'шум градієнта', v:Math.sqrt(8/R.b), txt:'1/√'+R.b+' = '+(1/Math.sqrt(R.b)).toFixed(3), c:css('--rose')},
+      {t:'точність', v: acc===null?0:acc, txt: acc===null?'не міряли':acc.toFixed(3),
+       c: acc===null?css('--hair'):(acc>=0.9?css('--teal'):css('--rose'))}
+    ];
+    for(k=0;k<bars.length;k++){
+      var y=top+k*gapY;
+      g.font=sans(12.5); g.fillStyle=css('--ink'); g.textAlign='right';
+      g.fillText(bars[k].t, bx-16, y+22);
+      g.fillStyle=css('--hair'); rr(g,bx,y,bw,30,7); g.fill();
+      g.fillStyle=bars[k].c;
+      rr(g,bx,y,Math.max(4,bw*Math.min(bars[k].v,1)),30,7); g.fill();
+      g.font=mono(12,true); g.fillStyle=css('--ink'); g.textAlign='left';
+      g.fillText(bars[k].txt, bx+bw+14, y+20);
+    }
+    g.font=mono(10.5,false); g.fillStyle=css('--soft'); g.textAlign='left';
+    g.fillText('батч '+R.b+' · '+R.steps+' кроків за епоху · швидкість '+
+               (scaled ? R.lrScaled : 0.03), bx, top+3*gapY+2);
+    g.fillText('смуги нормовані на найгірше значення в кожному рядку', bx, top+3*gapY+22);
+
+    if(acc===null)
+      verd('bsVd','t-mid','НА ЦИХ ДАНИХ НЕ МІРЯЛИ',
+        'Батч 512 на 360 прикладах дав би один крок за епоху — порівнювати нема чого. '+
+        'Час епохи заміряно на 1200 прикладах: '+R.time.toFixed(2)+' с проти 4.76 с при батчі 8.');
+    else if(acc>=0.9)
+      verd('bsVd','t-ok','РОБОЧЕ ПОЄДНАННЯ',
+        'Батч '+R.b+' зі швидкістю '+(scaled?R.lrScaled:0.03)+' дає '+acc.toFixed(3)+
+        '. Епоха коштує '+R.time.toFixed(2)+' с, кроків за епоху — '+R.steps+'.');
+    else if(R.b<=8)
+      verd('bsVd','t-no','РОЗХИТАЛОСЬ',
+        'Батч '+R.b+' дає '+R.steps+' кроків за епоху — вчетверо більше, ніж при 32. '+
+        'При тій самій швидкості 0.03 навчання розхитується: точність доходила до 0.883, '+
+        'а закінчила на '+acc.toFixed(3)+'. Лікується діленням швидкості на чотири.');
+    else
+      verd('bsVd','t-no','НЕ ДОЇХАЛО',
+        'Батч '+R.b+' дає лише '+R.steps+' '+(R.steps===1?'крок':'кроків')+
+        ' за епоху: за вісім епох це '+(R.steps*8)+' змін ваг замість 304. Точність '+
+        acc.toFixed(3)+'. Множення швидкості на чотири тут не врятувало — правило '+
+        'лінійного масштабування має межу.');
+  }
+  segment('bsSeg', function(i){ scaled=(i===1); draw(); });
+  on('bsSize','input',function(){ cur=+I('bsSize').value; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+/* ═════ Інтерактив 7 · пʼять діагнозів за кривими ═════ */
+(function(){
+  var cv=I('cDiag'); if(!cv) return;
+  var CASES=[
+    {name:'норма', tag:'t-ok', cap:'ЗДОРОВЕ НАВЧАННЯ',
+     loss:[1.2946,0.0844,0.0015,0.0005,0.0002,0.0002,0.0001,0.0001,0.0002,0.0001],
+     train:[0.738,0.998,1,1,1,1,1,1,1,1],
+     test:[0.732,0.990,1,1,1,1,1,1,1,1],
+     txt:'Втрата спадає монотонно до 0.0001, обидві криві точності йдуть разом і '+
+         'сходяться в 1.000. Розрив нульовий. Робити нічого не треба.'},
+    {name:'недонавчання', tag:'t-mid', cap:'НЕДОНАВЧАННЯ',
+     loss:[1.7947,1.7943,1.7938,1.7932,1.7927,1.7921,1.7915,1.791,1.7904,1.7899],
+     train:[0.247,0.258,0.258,0.264,0.267,0.267,0.272,0.281,0.283,0.286],
+     test:[0.250,0.253,0.260,0.270,0.277,0.277,0.283,0.273,0.277,0.287],
+     txt:'Втрата за десять епох зрушила з 1.7947 до 1.7899 — тобто стоїть. Мережа '+
+         'погана навіть на тих даних, які бачила: 0.286. Лікується більшою швидкістю, '+
+         'довшим навчанням або більшою мережею.'},
+    {name:'перенавчання', tag:'t-no', cap:'ПЕРЕНАВЧАННЯ',
+     loss:[1.808,1.780,1.758,1.736,1.691,1.624,1.511,1.366,1.225,1.116,0.990,0.970,
+           0.808,0.781,0.764,0.644,0.599,0.542,0.493,0.468,0.437,0.362,0.323,0.292,0.272],
+     train:[0.167,0.433,0.500,0.583,0.650,0.767,0.650,0.667,0.650,0.617,0.683,0.717,
+            0.650,0.733,0.800,0.750,0.817,0.833,0.867,0.867,0.883,0.917,0.950,0.917,0.933],
+     test:[0.167,0.323,0.377,0.373,0.460,0.540,0.567,0.550,0.557,0.533,0.607,0.593,
+           0.603,0.617,0.637,0.630,0.637,0.663,0.687,0.657,0.670,0.713,0.703,0.700,0.713],
+     txt:'Втрата спадає нормально, але криві точності розходяться: 0.933 на навчальній '+
+         'проти 0.713 на перевірочній. Розрив 0.220 і росте. Причина тут — брак даних '+
+         '(десять прикладів на клас), тому лікувати треба даними, а не дропаутом.'},
+    {name:'завелика швидкість', tag:'t-no', cap:'ЗАВЕЛИКА ШВИДКІСТЬ',
+     loss:[1.800,1.620,2.032,1.876,1.838,1.831,1.832,1.812,1.815,1.811],
+     train:[0.267,0.433,0.167,0.167,0.167,0.167,0.167,0.167,0.167,0.167],
+     test:[0.233,0.463,0.167,0.167,0.167,0.167,0.167,0.167,0.167,0.167],
+     txt:'Підпис у перших трьох епохах: 1.800 → 1.620 → 2.032. Втрата впала, потім '+
+         'підстрибнула вище початкової — і лягла на 1.79 назавжди. Обидві криві точності '+
+         'провалились у 0.167. Поділи швидкість на 3-10.'},
+    {name:'витік', tag:'t-no', cap:'ВИТІК ДАНИХ',
+     loss:[1.808,1.780,1.758,1.736,1.691,1.624,1.511,1.366,1.225,1.116,0.990,0.970,
+           0.808,0.781,0.764,0.644,0.599,0.542,0.493,0.468,0.437,0.362,0.323,0.292,0.272],
+     train:[0.167,0.433,0.500,0.583,0.650,0.767,0.650,0.667,0.650,0.617,0.683,0.717,
+            0.650,0.733,0.800,0.750,0.817,0.833,0.867,0.867,0.883,0.917,0.950,0.917,0.933],
+     test:[0.167,0.347,0.400,0.413,0.493,0.577,0.573,0.567,0.570,0.543,0.623,0.610,
+           0.603,0.643,0.677,0.660,0.673,0.703,0.727,0.707,0.720,0.750,0.763,0.747,0.767],
+     txt:'Ті самі криві, що в перенавчанні, але перевірочна йде вище: 0.767 замість 0.713. '+
+         'Уся видима ціна витоку — 5.4 пункти, і саме тому його не помічають роками. '+
+         'Пʼята частина перевірочної вибірки тут — навчальні приклади.'}
+  ];
+  var cur=0;
+  function lg(v){ return Math.log(Math.max(v,0.00005))/Math.LN10; }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var C=CASES[cur], n=C.loss.length;
+    var gap=C.train[n-1]-C.test[n-1];
+    I('dgTrain').textContent=C.train[n-1].toFixed(3);
+    I('dgTest').textContent=C.test[n-1].toFixed(3);
+    I('dgGap').textContent=(gap>=0?'+':'−')+Math.abs(gap).toFixed(3);
+    I('dgLoss').textContent=C.loss[n-1]<0.001 ? C.loss[n-1].toExponential(0) : C.loss[n-1].toFixed(3);
+
+    /* ліва панель — втрата.
+       Межі осі рахуємо під конкретний випадок: із нерухомою шкалою 0.0001…10
+       підстрибування втрати з 1.62 до 2.03 — той самий підпис завеликої швидкості,
+       заради якого й існує ця картинка, — стискається в пряму лінію. */
+    var bx=74, by=54, bw=340, bh=H-124;
+    head(g,'втрата на навчанні',bx,by-18);
+    var lv=C.loss.map(lg), k;
+    var lo=Math.min.apply(null,lv), hi=Math.max.apply(null,lv);
+    if(hi-lo < 0.5){ var mid=(hi+lo)/2; lo=mid-0.28; hi=mid+0.28; }
+    var pad=(hi-lo)*0.10; lo-=pad; hi+=pad;
+    var ticks=[];
+    for(k=0;k<=3;k++){
+      var yv=lo+(hi-lo)*k/3, val=Math.pow(10,yv);
+      ticks.push({v:yv, t: val>=10 ? val.toFixed(0)
+                     : val>=1 ? val.toFixed(2)
+                     : val>=0.01 ? val.toFixed(3)
+                     : val.toExponential(0)});
+    }
+    var T1=axes(g,{x:bx,y:by,w:bw,h:bh},{
+      xmin:0.5, xmax:n+0.5, ymin:lo, ymax:hi, yticks:ticks, xlabel:'епоха'
+    });
+    if(lg(1.792)>lo && lg(1.792)<hi){
+      dashed(g,T1,lg(1.792),css('--soft'),bx+1,bx+bw-1,null);
+      g.font=mono(9.5,false); g.fillStyle=css('--soft'); g.textAlign='right';
+      g.fillText('1.79', bx+bw-4, T1.Y(lg(1.792))-5);
+    }
+    polyline(g,T1,lv,css('--amber'),2.4,n<=12);
+
+    /* права панель — дві криві точності */
+    var px=530, pw=W-px-46;
+    head(g,'точність по епохах',px,by-18);
+    var T2=axes(g,{x:px,y:by,w:pw,h:bh},{
+      xmin:0.5, xmax:n+0.5, ymin:0, ymax:1.05,
+      yticks:[{v:0,t:'0'},{v:0.167,t:'0.167'},{v:0.5,t:'0.5'},{v:1,t:'1.0'}],
+      xlabel:'епоха'
+    });
+    dashed(g,T2,0.167,css('--soft'),px+1,px+pw-1,null);
+    polyline(g,T2,C.train,css('--rose'),2.4,n<=12);
+    polyline(g,T2,C.test,css('--teal'),2.4,n<=12);
+    legendRow(g,[{t:'навчальна',c:css('--rose')},
+                 {t:'перевірочна',c:css('--teal')}], px+pw, by-14);
+
+    verd('dgVd',C.tag,C.cap,C.txt);
+  }
+  segment('diagSeg', function(i){ cur=i; draw(); });
+  draw();
+  window.addEventListener('resize', draw);
+})();
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1898 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panoptic і SAM</title>
+<meta name="description" content="Дві окремо навчені моделі — семантична й instance — дають суперечливі відповіді на 54.5 % пікселів предметів: спірних 4.84 %, перекритих двома масками 3.77 %, порожніх 2.62 % від усього полотна. Panoptic вимагає рівно однієї пари «клас + номер предмета» на піксель, а PQ = SQ × RQ міряє це одним числом: RQ — F1 по сегментах при IoU понад 0.5, SQ — середній IoU зарахованих. Модель, що зливає дотичні предмети, дає mIoU 1.0000 і PQ 0.8808; модель, що псує лише фон, дає mask AP 1.0000 — сліпі плями пари mIoU + mask AP не перетинаються. PQ фону 0.9545 проти PQ речей 0.5992. Власна panoptic-голова дає PQ 0.5058 проти 0.6185 у найкращого зшивання. SAM міняє постановку: не «сегментуй усе», а «сегментуй те, на що я показав». Неоднозначних підказок 58.1 %, і модель з одним виходом дає IoU 0.5924 при розкиді 0.3026, а з трьома — 0.8177 при розкиді 0.0194.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* грабля №3: під uppercase латинська N і грецькі літери псуються.
+   Правило .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw{text-transform:none}
+
+/* сітка з двох канв поруч у деяких фігурах */
+.twin{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+@media(max-width:620px){.twin{grid-template-columns:1fr}}
+/* перемикачі рівнів у фігурі «прибрати скіп» */
+.seg.three button{flex:1 1 30%}
+</style>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 6 · Тема 32</p>
+    <h1>Panoptic і SAM</h1>
+    <p class="stand">Тема 31 лишила нас із двома моделями на одне зображення: одна
+      знає про фон, друга — про предмети. Panoptic зшиває їх в одну відповідь і
+      питає з неї одним числом. SAM іде далі й міняє саме питання: не «сегментуй
+      усе, що знаєш», а <b>«сегментуй те, на що я показав»</b>.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Дві моделі на одне зображення</a></li>
+        <li><a href="#s2">Речі й матерія</a></li>
+        <li><a href="#s3">Постановка panoptic</a></li>
+        <li><a href="#s4">Метрика PQ і її множники</a></li>
+        <li><a href="#s5">Чому не досить mIoU + mask AP</a></li>
+        <li><a href="#s6">Речі окремо, матерія окремо</a></li>
+        <li><a href="#s7">Своя panoptic-голова</a></li>
+        <li><a href="#s8">Зміна постановки: сегментація за підказкою</a></li>
+        <li><a href="#s9">Своя модель за підказкою</a></li>
+        <li><a href="#s10">Неоднозначність підказки</a></li>
+        <li><a href="#s11">Види підказок</a></li>
+        <li><a href="#s12">Що дав SAM галузі</a></li>
+        <li><a href="#s13">Підсумок блоку 6</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../31-instance-segmentation/lecture.html">← 31. Instance segmentation</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../33-ocr/lecture.html">33. OCR: знайти текст і прочитати →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Уяви фотографію вулиці. Небо, дорога, тротуар — це те, що не рахують:
+питання «скільки на фото неба?» не має відповіді в штуках. Машини, люди, дорожні
+знаки — навпаки, рахують: три машини, дві людини. До цієї теми ми вміли робити або
+одне, або друге. Семантична мережа з <a href="../29-semantic-segmentation/lecture.html">теми
+29</a> добре фарбує небо й дорогу, але не рахує машин. Модель із
+<a href="../31-instance-segmentation/lecture.html">теми 31</a> рахує машини, але
+небо їй нецікаве зовсім.</p>
+
+<p>Щоб описати одну фотографію повністю, доводиться запустити <b>дві різні моделі</b>
+й якось зшити їхні відповіді. Ця тема про те, чому зшити їх важче, ніж здається, і
+що з цього виросло. А в другій половині — про модель, яка взагалі відмовилась
+називати предмети, і саме тому виявилась корисною скрізь.</p>
+
+<h2 id="s1"><span class="num">01 / Розрив</span>Дві моделі на одне зображення</h2>
+
+<p>Почнімо з чесного експерименту. Беремо наші сцени 64×64 з
+<a href="../28-detection-practice/lecture.html">теми 28</a>, навчаємо на них дві
+мережі — семантичну з теми 29 і instance з теми 31 — і кладемо їхні відповіді одна
+на одну. Обидві мережі робочі, жодного шкідництва.</p>
+
+<p>Тепер питаємо кожен піксель, що він про себе почув. Виявляється, є три способи
+зіпсуватись, і жоден із них не є помилкою якоїсь однієї моделі.</p>
+
+<ul>
+  <li><b>Спірний піксель.</b> Семантична модель сказала «квадрат», а маска, яка його
+    накрила, належить колу. Або семантична сказала «фон», а instance-маска все одно
+    накрила. Дві відповіді, і вони різні.</li>
+  <li><b>Перекритий піксель.</b> Його накрили <b>дві або більше</b> масок. Для
+    instance-моделі це нормально: її вихід — список масок, і вони мають повне право
+    перетинатись. Для однієї відповіді на піксель — ні.</li>
+  <li><b>Дірка.</b> Семантична модель назвала піксель предметом, а жодна маска його
+    не накрила. Він лишився без номера предмета, тобто без відповіді взагалі.</li>
+</ul>
+
+<p>Зошит рахує це на 70 перевірних сценах, три зерна. Серед пікселів, які хоч одна
+з двох моделей назвала предметом, зіпсованих виходить <b>54.5 %</b> — спірних,
+перекритих або порожніх. У частках усього полотна це 4.84 % спірних,
+3.77 % перекритих і 2.62 % дірок.</p>
+
+<div class="note warn"><b>Чому це не лікується правилом «беремо впевненішого».</b>
+Упевненість семантичної моделі — це ймовірність класу в пікселі. Упевненість
+instance-моделі — оцінка предмета цілком. Це числа з різних мереж, навчених різними
+втратами; вони не в одній шкалі й порівнювати їх нема підстав. Будь-яке правило
+зшивання доводиться <b>вигадати</b>, і воно не випливає із жодної з двох задач.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Дві моделі, один піксель</p>
+  <p class="fig-sub">Обидві моделі трохи неточні: повзунки задають, на скільки
+    пікселів кожна з них «розпливається». Права панель показує, що з цього виходить.</p>
+  <div class="panel">
+    <div><canvas id="cTwo" width="940" height="300" aria-label="Сцена, відповідь семантичної моделі, відповідь instance-моделі і карта пікселів, які дістали дві різні відповіді або жодної"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="twoA1">похибка семантичної <output id="twoAOut">1 px</output></label>
+        <input type="range" id="twoA1" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="ctl">
+        <label for="twoB1">похибка instance <output id="twoBOut">1 px</output></label>
+        <input type="range" id="twoB1" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>спірних</b><i id="tw1">—</i></div>
+        <div class="cellv"><b>перекритих</b><i id="tw2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>дірок</b><i id="tw3">—</i></div>
+        <div class="cellv"><b>зіпсовано</b><i id="tw4">—</i></div>
+      </div>
+      <div class="verdict" id="twVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав обидва повзунки на нуль — і проблема зникне.</b> Дві
+    ідеальні моделі зшиваються без жодного конфлікту, і саме тому на папері задача
+    виглядає розвʼязаною. Досить одного пікселя похибки в кожної — і карта праворуч
+    засвічується. Рожеве — спірні пікселі, жовте — перекриті двома масками,
+    бірюзове — дірки. У зошиті на справжніх моделях зіпсовано <b>54.5 %</b>
+    пікселів предметів.</figcaption>
+</figure>
+
+<h2 id="s2"><span class="num">02 / Поділ</span>Речі й матерія</h2>
+
+<p>Перш ніж зшивати, варто спитати, звідки взявся сам поділ. Чому небо фарбує одна
+модель, а машини знаходить інша?</p>
+
+<p>Відповідь незручна: <b>поділ придумали ми</b>. У світі немає межі між «речами» і
+«матерією» — є два різні способи ставити питання.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Категорія</th><th>Англійською</th><th>Питання, на яке відповідає</th><th>Приклади</th></tr></thead>
+  <tbody>
+    <tr><td>речі</td><td>things</td><td>скільки їх і де кожна</td><td>машина, людина, чашка, книжка</td></tr>
+    <tr><td>матерія</td><td>stuff</td><td>де воно є, а де немає</td><td>небо, дорога, вода, стіна</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ознака, за якою розводять ці категорії, — <b>чи має сенс рахувати штуки</b>. Небо
+на фото одне, і питання «скільки шматків неба?» безглузде. Машин може бути пʼять, і
+питання «скільки?» — головне, заради чого знімок узагалі дивляться.</p>
+
+<p>Але межа тече. Трава на газоні — матерія: ніхто не рахує травинки. Трава в
+горщику — річ: горщиків три. Дерева в лісі — матерія, дерево на подвірʼї — річ.
+Цеглини стіни — матерія, поки не ремонтуєш стіну. У наборі COCO-Stuff «кущі» —
+матерія, у наборі для садівництва вони були б речами.</p>
+
+<p>Найчесніше формулювання таке: <b>категорія залежить не від предмета, а від
+задачі</b>. І коли одна модель уміє тільки речі, а друга тільки матерію, ти
+успадковуєш цей штучний поділ у своїй архітектурі — навіть якщо для твоєї задачі він
+не має сенсу.</p>
+
+<p>У наших сценах поділ такий: фон — матерія, три фігури — речі. Полотно 64×64, фону
+багато (<a href="../29-semantic-segmentation/lecture.html">тема 29</a> міряла 89.34 %
+на рідких сценах), фігури дрібні. Це навмисне копіює пропорцію справжніх знімків, де
+матерія займає більшість пікселів, а речі — більшість уваги.</p>
+
+<h2 id="s3"><span class="num">03 / Постановка</span>Кожен піксель дістає рівно одну пару</h2>
+
+<p>Panoptic segmentation ставить вимогу, яку легко сформулювати й важко виконати:</p>
+
+<div class="eq">кожен піксель дістає рівно одну пару <b>(клас, номер предмета)</b></div>
+
+<p>Розберімо її по словах.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">кожен</span>
+    <p>Дірок немає. Піксель без відповіді — це помилка, а не «нічого не знайдено».
+      Саме тут ламається instance-модель: у неї між масками порожньо, і ця порожнеча
+      не має ані класу, ані номера.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">рівно одну</span>
+    <p>Перекриттів немає. Дві маски не можуть претендувати на один піксель. Саме тут
+      ламається спосіб «зверху вниз»: маски предметів у Mask R-CNN
+      (<a href="../31-instance-segmentation/lecture.html">тема 31</a>) перетинаються
+      завжди, бо кожна рахується у своїй рамці незалежно від сусідів.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">клас і номер</span>
+    <p>Номер потрібен лише для речей. Для матерії він завжди нульовий: усі пікселі
+      неба — один сегмент, і питання «яке саме небо» не існує.</p>
+  </div>
+</div>
+
+<p>Звідси випливає термін, на якому тримається вся метрика. <b>Сегмент</b> — це
+звʼязна відповідь моделі: для речі — маска одного предмета, для матерії — усі
+пікселі цього класу на зображенні разом. Якщо на знімку три машини й небо, сегментів
+чотири: три речі й одна матерія.</p>
+
+<div class="note"><b>Зверни увагу, чого тут немає.</b> У постановці немає слова
+«модель». Panoptic — це формат відповіді, а не архітектура. Зшити дві моделі в цей
+формат можна; питання лише в тому, скільки на цьому втрачається — і саме на це
+питання відповідає метрика.</div>
+
+<h2 id="s4"><span class="num">04 / Метрика</span>PQ і її множники</h2>
+
+<p>Метрика зветься <b>PQ</b>, panoptic quality. Вона рахується на сегментах і
+складається з двох частин, які варто розуміти окремо.</p>
+
+<p><b>Крок перший — зіставлення.</b> Прогнозований сегмент і істинний сегмент
+<b>одного класу</b> утворюють пару, якщо їхній <code>IoU</code> <b>більший за
+0.5</b>. Поріг саме такий не з естетики: якщо перекриття більше половини, то до
+одного істинного сегмента не може підійти два прогнозовані одразу — місця не
+вистачить. Пари утворюються однозначно, і жодного правила вибору вигадувати не
+треба.</p>
+
+<p><b>Крок другий — два числа.</b> Позначмо: <span class="raw">TP</span> — скільки
+пар утворилось, <span class="raw">FP</span> — скільки прогнозованих сегментів
+лишилось без пари, <span class="raw">FN</span> — скільки істинних лишилось без пари.</p>
+
+<div class="eq">RQ = TP / (TP + ½·FP + ½·FN)</div>
+
+<p>Це звичайний <code>F1</code>, тільки не по пікселях, а по сегментах: <b>скільки</b>
+сегментів модель узагалі знайшла. Половинки перед <span class="raw">FP</span> і
+<span class="raw">FN</span> — це і є визначення <code>F1</code>, записане одним
+дробом.</p>
+
+<div class="eq">SQ = (сума IoU по всіх парах) / TP</div>
+
+<p>Це середня якість маски серед тих сегментів, які таки знайшлись: <b>наскільки
+точно</b>. І остаточно:</p>
+
+<div class="eq">PQ = SQ × RQ</div>
+
+<p>Метрика рахується окремо в кожному класі, а потім усереднюється по класах. Ось
+чому розклад на множники важливіший за саме PQ: <code>RQ</code> і <code>SQ</code>
+відповідають на два різні питання, і однакове PQ може означати протилежні речі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · PQ по кроках</p>
+  <p class="fig-sub">Кнопка «крок» веде через увесь розрахунок: сегменти → зіставлення
+    → TP, FP, FN → RQ → SQ і PQ. Повзунок зсуває прогноз і міняє числа.</p>
+  <div class="panel">
+    <div><canvas id="cPQ" width="940" height="330" aria-label="Істина й прогноз поруч, і покроковий розрахунок PQ з числами на кожному кроці"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="shift2">зсув прогнозу <output id="shiftOut">2 px</output></label>
+        <input type="range" id="shift2" min="0" max="5" step="1" value="2">
+      </div>
+      <div class="ctl"><span class="cap">крок: <span id="stepName">сегменти</span></span></div>
+      <button type="button" id="stepBtn">крок →</button>
+      <button type="button" id="resetBtn">спочатку</button>
+      <div class="readout">
+        <div class="cellv"><b>TP / FP / FN</b><i id="pq1" class="sm">—</i></div>
+        <div class="cellv"><b>RQ</b><i id="pq2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>SQ</b><i id="pq3">—</i></div>
+        <div class="cellv"><b>PQ</b><i id="pq4">—</i></div>
+      </div>
+      <div class="verdict" id="pqVd"></div>
+    </div>
+  </div>
+  <figcaption><b>SQ падає плавно, RQ — стрибком.</b> Зсунь прогноз на піксель-два:
+    IoU кожної пари сповзає вниз, і разом із ним SQ. Але щойно IoU переходить 0.5,
+    пара зникає цілком — і RQ провалюється сходинкою. Дві помилки різної природи, і
+    добуток без множників їх не розрізняє.</figcaption>
+</figure>
+
+<p>Найкорисніше, що можна винести з цього розділу, — уміння читати PQ назад.
+Однакове число буває в моделі, яка знайшла мало сегментів, зате точних, і в моделі,
+яка знайшла всі, але грубо.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Однакове PQ, різні SQ і RQ</p>
+  <p class="fig-sub">Вісім однакових предметів. Повзунок каже, скільки з них модель
+    знайшла; точність масок підбирається під нього так, щоб PQ майже не мінялось —
+    від 0.6076 до 0.6510 на всьому ході.</p>
+  <div class="panel">
+    <div><canvas id="cFact" width="940" height="300" aria-label="Істина з восьми предметів і прогноз, у якому знайдено лише частину, поруч зі стовпчиками SQ, RQ і PQ"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="k3">знайдено предметів <output id="kOut">8</output></label>
+        <input type="range" id="k3" min="4" max="8" step="1" value="8">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>SQ</b><i id="fc1">—</i></div>
+        <div class="cellv"><b>RQ</b><i id="fc2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>PQ</b><i id="fc3">—</i></div>
+        <div class="cellv"><b>знайдено</b><i id="fc4">—</i></div>
+      </div>
+      <div class="verdict" id="fcVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Одне число, дві поведінки.</b> На лівому краю повзунка модель
+    знаходить чотири предмети з восьми, зате майже до пікселя: SQ 0.9195, RQ 0.6667.
+    На правому — знаходить усі вісім, але маски грубі: SQ 0.6510, RQ 1.0000. PQ при
+    цьому не зрушило (0.6130 проти 0.6510), а користь різна: у задачі підрахунку
+    виграє друга модель, у задачі вимірювання площі — перша. Тому PQ завжди цитують
+    разом із множниками.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Чому одне число</span>Чому не досить mIoU + mask AP</h2>
+
+<p>Резонне заперечення: у нас уже є дві метрики. <code>mIoU</code> з
+<a href="../29-semantic-segmentation/lecture.html">теми 29</a> міряє пікселі,
+<code>mask AP</code> з <a href="../31-instance-segmentation/lecture.html">теми 31</a>
+міряє предмети. Хіба їхня пара не описує все?</p>
+
+<p>Ні, і причина проста: у кожної з них є <b>сліпа пляма</b>, і сліпі плями не
+перетинаються. Зошит будує шість «моделей» різної якості — усі зроблені з еталонної
+розмітки навмисним псуванням, тож ми точно знаємо, що саме в кожній зіпсовано.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>модель</th><th>PQ</th><th>mIoU</th><th>mask AP</th></tr></thead>
+  <tbody>
+    <tr><td>ідеальна</td><td>1.0000</td><td>1.0000</td><td>1.0000</td></tr>
+    <tr class="hot"><td>зливає дотичні</td><td>0.8808</td><td>1.0000</td><td>0.7922</td></tr>
+    <tr><td>ріже предмет навпіл</td><td>0.5292</td><td>1.0000</td><td>0.6961</td></tr>
+    <tr><td>зсув на 2 px</td><td>0.5840</td><td>0.7083</td><td>0.7722</td></tr>
+    <tr class="hot"><td>дзьобає фон</td><td>0.9804</td><td>0.7793</td><td>1.0000</td></tr>
+    <tr><td>губить кожен третій</td><td>0.7707</td><td>0.6419</td><td>0.5660</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Дивись на два підсвічені рядки.</p>
+
+<p><b>«Зливає дотичні»</b> — модель, у якої <b>всі пікселі правильні до одного</b>.
+Вона просто не розділяє предмети, що торкаються: дві кулі на столі дають одну маску.
+<code>mIoU</code> тут дорівнює 1.0000 — рівно одиниці, бо жодної помилки класу не
+зроблено. PQ падає до 0.8808. А сусідній рядок «ріже предмет навпіл» — та сама
+помилка, тільки в інший бік — має ту саму одиницю <code>mIoU</code> й PQ уже
+0.5292.</p>
+
+<p><b>«Дзьобає фон»</b> — навпаки. Усі предмети знайдені ідеально, а зіпсовано лише
+фон: частина його пікселів дістала клас без жодного предмета. <code>mask AP</code>
+цього не помічає взагалі — 1.0000, — бо фон у нього не входить за побудовою.</p>
+
+<p>Отже пара має сліпу пляму з кожного боку. І жодне усереднення двох чисел її не
+закриває: у першому рядку «ідеально» каже <code>mIoU</code>, у другому те саме каже
+<code>mask AP</code>.</p>
+
+<p>Зошит друкує всі три впорядкування поруч, і вони справді різні. Найрізкіше
+розходження — на моделі <b>«ріже предмет навпіл»</b>: за <code>mIoU</code> вона
+третя з шести, за PQ — <b>остання</b>. Метрика, що дивиться лише на пікселі, не
+бачить різниці між «один предмет» і «два його шматки», бо клас пікселя від цього не
+міняється. PQ бачить: сегментів стало вдвічі більше, ніж є, і половина з них ні з
+чим не зіставилась.</p>
+
+<h2 id="s6"><span class="num">06 / Дві половини</span>Речі окремо, матерія окремо</h2>
+
+<p>PQ прийнято розкладати ще й на дві половини: <code>PQ_th</code> — середнє по
+класах речей, <code>PQ_st</code> — по класах матерії. На перший погляд це просто
+зручна деталізація. Насправді тут причаїлась пастка.</p>
+
+<p>На наших сценах речей три класи, матерії один. Зошит рахує по класах:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>клас</th><th>PQ</th><th>SQ</th><th>RQ</th><th>TP</th><th>FN</th></tr></thead>
+  <tbody>
+    <tr><td>фон (матерія)</td><td>0.9545</td><td>0.9545</td><td>1.0000</td><td>70</td><td>0</td></tr>
+    <tr><td>коло</td><td>0.6639</td><td>0.8178</td><td>0.8118</td><td>69</td><td>15</td></tr>
+    <tr><td>квадрат</td><td>0.5730</td><td>0.8179</td><td>0.7006</td><td>62</td><td>13</td></tr>
+    <tr><td>трикутник</td><td>0.5608</td><td>0.7166</td><td>0.7826</td><td>63</td><td>14</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Подивись на <code>RQ</code> фону: 1.0000. Це не тому, що модель добра, а тому,
+що <b>сегмент матерії знайти майже неможливо не зуміти</b>. Він один на
+зображення й займає більшість пікселів; щоб не влучити в нього з <code>IoU</code>
+більшим за 0.5, треба помилитись катастрофічно. Тому <code>RQ</code> матерії
+прилипає до одиниці, і <code>PQ_st</code> фактично дорівнює його <code>SQ</code>.</p>
+
+<div class="note warn"><b>Звідси головна осторога.</b> Середнє «(PQ речей + PQ
+матерії) / 2» лестить моделі: половину оцінки дає категорія, у якій майже
+неможливо помилитись у розпізнаванні. У нас це 0.5992 проти 0.9545 — середнє по
+категоріях 0.7768, а справжнє PQ (середнє по <b>класах</b>) 0.6880.
+Порівнюй моделі по повному PQ або дивись на дві половини окремо, але ніколи не на
+їхнє середнє.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Речі проти матерії</p>
+  <p class="fig-sub">Ліворуч — істина, праворуч — прогноз. Один повзунок губить
+    предмети, другий псує фон. Стовпчики показують, що з цього бачить кожна половина
+    метрики.</p>
+  <div class="panel">
+    <div><canvas id="cThSt" width="940" height="300" aria-label="Істина й зіпсований прогноз поруч зі стовпчиками PQ речей, PQ матерії, повного PQ і середнього по двох категоріях"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="lost4">утрачено предметів <output id="lostOut">4</output></label>
+        <input type="range" id="lost4" min="0" max="5" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <label for="noise4">зіпсовано фону <output id="noiseOut">4 %</output></label>
+        <input type="range" id="noise4" min="0" max="24" step="2" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>PQ речей</b><i id="ts1">—</i></div>
+        <div class="cellv"><b>PQ матерії</b><i id="ts2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>PQ по класах</b><i id="ts3">—</i></div>
+        <div class="cellv"><b>середнє двох</b><i id="ts4">—</i></div>
+      </div>
+      <div class="verdict" id="tsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Ліві два повзунки псують різне, а праві два числа реагують
+    по-різному.</b> Утрата предметів валить PQ речей і майже не чіпає матерію.
+    Псування фону робить навпаки. А «середнє двох» щоразу лягає між ними й ховає
+    гіршу половину — саме тому його не варто цитувати як оцінку моделі.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Своя голова</span>Своя panoptic-голова</h2>
+
+<p>Тепер найцікавіше. Ми бачили, що зшивання двох моделей вимагає вигаданого правила.
+Зошит перевіряє три:</p>
+
+<ul>
+  <li><b>речі поверх усього</b> — маски кладуться за спаданням упевненості, піксель
+    дістається тій, яка взяла його першою;</li>
+  <li><b>лише там, де семантика згодна</b> — маска предмета забирає тільки ті пікселі,
+    яким семантична модель дала <b>той самий клас</b>;</li>
+  <li><b>поріг площі</b> — те саме, що перше, плюс сегменти, менші за 20 пікселів,
+    викидаються.</li>
+</ul>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>правило злиття</th><th>PQ</th><th>SQ</th><th>RQ</th><th>розкид</th></tr></thead>
+  <tbody>
+    <tr><td>речі поверх усього</td><td>0.6015</td><td>0.8003</td><td>0.7362</td><td>0.0885</td></tr>
+    <tr class="hot"><td>де семантика згодна</td><td>0.6185</td><td>0.8032</td><td>0.7510</td><td>0.1707</td></tr>
+    <tr><td>поріг площі 20 px</td><td>0.6107</td><td>0.8002</td><td>0.7490</td><td>0.0898</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>І ось перший чесний результат розділу: різниця між правилами — +0.0170 і +0.0092 за PQ при розкиді по зернах до 0.1707. Тобто <b>жодне правило не виграє</b>: усі три лежать усередині розкиду. Це не поразка ідеї, а вказівка, де насправді втрачається якість — не в правилі злиття, а в самих моделях, які ми зшиваємо.</p>
+
+<p>Але правило лишається вигаданим. Альтернатива — <b>одна модель, яка одразу віддає
+panoptic-карту</b>. Найпростіша конструкція така:</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">гілка перша</span>
+    <p><b>Семантична.</b> Клас кожного пікселя, чотири канали. Вона відповідає за
+      матерію і за те, який саме клас у речі.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">гілка друга</span>
+    <p><b>Голосування за центр.</b> Два числа на піксель: куди від нього до центра
+      свого предмета. Пікселі одного предмета показують в одну точку, різних — у
+      різні. Це рівно та гілка, яку
+      <a href="../31-instance-segmentation/lecture.html">тема 31</a> міряла окремо.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">злиття</span>
+    <p>Правило тут <b>не вигадане, а вбудоване</b>: кожен піксель належить рівно
+      одному згустку голосів усередині свого класу. Перекриттів не буває за
+      побудовою, дірок теж — бо клас пікселя вже є, і він або матерія, або належить
+      найближчому центру.</p>
+  </div>
+</div>
+
+<p>Зошит навчає таку голову на трьох зернах і дістає <b>PQ 0.5058</b> проти
+<b>0.6185</b> у найкращого зшивання. Різниця -0.1127 при найбільшому розкиді по зернах 0.2309 — тобто вона менша за розкид, і різницею називати її не можна. І це головний результат розділу: одна модель виграє не точністю, а тим, що в неї <b>немає чого налаштовувати</b>. Правило злиття не обирають — воно випливає з того, як влаштований вихід.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Правила злиття</p>
+  <p class="fig-sub">Ліва панель — те, що не зійшлось між двома моделями. Середня —
+    результат обраного правила. Права — істина, з якою ми його порівнюємо.</p>
+  <div class="panel">
+    <div><canvas id="cMerge" width="940" height="372" aria-label="Карта конфліктів, результат обраного правила злиття і еталонна розмітка поруч"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">правило злиття</span></div>
+      <div class="seg wrap" id="segMerge">
+        <button type="button" data-i="0" aria-pressed="true">речі поверх усього</button>
+        <button type="button" data-i="1" aria-pressed="false">де семантика згодна</button>
+        <button type="button" data-i="2" aria-pressed="false">поріг площі 200 px</button>
+      </div>
+      <div class="ctl">
+        <label for="mb5">похибка instance <output id="mbOut">2 px</output></label>
+        <input type="range" id="mb5" min="0" max="3" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сегментів</b><i id="mg1">—</i></div>
+        <div class="cellv"><b>дірок</b><i id="mg2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>PQ</b><i id="mg3">—</i></div>
+        <div class="cellv"><b>SQ</b><i id="mg4">—</i></div>
+      </div>
+      <div class="verdict" id="mgVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Правило вирішує більше, ніж здається.</b> На тих самих двох
+    відповідях правила дають різне PQ, і різниця сидить переважно в SQ. Постав похибку
+    instance-моделі на нуль — і перші два правила зійдуться майже точно (1.0000 і
+    0.9630): сперечатись стає нема про що. Третє не зійдеться ніколи, бо поріг площі
+    не залежить від похибки взагалі — він викидає дрібні предмети разом зі сміттям.
+    Поріг тут <b>200 px</b>, а в зошиті — 20 px: при 20 px на цих шести предметах
+    правило дає побітово той самий результат, що й перше, і керування було б мертвим.
+    Це саме по собі результат: поріг площі стає видимим лише тоді, коли він більший
+    за справжні предмети, тобто коли починає їх губити.
+    Це і є головний аргумент за одну модель замість двох: коли модель одна, правило
+    не доводиться обирати.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Інша постановка</span>Зміна постановки: сегментація за підказкою</h2>
+
+<p>Усе, що ми робили досі — і в цій темі, і в трьох попередніх, — це «сегментуй усе,
+що знаєш». Модель має список класів, вивчений наперед, і про предмет поза списком
+сказати їй нічого.</p>
+
+<p>SAM (segment anything model) ставить питання інакше:</p>
+
+<div class="eq">не «що тут є?», а «що <b>ось тут</b>?»</div>
+
+<p>Модель приймає зображення й <b>підказку</b> — точку, рамку, грубу маску — і віддає
+маску предмета, на який ця підказка вказує. Вона <b>нічого не класифікує</b>. На
+виході немає жодного класу: лише маска.</p>
+
+<p>Це та сама зміна, що CLIP зробив для класифікації в
+<a href="../22-clip/lecture.html">темі 22</a>. Там модель перестала мати фіксований
+список відповідей і почала відповідати на довільний текстовий запит. Тут модель
+перестала мати список класів і почала відповідати на довільну просторову підказку.
+Паралель точна аж до наслідків: обидві моделі стають придатними до предметів, яких
+не бачили, і обидві перестають самі по собі розвʼязувати прикладну задачу.</p>
+
+<div class="note"><b>Чому це вимагає окремої моделі, а не переробки старої.</b>
+Сегментатор із теми 29 приймає зображення й видає карту класів. Щоб він відповів на
+підказку, підказку треба кудись <b>подати</b> — тобто змінити вхід. У SAM це
+зроблено так: зображення проганяється через важкий енкодер <b>один раз</b>, а
+підказка йде в легкий декодер, який працює за мілісекунди. Тому на одному знімку
+можна клацати сотні разів без перерахунку — і це не оптимізація, а частина задуму.</div>
+
+<h2 id="s9"><span class="num">09 / Свій сегментатор</span>Своя модель за підказкою</h2>
+
+<p>Ваг справжнього SAM у нас немає: пакета <code>segment_anything</code> у середовищі
+не встановлено, а тягнути ваги з мережі зошит не має права. Тому зошит навчає
+<b>власну крихітну мережу за тією самою постановкою</b> — так само, як
+<a href="../22-clip/lecture.html">тема 22</a> зробила з CLIP, а
+<a href="../25-yolo/lecture.html">тема 25</a> із YOLO.</p>
+
+<p>Конструкція мінімальна. Вхід — <b>два канали</b>: зображення й карта підказки
+(кружечок радіуса 2 навколо точки). Тіло — той самий U-Net, що й раніше. Вихід —
+одна маска, без жодного класу.</p>
+
+<p>Результат: <b>IoU 0.8319</b> на трьох зернах. Для порівняння — інший спосіб
+відповісти на ту саму підказку: сегментувати все, а потім узяти пляму, у яку
+потрапила точка. Це найчесніший представник підходу «спершу все, потім вибір», і він
+дає <b>0.7534</b>.</p>
+
+<p>Різниця +0.0785 береться з одного місця: спосіб «сегментуй усе» не має
+жодного механізму, щоб відрізнити предмет від сусіда свого класу. Він віддає пляму
+цілком — те саме злипання, яким починалась
+<a href="../31-instance-segmentation/lecture.html">тема 31</a>. Модель за підказкою
+має цей механізм: підказка й є той механізм.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Підказка точкою</p>
+  <p class="fig-sub">Повзунки рухають точку по сцені. Перемикач змінює спосіб
+    відповіді: модель за підказкою чи «сегментуй усе, потім вибери».</p>
+  <div class="panel">
+    <div><canvas id="cPoint" width="940" height="400" aria-label="Сцена з підказкою-точкою і маска, яку віддала модель, з підсвіченим тим, що вона проґавила"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">спосіб відповіді</span></div>
+      <div class="seg" id="segPoint">
+        <button type="button" data-i="0" aria-pressed="true">за підказкою</button>
+        <button type="button" data-i="1" aria-pressed="false">сегментуй усе</button>
+      </div>
+      <div class="ctl">
+        <label for="px6">точка <span class="raw">x</span> <output id="ptXOut">44</output></label>
+        <input type="range" id="px6" min="0" max="63" step="1" value="44">
+      </div>
+      <div class="ctl">
+        <label for="py6">точка <span class="raw">y</span> <output id="ptYOut">18</output></label>
+        <input type="range" id="py6" min="0" max="63" step="1" value="18">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>IoU з предметом</b><i id="pt1">—</i></div>
+        <div class="cellv"><b>розмір маски</b><i id="pt2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>предмет злипся із сусідом</b><i id="pt3">—</i></div>
+      </div>
+      <div class="verdict" id="ptVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Тут показано механізм, а не якість.</b> Модель за підказкою віддає
+    саме ту фігуру, на яку ти показав; «сегментуй усе» віддає всю злиплу пляму, бо
+    поняття окремого предмета в неї немає — і IoU падає рівно на частку сусіда.
+    Перенеси точку на фігуру, що стоїть окремо: там обидва способи дають те саме.
+    Справжня навчена модель зошита дає IoU 0.8319, а не одиницю — але
+    механізм у неї той самий.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Неоднозначність</span>Одна підказка, кілька правильних відповідей</h2>
+
+<p>Тепер найцікавіше в усій SAM-частині. Точка <b>не визначає відповідь</b>.</p>
+
+<p>Клацни в стінку кільця. Що ти мав на увазі — стінку чи кільце цілком? Клацни в
+колесо машини — колесо, машину чи всю вантажівку з причепом? Усі ці відповіді чесні,
+і жодна не помилкова.</p>
+
+<p>На наших сценах ця неоднозначність теж є, і вона природна. Показавши в коло, яке
+торкається квадрата, ти міг мати на увазі три різні речі:</p>
+
+<ol>
+  <li><b>саме це коло</b> — окремий предмет;</li>
+  <li><b>усі кола цієї злиплої групи</b> — свій клас усередині групи;</li>
+  <li><b>усю групу цілком</b> — усе, що злиплось в одну пляму.</li>
+</ol>
+
+<p>Три вкладені відповіді, як «стінка → кільце → вся конструкція». На перевірці
+зошита таких підказок <b>58.1 %</b> — тобто більшість.</p>
+
+<p>Що робить модель, яку змусили дати <b>одну</b> маску? Вона мусить усереднити — і
+осідає на компромісі, який не збігається з жодною з трьох чесних відповідей.
+Справжній SAM віддає <b>три маски</b> на кожну підказку саме через це.</p>
+
+<p>Навчається він так: похибка рахується для кожного виходу, а назад іде
+<b>лише найменша</b>. Тобто вчиться тільки той вихід, який цього разу вгадав
+найкраще. З часом виходи розбирають між собою рівні: один тяжіє до дрібного, інший
+до великого.</p>
+
+<div class="note warn"><b>Замір мусить бути чесний.</b> Порівнювати треба ту саму
+мережу, ті самі дані й той самий бюджет навчання — інакше ми виміряємо кількість
+епох, а не кількість виходів. І оцінка теж одна для обох: <code>IoU</code>
+<b>найкращого</b> з виходів. Для моделі з одним виходом «найкращий» означає
+«єдиний», тож нікому не легшає.</div>
+
+<p>Зошит дає: одна маска — <b>0.5924</b>, три маски — <b>0.8177</b>, різниця
+<b>+0.2253</b>. Розкид по трьох зернах: <b>0.3026</b> в моделі з одним
+виходом і <b>0.0194</b> у моделі з трьома.</p>
+
+<p>Формально виграш +0.2253 менший за розкид одновиходової моделі (0.3026), і назвати його доведеним у звичному сенсі не можна. Але подивись, <b>чий</b> це розкид: у моделі з трьома виходами він 0.0194, тобто в 16 разів менший. Головний результат тут не середнє, а сама ця пара чисел: три виходи дають стабільне число, один вихід — лотерею.</p>
+
+<p>І ще одна деталь, помітна лише в лічильнику: <b>третій вихід не знадобився
+жодного разу</b>. Зошит рахує, який із трьох виходів вигравав, і по всіх трьох зернах
+виходить те саме — працюють два, третій простоює. Це чесно каже, скільки рівнів
+насправді є в наших сценах: два, а не три. У справжнього SAM їх теж не завжди три —
+просто на фотографії реального світу вкладених рівнів більше, ніж на полотні 64×64.</p>
+
+<p>Механізм за цими числами простий. Модель з одним виходом дістає <b>суперечливі
+градієнти</b>: той самий вхід тягне її то до предмета, то до групи, і куди вона
+зрештою осяде, вирішує зерно. Три виходи цієї суперечності не мають — кожен рівень
+дістається своєму виходу, ніхто ні з ким не бореться.</p>
+
+<div class="note warn"><b>Одна деталь, без якої це не працює.</b> Якщо всі три виходи
+починають з однаковим зсувом, перемагає завжди один із них: він виявляється трохи
+кращим на першому ж кроці, тільки він і вчиться, а решта лишаються сирими. Три маски
+вироджуються в одну. Лікування дешеве — дати виходам <b>різні початкові зсуви</b>,
+щоб один одразу був схильний казати «мало», а інший «багато». Зошит саме так і
+робить, і без цього рядка замір показує протилежне.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Три однаково чесні відповіді</p>
+  <p class="fig-sub">Підказка стоїть у центрі обраного предмета. Друга панель показує
+    три вкладені відповіді, які всі правильні. Перемикач порівнює модель з одним
+    виходом і з трьома.</p>
+  <div class="panel">
+    <div><canvas id="cAmb" width="940" height="300" aria-label="Сцена з підказкою, три вкладені правильні відповіді, і те, що видала модель з одним виходом або з трьома"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">скільки масок віддає модель</span></div>
+      <div class="seg" id="segAmb">
+        <button type="button" data-i="0" aria-pressed="true">одна</button>
+        <button type="button" data-i="1" aria-pressed="false">три</button>
+      </div>
+      <div class="ctl">
+        <label for="ai7">підказка <output id="ambOut">1 / 6</output></label>
+        <input type="range" id="ai7" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>одна маска</b><i id="am1">—</i></div>
+        <div class="cellv"><b>три маски</b><i id="am2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>IoU з предметом</b><i id="am3">—</i></div>
+        <div class="cellv"><b>IoU з групою</b><i id="am4">—</i></div>
+      </div>
+      <div class="verdict" id="ambVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Компроміс не збігається ні з чим.</b> Модель з одним виходом осідає
+    посередині трьох чесних відповідей: із предметом у неї одне IoU, із групою інше,
+    і жодне не близьке до одиниці. Три виходи розбирають рівні між собою. Перемкни
+    підказку на предмет, що стоїть окремо, — там усі три відповіді збігаються, і
+    виграшу немає взагалі.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Види підказок</span>Точка, рамка, маска, текст</h2>
+
+<p>Точка — не єдина підказка. SAM приймає їх кількох видів, і різняться вони тим,
+скільки неоднозначності лишають по собі.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Підказка</th><th>Що каже моделі</th><th>Скільки лишає неоднозначності</th></tr></thead>
+  <tbody>
+    <tr><td>точка</td><td>«десь тут»</td><td>багато: рівень предмета невідомий</td></tr>
+    <tr><td>кілька точок</td><td>«тут так, а тут ні»</td><td>менше: відʼємні точки відрізають зайве</td></tr>
+    <tr><td>рамка</td><td>«ось у цих межах»</td><td>мало: розмір заданий</td></tr>
+    <tr><td>груба маска</td><td>«приблизно ось так»</td><td>майже немає</td></tr>
+    <tr><td>текст</td><td>«ось це слово»</td><td>залежить від слова</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Зошит міряє два перші стовпці на своїх даних: та сама мережа, той самий бюджет,
+міняється лише те, що намальовано в каналі підказки — кружечок радіуса 2 чи залитий
+прямокутник рамки.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>підказка</th><th>усі</th><th>предмет сам</th><th>предмет у групі</th><th>розкид</th></tr></thead>
+  <tbody>
+    <tr><td>точка</td><td>0.8319</td><td>0.9042</td><td>0.7797</td><td>0.0691</td></tr>
+    <tr><td>рамка</td><td>0.8948</td><td>0.9601</td><td>0.8476</td><td>0.0288</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Рамка виграє +0.0629 у середньому, і формально це менше за розкид по зернах (0.0691 у точки). Але дивитись треба не на розкид, а на самі зерна: найгірше зерно рамки — 0.8756, найкраще зерно точки — 0.8732. Рамка виграла <b>в кожному з трьох прогонів</b>, і виграла найбільше саме там, де точка лишає неоднозначність: на предметах усередині групи +0.0679 проти +0.0559 на предметах, що стоять окремо.</p>
+
+<p>Про текстову підказку варто сказати окремо, бо навколо неї найбільше плутанини.
+У самій моделі SAM текстового входу немає — його додають зовні: текст перетворюють
+на область через CLIP-подібну модель, а вже область подають як підказку. Тобто
+«сегментація за текстом» — це <b>дві моделі в ланцюжку</b>, і слабка ланка там та,
+що розуміє текст, а не та, що малює маску.</p>
+
+<h2 id="s12"><span class="num">12 / Наслідки</span>Що дав SAM галузі</h2>
+
+<p>Головне число SAM — не якість, а <b>масштаб даних</b>. Модель навчали на наборі
+SA-1B: <b>11 мільйонів зображень і 1.1 мільярда масок</b> (числа з публікації
+авторів, ми їх не міряли). Для порівняння: COCO — це близько 200 тисяч зображень і
+1.5 мільйона масок предметів.</p>
+
+<div class="note"><b>Як розмітили мільярд масок.</b> Не руками. Процес ішов трьома
+колами. Спершу розмітники малювали маски вручну, і на цих даних навчили першу
+модель. Потім модель пропонувала маски, а розмітник лише правив і додавав пропущене —
+це вдесятеро швидше. На третьому колі модель пропонувала маски сама, суцільною
+сіткою точок по зображенню, і людина вже майже не втручалась. Кожне коло робило
+модель кращою, а наступне коло — дешевшим. Це і є та схема, яку тепер називають
+data engine.</div>
+
+<p>Що з цього вийшло на практиці.</p>
+
+<ul>
+  <li><b>Напівавтоматична розмітка.</b> Найчесніша користь. Розмітник клацає в
+    предмет замість того, щоб обводити його по контуру, — і година роботи дає в
+    десятки разів більше масок. <a href="../02-cv-task-map/lecture.html">Тема 02</a>
+    рахувала, що сотня масок коштує десять годин; підказка змінює саме цю цифру.</li>
+  <li><b>Маска як заготовка.</b> SAM дає контур, а твоя модель уже вирішує, що це
+    таке. Такий поділ праці дозволяє вчити класифікатор на дешевих даних, не
+    розмічаючи піксельні маски взагалі.</li>
+  <li><b>Нульовий постріл на нових доменах.</b> Медичні знімки, супутникові фото,
+    мікроскопія — SAM обводить предмет, якого не бачив ані разу. Не завжди добре, але
+    часто досить, щоб зекономити перший тиждень роботи.</li>
+</ul>
+
+<div class="note warn"><b>І чесно про межу.</b> SAM <b>не класифікує</b>. Він віддає
+маску й не каже, що на ній. Тому сам по собі він не розвʼязує жодної прикладної
+задачі: ані «знайди всі дефекти», ані «порахуй машини», ані «виміряй площу поля».
+Для будь-якої з них потрібна друга модель, яка назве предмет, — і саме вона
+лишається твоєю роботою. SAM зняв із задачі найдорожчий шматок, але не задачу.</div>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Підсумок блоку 6 і місток далі</h2>
+
+<p>Блок 6 закінчено. Чотири теми — і одна лінія крізь них: <b>питання стає точнішим,
+і кожне уточнення коштує окремої архітектури</b>.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>Тема</th><th>Питання до пікселя</th><th>Головне число</th></tr></thead>
+  <tbody>
+    <tr><td>29</td><td>якого ти класу?</td><td>фон 89.34 %, і модель «усе фон» дає точність 0.9001 при mIoU 0.0000</td></tr>
+    <tr><td>30</td><td>де точно проходить межа?</td><td>скіпи не дають нічого при двох рівнях стискання й дають 0.2243 при трьох</td></tr>
+    <tr><td>31</td><td>якому предмету ти належиш?</td><td>звʼязні плями відновлюють 1.000 вільних предметів і 0.343 дотичних</td></tr>
+    <tr><td>32</td><td>клас і предмет разом, одна відповідь</td><td>зшивання двох моделей псує 54.5 % пікселів предметів</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Що варто забрати з блоку.</p>
+
+<ul>
+  <li><b>Дисбаланс класів — не деталь навчання, а сама задача.</b> Фон 89.34 %
+    означає, що метрика, у яку входить фон, показує майже саму лише частку фону.
+    Звідси <code>mIoU</code>, звідси <code>Dice</code>, звідси PQ, усереднена по
+    класах, а не по пікселях.</li>
+  <li><b>Роздільність втрачається легко, а повертається дорого.</b> Три способи
+    повернути її (<a href="../29-semantic-segmentation/lecture.html">тема 29</a>) і
+    скіп-зʼєднання (<a href="../30-unet/lecture.html">тема 30</a>) працюють рівно
+    тоді, коли є що втрачати: порогова глибина залежить від точності заміру.</li>
+  <li><b>Питання «скільки їх?» ламає постановку.</b> Вихід стає списком невідомої
+    довжини, і це та сама складність, що в детекції
+    (<a href="../23-detection-setup/lecture.html">тема 23</a>).</li>
+  <li><b>Метрика мусить міряти те, чим ти користуватимешся.</b> Пара mIoU + mask AP
+    має сліпу пляму з кожного боку; PQ закриває обидві, але вимагає читати себе
+    множниками.</li>
+  <li><b>Перевага однієї моделі — не в точності.</b> Наш замір це показав прямо:
+    власна panoptic-голова дала 0.5058 проти 0.6185 у зшивання, тобто
+    <b>програла</b>. Виграє вона в іншому: у неї немає вигаданого правила злиття,
+    яке доводиться обирати й підганяти. А перебір правил, як показав той самий
+    зошит, дає різницю всередині розкиду по зернах.</li>
+  <li><b>Зміна постановки сильніша за зміну архітектури.</b> SAM не переміг решту в
+    якості — він змінив питання, і саме тому виявився корисним там, де його ніхто не
+    вчив.</li>
+</ul>
+
+<p>І тепер про те, чого ми досі не вміємо. Усе, що робив блок 6, стосується
+<b>одного нерухомого зображення</b>. Ми питали піксель про клас, про межу, про
+предмет — але жодного разу не питали, що з ним було <b>секунду тому</b>.</p>
+
+<p>Наступний блок — <b>«Відео, текст і 3D»</b> — додає до картинки <b>час</b>, і
+разом із ним нові задачі, у яких відповідь на кадрі залежить від сусідніх кадрів:
+оптичний потік, стеження за предметом, розпізнавання дії. Далі до зображення
+додається <b>текст</b>, а потім і третій вимір: глибина, форма, сцена як обʼєм. Місток до всього цього вже прокладено —
+CLIP із <a href="../22-clip/lecture.html">теми 22</a> показав, що зображення й слова
+можуть жити в одному просторі, а ця тема показала, що модель може відповідати на
+підказку замість того, щоб знати відповіді наперед.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../31-instance-segmentation/lecture.html"><span class="dir">попередня</span><span class="ttl">31. Instance segmentation</span></a>
+    <a class="next" href="../33-ocr/lecture.html"><span class="dir">наступна</span><span class="ttl">33. OCR: знайти текст і прочитати</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+/* детермінований генератор: та сама картинка у всіх читачів */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  return function(){ s=(1103515245*s+12345)>>>0; return s/4294967296; };
+}
+/* ═══════════════ спільне: сцени, маски, метрики ═══════════════ */
+var GS=64;                                    /* полотно сцен 64×64, як у зошиті */
+function paintKind(field, kind, cx, cy, r, val){
+  var x,y,inside;
+  for(y=0;y<GS;y++) for(x=0;x<GS;x++){
+    if(kind===0) inside=(x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r;
+    else if(kind===1) inside=(Math.abs(x-cx)<=r && Math.abs(y-cy)<=r);
+    else inside=(y-cy+r>=0 && y-cy<=r && Math.abs(x-cx)<=(y-cy+r)/2);
+    if(inside) field[y*GS+x]=val;
+  }
+}
+/* сцена за тим самим правилом, що в генераторі зошита */
+function buildScene(count, seed){
+  var rnd=LCG(seed*7919+13), seg=new Int32Array(GS*GS), inst=new Int32Array(GS*GS);
+  var items=[], taken=[], i, tries, r, cx, cy, kind, j, ow, oh, ok;
+  for(i=0;i<count;i++){
+    ok=false;
+    for(tries=0;tries<60;tries++){
+      r=6+Math.floor(rnd()*5); cx=r+1+Math.floor(rnd()*(GS-2*r-2));
+      cy=r+1+Math.floor(rnd()*(GS-2*r-2)); kind=Math.floor(rnd()*3);
+      ok=true;
+      for(j=0;j<taken.length;j++){
+        ow=Math.max(0, Math.min(cx+r, taken[j][0]+taken[j][2]) - Math.max(cx-r, taken[j][0]-taken[j][2]));
+        oh=Math.max(0, Math.min(cy+r, taken[j][1]+taken[j][2]) - Math.max(cy-r, taken[j][1]-taken[j][2]));
+        if(ow*oh > 0.45*(2*r)*(2*r)){ ok=false; break; }
+      }
+      if(ok) break;
+    }
+    if(!ok) continue;
+    taken.push([cx,cy,r]);
+    items.push({kind:kind, cx:cx, cy:cy, r:r, id:items.length+1});
+    paintKind(inst, kind, cx, cy, r, items.length);
+    paintKind(seg, kind, cx, cy, r, kind+1);
+  }
+  /* предмет, затулений цілком, зникає — так само, як у зошиті */
+  var alive={}, k;
+  for(k=0;k<GS*GS;k++) if(inst[k]) alive[inst[k]]=1;
+  var live=[];
+  for(k=0;k<items.length;k++) if(alive[items[k].id]) live.push(items[k]);
+  return {seg:seg, inst:inst, items:live};
+}
+function maskOfId(inst, id){
+  var out=new Uint8Array(GS*GS), k;
+  for(k=0;k<GS*GS;k++) if(inst[k]===id) out[k]=1;
+  return out;
+}
+/* нарощування маски на k пікселів — так «розпливається» неточна модель */
+function grow(mask, k){
+  var cur=mask, step, next, x, y, dx, dy, nx, ny, hit;
+  for(step=0;step<k;step++){
+    next=new Uint8Array(GS*GS);
+    for(y=0;y<GS;y++) for(x=0;x<GS;x++){
+      hit=0;
+      for(dy=-1;dy<=1 && !hit;dy++) for(dx=-1;dx<=1 && !hit;dx++){
+        nx=x+dx; ny=y+dy;
+        if(nx<0||ny<0||nx>=GS||ny>=GS) continue;
+        if(cur[ny*GS+nx]) hit=1;
+      }
+      next[y*GS+x]=hit;
+    }
+    cur=next;
+  }
+  return cur;
+}
+function iouOf(a, b){
+  var both=0, either=0, k;
+  for(k=0;k<GS*GS;k++){ if(a[k]&&b[k]) both++; if(a[k]||b[k]) either++; }
+  return either? both/either : 0;
+}
+function countOn(mask){var k,n=0; for(k=0;k<GS*GS;k++) if(mask[k]) n++; return n;}
+
+/* палітра предметів: колірних змінних теми на вісім предметів не вистачає */
+var PAL_LIGHT=['#c2185b','#0f766e','#c2620f','#3b5bdb','#7048e8','#0b7285','#a61e4d','#5c940d','#d9480f'];
+var PAL_DARK =['#f06292','#2dd4bf','#f5a524','#748ffc','#b197fc','#66d9e8','#ff8787','#a9e34b','#ffa94d'];
+function isDark(){
+  var c=css('--paper').replace('#','');
+  if(c.length<6) return false;
+  var r=parseInt(c.substr(0,2),16), gg=parseInt(c.substr(2,2),16), b=parseInt(c.substr(4,2),16);
+  return (0.299*r+0.587*gg+0.114*b) < 128;
+}
+function pal(i){ var p=isDark()?PAL_DARK:PAL_LIGHT; return p[i%p.length]; }
+function drawField(g, field, x0, y0, cell, colorOf){
+  var x,y,col,back=colorOf(0);
+  if(back!==null){ g.fillStyle=back; g.fillRect(x0, y0, GS*cell, GS*cell); }
+  for(y=0;y<GS;y++) for(x=0;x<GS;x++){
+    if(field[y*GS+x]===0) continue;
+    col=colorOf(field[y*GS+x]);
+    if(col===null) continue;
+    g.fillStyle=col; g.fillRect(x0+x*cell, y0+y*cell, cell, cell);
+  }
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(x0-0.5, y0-0.5, GS*cell+1, GS*cell+1);
+}
+/* PQ за визначенням: сегменти зіставляються при IoU строго більшому за 0.5 */
+function pqOf(predSegs, trueSegs, classes){
+  var c, i, j, tp, fp, fn, sum, taken, value, best, bestJ, out={}, list=[];
+  var pqSum=0, sqSum=0, rqSum=0, used=0, thing=[], stuffOnly=[];
+  for(c=0;c<classes;c++){
+    var pred=[], tru=[];
+    for(i=0;i<predSegs.length;i++) if(predSegs[i].cls===c) pred.push(predSegs[i].mask);
+    for(i=0;i<trueSegs.length;i++) if(trueSegs[i].cls===c) tru.push(trueSegs[i].mask);
+    if(pred.length===0 && tru.length===0) continue;
+    tp=0; sum=0; taken={};
+    for(i=0;i<pred.length;i++){
+      best=0; bestJ=-1;
+      for(j=0;j<tru.length;j++){
+        if(taken[j]) continue;
+        value=iouOf(pred[i], tru[j]);
+        if(value>best){ best=value; bestJ=j; }
+      }
+      if(best>0.5){ tp++; sum+=best; taken[bestJ]=1; }
+    }
+    fp=pred.length-tp; fn=tru.length-tp;
+    var den=tp+0.5*fp+0.5*fn;
+    var sq=tp? sum/tp : 0, rq=den? tp/den : 0;
+    out[c]={pq:sq*rq, sq:sq, rq:rq, tp:tp, fp:fp, fn:fn};
+    list.push(out[c]);
+    pqSum+=sq*rq; sqSum+=sq; rqSum+=rq; used++;
+    if(c===0) stuffOnly.push(sq*rq); else thing.push(sq*rq);
+  }
+  var mean=function(a){var k,s=0; if(!a.length) return 0; for(k=0;k<a.length;k++) s+=a[k]; return s/a.length;};
+  return {pq:used?pqSum/used:0, sq:used?sqSum/used:0, rq:used?rqSum/used:0,
+          th:mean(thing), st:mean(stuffOnly), per:out};
+}
+/* розбір карти «клас + номер предмета» на сегменти */
+function segmentsOf(classMap, idMap, classes){
+  var out=[], k, seen={}, stuff=new Uint8Array(GS*GS), any=0;
+  for(k=0;k<GS*GS;k++) if(classMap[k]===0){ stuff[k]=1; any=1; }
+  if(any) out.push({cls:0, mask:stuff});
+  for(k=0;k<GS*GS;k++){
+    if(idMap[k]===0 || seen[idMap[k]]) continue;
+    seen[idMap[k]]=1;
+    out.push({cls:classMap[k], mask:maskOfId(idMap, idMap[k])});
+  }
+  return out;
+}
+
+/* ═══════════════ 1 · дві моделі на одне зображення ═══════════════ */
+var twoA=1, twoB=1;
+function twoAnswers(seed, a, b){
+  var sc=buildScene(6, seed), i, k, m;
+  var semMap=new Int32Array(GS*GS);
+  for(i=0;i<sc.items.length;i++){
+    m=grow(maskOfId(sc.inst, sc.items[i].id), a);
+    for(k=0;k<GS*GS;k++) if(m[k]) semMap[k]=sc.items[i].kind+1;
+  }
+  var masks=[];
+  for(i=0;i<sc.items.length;i++){
+    m=grow(maskOfId(sc.inst, sc.items[i].id), b);
+    masks.push({mask:m, cls:sc.items[i].kind+1, area:countOn(m)});
+  }
+  masks.sort(function(p,q){return q.area-p.area;});
+  var cover=new Int32Array(GS*GS), topCls=new Int32Array(GS*GS);
+  for(i=0;i<masks.length;i++) for(k=0;k<GS*GS;k++) if(masks[i].mask[k]){
+    cover[k]++; if(topCls[k]===0) topCls[k]=masks[i].cls;
+  }
+  var conf=new Int32Array(GS*GS), disagree=0, onlyInst=0, overlap=0, hole=0, both=0;
+  for(k=0;k<GS*GS;k++){
+    var s=semMap[k], c=cover[k];
+    if(s>0||c>0) both++;
+    if(c>=1 && s>0 && topCls[k]!==s) disagree++;
+    if(c>=1 && s===0) onlyInst++;
+    if(c>=2) overlap++;
+    if(c===0 && s>0) hole++;
+    if(c>=2) conf[k]=3;
+    else if(c>=1 && s>0 && topCls[k]!==s) conf[k]=1;
+    else if(c>=1 && s===0) conf[k]=2;
+    else if(c===0 && s>0) conf[k]=4;
+    else if(c>=1) conf[k]=5;
+  }
+  return {sc:sc, sem:semMap, masks:masks, cover:cover, conf:conf, both:both,
+          disagree:disagree, onlyInst:onlyInst, overlap:overlap, hole:hole};
+}
+function drawTwo(){
+  var cv=I('cTwo'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=3, side=GS*cell, top=48, gapX=Math.round((W-4*side)/5);
+  var R=twoAnswers(3, twoA, twoB), k, i;
+  var soft=css('--soft'), ink=css('--ink'), paper=css('--paper');
+  var xs=[gapX, 2*gapX+side, 3*gapX+2*side, 4*gapX+3*side];
+  capt(g,'СЦЕНА',xs[0],28,soft,11,true);
+  capt(g,'МОДЕЛЬ 1 · КЛАС',xs[1],28,soft,11,true);
+  capt(g,'МОДЕЛЬ 2 · ПРЕДМЕТИ',xs[2],28,soft,11,true);
+  capt(g,'ЩО НЕ ЗІЙШЛОСЬ',xs[3],28,soft,11,true);
+
+  var img=new Int32Array(GS*GS);
+  for(k=0;k<GS*GS;k++) img[k]=R.sc.inst[k]?1:0;
+  drawField(g,img,xs[0],top,cell,function(v){return v?ink:paper;});
+  drawField(g,R.sem,xs[1],top,cell,function(v){
+    return v===0?paper:[null,css('--rose'),css('--teal'),css('--amber')][v];
+  });
+  var idField=new Int32Array(GS*GS);
+  for(i=R.masks.length-1;i>=0;i--) for(k=0;k<GS*GS;k++) if(R.masks[i].mask[k]) idField[k]=i+1;
+  drawField(g,idField,xs[2],top,cell,function(v){return v===0?paper:pal(v-1);});
+  drawField(g,R.conf,xs[3],top,cell,function(v){
+    if(v===0) return paper;
+    if(v===5) return css('--hair');
+    if(v===3) return css('--amber');
+    if(v===4) return css('--teal');
+    return css('--rose');
+  });
+  var pixels=GS*GS;
+  capt(g,'спірних '+f2(100*(R.disagree+R.onlyInst)/pixels)+' %',xs[3],top+side+16,css('--rose'),11,true);
+  capt(g,'перекриттів '+f2(100*R.overlap/pixels)+' %',xs[3],top+side+31,css('--amber'),11,true);
+  capt(g,'дірок '+f2(100*R.hole/pixels)+' %',xs[3],top+side+46,css('--teal'),11,true);
+
+  I('twoAOut').textContent=twoA+' px';
+  I('twoBOut').textContent=twoB+' px';
+  I('tw1').textContent=f2(100*(R.disagree+R.onlyInst)/pixels)+' %';
+  I('tw2').textContent=f2(100*R.overlap/pixels)+' %';
+  I('tw3').textContent=f2(100*R.hole/pixels)+' %';
+  var share=100*(R.disagree+R.onlyInst+R.overlap+R.hole)/Math.max(1,R.both);
+  I('tw4').textContent=f1(share)+' %';
+  if(twoA===0 && twoB===0)
+    verd('twVd','t-ok','ДВІ ІДЕАЛЬНІ МОДЕЛІ','Обидві моделі точні до пікселя — і тоді зшивати нема чого: жодного спірного пікселя, жодної дірки. Саме тому проблему легко не помітити на папері.');
+  else if(share<12)
+    verd('twVd','t-mid','ПОЧАЛОСЯ','Спірних і порожніх пікселів уже '+f1(share)+' % від тих, що хоч одна модель назвала предметом. Помилка в один піксель у кожної моделі — і зшивання перестає бути тривіальним.');
+  else
+    verd('twVd','t-no','ЗШИТИ НЕ ВИЙДЕ','Серед пікселів, які хоч одна модель назвала предметом, суперечливих або порожніх '+f1(share)+' %. Правило «беремо відповідь того, хто впевненіший» тут не рятує: впевненості двох різних моделей непорівнянні.');
+}
+
+/* ═══════════════ 2 · PQ по кроках ═══════════════ */
+var pqStep=0, pqShift=2;
+function pqScene(shift){
+  var sc=buildScene(4, 21), i, k, m, tmp;
+  var trueClass=new Int32Array(GS*GS), trueId=new Int32Array(GS*GS);
+  for(i=0;i<sc.items.length;i++){
+    m=maskOfId(sc.inst, sc.items[i].id);
+    for(k=0;k<GS*GS;k++) if(m[k]){ trueClass[k]=sc.items[i].kind+1; trueId[k]=i+1; }
+  }
+  var predClass=new Int32Array(GS*GS), predId=new Int32Array(GS*GS), n=0;
+  for(i=0;i<sc.items.length-1;i++){            /* останній предмет модель проґавила */
+    n++; tmp=new Int32Array(GS*GS);
+    paintKind(tmp, sc.items[i].kind, sc.items[i].cx+shift, sc.items[i].cy+shift,
+              sc.items[i].r, 1);
+    for(k=0;k<GS*GS;k++) if(tmp[k]){ predClass[k]=sc.items[i].kind+1; predId[k]=n; }
+  }
+  n++; tmp=new Int32Array(GS*GS);              /* і один предмет вигадала */
+  paintKind(tmp, 1, 54, 10, 5, 1);
+  for(k=0;k<GS*GS;k++) if(tmp[k]){ predClass[k]=2; predId[k]=n; }
+  return {trueSegs:segmentsOf(trueClass, trueId, 4),
+          predSegs:segmentsOf(predClass, predId, 4),
+          trueClass:trueClass, trueId:trueId, predClass:predClass, predId:predId,
+          objects:sc.items.length};
+}
+function drawPQ(){
+  var cv=I('cPQ'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=4, side=GS*cell, top=48;
+  var S=pqScene(pqShift), R=pqOf(S.predSegs, S.trueSegs, 4);
+  var soft=css('--soft'), paper=css('--paper');
+  capt(g,'ІСТИНА',24,28,soft,11,true);
+  capt(g,'ПРОГНОЗ',24+side+26,28,soft,11,true);
+  drawField(g,S.trueId,24,top,cell,function(v){return v===0?paper:pal(v-1);});
+  drawField(g,S.predId,24+side+26,top,cell,function(v){return v===0?paper:pal(v+2);});
+
+  var tp=0, fp=0, fn=0, sum=0, c, i, j;
+  var lines=[];
+  lines.push('сегментів в істині : '+S.trueSegs.length);
+  lines.push('сегментів у прогнозі: '+S.predSegs.length);
+  if(pqStep>=1){
+    lines.push('');
+    lines.push('зіставлення при IoU > 0.5');
+  }
+  for(c=0;c<4;c++){
+    var pred=[], tru=[];
+    for(i=0;i<S.predSegs.length;i++) if(S.predSegs[i].cls===c) pred.push(S.predSegs[i].mask);
+    for(i=0;i<S.trueSegs.length;i++) if(S.trueSegs[i].cls===c) tru.push(S.trueSegs[i].mask);
+    if(!pred.length && !tru.length) continue;
+    var taken={}, localTp=0;
+    for(i=0;i<pred.length;i++){
+      var best=0, bestJ=-1;
+      for(j=0;j<tru.length;j++){
+        if(taken[j]) continue;
+        var value=iouOf(pred[i], tru[j]);
+        if(value>best){ best=value; bestJ=j; }
+      }
+      if(pqStep>=1)
+        lines.push('  клас '+c+' : IoU '+f3(best)+(best>0.5?'  зараховано':'  ні'));
+      if(best>0.5){ taken[bestJ]=1; localTp++; sum+=best; }
+    }
+    tp+=localTp; fp+=pred.length-localTp; fn+=tru.length-localTp;
+  }
+  if(pqStep>=2){
+    lines.push('');
+    lines.push('зараховано TP '+tp+', зайвих FP '+fp+', утрачених FN '+fn);
+  }
+  if(pqStep>=3){
+    var den=tp+0.5*fp+0.5*fn;
+    lines.push('RQ = '+tp+' / ('+tp+' + '+(0.5*fp)+' + '+(0.5*fn)+') = '+f4(tp/den));
+  }
+  if(pqStep>=4){
+    lines.push('SQ = '+f3(sum)+' / '+tp+' = '+f4(sum/tp));
+    lines.push('');
+    lines.push('PQ = SQ × RQ');
+  }
+  var y=top+2;
+  for(i=0;i<lines.length && y<LH(cv)-6;i++){
+    capt(g, lines[i], 24+2*side+52, y, i>=lines.length-2&&pqStep>=4?css('--rose'):soft, 12,
+         i>=lines.length-2&&pqStep>=4);
+    y+=18;
+  }
+  I('shiftOut').textContent=pqShift+' px';
+  I('pq1').textContent=pqStep>=2? (String(tp)+' / '+String(fp)+' / '+String(fn)) : '—';
+  I('pq2').textContent=pqStep>=3?f4(R.rq):'—';
+  I('pq3').textContent=pqStep>=4?f4(R.sq):'—';
+  I('pq4').textContent=pqStep>=4?f4(R.pq):'—';
+  var names=['сегменти','зіставлення','TP, FP, FN','RQ','SQ і PQ'];
+  I('stepName').textContent=names[pqStep];
+  if(pqStep<4)
+    verd('pqVd','t-mid','КРОК '+(pqStep+1)+' / 5','Далі: '+names[Math.min(4,pqStep+1)]+'. Тисни «крок».');
+  else
+    verd('pqVd','t-ok','ГОТОВО','PQ = '+f4(R.pq)+' = SQ '+f4(R.sq)+' × RQ '+f4(R.rq)+
+      '. RQ каже, <b>скільки</b> сегментів знайдено, SQ — <b>наскільки точно</b>. Покрути зсув: SQ падає плавно, а RQ — стрибком, щойно IoU переходить 0.5.');
+}
+
+/* ═══════════════ 3 · однакове PQ, різні SQ і RQ ═══════════════ */
+var factK=8;
+var PQ_TARGET=0.60;
+function factScene(k){
+  var i, x, y, kk, trueClass=new Int32Array(GS*GS), trueId=new Int32Array(GS*GS);
+  var predClass=new Int32Array(GS*GS), predId=new Int32Array(GS*GS);
+  var s=Math.sqrt(PQ_TARGET*(8+k)/(2*k));
+  if(s>1) s=1;
+  var centers=[];
+  for(i=0;i<8;i++) centers.push([10+(i%4)*15, 18+Math.floor(i/4)*28]);
+  for(i=0;i<8;i++){
+    var tmp=new Int32Array(GS*GS);
+    paintKind(tmp, 0, centers[i][0], centers[i][1], 7, 1);
+    for(kk=0;kk<GS*GS;kk++) if(tmp[kk]){ trueClass[kk]=1; trueId[kk]=i+1; }
+  }
+  for(i=0;i<k;i++){
+    var tmp2=new Int32Array(GS*GS);
+    paintKind(tmp2, 0, centers[i][0], centers[i][1], 7*s, 1);
+    for(kk=0;kk<GS*GS;kk++) if(tmp2[kk]){ predClass[kk]=1; predId[kk]=i+1; }
+  }
+  return {trueClass:trueClass, trueId:trueId, predClass:predClass, predId:predId, s:s};
+}
+function bars(g, x0, y0, w, items){
+  var i, h=17, gap=9;
+  for(i=0;i<items.length;i++){
+    var yy=y0+i*(h+gap);
+    g.fillStyle=css('--hair'); g.fillRect(x0+62, yy, w, h);
+    g.fillStyle=items[i][2]; g.fillRect(x0+62, yy, w*Math.max(0,Math.min(1,items[i][1])), h);
+    capt(g, items[i][0], x0+56, yy+13, css('--soft'), 11, true, 'right');
+    capt(g, f4(items[i][1]), x0+68+w, yy+13, css('--ink'), 12, true);
+  }
+}
+function drawFact(){
+  var cv=I('cFact'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=4, side=GS*cell, top=48, k;
+  var S=factScene(factK);
+  /* PQ рахуємо лише на класі речей: тут одна річ і жодної матерії */
+  var predSegs=[], trueSegs=[], seen={}, kk;
+  trueSegs=segmentsOf(S.trueClass, S.trueId, 2).filter(function(t){return t.cls===1;});
+  predSegs=segmentsOf(S.predClass, S.predId, 2).filter(function(t){return t.cls===1;});
+  var R=pqOf(predSegs, trueSegs, 2);
+  var soft=css('--soft'), paper=css('--paper');
+  capt(g,'ІСТИНА · 8 ПРЕДМЕТІВ',24,28,soft,11,true);
+  capt(g,'ПРОГНОЗ',24+side+26,28,soft,11,true);
+  drawField(g,S.trueId,24,top,cell,function(v){return v===0?paper:pal(v-1);});
+  drawField(g,S.predId,24+side+26,top,cell,function(v){return v===0?paper:pal(v-1);});
+  bars(g, 24+2*side+60, top+14, 220, [
+    ['SQ', R.sq, css('--teal')],
+    ['RQ', R.rq, css('--amber')],
+    ['PQ', R.pq, css('--rose')]]);
+  capt(g,'SQ × RQ = '+f4(R.sq)+' × '+f4(R.rq)+' = '+f4(R.sq*R.rq),
+       24+2*side+60, top+130, soft, 12, true);
+  I('kOut').textContent=String(factK);
+  I('fc1').textContent=f4(R.sq);
+  I('fc2').textContent=f4(R.rq);
+  I('fc3').textContent=f4(R.pq);
+  I('fc4').textContent=String(factK)+' / 8';
+  if(factK===8)
+    verd('fcVd','t-mid','БАГАТО, АЛЕ ГРУБО','Модель знайшла всі вісім предметів (RQ '+f4(R.rq)+'), але маски в неї грубі: SQ '+f4(R.sq)+'. PQ '+f4(R.pq)+'.');
+  else if(factK<=4)
+    verd('fcVd','t-mid','МАЛО, АЛЕ ТОЧНО','Модель знайшла лише '+factK+' з восьми (RQ '+f4(R.rq)+'), зате майже до пікселя: SQ '+f4(R.sq)+'. PQ той самий — '+f4(R.pq)+'.');
+  else
+    verd('fcVd','t-ok','ТЕ САМЕ PQ','PQ '+f4(R.pq)+' при SQ '+f4(R.sq)+' і RQ '+f4(R.rq)+'. Це та сама точка на кривій: різні моделі, однакова оцінка. Дивись на множники, а не лише на добуток.');
+}
+
+/* ═══════════════ 4 · речі окремо, матерія окремо ═══════════════ */
+var lostV=4, noiseV=4;
+function thstScene(lost, noise){
+  var sc=buildScene(8, 9), i, k, m;
+  var trueClass=new Int32Array(GS*GS), trueId=new Int32Array(GS*GS);
+  for(i=0;i<sc.items.length;i++){
+    m=maskOfId(sc.inst, sc.items[i].id);
+    for(k=0;k<GS*GS;k++) if(m[k]){ trueClass[k]=sc.items[i].kind+1; trueId[k]=i+1; }
+  }
+  var predClass=new Int32Array(GS*GS), predId=new Int32Array(GS*GS);
+  for(i=0;i<sc.items.length;i++){
+    if(i<lost) continue;                       /* модель загубила перші предмети */
+    m=maskOfId(sc.inst, sc.items[i].id);
+    /* номер лишаємо той самий, що в істині, — тоді кольори панелей збігаються */
+    for(k=0;k<GS*GS;k++) if(m[k]){ predClass[k]=sc.items[i].kind+1; predId[k]=i+1; }
+  }
+  /* фон, зіпсований плямами: піксель отримав клас речі, але жодного предмета */
+  var rnd=LCG(77), x, y, bx, by;
+  for(by=0;by<16;by++) for(bx=0;bx<16;bx++){
+    if(rnd()*100>=noise) continue;
+    for(y=by*4;y<by*4+4;y++) for(x=bx*4;x<bx*4+4;x++){
+      k=y*GS+x;
+      if(predClass[k]===0 && predId[k]===0) predClass[k]=1;
+    }
+  }
+  return {trueSegs:segmentsOf(trueClass, trueId, 4),
+          predSegs:segmentsOf(predClass, predId, 4),
+          trueId:trueId, predId:predId, predClass:predClass, objects:sc.items.length};
+}
+function drawThSt(){
+  var cv=I('cThSt'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=4, side=GS*cell, top=48;
+  var S=thstScene(lostV, noiseV), R=pqOf(S.predSegs, S.trueSegs, 4);
+  var soft=css('--soft'), paper=css('--paper');
+  capt(g,'ІСТИНА',24,28,soft,11,true);
+  capt(g,'ПРОГНОЗ',24+side+26,28,soft,11,true);
+  drawField(g,S.trueId,24,top,cell,function(v){return v===0?paper:pal(v-1);});
+  var view=new Int32Array(GS*GS), k;
+  for(k=0;k<GS*GS;k++) view[k]=S.predId[k]? S.predId[k] : (S.predClass[k]?100:0);
+  drawField(g,view,24+side+26,top,cell,function(v){
+    if(v===0) return paper;
+    if(v===100) return css('--hair');
+    return pal(v-1);
+  });
+  var naive=(R.th+R.st)/2;
+  bars(g, 24+2*side+60, top+6, 210, [
+    ['PQ речей', R.th, css('--rose')],
+    ['PQ матерії', R.st, css('--teal')],
+    ['PQ (4 класи)', R.pq, css('--amber')],
+    ['середнє двох', naive, css('--soft')]]);
+  I('lostOut').textContent=String(lostV);
+  I('noiseOut').textContent=noiseV+' %';
+  I('ts1').textContent=f4(R.th);
+  I('ts2').textContent=f4(R.st);
+  I('ts3').textContent=f4(R.pq);
+  I('ts4').textContent=f4(naive);
+  if(R.st-R.th>0.20)
+    verd('tsVd','t-no','СЕРЕДНЄ БРЕШЕ','PQ на речах '+f4(R.th)+', на матерії '+f4(R.st)+'. Середнє по двох категоріях — '+f4(naive)+', і воно ховає провал на речах: матерія тут один клас із одним величезним сегментом, який знаходиться завжди.');
+  else if(R.st-R.th>0.07)
+    verd('tsVd','t-mid','РОЗХОДЯТЬСЯ','Матерія тримається на '+f4(R.st)+', речі просіли до '+f4(R.th)+'. Різниця вже помітна — і саме її ховає одне число.');
+  else
+    verd('tsVd','t-ok','ПОКИ РІВНО','PQ речей '+f4(R.th)+' і PQ матерії '+f4(R.st)+' близькі. Додай утрачених предметів або шуму на фоні — і категорії розійдуться.');
+}
+
+/* ═══════════════ 5 · правила злиття ═══════════════ */
+var mergeRule=0, mergeB=2;
+var MIN_AREA=200;   /* поріг площі: дрібніші сегменти правило викидає */
+function mergeResult(rule, b){
+  var R=twoAnswers(3, 1, b), i, k;
+  var sc=R.sc;
+  var trueClass=new Int32Array(GS*GS), trueId=new Int32Array(GS*GS), m;
+  for(i=0;i<sc.items.length;i++){
+    m=maskOfId(sc.inst, sc.items[i].id);
+    for(k=0;k<GS*GS;k++) if(m[k]){ trueClass[k]=sc.items[i].kind+1; trueId[k]=i+1; }
+  }
+  var predClass=new Int32Array(GS*GS), predId=new Int32Array(GS*GS), n=0, holes=0;
+  var minArea=(rule===2)?MIN_AREA:0;
+  for(i=0;i<R.masks.length;i++){
+    var take=new Uint8Array(GS*GS), area=0;
+    for(k=0;k<GS*GS;k++){
+      if(!R.masks[i].mask[k] || predId[k]!==0) continue;
+      if(rule===1 && R.sem[k]!==R.masks[i].cls) continue;
+      take[k]=1; area++;
+    }
+    if(area<minArea) continue;
+    n++;
+    for(k=0;k<GS*GS;k++) if(take[k]){ predId[k]=n; predClass[k]=R.masks[i].cls; }
+  }
+  for(k=0;k<GS*GS;k++) if(predId[k]===0 && R.sem[k]>0) holes++;
+  var out=pqOf(segmentsOf(predClass, predId, 4), segmentsOf(trueClass, trueId, 4), 4);
+  out.segments=n; out.holes=holes; out.predId=predId; out.predClass=predClass;
+  out.trueId=trueId; out.conf=R.conf;
+  return out;
+}
+function drawMerge(){
+  var cv=I('cMerge'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=4, side=GS*cell, top=48, gapX=Math.round((W-3*side)/4);
+  var R=mergeResult(mergeRule, mergeB);
+  var soft=css('--soft'), paper=css('--paper');
+  var xs=[gapX, 2*gapX+side, 3*gapX+2*side];
+  capt(g,'ЩО НЕ ЗІЙШЛОСЬ',xs[0],28,soft,11,true);
+  capt(g,'ПІСЛЯ ЗЛИТТЯ',xs[1],28,soft,11,true);
+  capt(g,'ІСТИНА',xs[2],28,soft,11,true);
+  drawField(g,R.conf,xs[0],top,cell,function(v){
+    if(v===0) return paper;
+    if(v===5) return css('--hair');
+    if(v===3) return css('--amber');
+    if(v===4) return css('--teal');
+    return css('--rose');
+  });
+  drawField(g,R.predId,xs[1],top,cell,function(v){return v===0?paper:pal(v-1);});
+  drawField(g,R.trueId,xs[2],top,cell,function(v){return v===0?paper:pal(v-1);});
+  capt(g,'сегментів '+R.segments+', дірок '+R.holes+' px',xs[1],top+side+18,soft,11,true);
+  capt(g,'PQ '+f4(R.pq),xs[1],top+side+34,css('--rose'),13,true);
+  I('mbOut').textContent=mergeB+' px';
+  I('mg1').textContent=String(R.segments);
+  I('mg2').textContent=String(R.holes);
+  I('mg3').textContent=f4(R.pq);
+  I('mg4').textContent=f4(R.sq);
+  var names=['речі поверх усього','лише де семантика згодна','поріг площі 200 px'];
+  if(mergeRule===1)
+    verd('mgVd','t-ok','СЕМАНТИКА СУДДЯ','Правило «'+names[mergeRule]+'» дає PQ '+f4(R.pq)+' при SQ '+f4(R.sq)+'. Предмет забирає лише ті пікселі, з якими згодна семантична модель, — і розпливлі краї відрізаються самі.');
+  else if(mergeRule===2)
+    verd('mgVd','t-mid','ПОРІГ ПЛОЩІ','Правило «'+names[mergeRule]+'» лишило '+R.segments+' сегментів із 6 і дало PQ '+f4(R.pq)+'. Поріг не вміє відрізнити сміття від дрібного предмета: він викидає все, що менше за 200 пікселів, — а частина справжніх фігур саме така. Разом із сегментами падає й RQ.');
+  else
+    verd('mgVd','t-no','РЕЧІ ПОВЕРХ УСЬОГО','Правило «'+names[mergeRule]+'» дає PQ '+f4(R.pq)+' при SQ '+f4(R.sq)+'. Хто перший узяв піксель, той і має рацію — і вся похибка instance-моделі потрапляє у відповідь без жодного фільтра.');
+}
+
+/* ═══════════════ спільне для підказок: групи й звуження маски ═══════════════ */
+function erode(mask, k){
+  var inv=new Uint8Array(GS*GS), i, out;
+  for(i=0;i<GS*GS;i++) inv[i]=mask[i]?0:1;
+  out=grow(inv, k);
+  var res=new Uint8Array(GS*GS);
+  for(i=0;i<GS*GS;i++) res[i]=out[i]?0:1;
+  return res;
+}
+/* звʼязна пляма, у яку потрапила точка: over(k) каже, чи піксель належить плямі */
+function fillFrom(over, x0, y0){
+  var out=new Uint8Array(GS*GS), stack=[y0*GS+x0], k, x, y, dx, dy, nx, ny, ni;
+  if(!over(y0*GS+x0)) return out;
+  out[y0*GS+x0]=1;
+  while(stack.length){
+    k=stack.pop(); x=k%GS; y=(k-x)/GS;
+    for(dy=-1;dy<=1;dy++) for(dx=-1;dx<=1;dx++){
+      nx=x+dx; ny=y+dy;
+      if(nx<0||ny<0||nx>=GS||ny>=GS) continue;
+      ni=ny*GS+nx;
+      if(!out[ni] && over(ni)){ out[ni]=1; stack.push(ni); }
+    }
+  }
+  return out;
+}
+function markPoint(g, x0, y0, cell, px, py, color){
+  g.strokeStyle=color; g.lineWidth=2;
+  g.beginPath(); g.arc(x0+(px+0.5)*cell, y0+(py+0.5)*cell, 6, 0, 6.2832); g.stroke();
+  g.beginPath(); g.arc(x0+(px+0.5)*cell, y0+(py+0.5)*cell, 1.6, 0, 6.2832);
+  g.fillStyle=color; g.fill();
+}
+
+/* ═══════════════ 6 · підказка точкою ═══════════════ */
+var ptX=44, ptY=18, ptMode=0;
+function pointAnswer(px, py, mode){
+  var sc=buildScene(8, 8), id=sc.inst[py*GS+px];
+  if(id===0) return {sc:sc, empty:true};
+  var truth=maskOfId(sc.inst, id), out;
+  if(mode===0) out=truth;                      /* модель за підказкою: саме цей предмет */
+  else {                                       /* сегментуй усе, потім візьми пляму */
+    var cls=sc.seg[py*GS+px];
+    out=fillFrom(function(k){return sc.seg[k]===cls;}, px, py);
+  }
+  var whole=fillFrom(function(k){return sc.seg[k]===sc.seg[py*GS+px];}, px, py);
+  return {sc:sc, empty:false, truth:truth, out:out, id:id,
+          merged:countOn(whole)>countOn(truth)+4, iou:iouOf(out, truth)};
+}
+function drawPoint(){
+  var cv=I('cPoint'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=5, side=GS*cell, top=48, gapX=Math.round((W-2*side)/3);
+  var A=pointAnswer(ptX, ptY, ptMode), k;
+  var soft=css('--soft'), ink=css('--ink'), paper=css('--paper');
+  capt(g,'СЦЕНА Й ПІДКАЗКА',gapX,28,soft,11,true);
+  capt(g,'ВІДПОВІДЬ МОДЕЛІ',2*gapX+side,28,soft,11,true);
+  var img=new Int32Array(GS*GS);
+  for(k=0;k<GS*GS;k++) img[k]=A.sc.inst[k]?1:0;
+  drawField(g,img,gapX,top,cell,function(v){return v?ink:paper;});
+  markPoint(g,gapX,top,cell,ptX,ptY,css('--rose'));
+  if(A.empty){
+    drawField(g,new Int32Array(GS*GS),2*gapX+side,top,cell,function(){return paper;});
+    capt(g,'точка на фоні — предмета під нею немає',2*gapX+side,top+side+18,soft,11);
+    I('pt1').textContent='—'; I('pt2').textContent='—'; I('pt3').textContent='фон';
+    verd('ptVd','t-mid','ТОЧКА В ПОРОЖНЕЧУ','Під підказкою немає предмета. Справжній SAM у такому разі теж щось видасть — він не вміє відповісти «тут нічого немає». Пересунь точку на фігуру.');
+  } else {
+    var field=new Int32Array(GS*GS);
+    for(k=0;k<GS*GS;k++)
+      field[k]=A.out[k]? (A.truth[k]?1:3) : (A.truth[k]?2:0);
+    drawField(g,field,2*gapX+side,top,cell,function(v){
+      if(v===0) return paper;
+      if(v===1) return css('--teal');
+      if(v===2) return css('--rose');
+      return css('--amber');
+    });
+    markPoint(g,2*gapX+side,top,cell,ptX,ptY,css('--ink'));
+    capt(g,'бірюзове — влучило, жовте — зайве, рожеве — проґавлено',
+         2*gapX+side,top+side+18,soft,11);
+    I('pt1').textContent=f4(A.iou);
+    I('pt2').textContent=String(countOn(A.out))+' px';
+    I('pt3').textContent=A.merged?'так':'ні';
+    if(ptMode===0)
+      verd('ptVd','t-ok','ЗА ПІДКАЗКОЮ','IoU '+f4(A.iou)+'. Тут показано сам механізм: модель відповідає на питання «що <b>ось тут</b>?» і віддає рівно той предмет, на який ти показав, навіть коли він торкається сусіда. Справжня навчена модель у зошиті дає менше — але саме з цієї причини вона взагалі здатна відповісти.');
+    else if(A.merged)
+      verd('ptVd','t-no','ПЛЯМА ЗАМІСТЬ ПРЕДМЕТА','IoU '+f4(A.iou)+'. Модель сегментувала все за класами, і предмет під точкою злився із сусідом свого класу в одну пляму. Підказка тут не допомагає: вибирати нема з чого.');
+    else
+      verd('ptVd','t-ok','ПОЩАСТИЛО','IoU '+f4(A.iou)+'. Цей предмет ні з ким не торкається, тож пляма збіглася з ним. Перенеси точку на фігуру, що має сусіда свого класу, — і число впаде.');
+  }
+  I('ptXOut').textContent=String(ptX);
+  I('ptYOut').textContent=String(ptY);
+}
+
+/* ═══════════════ 7 · неоднозначність підказки ═══════════════ */
+var ambIndex=0, ambMode=0;
+function ambData(index){
+  var sc=buildScene(6, 8), i, k;
+  var items=sc.items;
+  if(!items.length) return null;
+  var it=items[index % items.length];
+  var truth=maskOfId(sc.inst, it.id);
+  /* точка — піксель предмета, найближчий до його центра мас */
+  var rows=[], cols=[], sx=0, sy=0, n=0;
+  for(k=0;k<GS*GS;k++) if(truth[k]){ sx+=k%GS; sy+=(k-(k%GS))/GS; n++; }
+  sx/=n; sy/=n;
+  var bestK=-1, bestD=1e9;
+  for(k=0;k<GS*GS;k++) if(truth[k]){
+    var x=k%GS, y=(k-x)/GS, d=(x-sx)*(x-sx)+(y-sy)*(y-sy);
+    if(d<bestD){ bestD=d; bestK=k; }
+  }
+  var px=bestK%GS, py=(bestK-px)/GS;
+  var group=fillFrom(function(q){return sc.seg[q]>0;}, px, py);
+  var cls=sc.seg[bestK];
+  var samecls=new Uint8Array(GS*GS);
+  for(k=0;k<GS*GS;k++) if(group[k] && sc.seg[k]===cls) samecls[k]=1;
+  return {sc:sc, px:px, py:py, levels:[truth, samecls, group], count:items.length};
+}
+function drawAmb(){
+  var cv=I('cAmb'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var cell=3, side=GS*cell, top=48, gapX=Math.round((W-4*side)/5);
+  var A=ambData(ambIndex); if(!A) return;
+  var soft=css('--soft'), ink=css('--ink'), paper=css('--paper');
+  var xs=[gapX, 2*gapX+side, 3*gapX+2*side, 4*gapX+3*side];
+  capt(g,'СЦЕНА Й ПІДКАЗКА',xs[0],28,soft,11,true);
+  capt(g,'ТРИ ЧЕСНІ ВІДПОВІДІ',xs[1],28,soft,11,true);
+  capt(g, ambMode===0?'ОДНА МАСКА':'МАСКА 1 · ПРЕДМЕТ',xs[2],28,soft,11,true);
+  capt(g, ambMode===0?'ЩО ВОНА ВТРАТИЛА':'МАСКИ 2 І 3',xs[3],28,soft,11,true);
+  var img=new Int32Array(GS*GS), k;
+  for(k=0;k<GS*GS;k++) img[k]=A.sc.inst[k]?1:0;
+  drawField(g,img,xs[0],top,cell,function(v){return v?ink:paper;});
+  markPoint(g,xs[0],top,cell,A.px,A.py,css('--rose'));
+  var nested=new Int32Array(GS*GS);
+  for(k=0;k<GS*GS;k++) nested[k]=A.levels[0][k]?3:(A.levels[1][k]?2:(A.levels[2][k]?1:0));
+  drawField(g,nested,xs[1],top,cell,function(v){
+    return v===0?paper:[null,css('--hair'),css('--amber'),css('--rose')][v];
+  });
+  var one=A.levels[1];              /* компроміс: те, що лишається спільним у двох із трьох */
+  var three=[A.levels[0], A.levels[1], A.levels[2]];
+  var oneScores=[iouOf(one,A.levels[0]), iouOf(one,A.levels[1]), iouOf(one,A.levels[2])];
+  var bestScores=[0,0,0], i, j;
+  for(j=0;j<3;j++) for(i=0;i<3;i++)
+    bestScores[j]=Math.max(bestScores[j], iouOf(three[i], A.levels[j]));
+  var mean=function(a){return (a[0]+a[1]+a[2])/3;};
+  if(ambMode===0){
+    drawField(g,one,xs[2],top,cell,function(v){return v?css('--teal'):paper;});
+    var missed=new Int32Array(GS*GS);
+    for(k=0;k<GS*GS;k++) missed[k]=(A.levels[0][k]&&!one[k])?1:((A.levels[2][k]&&!one[k])?2:0);
+    drawField(g,missed,xs[3],top,cell,function(v){
+      return v===0?paper:(v===1?css('--rose'):css('--amber'));
+    });
+  } else {
+    drawField(g,three[0],xs[2],top,cell,function(v){return v?css('--rose'):paper;});
+    var pair=new Int32Array(GS*GS);
+    for(k=0;k<GS*GS;k++) pair[k]=three[2][k]?1:0;
+    for(k=0;k<GS*GS;k++) if(three[1][k]) pair[k]=2;
+    drawField(g,pair,xs[3],top,cell,function(v){
+      return v===0?paper:(v===1?css('--hair'):css('--amber'));
+    });
+  }
+  capt(g,'рожеве — предмет, жовте — свій клас у групі',xs[1],top+side+18,soft,10);
+  I('ambOut').textContent=(ambIndex%A.count+1)+' / '+A.count;
+  I('am1').textContent=f4(mean(oneScores));
+  I('am2').textContent=f4(mean(bestScores));
+  I('am3').textContent=f4(oneScores[0]);
+  I('am4').textContent=f4(oneScores[2]);
+  var gain=mean(bestScores)-mean(oneScores);
+  if(gain<0.02)
+    verd('ambVd','t-ok','ТУТ НЕОДНОЗНАЧНОСТІ НЕМАЄ','Предмет ні з ким не торкається, тож усі три відповіді збігаються, і три виходи нічого не додають ('+sgn(gain)+'). Перемкни підказку на фігуру, що має сусіда.');
+  else
+    verd('ambVd','t-no','ОДНА МАСКА — ЦЕ КОМПРОМІС','Одна маска дає в середньому '+f4(mean(oneScores))+', три — '+f4(mean(bestScores))+', різниця '+sgn(gain)+'. Компроміс не збігається з жодною чесною відповіддю: з предметом IoU '+f4(oneScores[0])+', з групою — '+f4(oneScores[2])+'.');
+}
+
+/* ═══════════════ звʼязування ═══════════════ */
+on('twoA1','input',function(){ twoA=+I('twoA1').value; drawTwo(); });
+on('twoB1','input',function(){ twoB=+I('twoB1').value; drawTwo(); });
+
+on('shift2','input',function(){ pqShift=+I('shift2').value; drawPQ(); });
+on('stepBtn','click',function(){ pqStep=Math.min(4,pqStep+1); drawPQ(); });
+on('resetBtn','click',function(){ pqStep=0; drawPQ(); });
+
+on('k3','input',function(){ factK=+I('k3').value; drawFact(); });
+
+on('lost4','input',function(){ lostV=+I('lost4').value; drawThSt(); });
+on('noise4','input',function(){ noiseV=+I('noise4').value; drawThSt(); });
+
+segment('segMerge', function(i){ mergeRule=i; drawMerge(); });
+on('mb5','input',function(){ mergeB=+I('mb5').value; drawMerge(); });
+
+segment('segPoint', function(i){ ptMode=i; drawPoint(); });
+on('px6','input',function(){ ptX=+I('px6').value; drawPoint(); });
+on('py6','input',function(){ ptY=+I('py6').value; drawPoint(); });
+on('cPoint','click',function(ev){
+  var cv=I('cPoint'), box=cv.getBoundingClientRect();
+  var scale=LW(cv)/box.width;
+  var x=(ev.clientX-box.left)*scale, y=(ev.clientY-box.top)*scale;
+  var cell=5, side=GS*cell, top=48, gapX=(LW(cv)-2*side)/3;
+  if(x<gapX || x>gapX+side || y<top || y>top+side) return;
+  ptX=Math.max(0,Math.min(GS-1,Math.floor((x-gapX)/cell)));
+  ptY=Math.max(0,Math.min(GS-1,Math.floor((y-top)/cell)));
+  I('px6').value=ptX; I('py6').value=ptY;
+  drawPoint();
+});
+
+segment('segAmb', function(i){ ambMode=i; drawAmb(); });
+on('ai7','input',function(){ ambIndex=+I('ai7').value; drawAmb(); });
+
+function redrawAll(){
+  drawTwo(); drawPQ(); drawFact(); drawThSt(); drawMerge(); drawPoint(); drawAmb();
+}
+redrawAll();
+if(window.matchMedia){
+  var scheme=window.matchMedia('(prefers-color-scheme: dark)');
+  if(scheme.addEventListener) scheme.addEventListener('change', redrawAll);
+}
+window.addEventListener('resize', redrawAll);
+})();
+
+</script>
+</body>
+</html>

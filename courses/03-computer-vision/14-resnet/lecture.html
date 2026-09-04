@@ -1,0 +1,1898 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ResNet і скіп-зʼєднання: чому глибше перестало працювати і що це полагодило</title>
+<meta name="description" content="Деградація глибоких мереж, заміряна на власному досліді: проста мережа з 25 згорткових шарів дає 0.567 навчальної точності проти 0.926 у мережі з пʼятьма, залишкова з тими самими вагами тримає 1.000. Парадокс тотожності, норма градієнта по шарах, будова блоку ResNet, нульова ініціалізація останнього BN, проєкція 1×1, пляшкове горло і розбір справжньої resnet18: 95,5 % ваг у згортках проти 10,6 % у VGG16.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+</style>
+
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap, pre.arch{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка не рожева й не моноширинна */
+.plain td:first-child{font-family:inherit; font-size:inherit; color:var(--ink);
+  white-space:normal; font-weight:600}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+/* рядок, де мережа ламається — підсвічуємо, бо саме він і є предметом теми */
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* кілька кнопок в один рядок під канвою інтерактиву */
+.btnrow{display:flex; gap:8px}
+.btnrow button{flex:1}
+
+/* елементи сегментного перемикача не ширші за свій рядок */
+.seg.wrap button{min-width:0}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* блок коду мережі в тексті: моноширинний, зі збереженням відступів */
+pre.arch{font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.6;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 18px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow)}
+pre.arch b{color:var(--rose); font-weight:700}
+pre.arch i{color:var(--soft); font-style:normal}
+</style>
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 3 · Тема 14</p>
+    <h1>ResNet і скіп-зʼєднання</h1>
+    <p class="stand">Глибина працювала, працювала — і раптом перестала. Мережа з двадцяти
+      пʼяти шарів вивчила навчальні дані гірше, ніж мережа з пʼяти. Полагодив це один
+      знак «плюс».</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Обіцянка глибини</a></li>
+        <li><a href="#s2">Що показує вимір</a></li>
+        <li><a href="#s3">Це не перенавчання</a></li>
+        <li><a href="#s4">Парадокс тотожності</a></li>
+        <li><a href="#s5">Тотожність задарма</a></li>
+        <li><a href="#s6">Що це робить із градієнтом</a></li>
+        <li><a href="#s7">Блок ResNet по деталях</a></li>
+        <li><a href="#s8">Нульова ініціалізація</a></li>
+        <li><a href="#s9">Коли форми не збігаються</a></li>
+        <li><a href="#s10">Пляшкове горло</a></li>
+        <li><a href="#s11">ResNet18 по шарах</a></li>
+        <li><a href="#s12">Підсумок і що далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../13-alexnet-vgg/lecture.html">← 13. AlexNet і VGG</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../15-efficient-architectures/lecture.html">15. Inception, MobileNet, EfficientNet →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У <a href="../13-alexnet-vgg/lecture.html">попередній темі</a> ми
+порахували AlexNet і VGG по шарах і побачили дві речі. Перша відома всім: глибина
+працює, і VGG16 із тринадцятьма згортками краща за AlexNet із пʼятьма. Друга відома
+менше: 123 642 856 із 138 мільйонів ваг VGG16 сидять у трьох повнозвʼязних шарах
+голови, тобто мережа, яку памʼятають як глибоку згорткову, на 89,4 % складається зі
+звичайних повнозвʼязних ваг.</p>
+
+<p>Обидві ці речі виправила одна архітектура, і виправила одним прийомом. Її звати
+<strong>ResNet</strong> — від <em>residual network</em>, «залишкова мережа». У цій темі
+ми розберемо, що саме зламалось, коли мережі спробували зробити ще глибшими, і чому
+рядок <code>out = out + x</code> це полагодив.</p>
+
+<div class="note"><b>Що ми зміряємо самі.</b> Усі числа цієї теми отримані на
+<strong>нашому власному досліді</strong>, а не переказані зі статті. Ми навчимо десять
+мереж на тих самих фігурах 28×28, що й у блоці 2, зміряємо норму градієнта по шарах,
+перевіримо, чи справді залишковий блок на старті нічого не робить, і розберемо справжню
+<code>resnet18</code> через <code>torchvision</code>. Кожне число друкує
+<code>practice.ipynb</code> — жодне не взяте на віру.</div>
+
+<h2 id="s1"><span class="num">01 / Обіцянка</span>Обіцянка глибини</h2>
+
+<p>До 2015 року історія згорткових мереж читалася як одна пряма лінія. AlexNet, 2012 —
+пʼять згорткових шарів. VGG16, 2014 — тринадцять. Точність росла разом із глибиною, і
+пояснення було зрозумілим: кожен шар додає рівень абстракції. Перші шари бачать межі,
+середні — кутки й текстури, глибші — частини предметів. Більше шарів — довший ланцюжок
+абстракцій.</p>
+
+<p>З цього випливав очевидний наступний крок: узяти VGG, дописати ще двадцять шарів і
+отримати ще кращу мережу. Спробували — і не вийшло.</p>
+
+<p>Мережа з більшою кількістю шарів давала <strong>гіршу</strong> точність. Причому
+гіршою вона була не тільки на перевірочних даних, яких не бачила, а й на самих
+навчальних, які бачила тисячі разів. Це вже не схоже на жодну з відомих проблем, і саме
+через це явище дістало власне імʼя — <strong>деградація</strong> (degradation).</p>
+
+<p>Спершу перевіримо, що це справді відбувається. На нашій задачі, з нашим кодом, із
+числами, які ти можеш відтворити.</p>
+
+<h2 id="s2"><span class="num">02 / Вимір</span>Що показує вимір</h2>
+
+<p>Задача — та сама, що в блоці 2: шість класів фігур 28×28 (коло, квадрат, ромб,
+кільце, хрест, трикутник), згенерованих формулами, зі зсувом центра до чотирьох пікселів
+і гаусовим шумом. Шістсот прикладів на навчання, триста на перевірку. Шість класів
+означає, що <strong>вгадування навмання дає 0,167</strong> — це наша підлога, нижче не
+буває.</p>
+
+<p>Мережу будуємо з однакових блоків. Кожен блок — це дві згортки 3×3 на шістнадцяти
+каналах, після кожної батчнорм (<a href="../11-training-cnn/lecture.html">тема 11</a>),
+після першої ReLU, після другої теж ReLU. Перед блоками стоїть один згортковий шар, який
+зменшує картинку з 28×28 до 7×7, після блоків — <a
+href="../08-pooling/lecture.html">глобальне усереднення</a> й один лінійний шар на шість
+класів. Глибину міряємо в згорткових шарах: один у стемі плюс дві на блок. Один блок —
+три шари, дванадцять блоків — двадцять пʼять.</p>
+
+<p>Тепер найважливіше в цьому досліді. Ми порівнюємо <strong>дві мережі, які
+відрізняються рівно одним знаком «плюс»</strong>:</p>
+
+<pre class="arch">def forward(self, x):
+    out = self.relu(self.bn1(self.conv1(x)))
+    out = self.bn2(self.conv2(out))
+<b>    out = out + x          # цього рядка немає в простій мережі</b>
+    return self.relu(out)</pre>
+
+<p>Однакова кількість згорток, однакова кількість батчнормів, однакова кількість ReLU,
+однакова кількість ваг до останнього числа. Ми зміряли: на глибині 25 обидві мережі
+мають рівно <strong>56 342 параметри</strong>. Різниця лише в тому, що залишкова мережа
+додає до виходу блоку його ж вхід. Це важливо: якби мережі відрізнялись ще чимось,
+висновок нічого не вартував би.</p>
+
+<p>Навчання: SGD із моментом 0.9, швидкість навчання 0.005, двадцять епох, батч 64.
+Кожен рядок — середнє з трьох прогонів із різними зернами випадковості, бо на такій
+маленькій задачі один прогін занадто шумний, щоб на нього спиратись.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr>
+    <th>глибина</th><th>параметрів</th>
+    <th>проста, навч</th><th>проста, тест</th>
+    <th>залишкова, навч</th><th>залишкова, тест</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>3 шари</td><td>4 950</td><td>0.807</td><td>0.759</td><td>0.876</td><td>0.821</td></tr>
+    <tr><td>5 шарів</td><td>9 622</td><td><b>0.926</b></td><td><b>0.868</b></td><td>0.934</td><td>0.869</td></tr>
+    <tr><td>9 шарів</td><td>18 966</td><td>0.872</td><td>0.798</td><td>1.000</td><td>0.943</td></tr>
+    <tr class="hot"><td>17 шарів</td><td>37 654</td><td>0.798</td><td>0.717</td><td>1.000</td><td><b>0.960</b></td></tr>
+    <tr class="hot"><td>25 шарів</td><td>56 342</td><td><b>0.567</b></td><td>0.530</td><td>1.000</td><td>0.954</td></tr>
+  </tbody>
+</table></div>
+
+<p>Прочитай ліву половину таблиці згори вниз. Проста мережа виходить на найкращу
+навчальну точність <strong>на пʼяти шарах</strong> — 0.926. Далі кожні додані шари
+роблять гірше: 0.872 на девʼяти, 0.798 на сімнадцяти, 0.567 на двадцяти пʼяти. Мережа з
+двадцяти пʼяти шарів і 56 тисяч ваг вивчила навчальні дані гірше, ніж мережа з пʼяти
+шарів і 9,6 тисячі ваг — маючи вшестеро більше ваг і ту саму задачу.</p>
+
+<p>Тепер праву половину. Залишкова мережа з тих самих блоків росте монотонно й з девʼяти
+шарів упирається в стелю: <strong>1.000 на навчальних даних</strong> на глибинах 9, 17 і
+25. Перевірочна точність — 0.943, 0.960, 0.954. Мережа не ламається.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Деградація глибини</p>
+  <p class="fig-sub">Веди повзунок по глибині. Суцільні лінії — навчальна точність, пунктирні — перевірочна. Рожеві — проста мережа, бірюзові — залишкова.</p>
+  <div class="panel">
+    <div><canvas id="cDeg" width="940" height="380" aria-label="Дві пари кривих точності від глибини мережі: проста мережа падає після пʼяти шарів, залишкова тримається"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="degIdx">глибина <output id="degOut">3</output></label>
+        <input type="range" id="degIdx" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>проста, навч</b><i id="degPTr">—</i></div>
+        <div class="cellv"><b>проста, тест</b><i id="degPTe">—</i></div>
+        <div class="cellv"><b>залишк., навч</b><i id="degRTr">—</i></div>
+        <div class="cellv"><b>залишк., тест</b><i id="degRTe">—</i></div>
+        <div class="cellv"><b>параметрів</b><i class="sm" id="degPar">—</i></div>
+        <div class="cellv"><b>розрив навч</b><i id="degGap">—</i></div>
+      </div>
+      <div class="verdict" id="degVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Вісь ліворуч — частка правильних відповідей</b>, від 0.167 (вгадування на
+    шести класах) до 1.000. Вісь унизу — глибина в згорткових шарах, нерівномірна: 3, 5,
+    9, 17, 25. Кожна точка — середнє з трьох прогонів. Обидві мережі на кожній глибині
+    мають однакову кількість ваг, згорток, батчнормів і ReLU.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Не перенавчання</span>Це не перенавчання</h2>
+
+<p>Найперша думка, коли глибша модель дає гіршу перевірочну точність, — це
+перенавчання. Модель більша, ваг більше, вона завчила навчальні дані напамʼять і не
+узагальнює. Ця думка правильна в девʼяти випадках із десяти, і саме тому її треба
+відкинути акуратно, а не махнути рукою.</p>
+
+<p><strong>Перенавчання має точний підпис.</strong> Навчальна точність висока, часто
+одиниця; перевірочна нижча; розрив між ними росте. Модель уміє відтворити те, що бачила,
+і не вміє нічого крім.</p>
+
+<p>Подивись на рядок «25 шарів» у нашій таблиці. Навчальна точність простої мережі —
+<strong>0.567</strong>. Перевірочна — 0.530. Розрив між ними 0.037, тобто його практично
+немає. Мережа не завчила навчальні дані — вона їх <strong>не вивчила</strong>. На тих
+самих шістсот прикладах, які бачила двадцять разів поспіль, вона помиляється майже в
+половині випадків.</p>
+
+<p>Порівняй із мережею на пʼять шарів: 0.926 навчальної проти 0.868 перевірочної. Ось
+там розрив є, і це нормальний невеликий надлишок памʼяті над узагальненням.</p>
+
+<div class="note warn"><b>Розрізнення, яке варто запамʼятати назавжди.</b> Якщо падає
+<em>тільки перевірочна</em> точність — це задача узагальнення: бракує даних, потрібна
+<a href="../10-augmentation/lecture.html">аугментація</a>, регуляризація, менша модель.
+Якщо падає <em>навчальна</em> — це задача оптимізації: мережа фізично не може дійти до
+хорошого розвʼязку, і жодна аугментація тут не допоможе. Деградація глибоких мереж — це
+другий випадок, і саме тому її лікували зміною архітектури, а не даними.</div>
+
+<p>Друга думка, яка приходить наступною, — зникомий градієнт (vanishing gradient). Це
+відома проблема глибоких мереж: коли сигнал помилки йде назад крізь багато шарів,
+він множиться на похідні й може згасати до нуля, так що перші шари нічого не вчаться.
+Але в нашій мережі після кожної згортки стоїть батчнорм, а він саме для того й
+придуманий, щоб тримати масштаб сигналу в межах. Ми зміряємо градієнт у розділі 6 і
+побачимо: з ним справді щось не так, але зовсім не те, чого чекаєш.</p>
+
+<h2 id="s4"><span class="num">04 / Парадокс</span>Парадокс тотожності</h2>
+
+<p>Тепер найважливіший аргумент теми, і він не потребує ні коду, ні математики — лише
+уважності.</p>
+
+<p>Візьмімо нашу мережу на пʼять шарів, яка дала 0.926 на навчальних даних. Тепер
+збудуймо мережу на двадцять пʼять шарів так: перші пʼять шарів такі самі, а решта
+двадцять — <strong>додаткові</strong>.</p>
+
+<p>Питання: чи існує такий набір ваг для цих двадцяти додаткових шарів, при якому
+двадцятипʼятишарова мережа поводиться <em>точно так само</em>, як пʼятишарова?</p>
+
+<p>Так, існує. Досить, щоб кожен зайвий шар навчився <strong>тотожного
+перетворення</strong> — тобто просто передавав свій вхід на вихід незмінним. Тоді
+двадцять зайвих шарів разом не роблять нічого, сигнал проходить крізь них наскрізь, і
+мережа дає рівно той самий результат, що й коротша.</p>
+
+<div class="note"><b>Тотожне перетворення (identity mapping)</b> — найпростіша функція,
+яка існує: <span class="mono">f(x) = x</span>. Що подали на вхід, те й вийшло. Для шару
+мережі це означає «нічого не змінюй, просто пропусти далі».</div>
+
+<p>Із цього випливає висновок, який виглядає залізобетонним:</p>
+
+<div class="eq">точність(25 шарів) ≥ точність(5 шарів)</div>
+
+<p>Словами: глибша мережа <strong>не може бути гіршою за коротшу</strong>, бо вона
+містить коротшу в собі як окремий випадок. У найгіршому разі оптимізація знайде саме цей
+випадок і зупиниться. Гірше бути не повинно в принципі.</p>
+
+<p>А тепер наш вимір: 0.567 проти 0.926. Розрив — <strong>0.359</strong>, і він не на
+користь глибшої.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Парадокс тотожності</p>
+  <p class="fig-sub">Обери, скільки шарів дописати до найкращої простої мережі. Ліворуч — що каже теорія, праворуч — що показав вимір.</p>
+  <div class="panel">
+    <div><canvas id="cPar" width="940" height="290" aria-label="Схема: коротка мережа плюс додаткові шари, які нічого не роблять; поруч теоретична нижня межа точності й фактично заміряна"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="parIdx">разом шарів <output id="parOut">5</output></label>
+        <input type="range" id="parIdx" min="0" max="3" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>дописано шарів</b><i id="parExtra">—</i></div>
+        <div class="cellv"><b>теорія, не менше</b><i id="parTheo">—</i></div>
+        <div class="cellv"><b>вимір, навч</b><i id="parFact">—</i></div>
+        <div class="cellv"><b>борг</b><i id="parDebt">—</i></div>
+      </div>
+      <div class="verdict" id="parVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Сірі коробки — базова мережа на пʼять шарів</b> (навчальна точність
+    0.926). Рожеві — дописані шари: якщо кожен вивчить тотожність, мережа поводитиметься
+    як базова, тож нижче 0.926 впасти не мала б. «Борг» — на скільки фактичний вимір
+    нижчий за цю межу.</figcaption>
+</figure>
+
+<p>Логіка бездоганна, вимір теж. Отже, помилкове припущення сховане десь між ними — і
+воно ось яке: <strong>ми припустили, що оптимізація знайде тотожне перетворення, якщо
+воно оптимальне</strong>.</p>
+
+<p>Не знайде. Спробуй уявити, що потрібно, щоб згортка 3×3 із батчнормом вивчила
+тотожність. Ядро має стати одиничним імпульсом: одиниця рівно в центрі свого каналу й
+нулі у всіх інших 143 позиціях (16 каналів × 9 позицій, мінус одна). Батчнорм має
+підібрати γ і β так, щоб не змінити масштаб. Це не «просто нічого не робити» — це дуже
+конкретна, дуже вузька точка у просторі ваг, і градієнтний спуск не має жодної причини
+цілитись саме в неї.</p>
+
+<p><strong>Отже, проблема не у виразності мережі, а в оптимізації.</strong> Потрібний
+розвʼязок існує, але шлях до нього не проглядається зі стартової точки.</p>
+
+<h2 id="s5"><span class="num">05 / Ідея</span>Тотожність задарма</h2>
+
+<p>Коли задача звучить як «потрібне перетворення існує, але його важко знайти», є два
+шляхи: шукати краще або зробити так, щоб шукати не довелось. ResNet обрала друге.</p>
+
+<p>Ідея в одному рядку. Нехай <span class="mono">F(x)</span> — те, що рахує блок із двох
+згорток. Замість того щоб брати вихід блоку як є, додамо до нього вхід:</p>
+
+<div class="eq">y = F(x) + x</div>
+
+<p>Розберемо кожен символ. <span class="mono">x</span> — те, що прийшло в блок: карта
+ознак, наприклад 16 каналів по 7×7. <span class="mono">F(x)</span> — те, що порахували
+дві згортки з батчнормами всередині блоку; форма така сама, 16 на 7×7.
+<span class="mono">y</span> — вихід блоку. Знак «плюс» — звичайне поелементне додавання
+двох тензорів однакової форми: перше число до першого, друге до другого.</p>
+
+<p>Тепер подивись, що змінилося. Раніше блок мав вивчити <strong>яким має бути
+вихід</strong>. Тепер він вчить <strong>що додати до входу</strong>. Різницю між бажаним
+виходом і входом називають <strong>залишком</strong> (residual) — звідси й назва
+архітектури.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 — чого ми хочемо від зайвого шару</span>
+    <p>Щоб глибша мережа не була гіршою за коротшу, зайвий блок має вміти нічого не
+      робити. Позначмо бажаний вихід блоку <span class="mono">H(x)</span>. «Нічого не
+      робити» означає <span class="mono">H(x) = x</span>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 — як це виглядає у звичайному блоці</span>
+    <div class="eq left">звичайний блок:  y = F(x)
+щоб y = x, треба:  F(x) = x</div>
+    <p>Дві згортки з батчнормами мають самі відтворити тотожність. Це та сама вузька
+      точка у просторі ваг, про яку йшлося вище.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 — як це виглядає в залишковому блоці</span>
+    <div class="eq left">залишковий блок:  y = F(x) + x
+щоб y = x, треба:  F(x) = 0</div>
+    <p>Тепер тотожність досягається, коли внутрішня частина видає <strong>нуль</strong>.
+      А нуль — це те, куди ваги приходять самі: досить, щоб вони поменшали. Ваговий спад
+      (weight decay), який і так стоїть у кожному оптимізаторі, тягне ваги саме туди.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 — що з цього виходить</span>
+    <p>Тотожність перестала бути особливою точкою, яку треба вгадати. Вона стала
+      <strong>станом спокою</strong> — тим, що вийде, якщо блок нічого не робитиме.
+      Глибина більше не карає: зайвий блок або приносить користь, або дешево вимикається.</p>
+  </div>
+</div>
+
+<p>Порахуймо це руками на чотирьох числах, щоб не лишалось абстракцією. Хай на вхід
+блоку прийшов маленький шматок карти ознак: <span class="mono">x = [2, 0, 1, 3]</span>.
+Хай згортки всередині видали <span class="mono">F(x) = [0.1, −0.2, 0, 0.05]</span> —
+маленькі числа, бо ваги ще майже не навчились.</p>
+
+<ul>
+  <li><strong>Звичайний блок</strong> віддасть далі <span class="mono">[0.1, −0.2, 0,
+    0.05]</span>. Від початкового <span class="mono">[2, 0, 1, 3]</span> не лишилось
+    нічого: інформація зникла на одному шарі.</li>
+  <li><strong>Залишковий блок</strong> віддасть <span class="mono">[2.1, −0.2, 1,
+    3.05]</span>. Вхід дійшов до виходу майже неушкодженим, блок його трохи підправив.</li>
+</ul>
+
+<p>Це і є зміст скіп-зʼєднання: <strong>сигнал за замовчуванням проходить</strong>, а
+шар лише вносить поправку.</p>
+
+<h2 id="s6"><span class="num">06 / Градієнт</span>Що це робить із градієнтом</h2>
+
+<p>Досі ми говорили про прямий прохід — про те, як дані йдуть від входу до виходу. Але
+навчання відбувається у зворотному, і саме там скіп-зʼєднання видно найкраще.</p>
+
+<p>Спершу словами, без похідних. Коли мережа помилилась, сигнал про помилку йде назад:
+від останнього шару до першого, і кожен шар по дорозі його перетворює. Якщо на кожному
+кроці сигнал трохи зменшується, до перших шарів дійде майже нуль, і вони не
+навчатимуться. Якщо на кожному кроці він трохи зростає, до перших шарів дійде щось
+величезне, і вони почнуть смикатись від кожної дрібниці.</p>
+
+<p>Тепер формально, і це єдина похідна в темі. Похідна — це відповідь на питання
+«наскільки зміниться вихід, якщо трохи змінити вхід». Позначається значком ∂ (кругле
+«д»), і запис <span class="mono">∂y/∂x</span> читається «як швидко y змінюється зі
+зміною x». Похідна суми дорівнює сумі похідних — це шкільне правило, і воно тут вирішує
+все:</p>
+
+<div class="eq">y = F(x) + x &nbsp;&nbsp;⟹&nbsp;&nbsp; ∂y/∂x = ∂F/∂x + 1</div>
+
+<p>Одиниця в кінці — і є скіп-зʼєднання. Що б не сталося з градієнтом усередині блоку,
+до неї додається чиста одиниця: <strong>частина сигналу проходить крізь блок
+незміненою</strong>. У звичайному блоці цієї одиниці немає, там просто
+<span class="mono">∂y/∂x = ∂F/∂x</span>, і якщо цей множник систематично більший або
+менший за одиницю, за двадцять блоків він підноситься до двадцятого степеня.</p>
+
+<p>Зміряймо. Беремо мережу з дванадцяти блоків (25 шарів), подаємо один батч із 64
+зображень, рахуємо помилку, робимо зворотний прохід — і дивимось на норму градієнта
+першої згортки в кожному блоці. Норма — це просто довжина вектора: корінь із суми
+квадратів усіх чисел градієнта. Одне число, що каже «наскільки сильно цей шар зараз
+штовхають».</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>блок</th><th>проста мережа</th><th>залишкова</th></tr></thead>
+  <tbody>
+    <tr><td>1 (біля входу)</td><td>9.077</td><td>1.480</td></tr>
+    <tr><td>4</td><td>2.584</td><td>0.609</td></tr>
+    <tr><td>8</td><td>0.688</td><td>0.435</td></tr>
+    <tr><td>12 (біля виходу)</td><td>0.180</td><td>0.350</td></tr>
+    <tr class="sumrow"><td>перший / останній</td><td>50.5×</td><td>4.2×</td></tr>
+  </tbody>
+</table></div>
+
+<div class="note warn"><b>Несподіванка, яку варто назвати прямо.</b> Підручники обіцяють
+<em>згасання</em> градієнта до входу. У нас вийшло навпаки: у простій мережі градієнт до
+входу <strong>розростається</strong>, і в пʼятдесят разів. Причина — батчнорм. Він ділить
+сигнал на його ж стандартне відхилення, і на зворотному проході це ділення перетворюється
+на множення. Двадцять чотири таких множення поспіль дають накопичений розгін. Тобто
+батчнорм урятував нас від згасання й натомість подарував протилежну біду. Для нашого
+висновку це нічого не міняє: в обох випадках сигнал по шарах <strong>нерівний</strong>,
+а один крок оптимізатора має бути доречним одразу для всіх шарів. У залишковій мережі
+розкид 4,2 раза замість 50,5 — сигнал по шарах майже однаковий.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Норма градієнта по шарах</p>
+  <p class="fig-sub">Перемкни архітектуру. Стовпчики — норма градієнта в кожному з дванадцяти блоків, зліва вхід, справа вихід. Шкала логарифмічна.</p>
+  <div class="panel">
+    <div><canvas id="cGrad" width="940" height="380" aria-label="Стовпчики норми градієнта по дванадцяти блоках у логарифмічній шкалі для простої та залишкової мережі"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">архітектура</span>
+        <div class="seg" id="gradSeg">
+          <button data-i="0" aria-pressed="true">проста</button>
+          <button data-i="1" aria-pressed="false">залишкова</button>
+          <button data-i="2" aria-pressed="false">нульова γ</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>блок 1</b><i class="sm" id="grFirst">—</i></div>
+        <div class="cellv"><b>блок 12</b><i class="sm" id="grLast">—</i></div>
+        <div class="cellv"><b>розкид</b><i id="grRatio">—</i></div>
+        <div class="cellv"><b>тест, 25 шарів</b><i id="grAcc">—</i></div>
+      </div>
+      <div class="verdict" id="grVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно на старті навчання</b>, до першого кроку оптимізатора, на батчі
+    з 64 зображень. Висота стовпчика — норма градієнта ваг першої згортки блоку в
+    логарифмічній шкалі: кожна горизонтальна лінія — десятикратна зміна. Третій режим
+    (нульова ініціалізація останнього батчнорму) розібраний у розділі 8.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Блок</span>Блок ResNet по деталях</h2>
+
+<p>Тепер зберімо блок повністю й розберімося з деталями, які виглядають дрібницями, а
+насправді ними не є.</p>
+
+<pre class="arch">class Block(nn.Module):
+    def __init__(self, channels):
+        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1, bias=False)
+        self.bn1   = nn.BatchNorm2d(channels)
+        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1, bias=False)
+        self.bn2   = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        out = relu(self.bn1(self.conv1(x)))   <i># перша половина: згортка, BN, ReLU</i>
+        out = self.bn2(self.conv2(out))       <i># друга: згортка і BN, ReLU поки нема</i>
+<b>        out = out + x                         # скіп-зʼєднання</b>
+        return relu(out)                      <i># і аж тепер ReLU</i></pre>
+
+<p>Три деталі, які варто прокоментувати окремо.</p>
+
+<p><strong>Згортки без зсуву</strong> (<code>bias=False</code>). Батчнорм одразу після
+згортки віднімає середнє по батчу, тож будь-який доданий зсув він тут-таки й прибирає.
+Тримати параметр, дію якого наступний шар скасовує, — марна витрата. Для нашого блоку на
+16 каналів це економія 32 чисел із 4 672, дрібниця; для ResNet-50 — десятки тисяч.</p>
+
+<p><strong>ReLU стоїть після додавання, а не до нього.</strong> Це та деталь, повз яку
+легко пройти, а вона визначає, що блок узагалі здатен зробити. ReLU обнуляє все
+відʼємне. Якщо поставити її перед додаванням, гілка <span class="mono">F(x)</span>
+віддаватиме лише невідʼємні числа, і блок зможе <em>тільки додавати</em> — ніколи не
+віднімати. Сигнал тоді росте від блоку до блоку й ніколи не спадає. Ми зміряли середнє
+значення активацій на старті: у канонічному варіанті воно росте від 0.91 у першому блоці
+до 2.36 у дванадцятому, а якщо перенести ReLU перед додаванням — від 1.12 до
+<strong>5.42</strong>. За вдвічі швидшого розгону на дванадцяти блоках на пʼятдесяти буде
+вже погано.</p>
+
+<div class="note"><b>Чесно про наш вимір.</b> На нашій задачі варіант «ReLU перед
+додаванням» дав перевірочну точність 0.960 проти 0.954 в канонічного — тобто
+<strong>різниці в точності не видно</strong>. Дванадцяти блоків замало, щоб розгін
+активацій устиг зашкодити. Ми не робитимемо вигляд, що вимір показав більше, ніж показав:
+доказом тут є зростання масштабу активацій (2.36 проти 5.42), а не точність. Саме тому
+канонічний блок ставить ReLU останньою — це запобіжник на глибину, якої наша задача не
+потребує.</div>
+
+<p><strong>Скіп нічого не коштує.</strong> У ньому немає жодної ваги: це операція
+додавання двох тензорів. Наш блок на 16 каналів має 4 672 параметри — дві згортки
+2 × 16 × 16 × 3 × 3 = 4 608 плюс два батчнорми 2 × 2 × 16 = 64, — і рівно стільки ж їх у
+простому блоці. Скіп додає трохи памʼяті (вхід блоку треба тримати до самого додавання) і
+кілька відсотків часу, але жодного параметра.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Куди йде додавання</p>
+  <p class="fig-sub">Три варіанти проводки одного й того самого блоку. Дивись, де стоїть додавання відносно останньої ReLU і що з цього виходить.</p>
+  <div class="panel">
+    <div><canvas id="cBlk" width="940" height="360" aria-label="Схема залишкового блоку: дві згортки з батчнормом, скіп-зʼєднання і місце останньої ReLU"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">проводка</span>
+        <div class="seg" id="blkSeg">
+          <button data-i="0" aria-pressed="true">без скіпа</button>
+          <button data-i="1" aria-pressed="false">скіп до ReLU</button>
+          <button data-i="2" aria-pressed="false">скіп після ReLU</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>блок може</b><i class="sm" id="blkCan">—</i></div>
+        <div class="cellv"><b>активація, блок 12</b><i id="blkAct">—</i></div>
+        <div class="cellv"><b>розгін від блоку 1</b><i id="blkGrow">—</i></div>
+        <div class="cellv"><b>тест, 25 шарів</b><i id="blkAcc">—</i></div>
+      </div>
+      <div class="verdict" id="blkVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Числа під схемою заміряні на нашій мережі з дванадцяти блоків.</b>
+    «Активація, блок 12» — середнє значення виходу останнього блоку на старті навчання;
+    «розгін» — у скільки разів воно більше за вихід першого блоку. Точність — середнє з
+    трьох прогонів на глибині 25.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Нуль</span>Нульова ініціалізація</h2>
+
+<p>У розділі 5 ми сказали: тотожність досягається, коли <span class="mono">F(x) =
+0</span>. Це відкриває дешевий прийом, який радять усі практичні посібники з ResNet:
+зробити так, щоб <strong>на самому старті</strong> кожен блок уже видавав нуль.</p>
+
+<p>Робиться це одним рядком: γ (гамма) останнього батчнорму в блоці ставимо в нуль.</p>
+
+<div class="eq">nn.init.zeros_(block.bn2.weight)</div>
+
+<p>Нагадаю, що робить батчнорм: він нормалізує число, а потім множить на γ і додає β. Ці
+два параметри мережа вчить сама, і за замовчуванням вони починають з γ = 1, β = 0. Якщо
+поставити γ = 0, вихід батчнорму стає нулем незалежно від входу. Отже,
+<span class="mono">F(x) = 0</span>, і блок віддає <span class="mono">relu(0 + x)</span>,
+що дорівнює просто <span class="mono">x</span> — бо <span class="mono">x</span> прийшов
+із попереднього ReLU й уже невідʼємний.</p>
+
+<p>Ми це перевірили прямо, а не на віру. У практиці стоїть рядок
+<code>torch.allclose(block(x), x)</code>: він відповідає <strong>True</strong> для блоку
+з нульовим γ і <strong>False</strong> для звичайного, де максимальне відхилення виходу
+від входу становить 0.65.</p>
+
+<p>Що це дає. Глибока залишкова мережа на старті поводиться як <em>неглибока</em>: усі
+блоки прозорі, працює тільки стем і голова. Масштаб сигналу не пливе: ми зміряли середнє
+активацій по дванадцяти блоках, і воно тримається на 0.73 від першого до останнього, тоді
+як у звичайної залишкової мережі росте з 0.91 до 2.36. Глибина «вмикається» поступово, у
+міру того як γ відходить від нуля.</p>
+
+<div class="note warn"><b>А ось наш вимір, і він проти прийому.</b> На нашій задачі
+нульова ініціалізація виявилась <strong>помітно гіршою</strong>: 0.358 перевірочної
+точності на глибині 25 проти 0.954 у звичайної залишкової мережі. Причина видно з
+інтерактиву 3: при γ = 0 градієнт усередині блоків дорівнює <strong>рівно нулю</strong> —
+не малий, а точно нуль. Блоки не вчаться взагалі, поки сама γ не зрушить з місця, а вона
+рухається повільно: за двадцять епох дійшла в середньому лише до 0.028. Ми перевірили
+здогад — дали
+шістдесят епох замість двадцяти, і картина розвернулась: 0.867 у мережі з нульовим γ
+проти 0.807 у звичайної. Отже, нульова ініціалізація — це <strong>прийом для довгого
+розкладу</strong>. У статті ResNet її застосовували на ImageNet із девʼяноста епохами; на
+двадцяти вона не встигає нічого дати, а ціну бере одразу.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Нульова ініціалізація останнього BN</p>
+  <p class="fig-sub">Перемкни старт. Стовпчики — середня активація на виході кожного з дванадцяти блоків до першого кроку навчання.</p>
+  <div class="panel">
+    <div><canvas id="cZero" width="940" height="380" aria-label="Стовпчики масштабу активацій по дванадцяти блоках для трьох варіантів старту мережі"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">старт мережі</span>
+        <div class="seg" id="zeroSeg">
+          <button data-i="0" aria-pressed="true">проста</button>
+          <button data-i="1" aria-pressed="false">залишкова</button>
+          <button data-i="2" aria-pressed="false">залишкова, γ = 0</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>блок тотожний?</b><i class="sm" id="zoIdent">—</i></div>
+        <div class="cellv"><b>розгін по стосу</b><i id="zoGrow">—</i></div>
+        <div class="cellv"><b>тест, 20 епох</b><i id="zo20">—</i></div>
+        <div class="cellv"><b>тест, 60 епох</b><i id="zo60">—</i></div>
+      </div>
+      <div class="verdict" id="zoVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Заміряно на батчі з 64 зображень до першого кроку оптимізатора.</b> При
+    γ = 0 лінія рівна, бо кожен блок віддає рівно те, що отримав. Точність за 20 епох —
+    середнє з трьох прогонів; за 60 епох — один прогін на глибині 25.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Форми</span>Коли форми не збігаються</h2>
+
+<p>Досі всі наші блоки мали однаковий вхід і вихід: 16 каналів по 7×7 усередині,
+16 каналів по 7×7 назовні. Тому <span class="mono">F(x) + x</span> просто працює: два
+тензори однакової форми додаються поелементно.</p>
+
+<p>Але справжня мережа так не будується. За правилом із <a
+href="../09-cnn-complete/lecture.html">теми 09</a> сторона карти час від часу
+зменшується вдвічі, а кількість каналів подвоюється. У той момент вхід блоку має форму,
+скажімо, 64 канали по 56×56, а вихід — 128 каналів по 28×28. Додати їх не можна:
+різні розміри.</p>
+
+<p>Розвʼязок ResNet — пропустити сам скіп крізь <strong>проєкцію</strong>: згортку 1×1 з
+кроком 2. Згортка 1×1 (ми розбирали її в <a href="../07-conv-layer/lecture.html">темі
+07</a>) не дивиться на сусідів — вона лише перемішує канали в кожній точці окремо. Крок 2
+пропускає кожен другий піксель по обох осях, зменшуючи сторону вдвічі. Разом це рівно та
+операція, яка потрібна: змінити кількість каналів і сторону, не роблячи нічого
+змістовного.</p>
+
+<div class="eq">y = F(x) + W<span class="sub">s</span>·x</div>
+
+<p><span class="mono">W<span class="sub">s</span></span> — ваги цієї згортки 1×1. Скіп
+перестав бути безкоштовним, тож порахуймо, скільки він тепер коштує. Згортка 1×1 без
+зсуву з <span class="mono">c<span class="sub">in</span></span> у
+<span class="mono">c<span class="sub">out</span></span> каналів має
+<span class="mono">c<span class="sub">in</span> × c<span class="sub">out</span></span>
+ваг, плюс батчнорм після неї додає ще <span class="mono">2 ×
+c<span class="sub">out</span></span>.</p>
+
+<p>У справжній <code>resnet18</code> проєкція потрібна рівно тричі — на трьох переходах
+між стадіями. Ми порахували всі три:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>перехід</th><th>канали</th><th>проєкція, ваг</th><th>увесь блок, ваг</th><th>частка</th></tr></thead>
+  <tbody>
+    <tr><td>layer2[0]</td><td>64 → 128</td><td>8 448</td><td>230 144</td><td>3.67 %</td></tr>
+    <tr><td>layer3[0]</td><td>128 → 256</td><td>33 280</td><td>919 040</td><td>3.62 %</td></tr>
+    <tr><td>layer4[0]</td><td>256 → 512</td><td>132 096</td><td>3 673 088</td><td>3.60 %</td></tr>
+    <tr class="sumrow"><td>разом</td><td>—</td><td>173 824</td><td>11 689 512</td><td>1.49 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Тобто вся тотожність, яку ResNet купує проєкціями, коштує <strong>півтора відсотка
+мережі</strong>. Решта скіпів — а їх у <code>resnet18</code> пʼять із восьми — не коштує
+нічого взагалі.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Коли скіпу потрібна проєкція</p>
+  <p class="fig-sub">Перемикай перехід між стадіями. Дивись, чи збігаються форми на двох гілках і скільки коштує їх узгодити.</p>
+  <div class="panel">
+    <div><canvas id="cProj" width="700" height="310" aria-label="Дві гілки блоку: основна з двома згортками і скіп; при зміні форми на скіпі зʼявляється коробка проєкції 1 на 1"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="projIdx">блок <output id="projOut">layer1[0]</output></label>
+        <input type="range" id="projIdx" min="0" max="3" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вхід</b><i class="sm" id="prIn">—</i></div>
+        <div class="cellv"><b>вихід</b><i class="sm" id="prOutS">—</i></div>
+        <div class="cellv"><b>проєкція, ваг</b><i class="sm" id="prCost">—</i></div>
+        <div class="cellv"><b>частка блоку</b><i id="prShare">—</i></div>
+      </div>
+      <div class="verdict" id="prVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Числа з <code>torchvision.models.resnet18(weights=None)</code></b>, вхід
+    3×224×224. Верхня гілка — дві згортки 3×3, нижня — скіп. Коли форми збігаються, скіп
+    намальовано лінією без коробки: він не має жодної ваги.</figcaption>
+</figure>
+
+<div class="note"><b>Чому не нулями.</b> У статті ResNet розглядали й дешевший варіант:
+не проєкцію, а доповнення нулями — узяти 64 канали, дописати 64 нульових і викидати
+кожен другий піксель. Це справді безкоштовно. Але працює трохи гірше, і оскільки
+проєкції коштують півтора відсотка, вибір очевидний. Дешевий варіант досі трапляється в
+маленьких мережах для CIFAR, де важить кожна вага.</div>
+
+<h2 id="s10"><span class="num">10 / Горло</span>Пляшкове горло</h2>
+
+<p>Наш блок із двох згорток 3×3 звуть <strong>звичайним</strong> (basic block), і саме на
+ньому побудовані ResNet-18 і ResNet-34. Але ResNet-50 і глибші влаштовані інакше, і
+причина суто арифметична.</p>
+
+<p>Згортка 3×3 із <span class="mono">c</span> каналів у <span class="mono">c</span>
+каналів має <span class="mono">c × c × 9</span> ваг — тобто росте як <strong>квадрат
+кількості каналів</strong>. На 64 каналах це 36 864, на 512 — 2 359 296, у шістдесят
+чотири рази більше. Стос глибиною в пʼятдесят шарів на широких каналах просто не влізе
+нікуди.</p>
+
+<p>Прийом називається <strong>пляшкове горло</strong> (bottleneck) і складається з трьох
+згорток замість двох:</p>
+
+<pre class="arch">1×1 : c → c/4      <i>стиснути канали вчетверо — дешево, бо ядро одиничне</i>
+3×3 : c/4 → c/4    <i>уся просторова робота — на вчетверо вужчому місці</i>
+1×1 : c/4 → c      <i>розтиснути назад до потрібної ширини</i></pre>
+
+<p>Уся просторова робота — та сама згортка 3×3, яка й бачить сусідів, — робиться на
+вчетверо меншій кількості каналів. Дорога згортка отримує в шістнадцять разів менше ваг
+(бо <span class="mono">c²</span> стало <span class="mono">(c/4)² </span>), а дешеві 1×1
+по краях коштують мало.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>каналів</th><th>звичайний блок</th><th>пляшкове горло</th><th>у скільки менше</th></tr></thead>
+  <tbody>
+    <tr><td>64</td><td>73 984</td><td>4 544</td><td>16.3×</td></tr>
+    <tr><td>256</td><td>1 180 672</td><td>70 400</td><td>16.8×</td></tr>
+    <tr><td>512</td><td>4 720 640</td><td>280 064</td><td>16.9×</td></tr>
+    <tr class="hot"><td>2048</td><td>75 505 664</td><td>4 462 592</td><td>16.9×</td></tr>
+  </tbody>
+</table></div>
+
+<p>Останній рядок і є відповіддю на питання «навіщо». ResNet-50 закінчується стадією на
+2048 каналів. На звичайних блоках вона важила б 226 516 992 ваги — більше, ніж уся
+VGG16 разом із її головою. На пляшкових горлах та сама стадія важить
+<strong>14 964 736</strong>, у пʼятнадцять разів менше. Уся ResNet-50 разом виходить на
+25 557 032 параметри — при пʼятдесяти трьох згорткових шарах це впʼятеро легше за
+VGG16 із тринадцятьма.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Звичайний блок проти пляшкового горла</p>
+  <p class="fig-sub">Веди повзунок по ширині каналів. Обидва блоки мають однакові вхід і вихід — різна лише внутрішня будова.</p>
+  <div class="panel">
+    <div><canvas id="cBot" width="940" height="380" aria-label="Порівняння звичайного блоку з двох згорток 3 на 3 і пляшкового горла з трьох згорток за кількістю ваг і множень"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="botIdx">каналів <output id="botOut">64</output></label>
+        <input type="range" id="botIdx" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>звичайний, ваг</b><i class="sm" id="boP1">—</i></div>
+        <div class="cellv"><b>горло, ваг</b><i class="sm" id="boP2">—</i></div>
+        <div class="cellv"><b>звичайний, множень</b><i class="sm" id="boM1">—</i></div>
+        <div class="cellv"><b>горло, множень</b><i class="sm" id="boM2">—</i></div>
+        <div class="cellv"><b>виграш</b><i id="boWin">—</i></div>
+        <div class="cellv"><b>вузьке місце</b><i class="sm" id="boNeck">—</i></div>
+      </div>
+      <div class="verdict" id="boVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Ваги пораховані формулою, множення — для карти 14×14.</b> Товщина смуги
+    всередині схеми пропорційна кількості каналів у цьому місці — видно, як згортка 3×3
+    працює на вчетверо вужчому. Висота стовпчиків праворуч — кількість ваг у
+    логарифмічній шкалі, інакше 4 544 і 75 мільйонів не вміщаються поруч.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / ResNet18</span>ResNet18 по шарах</h2>
+
+<p>Зберімо все докупи на справжній мережі. <code>torchvision</code> будує її локально,
+нічого не завантажуючи:</p>
+
+<pre class="arch">import torchvision.models as models
+model = models.resnet18(<b>weights=None</b>)   <i># архітектура є, ваг з ImageNet немає</i></pre>
+
+<p>Будова: один згортковий шар 7×7 на початку, потім чотири стадії по два блоки, потім
+глобальне усереднення й один лінійний шар. Разом <strong>20 згорткових шарів</strong> і
+<strong>11 689 512 параметрів</strong>.</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>стадія</th><th>блоків</th><th>каналів</th><th>крок першого блоку</th></tr></thead>
+  <tbody>
+    <tr><td>conv1</td><td>—</td><td>3 → 64</td><td>2 (плюс пулінг 2)</td></tr>
+    <tr><td>layer1</td><td>2</td><td>64 → 64</td><td>1</td></tr>
+    <tr><td>layer2</td><td>2</td><td>64 → 128</td><td>2</td></tr>
+    <tr><td>layer3</td><td>2</td><td>128 → 256</td><td>2</td></tr>
+    <tr><td>layer4</td><td>2</td><td>256 → 512</td><td>2</td></tr>
+    <tr><td>голова</td><td>—</td><td>512 → 1000</td><td>—</td></tr>
+  </tbody>
+</table></div>
+
+<p>А тепер головне число, заради якого ми сюди йшли ще з <a
+href="../13-alexnet-vgg/lecture.html">теми 13</a>. Порахуймо, де ці 11,7 мільйона
+лежать:</p>
+
+<div class="scroll-x"><table class="nums">
+  <thead><tr><th>мережа</th><th>усього ваг</th><th>згорткових шарів</th><th>у згортках</th><th>у голові</th></tr></thead>
+  <tbody>
+    <tr><td>AlexNet</td><td>61 100 840</td><td>5</td><td>4.0 %</td><td>96.0 %</td></tr>
+    <tr><td>VGG16</td><td>138 357 544</td><td>13</td><td>10.6 %</td><td><b>89.4 %</b></td></tr>
+    <tr class="hot"><td>ResNet18</td><td>11 689 512</td><td>20</td><td><b>95.5 %</b></td><td>4.4 %</td></tr>
+    <tr><td>ResNet34</td><td>21 797 672</td><td>36</td><td>97.6 %</td><td>2.4 %</td></tr>
+    <tr><td>ResNet50</td><td>25 557 032</td><td>53</td><td>91.8 %</td><td>8.0 %</td></tr>
+  </tbody>
+</table></div>
+
+<p>Пропорція перевернулась. У VGG16 голова тримає 123 642 856 ваг, у ResNet18 —
+<strong>513 000</strong>, у 241 раз менше. Мережа стала вчетверо глибшою й водночас
+у дванадцять разів легшою.</p>
+
+<p>І зробили це не скіп-зʼєднання. Зробило <a
+href="../08-pooling/lecture.html">глобальне усереднення</a> з теми 08: замість
+<code>Flatten</code>, що перетворює 512×7×7 на рядок із 25 088 чисел і віддає його
+повнозвʼязному шару на 4096 виходів, ResNet усереднює кожну карту в одне число й
+віддає лінійному шару рядок із 512. Один шар замість трьох, 512 входів замість
+25 088.</p>
+
+<div class="note"><b>Дві незалежні революції в одній мережі, і їх часто плутають.</b>
+Скіп-зʼєднання зробило мережу <em>навчальною на великій глибині</em> — без них 20 шарів
+не зійшлись би. Глобальне усереднення зробило її <em>легкою</em> — воно прибрало 96 %
+ваг, які раніше сиділи в голові. Це різні прийоми, вони розвʼязують різні задачі, і кожен
+працює без іншого. У ResNet вони просто приїхали разом.</div>
+
+<p>Ще одне число варте уваги. Батчнорми в ResNet18 займають <strong>0,08 %</strong>
+параметрів — 9 600 ваг з одинадцяти з половиною мільйонів. Шар, без
+якого глибока мережа не навчається взагалі, важить менше однієї тисячної.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Підсумок і що далі</h2>
+
+<p>Що ми зміряли в цій темі:</p>
+
+<ul>
+  <li><strong>Деградація існує, і ми її відтворили.</strong> Проста мережа з 25
+    згорткових шарів дала 0.567 навчальної точності проти 0.926 у мережі з пʼяти. Та сама
+    мережа зі скіп-зʼєднаннями — 1.000.</li>
+  <li><strong>Це не перенавчання.</strong> На глибині 25 навчальна точність простої
+    мережі 0.567, перевірочна 0.530: розрив 0.037. Мережа не завчила дані напамʼять,
+    вона їх не вивчила.</li>
+  <li><strong>Парадокс тотожності.</strong> Глибша мережа містить коротшу в собі, тож
+    гіршою бути не може — а на вимірі гірша на 0.359. Отже, проблема в оптимізації, а не
+    у виразності.</li>
+  <li><strong>Скіп вирівнює градієнт.</strong> Розкид норми градієнта між першим і
+    останнім блоком: 50.5 раза в простій мережі, 4.2 раза в залишковій. Похідна суми
+    пропускає одиницю крізь скіп незміненою.</li>
+  <li><strong>Скіп безкоштовний.</strong> Мережі на глибині 25 мають рівно по 56 342
+    параметри обидві. Проєкції 1×1 у справжній resnet18 коштують 1,49 % ваг.</li>
+  <li><strong>Пляшкове горло дає 16,9 раза.</strong> На 2048 каналах звичайний блок
+    важив би 75 505 664 ваги, блок із горлом — 4 462 592.</li>
+  <li><strong>Друга революція — голова.</strong> 95,5 % ваг ResNet18 у згортках проти
+    10,6 % у VGG16. Голова схудла з 123 642 856 ваг до 513 000.</li>
+</ul>
+
+<h3>Скіп-зʼєднання пішло далі за ResNet</h3>
+
+<p>Прийом виявився надто корисним, щоб лишитись деталлю однієї архітектури. Сьогодні
+важко знайти глибоку мережу без нього:</p>
+
+<ul>
+  <li><strong>U-Net</strong> для сегментації — скіпи звʼязують шари стиснення з шарами
+    відновлення, повертаючи дрібні деталі, втрачені при пулінгу. Про це — блок 6 курсу.</li>
+  <li><strong>Трансформери</strong> — кожен блок уваги й кожен повнозвʼязний підблок
+    обгорнуті в <span class="mono">x + …</span>. Без цього трансформер на дванадцять
+    шарів не навчається. Про це — блок 4.</li>
+  <li><strong>DenseNet</strong> пішла далі й зʼєднала кожен шар з усіма наступними;
+    ідея та сама, тільки замість додавання — склеювання каналів.</li>
+</ul>
+
+<h3>Що далі</h3>
+
+<p>ResNet зняла обмеження на глибину й заразом викинула важку голову. Мережа стала
+глибокою, точною і при цьому вдванадцятеро легшою за VGG16.</p>
+
+<p>Але «легша за VGG16» — це слабка похвала. ResNet-50 — це 25 557 032 ваги, і сама лише
+її остання стадія, яку ми щойно порахували, важить 14 964 736 — більше, ніж уся ResNet18
+разом. І це вже <em>після</em> того, як пляшкове горло зрізало з неї пʼятнадцять
+шістнадцятих. На сервері з відеокартою це дрібниця. На телефоні, який має вкластися в
+кадр відео й не розрядити батарею, це неможливо.</p>
+
+<p>Отже, наступне питання не «як зробити глибше», а <strong>«як зробити дешевше»</strong>
+— і відповідь виявиться такою ж несподіваною, як і скіп-зʼєднання. Про це — <a
+href="../15-efficient-architectures/lecture.html">тема 15, Inception, MobileNet,
+EfficientNet</a>.</p>
+
+<div class="note"><b>Далі в практиці.</b> У <code>practice.ipynb</code> ти навчиш десять
+мереж і отримаєш таблицю глибин власними руками, заміряєш норму градієнта по дванадцяти
+блоках, перевіриш через <code>torch.allclose</code>, що блок із нульовим γ справді
+тотожний, порахуєш параметри блоку руками й звіриш із <code>sum(p.numel())</code>, а
+потім розбереш справжню <code>resnet18</code> через <code>weights=None</code>.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../13-alexnet-vgg/lecture.html"><span class="dir">попередня</span><span class="ttl">13. AlexNet і VGG</span></a>
+    <a class="next" href="../15-efficient-architectures/lecture.html"><span class="dir">наступна</span><span class="ttl">15. Inception, MobileNet, EfficientNet</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function rr(g,x,y,w,h,r){
+  var rad=Math.min(r,Math.abs(w)/2,Math.abs(h)/2);
+  g.beginPath(); g.moveTo(x+rad,y);
+  g.arcTo(x+w,y,x+w,y+h,rad); g.arcTo(x+w,y+h,x,y+h,rad);
+  g.arcTo(x,y+h,x,y,rad); g.arcTo(x,y,x+w,y,rad); g.closePath();
+}
+function verd(id,tag,cap,txt){
+  var e=I(id); if(e) e.innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* «1 раз», «3 рази», «12 разів» */
+function разів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'раз';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рази';
+  return 'разів';
+}
+function крат(v){
+  if(Math.abs(v-Math.round(v))<1e-9) return v.toFixed(0)+' '+разів(Math.round(v));
+  return v.toFixed(1)+' раза';
+}
+/* «1 шар», «3 шари», «20 шарів» */
+function шарів(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'шар';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'шари';
+  return 'шарів';
+}
+/* «14.8 млрд», «25.6 млн», «513 тис.» */
+function млн(v){
+  if(v>=1e9) return (v/1e9).toFixed(1)+' млрд';
+  if(v>=1e6) return (v/1e6).toFixed(1)+' млн';
+  if(v>=1e3) return (v/1e3).toFixed(0)+' тис.';
+  return String(Math.round(v));
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* стрілка від (x1,y1) до (x2,y2) */
+function arrow(g,x1,y1,x2,y2,color,dash){
+  g.strokeStyle=color; g.lineWidth=1.6;
+  g.setLineDash(dash?[5,4]:[]);
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke();
+  g.setLineDash([]);
+  var a=Math.atan2(y2-y1,x2-x1);
+  g.fillStyle=color; g.beginPath();
+  g.moveTo(x2,y2);
+  g.lineTo(x2-7*Math.cos(a-0.4), y2-7*Math.sin(a-0.4));
+  g.lineTo(x2-7*Math.cos(a+0.4), y2-7*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   СПІЛЬНІ ДАНІ — усе заміряно в practice.ipynb, зерно 42 для даних,
+   зерна 0/1/2 для ваг, torch.set_num_threads(1)
+   ═══════════════════════════════════════════════════════════════════ */
+var DEPTHS  = [3, 5, 9, 17, 25];
+var NPAR    = [4950, 9622, 18966, 37654, 56342];
+var PLAIN_TR= [0.807, 0.926, 0.872, 0.798, 0.567];
+var PLAIN_TE= [0.759, 0.868, 0.798, 0.717, 0.530];
+var RES_TR  = [0.876, 0.934, 1.000, 1.000, 1.000];
+var RES_TE  = [0.821, 0.869, 0.943, 0.960, 0.954];
+var CHANCE  = 0.167;                       /* вгадування на шести класах */
+
+/* норма градієнта ваг conv1 по блоках, на старті, батч 64 */
+var GRAD_PLAIN=[9.077,5.492,3.981,2.584,2.032,1.311,0.9633,0.6884,0.4907,0.3402,0.2271,0.1797];
+var GRAD_RES  =[1.480,0.9021,0.7405,0.6088,0.5736,0.5309,0.4711,0.4352,0.4159,0.3432,0.4188,0.3495];
+var GRAD_ZERO =[0,0,0,0,0,0,0,0,0,0,0,0];
+
+/* середня активація на виході блоку, на старті, батч 64 */
+var ACT_PLAIN=[0.39,0.39,0.38,0.38,0.38,0.39,0.38,0.38,0.38,0.38,0.39,0.38];
+var ACT_RES  =[0.91,1.09,1.26,1.41,1.57,1.70,1.82,1.93,2.04,2.15,2.26,2.36];
+var ACT_ZERO =[0.73,0.73,0.73,0.73,0.73,0.73,0.73,0.73,0.73,0.73,0.73,0.73];
+var ACT_AFTER=[1.12,1.51,1.90,2.29,2.68,3.07,3.46,3.85,4.24,4.64,5.03,5.42];
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 1 · Деградація глибини
+   ═══════════════════════════════════════════════════════════════════ */
+function degX(W,i){ var pad=64; return pad + (W-pad-30)*i/(DEPTHS.length-1); }
+function degY(H,v){ var top=34, bot=H-52; return bot - (bot-top)*(v-0.10)/(1.02-0.10); }
+
+function drawDeg(){
+  var cv=I('cDeg'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i, k;
+  var idx=+I('degIdx').value; if(!isFinite(idx)) idx=0;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+
+  /* сітка й підписи осі значень */
+  var ticks=[0.167,0.4,0.6,0.8,1.0];
+  g.lineWidth=1;
+  for(k=0;k<ticks.length;k++){
+    var yy=Math.round(degY(H,ticks[k]))+0.5;
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(56,yy); g.lineTo(W-30,yy); g.stroke();
+    capt(g, ticks[k]===0.167?'0.167':ticks[k].toFixed(1), 50, yy+4, soft, 11, false, 'right');
+  }
+  capt(g,'рівень вгадування', 60, degY(H,0.167)-6, amber, 10.5, true);
+
+  /* вертикаль обраної глибини */
+  var xs=Math.round(degX(W,idx))+0.5;
+  g.strokeStyle=amber; g.lineWidth=1.4; g.setLineDash([4,4]);
+  g.beginPath(); g.moveTo(xs,26); g.lineTo(xs,H-46); g.stroke(); g.setLineDash([]);
+
+  /* чотири криві */
+  function line(arr,color,dash){
+    g.strokeStyle=color; g.lineWidth=dash?1.8:2.6; g.setLineDash(dash?[6,4]:[]);
+    g.beginPath();
+    for(i=0;i<DEPTHS.length;i++){
+      var x=degX(W,i), y=degY(H,arr[i]);
+      if(i===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke(); g.setLineDash([]);
+    for(i=0;i<DEPTHS.length;i++){
+      g.fillStyle = (i===idx)?color:css('--raise');
+      g.strokeStyle=color; g.lineWidth=2;
+      g.beginPath(); g.arc(degX(W,i),degY(H,arr[i]), i===idx?5.5:3.5, 0, 6.2832);
+      g.fill(); g.stroke();
+    }
+  }
+  line(PLAIN_TE, rose, true);
+  line(RES_TE, teal, true);
+  line(PLAIN_TR, rose, false);
+  line(RES_TR, teal, false);
+
+  /* підписи глибин унизу */
+  for(i=0;i<DEPTHS.length;i++){
+    capt(g, String(DEPTHS[i]), degX(W,i), H-28, i===idx?ink:soft, i===idx?13:11, i===idx, 'center');
+  }
+  capt(g,'глибина, згорткових шарів', W/2, H-9, soft, 11, false, 'center');
+
+  /* легенда стоїть у порожньому лівому низу, щоб не лягти на криві (грабля №12) */
+  var lx=112, ly=degY(H,0.42);
+  var leg=[['проста, навч',rose,false],['проста, тест',rose,true],
+           ['залишкова, навч',teal,false],['залишкова, тест',teal,true]];
+  for(k=0;k<leg.length;k++){
+    g.strokeStyle=leg[k][1]; g.lineWidth=leg[k][2]?1.8:2.6;
+    g.setLineDash(leg[k][2]?[6,4]:[]);
+    g.beginPath(); g.moveTo(lx,ly+k*17-4); g.lineTo(lx+22,ly+k*17-4); g.stroke();
+    g.setLineDash([]);
+    capt(g,leg[k][0], lx+28, ly+k*17, soft, 11);
+  }
+
+  I('degOut').textContent=DEPTHS[idx];
+  I('degPTr').textContent=PLAIN_TR[idx].toFixed(3);
+  I('degPTe').textContent=PLAIN_TE[idx].toFixed(3);
+  I('degRTr').textContent=RES_TR[idx].toFixed(3);
+  I('degRTe').textContent=RES_TE[idx].toFixed(3);
+  I('degPar').textContent=gr(NPAR[idx])+' в обох';
+  var gap=RES_TR[idx]-PLAIN_TR[idx];
+  I('degGap').textContent=(gap>=0?'+':'')+gap.toFixed(3);
+
+  var best=PLAIN_TR[1];                       /* найкраща проста — на пʼяти шарах */
+  if(idx===0){
+    verd('degVd','t-mid','СТОС ЩЕ ЗАКОРОТКИЙ',
+      'Три шари — це мало для обох мереж: 0.807 проти 0.876. Найкраще, на що здатна '+
+      'проста мережа, попереду, на пʼяти шарах (0.926). Ламати тут ще нічого.');
+  }else if(idx===1){
+    verd('degVd','t-mid','ПАРИТЕТ І СТЕЛЯ ПРОСТОЇ',
+      'Пʼять шарів — найкраща проста мережа за всю таблицю: 0.926. Залишкова дає '+
+      RES_TR[idx].toFixed(3)+', тобто майже те саме. Поки стос короткий, скіпу нема '+
+      'від чого рятувати.');
+  }else if(PLAIN_TR[idx] < best-0.02){
+    verd('degVd','t-no','ПРОСТА ДЕГРАДУЄ',
+      'На '+DEPTHS[idx]+' '+шарів(DEPTHS[idx])+' проста дає '+PLAIN_TR[idx].toFixed(3)+
+      ' на навчанні — гірше за '+best.toFixed(3)+', які вона ж показала на пʼяти шарах, '+
+      'маючи в '+крат(Math.round(NPAR[idx]/NPAR[1]*10)/10)+' менше ваг. Залишкова з тими '+
+      'самими '+gr(NPAR[idx])+' вагами: '+RES_TR[idx].toFixed(3)+', розрив '+gap.toFixed(3)+'.');
+  }else{
+    verd('degVd','t-ok','ЗАЛИШКОВА ВЖЕ ПОПЕРЕДУ',
+      'Проста тримається на '+PLAIN_TR[idx].toFixed(3)+', залишкова вперлась у '+
+      RES_TR[idx].toFixed(3)+' — стелю навчальних даних. Розрив '+gap.toFixed(3)+
+      ' при однакових '+gr(NPAR[idx])+' вагах.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 2 · Парадокс тотожності
+   ═══════════════════════════════════════════════════════════════════ */
+var PAR_IDX=[1,2,3,4];        /* індекси в DEPTHS: 5, 9, 17, 25 */
+
+function drawPar(){
+  var cv=I('cPar'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var sel=+I('parIdx').value; if(!isFinite(sel)) sel=0;
+  var di=PAR_IDX[sel], depth=DEPTHS[di];
+  var base=DEPTHS[1], baseAcc=PLAIN_TR[1], fact=PLAIN_TR[di];
+  var extra=depth-base;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+
+  /* ── угорі: схема мережі на всю ширину ── */
+  var y0=54, boxH=58;
+  var nBase=5, nExtra=extra, total=nBase+nExtra;
+  var availW=W-80;
+  var step=Math.min(38, availW/total);
+  var x=40;
+  capt(g,'мережа на '+depth+' '+шарів(depth)+': пʼять базових плюс '+extra, 40, 34, ink, 12.5, true);
+
+  for(i=0;i<total;i++){
+    var isBase=(i<nBase);
+    g.fillStyle=isBase?paper:css('--rose-w');
+    rr(g,x,y0,Math.max(step-6,3),boxH,3); g.fill();
+    g.strokeStyle=isBase?hair:rose; g.lineWidth=1;
+    rr(g,x+0.5,y0+0.5,Math.max(step-6,3)-1,boxH-1,3); g.stroke();
+    x+=step;
+  }
+  capt(g,'базові 5', 40, y0+boxH+17, soft, 11, true);
+  if(nExtra>0){
+    capt(g,'дописані '+nExtra+': мають вивчити f(x) = x',
+      40+nBase*step+2, y0+boxH+17, rose, 11, true);
+  }
+
+  /* ── унизу: дві планки ── */
+  var px=40, lblW=150, full=W-px-lblW-96;
+  var barTop=174, barH=26;
+  function bar(y,v,color,label,val){
+    g.fillStyle=css('--paper'); rr(g,px+lblW,y,full,barH,5); g.fill();
+    g.strokeStyle=hair; g.lineWidth=1; rr(g,px+lblW+0.5,y+0.5,full-1,barH-1,5); g.stroke();
+    var wv=full*Math.max(0,Math.min(1,(v-CHANCE)/(1-CHANCE)));
+    g.fillStyle=color; rr(g,px+lblW,y,Math.max(wv,3),barH,5); g.fill();
+    capt(g,label, px, y+18, soft, 11.5);
+    capt(g,val, px+lblW+full+8, y+18, ink, 13, true, 'left');
+  }
+  capt(g,'навчальна точність, шкала від 0.167 (вгадування) до 1.000',
+       px, barTop-14, ink, 12, true);
+  bar(barTop, baseAcc, teal, 'теорія, не менше', baseAcc.toFixed(3));
+  bar(barTop+46, fact, rose, 'фактичний вимір', fact.toFixed(3));
+
+  /* борг між планками */
+  var debt=baseAcc-fact;
+  var yFoot=barTop+46+barH+16;
+  var xTh=px+lblW+full*(baseAcc-CHANCE)/(1-CHANCE);
+  var xFa=px+lblW+full*Math.max(0,(fact-CHANCE))/(1-CHANCE);
+  if(debt>0.005){
+    g.strokeStyle=css('--amber'); g.lineWidth=1.4; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(xTh,barTop); g.lineTo(xTh,yFoot); g.stroke();
+    g.beginPath(); g.moveTo(xFa,barTop+46); g.lineTo(xFa,yFoot); g.stroke();
+    g.setLineDash([]);
+    arrow(g,xTh,yFoot-4,xFa,yFoot-4,css('--amber'),false);
+    capt(g,'борг '+debt.toFixed(3), (xTh+xFa)/2, yFoot+16, css('--amber'), 12.5, true, 'center');
+  }else{
+    capt(g,'боргу немає: вимір збігається з теоретичною межею',
+         px+lblW, yFoot+16, teal, 12.5, true);
+  }
+
+  I('parOut').textContent=depth;
+  I('parExtra').textContent=extra;
+  I('parTheo').textContent=baseAcc.toFixed(3);
+  I('parFact').textContent=fact.toFixed(3);
+  I('parDebt').textContent=(debt>0?'−':'+')+Math.abs(debt).toFixed(3);
+
+  if(debt<=0.01){
+    verd('parVd','t-ok','ТЕОРІЯ ТРИМАЄТЬСЯ',
+      'Дописано '+extra+' '+шарів(extra)+', і мережа не стала гіршою: '+fact.toFixed(3)+
+      ' проти обіцяних '+baseAcc.toFixed(3)+'. Поки шарів мало, оптимізація ще дає раду.');
+  }else if(debt<0.15){
+    verd('parVd','t-mid','ТЕОРІЯ ВЖЕ ПРОГРАЄ',
+      'Мережа на '+depth+' '+шарів(depth)+' містить у собі пʼятишарову, тож мала б дати '+
+      'щонайменше '+baseAcc.toFixed(3)+'. Дає '+fact.toFixed(3)+
+      ' — на '+debt.toFixed(3)+' менше. Потрібні ваги існують, знайти їх не вдалося.');
+  }else{
+    verd('parVd','t-no','ПАРАДОКС У ПОВНИЙ ЗРІСТ',
+      'Досить, щоб '+extra+' дописаних '+шарів(extra)+' вивчили f(x) = x, і вийшло б '+
+      baseAcc.toFixed(3)+'. Вимір дає '+fact.toFixed(3)+', борг '+debt.toFixed(3)+
+      '. Це не брак виразності — це оптимізація не знаходить розвʼязку, який точно є.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 3 · Норма градієнта по шарах
+   ═══════════════════════════════════════════════════════════════════ */
+var gradMode=0;
+
+function drawGrad(){
+  var cv=I('cGrad'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i, k;
+  var arr=[GRAD_PLAIN,GRAD_RES,GRAD_ZERO][gradMode];
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var color=[rose,teal,amber][gradMode];
+
+  var left=64, right=W-30, top=52, bot=H-64;
+  /* логарифмічна шкала від 0.1 до 10 */
+  function ly(v){
+    if(v<=0) return bot;
+    var lo=Math.log(0.1)/Math.LN10, hi=Math.log(10)/Math.LN10;
+    var t=(Math.log(v)/Math.LN10 - lo)/(hi-lo);
+    return bot-(bot-top)*Math.max(0,Math.min(1,t));
+  }
+  var decades=[0.1,1,10];
+  for(k=0;k<decades.length;k++){
+    var yy=Math.round(ly(decades[k]))+0.5;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(left,yy); g.lineTo(right,yy); g.stroke();
+    capt(g, decades[k]===0.1?'0.1':String(decades[k]), left-8, yy+4, soft, 11, false, 'right');
+  }
+  capt(g,'норма', left-8, top-18, soft, 10.5, false, 'right');
+  capt(g,'градієнта', left-8, top-6, soft, 10.5, false, 'right');
+
+  var n=arr.length, bw=(right-left)/n;
+  for(i=0;i<n;i++){
+    var x=left+i*bw+3, w=bw-6;
+    var y=ly(arr[i]);
+    if(arr[i]>0){
+      g.fillStyle=color; rr(g,x,y,w,bot-y,3); g.fill();
+    }else{
+      g.strokeStyle=color; g.lineWidth=2;
+      g.beginPath(); g.moveTo(x,bot-1.5); g.lineTo(x+w,bot-1.5); g.stroke();
+    }
+    capt(g, String(i+1), x+w/2, bot+16, i===0||i===n-1?ink:soft, 11, i===0||i===n-1, 'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(left,bot+0.5); g.lineTo(right,bot+0.5); g.stroke();
+
+  capt(g,'блок 1 · біля входу', left, bot+34, soft, 11);
+  capt(g,'блок 12 · біля виходу', right, bot+34, soft, 11, false, 'right');
+
+  /* напрямок зворотного проходу */
+  arrow(g, right-40, top-16, left+40, top-16, soft, true);
+  capt(g,'сюди йде сигнал помилки', (left+right)/2, top-22, soft, 11, false, 'center');
+
+  var first=arr[0], last=arr[n-1];
+  I('grFirst').textContent = first>0 ? first.toFixed(3) : 'рівно 0';
+  I('grLast').textContent  = last>0  ? last.toFixed(3)  : 'рівно 0';
+  I('grRatio').textContent = (first>0 && last>0) ? (first/last).toFixed(1)+'×' : '—';
+  I('grAcc').textContent   = ['0.530','0.954','0.358'][gradMode];
+
+  if(gradMode===0){
+    verd('grVd','t-no','СИГНАЛ РОЗГОЙДУЄТЬСЯ',
+      'Від виходу до входу норма зростає з '+last.toFixed(3)+' до '+first.toFixed(3)+
+      ' — у '+(first/last).toFixed(1)+' раза. Один крок оптимізатора не може бути '+
+      'доречним і для першого блоку, і для дванадцятого водночас.');
+  }else if(gradMode===1){
+    verd('grVd','t-ok','СИГНАЛ РІВНИЙ',
+      'Розкид між першим і останнім блоком — усього '+(first/last).toFixed(1)+
+      ' раза проти 50.5 у простої мережі. Похідна суми пропускає крізь скіп чисту '+
+      'одиницю, і вона не дає добутку розігнатись.');
+  }else{
+    verd('grVd','t-mid','ГРАДІЄНТА НЕМАЄ ЗОВСІМ',
+      'При γ = 0 усередині блоків градієнт дорівнює рівно нулю: блоки на першому кроці '+
+      'не вчаться взагалі. Вони «вмикаються» лише в міру того, як сама γ відходить від '+
+      'нуля — за 20 епох вона дійшла в середньому до 0.028.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 4 · Куди йде додавання
+   ═══════════════════════════════════════════════════════════════════ */
+var blkMode=0;
+
+function drawBlk(){
+  var cv=I('cBlk'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), k;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper'), raise=css('--raise');
+
+  var yMain=150, bh=52;
+  var names=['conv 3×3','BN','ReLU','conv 3×3','BN'];
+  var xs=[], wds=[86,48,58,86,48];
+  var startX=118, gapx=22, x=startX, k2;
+  for(k=0;k<wds.length;k++){ xs.push(x); x+=wds[k]+gapx; }
+  var lastEnd=xs[4]+wds[4];
+
+  /* вхід */
+  capt(g,'вхід x', 40, yMain+bh/2+4, ink, 13, true);
+  arrow(g, 92, yMain+bh/2, xs[0]-6, yMain+bh/2, soft, false);
+
+  /* основна гілка */
+  for(k=0;k<5;k++){
+    g.fillStyle=paper; rr(g,xs[k],yMain,wds[k],bh,7); g.fill();
+    g.strokeStyle=hair; g.lineWidth=1; rr(g,xs[k]+0.5,yMain+0.5,wds[k]-1,bh-1,7); g.stroke();
+    capt(g,names[k], xs[k]+wds[k]/2, yMain+bh/2+5, ink, 12, false, 'center');
+    if(k<4) arrow(g, xs[k]+wds[k], yMain+bh/2, xs[k+1]-6, yMain+bh/2, soft, false);
+  }
+
+  /* далі — вузли на головній гілці; у простому блоці він рівно один (ReLU) */
+  var xA=lastEnd+56, xB=xA+112;
+  var seq = (blkMode===0) ? ['ReLU'] : (blkMode===1 ? ['+','ReLU'] : ['ReLU','+']);
+  var pos = (blkMode===0) ? [xA] : [xA,xB];
+  var xOut = pos[pos.length-1]+96;
+
+  function node(cx,label,active){
+    var r=25;
+    g.fillStyle=active?css('--teal-w'):paper;
+    g.beginPath(); g.arc(cx,yMain+bh/2,r,0,6.2832); g.fill();
+    g.strokeStyle=active?teal:hair; g.lineWidth=active?2:1;
+    g.beginPath(); g.arc(cx,yMain+bh/2,r,0,6.2832); g.stroke();
+    capt(g,label,cx,yMain+bh/2+(label==='+'?7:5),active?ink:soft, label==='+'?18:12, true, 'center');
+  }
+  arrow(g, lastEnd, yMain+bh/2, pos[0]-30, yMain+bh/2, soft, false);
+  for(k2=0;k2<pos.length;k2++){
+    node(pos[k2], seq[k2], seq[k2]==='+');
+    if(k2<pos.length-1) arrow(g, pos[k2]+27, yMain+bh/2, pos[k2+1]-30, yMain+bh/2, soft, false);
+  }
+  arrow(g, pos[pos.length-1]+27, yMain+bh/2, xOut-14, yMain+bh/2, soft, false);
+  capt(g,'вихід y', xOut-6, yMain+bh/2+4, ink, 13, true);
+
+  /* скіп-гілка */
+  if(blkMode!==0){
+    var xJoin=pos[seq.indexOf('+')];
+    var ySkip=yMain+bh+64;
+    g.strokeStyle=teal; g.lineWidth=2.4; g.setLineDash([]);
+    g.beginPath();
+    g.moveTo(66, yMain+bh/2+8);
+    g.lineTo(66, ySkip);
+    g.lineTo(xJoin, ySkip);
+    g.stroke();
+    arrow(g, xJoin, ySkip, xJoin, yMain+bh/2+27, teal, false);
+    capt(g,'скіп-зʼєднання: x іде повз усі згортки', 76, ySkip-9, teal, 12, true);
+  }else{
+    capt(g,'скіпа немає: вихід повністю визначають дві згортки', 76, yMain+bh+74, soft, 12, true);
+  }
+
+  /* заголовок режиму */
+  var title=['звичайний блок · y = F(x)',
+             'залишковий блок · y = relu(F(x) + x)',
+             'скіп після ReLU · y = relu(F(x)) + x'][blkMode];
+  capt(g,title, 40, 42, ink, 13, true);
+
+  var CAN=['лише замінити вхід','додати і відняти','лише додати невідʼємне'];
+  var ACT=[ACT_PLAIN,ACT_RES,ACT_AFTER][blkMode];
+  I('blkCan').textContent=CAN[blkMode];
+  I('blkAct').textContent=ACT[11].toFixed(2);
+  I('blkGrow').textContent=(ACT[11]/ACT[0]).toFixed(1)+'×';
+  I('blkAcc').textContent=['0.530','0.954','0.960'][blkMode];
+
+  if(blkMode===0){
+    verd('blkVd','t-no','ВХІД НЕ ДОЖИВАЄ ДО ВИХОДУ',
+      'Що б не порахували згортки, воно й буде виходом. Масштаб рівний ('+
+      ACT[0].toFixed(2)+' → '+ACT[11].toFixed(2)+'), бо BN тримає його силою, '+
+      'але сам сигнал по дорозі губиться: 0.530 на глибині 25.');
+  }else if(blkMode===1){
+    verd('blkVd','t-ok','КАНОНІЧНА ПРОВОДКА',
+      'Додавання стоїть перед останньою ReLU, тож гілка F(x) може дати й відʼємне — '+
+      'блок уміє не лише додавати, а й віднімати. Масштаб росте помірно: '+
+      ACT[0].toFixed(2)+' → '+ACT[11].toFixed(2)+', тобто в '+(ACT[11]/ACT[0]).toFixed(1)+' раза.');
+  }else{
+    verd('blkVd','t-mid','ПРАЦЮЄ, АЛЕ РОЗГАНЯЄТЬСЯ',
+      'ReLU обнулила все відʼємне до додавання, тож блок уміє лише додавати. '+
+      'Масштаб росте вдвічі швидше: '+ACT[0].toFixed(2)+' → '+ACT[11].toFixed(2)+
+      '. На наших 12 блоках точність ще не постраждала (0.960), на пʼятдесяти постраждала б.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 5 · Нульова ініціалізація
+   ═══════════════════════════════════════════════════════════════════ */
+var zeroMode=0;
+
+function drawZero(){
+  var cv=I('cZero'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), i, k;
+  var arr=[ACT_PLAIN,ACT_RES,ACT_ZERO][zeroMode];
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var color=[rose,teal,amber][zeroMode];
+
+  var left=64, right=W-30, top=54, bot=H-64, maxv=2.6;
+  function vy(v){ return bot-(bot-top)*Math.max(0,Math.min(1,v/maxv)); }
+
+  for(k=0;k<=5;k++){
+    var val=k*0.5, yy=Math.round(vy(val))+0.5;
+    if(val>maxv) continue;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(left,yy); g.lineTo(right,yy); g.stroke();
+    capt(g, val.toFixed(1), left-8, yy+4, soft, 11, false, 'right');
+  }
+  capt(g,'середня', left-8, top-20, soft, 10.5, false, 'right');
+  capt(g,'активація', left-8, top-8, soft, 10.5, false, 'right');
+
+  var n=arr.length, bw=(right-left)/n;
+  for(i=0;i<n;i++){
+    var x=left+i*bw+4, w=bw-8, y=vy(arr[i]);
+    g.fillStyle=color; rr(g,x,y,w,bot-y,3); g.fill();
+    capt(g, arr[i].toFixed(2), x+w/2, y-7, soft, 10.5, false, 'center');
+    capt(g, String(i+1), x+w/2, bot+16, soft, 11, false, 'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(left,bot+0.5); g.lineTo(right,bot+0.5); g.stroke();
+  capt(g,'номер блоку в стосі', (left+right)/2, bot+36, soft, 11, false, 'center');
+
+  var titles=['проста мережа: BN тримає масштаб, але вхід не доживає до виходу',
+              'залишкова: кожен блок додає своє, масштаб повзе вгору',
+              'залишкова з γ = 0: кожен блок віддає рівно те, що отримав'];
+  capt(g, titles[zeroMode], left, 34, ink, 12.5, true);
+
+  I('zoIdent').textContent=['ні','ні','так, allclose'][zeroMode];
+  I('zoGrow').textContent=(arr[11]/arr[0]).toFixed(2)+'×';
+  I('zo20').textContent=['0.530','0.954','0.358'][zeroMode];
+  I('zo60').textContent=['—','0.807','0.867'][zeroMode];
+
+  if(zeroMode===0){
+    verd('zoVd','t-no','НЕ ТОТОЖНИЙ І НЕ БУДЕ',
+      'Щоб проста мережа поводилась як коротка, кожен блок мав би вивчити f(x) = x. '+
+      'Масштаб рівний тільки завдяки BN, а сам вхід губиться на першій же згортці.');
+  }else if(zeroMode===1){
+    verd('zoVd','t-mid','ПРАЦЮЄ, АЛЕ МАСШТАБ ПОВЗЕ',
+      'Кожен блок додає свій залишок до входу, і за 12 блоків активація виросла в '+
+      (arr[11]/arr[0]).toFixed(2)+' раза. На 12 блоках це не заважає (0.954), '+
+      'на 50 заважало б.');
+  }else{
+    verd('zoVd','t-ok','РІВНО ТОТОЖНИЙ — І В ЦЬОМУ ЦІНА',
+      'Лінія пряма: allclose(block(x), x) дає True, глибока мережа на старті поводиться '+
+      'як неглибока. Але блоки при цьому не вчаться: за 20 епох 0.358 проти 0.954. '+
+      'За 60 епох картина розвертається — 0.867 проти 0.807.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 6 · Коли скіпу потрібна проєкція
+   Числа з torchvision.models.resnet18(weights=None), вхід 3×224×224
+   ═══════════════════════════════════════════════════════════════════ */
+var STAGE=[
+  {n:'layer1[0]', ci:64,  co:64,  si:56, so:56, stride:1, proj:0,      total:73984},
+  {n:'layer2[0]', ci:64,  co:128, si:56, so:28, stride:2, proj:8448,   total:230144},
+  {n:'layer3[0]', ci:128, co:256, si:28, so:14, stride:2, proj:33280,  total:919040},
+  {n:'layer4[0]', ci:256, co:512, si:14, so:7,  stride:2, proj:132096, total:3673088}
+];
+
+function drawProj(){
+  var cv=I('cProj'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var idx=+I('projIdx').value; if(!isFinite(idx)) idx=0;
+  var S=STAGE[idx], need=(S.proj>0);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+
+  var yTop=96, yBot=222, bh=48;
+  var xIn=58;
+
+  capt(g,'блок '+S.n, 40, 40, ink, 13, true);
+  capt(g,'вхід '+S.ci+'×'+S.si+'×'+S.si+'   →   вихід '+S.co+'×'+S.so+'×'+S.so,
+       40, 62, soft, 12);
+
+  function box(x,y,w,label,sub,color,fill){
+    g.fillStyle=fill||paper; rr(g,x,y,w,bh,7); g.fill();
+    g.strokeStyle=color||hair; g.lineWidth=color?1.8:1;
+    rr(g,x+0.5,y+0.5,w-1,bh-1,7); g.stroke();
+    capt(g,label,x+w/2,y+21,ink,12,true,'center');
+    if(sub) capt(g,sub,x+w/2,y+37,soft,10.5,false,'center');
+  }
+
+  /* точка розгалуження */
+  g.fillStyle=ink; g.beginPath(); g.arc(xIn,yTop+bh/2,4,0,6.2832); g.fill();
+  g.strokeStyle=soft; g.lineWidth=2;
+  g.beginPath(); g.moveTo(xIn,yTop+bh/2); g.lineTo(xIn,yBot+bh/2); g.stroke();
+
+  /* верхня гілка: дві згортки */
+  var w1=168, x1=xIn+52, x2=x1+w1+34;
+  arrow(g,xIn,yTop+bh/2,x1-6,yTop+bh/2,soft,false);
+  box(x1,yTop,w1,'conv 3×3, крок '+S.stride, S.ci+' → '+S.co, null, paper);
+  arrow(g,x1+w1,yTop+bh/2,x2-6,yTop+bh/2,soft,false);
+  box(x2,yTop,w1,'conv 3×3, крок 1', S.co+' → '+S.co, null, paper);
+  capt(g,'основна гілка F(x)', x1, yTop-12, soft, 11, true);
+
+  /* нижня гілка: скіп */
+  capt(g,'скіп', x1, yBot-12, teal, 11, true);
+  if(need){
+    arrow(g,xIn,yBot+bh/2,x1-6,yBot+bh/2,teal,false);
+    box(x1,yBot,w1,'conv 1×1, крок '+S.stride, S.ci+' → '+S.co+' · '+gr(S.proj)+' ваг', teal, css('--teal-w'));
+    arrow(g,x1+w1,yBot+bh/2,x2+w1,yBot+bh/2,teal,false);
+  }else{
+    g.strokeStyle=teal; g.lineWidth=2.4;
+    g.beginPath(); g.moveTo(xIn,yBot+bh/2); g.lineTo(x2+w1,yBot+bh/2); g.stroke();
+    capt(g,'форми збігаються — проводимо x як є, жодної ваги',
+         x1, yBot+bh/2-8, teal, 12, true);
+  }
+
+  /* злиття */
+  var xAdd=x2+w1+52, xOut=xAdd+82;
+  g.strokeStyle=soft; g.lineWidth=2;
+  g.beginPath(); g.moveTo(x2+w1,yTop+bh/2); g.lineTo(xAdd,yTop+bh/2); g.stroke();
+  g.strokeStyle=teal;
+  g.beginPath(); g.moveTo(x2+w1,yBot+bh/2); g.lineTo(xAdd,yBot+bh/2);
+  g.lineTo(xAdd,yTop+bh/2+26); g.stroke();
+  g.fillStyle=css('--teal-w'); g.beginPath(); g.arc(xAdd,yTop+bh/2,23,0,6.2832); g.fill();
+  g.strokeStyle=teal; g.lineWidth=2; g.beginPath(); g.arc(xAdd,yTop+bh/2,23,0,6.2832); g.stroke();
+  capt(g,'+',xAdd,yTop+bh/2+7,ink,18,true,'center');
+  arrow(g,xAdd+25,yTop+bh/2,xOut-8,yTop+bh/2,soft,false);
+  capt(g,'y', xOut, yTop+bh/2+5, ink, 13, true);
+
+  I('projOut').textContent=S.n;
+  I('prIn').textContent=S.ci+'×'+S.si+'×'+S.si;
+  I('prOutS').textContent=S.co+'×'+S.so+'×'+S.so;
+  I('prCost').textContent=need?gr(S.proj)+' ваг':'0';
+  I('prShare').textContent=need?(S.proj/S.total*100).toFixed(2)+' %':'0 %';
+
+  if(!need){
+    verd('prVd','t-ok','ПРОЄКЦІЯ НЕ ПОТРІБНА',
+      'Вхід і вихід мають однакову форму '+S.ci+'×'+S.si+'×'+S.si+
+      ', тож x додається як є. Скіп не має жодної ваги і не додає жодного множення. '+
+      'Таких блоків у resnet18 пʼять із восьми.');
+  }else{
+    verd('prVd','t-mid','ПОТРІБНА, І КОШТУЄ ДЕШЕВО',
+      'Канали '+S.ci+' → '+S.co+' і сторона '+S.si+' → '+S.so+
+      ' — додати напряму неможливо. Згортка 1×1 з кроком '+S.stride+' коштує '+
+      gr(S.proj)+' ваг, тобто '+(S.proj/S.total*100).toFixed(2)+
+      ' % блоку. Разом усі три проєкції resnet18 — 1.49 % мережі.');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Інтерактив 7 · Звичайний блок проти пляшкового горла
+   ═══════════════════════════════════════════════════════════════════ */
+var BCH=[64,128,256,512,1024,2048];
+
+function drawBot(){
+  var cv=I('cBot'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv), k;
+  var idx=+I('botIdx').value; if(!isFinite(idx)) idx=0;
+  var c=BCH[idx], w=c/4;
+  var p1=2*c*c*9+4*c;
+  var p2=c*w+2*w + w*w*9+2*w + w*c+2*c;
+  var m1=2*c*c*9*14*14;
+  var m2=(c*w + w*w*9 + w*c)*14*14;
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+
+  /* ── ліворуч: дві схеми, висота смуги пропорційна кількості каналів ── */
+  var xL=44, midA=100, midB=250;
+  function ribbon(x0,ymid,wid,ch,label,fill,stroke){
+    var hh=10+48*(ch/c);                     /* повна ширина = поточне c */
+    g.fillStyle=fill; rr(g,x0,ymid-hh/2,wid,hh,4); g.fill();
+    g.strokeStyle=stroke; g.lineWidth=1.2; rr(g,x0+0.5,ymid-hh/2+0.5,wid-1,hh-1,4); g.stroke();
+    /* підпис ставимо нижче найширшої можливої смуги, щоб не заїхав у неї */
+    capt(g,label, x0+wid/2, ymid+45, soft, 10.5, false, 'center');
+  }
+  capt(g,'звичайний блок · дві згортки 3×3', xL, midA-52, ink, 12.5, true);
+  ribbon(xL, midA, 190, c, 'conv 3×3 · '+c+' → '+c, css('--rose-w'), rose);
+  ribbon(xL+210, midA, 190, c, 'conv 3×3 · '+c+' → '+c, css('--rose-w'), rose);
+
+  capt(g,'пляшкове горло · 1×1, 3×3, 1×1', xL, midB-52, ink, 12.5, true);
+  ribbon(xL, midB, 118, c, '1×1 · '+c+' → '+w, css('--teal-w'), teal);
+  ribbon(xL+132, midB, 136, w, '3×3 · '+w+' → '+w, css('--teal-w'), teal);
+  ribbon(xL+282, midB, 118, c, '1×1 · '+w+' → '+c, css('--teal-w'), teal);
+  capt(g,'уся просторова робота — на вчетверо вужчому місці',
+       xL, midB+72, teal, 11, true);
+
+  /* ── праворуч: стовпчики ваг у логарифмічній шкалі ── */
+  var bx=W-408, bw2=126, base=H-72, topY=48;
+  function lgY(v){
+    var lo=3, hi=8;                       /* 10^3 … 10^8 ваг */
+    var t=(Math.log(v)/Math.LN10 - lo)/(hi-lo);
+    return base-(base-topY)*Math.max(0,Math.min(1,t));
+  }
+  for(k=3;k<=8;k++){
+    var yy=Math.round(lgY(Math.pow(10,k)))+0.5;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(bx-8,yy); g.lineTo(W-34,yy); g.stroke();
+    capt(g,'10^'+k, bx-14, yy+4, soft, 10, false, 'right');
+  }
+  var y1=lgY(p1), y2=lgY(p2);
+  g.fillStyle=rose; rr(g,bx,y1,bw2,base-y1,4); g.fill();
+  g.fillStyle=teal; rr(g,bx+bw2+42,y2,bw2,base-y2,4); g.fill();
+  capt(g,'звичайний', bx+bw2/2, base+18, soft, 11, false, 'center');
+  capt(g,'горло', bx+bw2+42+bw2/2, base+18, soft, 11, false, 'center');
+  capt(g,gr(p1), bx+bw2/2, y1-8, ink, 12, true, 'center');
+  capt(g,gr(p2), bx+bw2+42+bw2/2, y2-8, ink, 12, true, 'center');
+  capt(g,'ваг у блоці, логарифмічна шкала', bx-14, topY-16, soft, 10.5);
+
+  I('botOut').textContent=c;
+  I('boP1').textContent=gr(p1);
+  I('boP2').textContent=gr(p2);
+  I('boM1').textContent=млн(m1);
+  I('boM2').textContent=млн(m2);
+  I('boWin').textContent=(p1/p2).toFixed(1)+'×';
+  I('boNeck').textContent=c+' → '+w+' → '+c;
+
+  if(c<=128){
+    verd('boVd','t-mid','ВИГРАШ Є, АЛЕ ГОРЛО ЩЕ НЕ ПОТРІБНЕ',
+      'На '+c+' каналах звичайний блок коштує '+gr(p1)+' ваг — це ще прийнятно. '+
+      'Горло дало б '+gr(p2)+', у '+(p1/p2).toFixed(1)+' раза менше, але й економити '+
+      'тут особливо нічого. ResNet-18 саме тому на звичайних блоках.');
+  }else if(c<=512){
+    verd('boVd','t-ok','ГОРЛО ВЖЕ ОКУПОВУЄТЬСЯ',
+      'Звичайний блок на '+c+' каналах — '+gr(p1)+' ваг і '+млн(m1)+
+      ' множень на карту 14×14. Горло стискає до '+w+' каналів і дає '+gr(p2)+
+      ' ваг: у '+(p1/p2).toFixed(1)+' раза дешевше при тих самих вході й виході.');
+  }else{
+    verd('boVd','t-ok','БЕЗ ГОРЛА ТАКОЇ ШИРИНИ НЕ БУВАЄ',
+      'Звичайний блок на '+c+' каналах важив би '+gr(p1)+' ваг — '+
+      (c===2048?'більше за половину VGG16, і це один блок з трьох у стадії':
+                'уже стільки, скільки вся resnet18')+
+      '. Горло дає '+gr(p2)+', у '+(p1/p2).toFixed(1)+' раза менше. '+
+      'Саме тому ResNet-50 і глибші побудовані на ньому.');
+  }
+}
+
+/* ═══════ підключення керування ═══════ */
+on('degIdx','input',drawDeg);
+on('parIdx','input',drawPar);
+on('projIdx','input',drawProj);
+on('botIdx','input',drawBot);
+segment('gradSeg', function(i){ gradMode=i; drawGrad(); });
+segment('blkSeg',  function(i){ blkMode=i;  drawBlk();  });
+segment('zeroSeg', function(i){ zeroMode=i; drawZero(); });
+
+function redrawAll(){
+  drawDeg(); drawPar(); drawGrad(); drawBlk(); drawZero(); drawProj(); drawBot();
+}
+redrawAll();
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+})();
+</script>
+</body>
+</html>

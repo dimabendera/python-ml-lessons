@@ -1,0 +1,2194 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дифузійні моделі</title>
+<meta name="description" content="Дифузія міняє змагання GAN на регресію з однією втратою, і крива цієї втрати справді щось означає: на трьох контрольних точках вона падає 0.2627 → 0.1469 → 0.1004 разом із FID 896.92 → 334.30 → 182.23. Прямий процес має закриту формулу — ітеративні 50 кроків дають σ 0.3463, стрибок формулою 0.3459 при теорії 0.3463. Книжкові β від 0.0001 до 0.02 написані для тисячі кроків: узяті на 200, вони лишають у кінці ланцюга 0.3636 сигналу й середнє −0.2535 замість нуля. Головне тут — калібрування метрики: FID на 32 усереднених ознаках ставить повний колапс мод лише в 1.01 раза гірше за робочу модель, тобто не відрізняє їх; FID на 64 ознаках судді дає запас 2.41×. Аж після цього можна питати про кроки: 2 кроки DDIM дають 6033.76 при одному класі з шести, 20 кроків — 181.84, 200 кроків — 175.78 при розкиді ±36.38. Передбачення шуму перемагає передбачення зображення непересічними купами (139-228 проти 651-1202), а лінійний розклад від косинусного не відрізняється. Умовна генерація на цьому бюджеті майже не працює: 0.1856 влучань при 0.1667 у випадкового вгадування.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, td:first-child, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir, .step .dl,
+.ctl .cap, .nums td, .nums th, .nums td:first-child, .plain td:first-child,
+.seg button, .lgd{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+.nums tr.good td{background:var(--teal-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase грецькі й окремі кириличні літери псуються */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw, th .raw{text-transform:none}
+
+/* заголовок теми довгий, а кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* легенда під канвою: кольорові квадратики з підписом */
+.lgd{display:flex; flex-wrap:wrap; gap:14px; margin-top:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; color:var(--soft)}
+.lgd span{display:flex; align-items:center; gap:6px}
+.lgd i{width:11px; height:11px; border-radius:2px; display:inline-block; font-style:normal}
+
+/* перемикачі у фігурах, де варіантів багато */
+.seg.wide button{flex:1 1 30%}
+.seg.tight button{font-size:10px; padding:8px 3px; letter-spacing:-.01em}
+</style>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 8 · Тема 39</p>
+    <h1>Дифузійні моделі</h1>
+    <p class="stand">У GAN дві мережі змагаються, і жодна з них не має чого
+      мінімізувати. Дифузія відмовляється від змагання зовсім: вона псує зображення
+      шумом за відомим правилом і вчить одну мережу цей шум упізнавати. Задача стає
+      звичайною регресією — <b>із втратою, яку можна читати</b>.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Чому змагання довелося кинути</a></li>
+        <li><a href="#s2">Пряма дифузія: як псують зображення</a></li>
+        <li><a href="#s3">Стрибок замість ланцюга</a></li>
+        <li><a href="#s4">Розклад шуму, і скільки його треба</a></li>
+        <li><a href="#s5">Мережа й втрата, яку можна читати</a></li>
+        <li><a href="#s6">Зворотний прохід: із шуму у фігуру</a></li>
+        <li><a href="#s7">Передбачати шум чи зображення</a></li>
+        <li><a href="#s8">Метрику генерації спершу калібрують</a></li>
+        <li><a href="#s9">Скільки кроків насправді треба</a></li>
+        <li><a href="#s10">DDIM: відбір без жеребу</a></li>
+        <li><a href="#s11">Умовна генерація</a></li>
+        <li><a href="#s12">Латентна дифузія і Stable Diffusion</a></li>
+        <li><a href="#s13">Що з усім цим не так</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../38-gan/lecture.html">← 38. GAN</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../40-limits-ethics/lecture.html">40. Межі й етика CV →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Тема 38 лишила нас із незручним фактом: у GAN <b>немає числа, яке
+падає, коли стає краще</b>. Втрата генератора росте, коли дискримінатор розумнішає,
+і падає, коли той дурнішає, — а обидва рухи виглядають на графіку однаково. Тому
+навчання GAN доводиться пильнувати очима: подивитись на картинки, здогадатись,
+хто з двох переміг, і підкрутити швидкість навчання наосліп.</p>
+
+<p>Дифузійна модель <a href="../glossary.html#t-diffusion">(diffusion model)</a>
+відмовляється від змагання зовсім. Ідея спершу звучить як жарт: візьмімо зображення
+й <b>зіпсуймо його самі</b>, крок за кроком підмішуючи випадковий шум, доки від
+картинки не лишиться нічого. Ми зіпсували його власноруч, отже, точно знаємо, <b>що
+саме</b> підмішали. Далі вчимо мережу відповідати на просте питання: «ось зіпсоване
+зображення й номер кроку — який шум тут підмішаний?» Це вже не змагання, а звичайна
+регресія з правильною відповіддю, і в неї є одна втрата на всю модель.</p>
+
+<p>А далі — дрібниця, яка й зробила ці моделі знаменитими: якщо мережа вміє прибирати
+шум, її можна запустити <b>з чистого шуму</b> й прибирати доти, доки з-під нього не
+проступить зображення, якого ніхто не малював.</p>
+
+<p>Наскрізний приклад теми той самий, що в усьому блоці: <b>шість фігур 28×28</b> —
+коло, квадрат, ромб, кільце, хрест і трикутник, — із випадковим центром, випадковим
+радіусом і шумом 0.06. Ті самі, що в <a href="../16-self-supervised/lecture.html">темі
+16</a>, у <a href="../37-autoencoders/lecture.html">37</a> і в
+<a href="../38-gan/lecture.html">38</a>. Бібліотеки <code>diffusers</code> в нас
+немає, тож дифузію ми, як завжди в цьому курсі, будуємо руками — двадцять одна тисяча
+ваг, усе видно.</p>
+
+<h2 id="s1"><span class="num">01 / Мотив</span>Чому змагання довелося кинути</h2>
+
+<p>Порівняймо дві постановки чесно, без реклами.</p>
+
+<p><b>GAN.</b> Генератор і дискримінатор мінімізують <b>різні</b> втрати, і одна з
+них залежить від іншої. Рівновага, якої вони шукають, — це сідлова точка, а не
+мінімум. Немає жодної функції від пари мереж, яка падала б протягом усього навчання, —
+отже, немає й графіка, на який можна дивитись.</p>
+
+<p><b>Дифузія.</b> Мережа одна, втрата одна: середня квадратична похибка між
+підмішаним шумом і передбаченим. Мінімум у неї є, і він досяжний.</p>
+
+<p>Ціна теж є, і вона чесно велика: одна картинка коштує не один прохід мережі, а
+<b>десятки або сотні</b>. GAN малює за один прохід, дифузія — за сто. Друга половина
+теми про те, скільки з тих сотень кроків справді потрібні.</p>
+
+<div class="note"><b>Що таке «шум» у цій темі.</b> Скрізь далі це <b>гаусів шум</b>:
+до кожного пікселя додається своє випадкове число з нормального розподілу із середнім
+0. Наскільки великі ці числа, задає стандартне відхилення σ (сигма): при σ = 0.1
+більшість доданків лежить у межах ±0.2, при σ = 1 — у межах ±2, тобто більше за весь
+діапазон яскравості. Іншої випадковості в дифузії немає.</div>
+
+<h2 id="s2"><span class="num">02 / Пряма дифузія</span>Як псують зображення</h2>
+
+<p>Почнімо з єдиної частини моделі, у якій немає жодної ваги й нічого не навчається.
+Пряма дифузія (forward process) — це рецепт псування, записаний наперед. Беремо
+зображення <span class="raw">x₀</span> і робимо <span class="raw">T</span> кроків.
+На кожному кроці трохи стискаємо картинку до нуля й трохи домішуємо свіжий шум:</p>
+
+<div class="eq">x<span class="sub">t</span> = √(1 − β<span class="sub">t</span>) · x<span class="sub">t−1</span> &nbsp;+&nbsp; √β<span class="sub">t</span> · ε</div>
+
+<p>Що тут що:</p>
+
+<ul>
+  <li><span class="raw">x<span class="sub">t−1</span></span> — зображення на попередньому
+    кроці, <span class="raw">x<span class="sub">t</span></span> — на цьому;</li>
+  <li><span class="raw">β<span class="sub">t</span></span> (бета) — маленьке число від
+    0 до 1: <b>яку частку кроку віддано шуму</b>. Поки що беремо його як у першій
+    статті про DDPM: лінійно від 0.0001 до 0.02. У розділі 4 виявиться, що з цими
+    числами не все гаразд;</li>
+  <li><span class="raw">ε</span> (епсилон) — свіжий гаусів шум того самого розміру, що
+    зображення, зі стандартним відхиленням 1;</li>
+  <li>множники стоять під коренем не для краси: у незалежних випадкових доданків
+    складаються <b>дисперсії</b>, а не стандартні відхилення. Пара
+    <span class="raw">(√(1−β), √β)</span> дає в сумі
+    <span class="raw">(1−β) + β = 1</span>, тобто розмах картинки не росте й не згасає
+    крок за кроком. Той самий трюк, що в
+    <a href="../11-training-cnn/lecture.html">ініціалізації ваг</a>.</li>
+</ul>
+
+<p>Послідовність <span class="raw">β₁, β₂, …, β<span class="sub">T</span></span>
+зветься <b>розкладом шуму</b> (noise schedule). Її обирає інженер, а не мережа.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Пряма дифузія на одній фігурі</p>
+  <p class="fig-sub">Повзунок веде по кроках ланцюга. Ліворуч — вихідна фігура,
+    праворуч — вона ж після <span class="raw">t</span> кроків псування; смуга внизу
+    показує весь ланцюг одразу.</p>
+  <div class="panel">
+    <div><canvas id="cFwd" width="940" height="330" aria-label="Фігура до псування, вона ж після t кроків домішування шуму, смуга з проміжними станами ланцюга і стовпчики часток сигналу та шуму"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="tFwd">крок <span class="raw">t</span> <output id="tFwdOut">50</output></label>
+        <input type="range" id="tFwd" min="0" max="199" step="1" value="50">
+      </div>
+      <div class="ctl">
+        <span class="cap">фігура</span>
+        <div class="seg wrap" id="segFwd">
+          <button data-i="0" aria-pressed="true">коло</button>
+          <button data-i="1" aria-pressed="false">квадрат</button>
+          <button data-i="2" aria-pressed="false">ромб</button>
+          <button data-i="3" aria-pressed="false">кільце</button>
+          <button data-i="4" aria-pressed="false">хрест</button>
+          <button data-i="5" aria-pressed="false">трикутник</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b><span class="raw">ᾱ</span> накопичене</b><i id="fw1">—</i></div>
+        <div class="cellv"><b>частка сигналу</b><i id="fw2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>частка шуму</b><i id="fw3">—</i></div>
+        <div class="cellv"><b><span class="raw">β</span> цього кроку</b><i id="fw4">—</i></div>
+      </div>
+      <div class="verdict" id="fwVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Псування нерівномірне в часі.</b> Перші двадцять кроків майже нічого
+    не змінюють: <span class="raw">β</span> там крихітна. Основна руйнація припадає на
+    середину ланцюга — саме там форма перестає бути впізнаваною, і саме там мережі
+    найважче й найцікавіше працювати. Розклад тут книжковий:
+    <span class="raw">β</span> лінійно від 0.0001 до 0.02, кроків 200.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Закрита формула</span>Стрибок замість ланцюга</h2>
+
+<p>Якби для навчання доводилось щоразу прокручувати ланцюг із сотні кроків, дифузія
+була б непідйомною. Але не доводиться: <b>усю послідовність можна згорнути в одну
+формулу</b>. Виведемо її на двох кроках руками — далі все повторюється.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · один крок псування</span>
+    <div class="eq left">x₁ = √(1−β₁)·x₀ + √β₁·ε₁</div>
+    <p>Позначмо <span class="raw">α<span class="sub">t</span> = 1 − β<span class="sub">t</span></span> —
+      це «частка, що лишилась від картинки». Тоді
+      <span class="raw">x₁ = √α₁·x₀ + √(1−α₁)·ε₁</span>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · підставляємо в наступний</span>
+    <div class="eq left">x₂ = √α₂·x₁ + √(1−α₂)·ε₂ = √(α₂α₁)·x₀ + √α₂·√(1−α₁)·ε₁ + √(1−α₂)·ε₂</div>
+    <p>Від <span class="raw">x₀</span> лишився множник <span class="raw">√(α₂α₁)</span>.
+      А два шумові доданки — незалежні гаусові величини, і їх можна замінити одним.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · два шуми складаються в один</span>
+    <p>Сума двох незалежних гаусових величин — теж гаусова, і її дисперсія дорівнює
+      сумі дисперсій. Тут це
+      <span class="raw">α₂(1−α₁) + (1−α₂) = 1 − α₂α₁</span>. Отже:</p>
+    <div class="eq left">x₂ = √(α₂α₁)·x₀ + √(1 − α₂α₁)·ε,&nbsp; де ε — один свіжий гаусів шум</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · загальний вигляд</span>
+    <p>Той самий доказ повторюється для будь-якого <span class="raw">t</span>. Уводимо
+      <b>накопичений добуток</b>
+      <span class="raw">ᾱ<span class="sub">t</span> = α₁·α₂·…·α<span class="sub">t</span></span>
+      (значок над буквою читається «альфа з рискою»), і виходить головна формула теми:</p>
+    <div class="eq">x<span class="sub">t</span> = √ᾱ<span class="sub">t</span> · x₀ &nbsp;+&nbsp; √(1 − ᾱ<span class="sub">t</span>) · ε</div>
+  </div>
+</div>
+
+<p>Словами: <b>зіпсоване зображення на будь-якому кроці — це вихідне зображення,
+приглушене в <span class="raw">√ᾱ</span> разів, плюс шум із розмахом
+<span class="raw">√(1−ᾱ)</span>.</b> Два множники дають у сумі квадратів одиницю, тож
+<span class="raw">√ᾱ</span> природно назвати <b>часткою сигналу</b>, а
+<span class="raw">√(1−ᾱ)</span> — <b>часткою шуму</b>.</p>
+
+<p>Наслідок практичний і величезний: щоб навчати мережу, ланцюг не потрібен зовсім.
+На кожному кроці навчання ми <b>кидаємо жереб на <span class="raw">t</span></b>,
+стрибаємо на цей крок однією формулою й питаємо мережу про підмішаний шум.</p>
+
+<div class="note"><b>Перевірка, а не обіцянка.</b> Зошит бере 600 справжніх фігур,
+чесно прокручує 50 кроків ланцюга й окремо стрибає на той самий крок однією формулою.
+Стандартне відхилення доданого шуму виходить <b>0.3463</b> ітеративно й <b>0.3459</b>
+формулою при теоретичному <span class="raw">√(1 − ᾱ₄₉)</span> = <b>0.3463</b>. Три
+числа збігаються до третього знака, і в зошиті на це стоїть <code>assert</code>. Саме
+завдяки цій рівності навчання дифузії й коштує дешево.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Ланцюг проти стрибка</p>
+  <p class="fig-sub">Ліворуч — результат чесних <span class="raw">t</span> кроків
+    один за одним, праворуч — той самий крок, узятий однією формулою. Крива внизу
+    показує розмах доданого шуму в обох способах.</p>
+  <div class="panel">
+    <div><canvas id="cJump" width="940" height="330" aria-label="Зображення після ітеративного ланцюга і після стрибка однією формулою, а також криві розмаху шуму для обох способів"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="tJump">крок <span class="raw">t</span> <output id="tJumpOut">50</output></label>
+        <input type="range" id="tJump" min="1" max="199" step="1" value="50">
+      </div>
+      <div class="ctl">
+        <label for="sJump">жереб <output id="sJumpOut">1</output></label>
+        <input type="range" id="sJump" min="1" max="8" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ланцюгом</b><i id="jp1">—</i></div>
+        <div class="cellv"><b>формулою</b><i id="jp2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>теорія <span class="raw">√(1−ᾱ)</span></b><i id="jp3">—</i></div>
+        <div class="cellv"><b>розбіжність</b><i id="jp4">—</i></div>
+      </div>
+      <div class="verdict" id="jpVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Дві картинки різні, а числа однакові — і це саме те, що треба.</b>
+    Ланцюг і формула тягнуть <b>різні</b> випадкові числа, тож пікселі не збігаються
+    ніколи. Збігається <b>розподіл</b>: розмах доданого шуму той самий із точністю
+    до третього знака. Саме тому навчання може стрибати одразу на потрібний крок і
+    не проганяти сотню проміжних.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Розклад</span>Скільки шуму треба насправді</h2>
+
+<p>Тепер найцікавіше в прямому процесі, і воно ж — найчастіша прихована поломка.
+Порахуймо накопичений добуток <span class="raw">ᾱ</span> для книжкового розкладу
+(<span class="raw">β</span> лінійно від 0.0001 до 0.02, кроків 200) і подивімось, що
+з ним стається до кінця ланцюга.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>крок <span class="raw">t</span></th><th><span class="raw">ᾱ</span></th><th>частка сигналу <span class="raw">√ᾱ</span></th><th>частка шуму</th></tr>
+<tr><td>10</td><td>0.993419</td><td>0.9967</td><td>0.0811</td></tr>
+<tr><td>50</td><td>0.875616</td><td>0.9357</td><td>0.3527</td></tr>
+<tr><td>100</td><td>0.596395</td><td>0.7723</td><td>0.6353</td></tr>
+<tr class="hot"><td>199</td><td>0.132183</td><td>0.3636</td><td>0.9316</td></tr>
+</table></div>
+
+<p>Останній рядок — це діагноз. У кінці ланцюга від зображення лишається ще
+<b>0.3636</b> сигналу: <span class="raw">x</span> на останньому кроці — не чистий шум,
+а <b>шум із помітною домішкою вихідної картинки</b>. Тут ламається не арифметика, а
+вся ідея генерації. Малювати ми збираємось так: візьмемо чистий шум
+<span class="raw">N(0, 1)</span> і почнемо його прибирати. Але мережа чистого шуму
+ніколи не бачила — вона бачила «шум плюс третину фігури».</p>
+
+<p>Розрив вимірний одним рядком. Зошит бере справжні фігури в діапазоні
+<span class="raw">[−1, 1]</span> (там середнє дорівнює <b>−0.6919</b>, бо фону в наших
+фігурах більше, ніж самої фігури) і рахує, що виходить на останньому кроці:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>розклад</th><th>сума <span class="raw">β</span></th><th><span class="raw">√ᾱ</span> у кінці</th><th>середнє <span class="raw">x<span class="sub">T</span></span></th><th>розкид <span class="raw">x<span class="sub">T</span></span></th></tr>
+<tr class="hot"><td>книжковий 0.0001…0.02</td><td>2.010</td><td>0.3636</td><td>−0.2535</td><td>0.9614</td></tr>
+<tr class="good"><td>стиснутий 0.0005…0.1</td><td>10.050</td><td>0.0055</td><td>−0.0046</td><td>1.0025</td></tr>
+<tr class="good"><td>косинусний</td><td>9.242</td><td>0.0002</td><td>−0.0018</td><td>0.9997</td></tr>
+</table></div>
+
+<p>Читай стовпчик «середнє». Ми збираємось починати відбір із
+<span class="raw">N(0, 1)</span>, у якого середнє дорівнює нулю. Кінець книжкового
+ланцюга має середнє <b>−0.2535</b>. Це не дрібниця в четвертому знаку — це чверть
+усього діапазону яскравості, зсунута туди, де мережа її не чекає.</p>
+
+<div class="note warn"><b>Звідки взялася поломка й чому вона типова.</b> Числа
+0.0001 і 0.02 узяті з першої статті про DDPM, і там вони стоять при
+<b>тисячі</b> кроків. Сума <span class="raw">β</span> по тисячі кроків дорівнює
+приблизно 10 — саме стільки треба, щоб <span class="raw">ᾱ</span> впала до нуля.
+Скоротивши ланцюг до 200 кроків і лишивши ті самі
+<span class="raw">β</span>, ми лишили від потрібного шуму <b>рівно пʼяту частину</b>:
+2.010 замість 10.05. Ось звідки в справжніх DDPM тисяча кроків — і ось чому
+переносити числа з чужої статті, не переносячи <span class="raw">T</span>, не можна.
+Лікування коштує один рядок: домнож <span class="raw">β</span> на
+<span class="raw">1000 / T</span>.</div>
+
+<p>Далі робочим беремо <b>стиснутий лінійний</b> розклад, а косинусний лишаємо для
+порівняння: у нього інша форма кривої, і це видно на числах — на кроці 100 в
+косинусного <span class="raw">ᾱ</span> = 0.4861, а в стиснутого лінійного вже 0.0728.
+Косинусний довше тримає картинку впізнаваною й руйнує її різко в кінці. Чи дає це
+кращі картинки — питання заміру, і ми його зробимо в розділі 9.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Три розклади шуму поруч</p>
+  <p class="fig-sub">Крива показує частку сигналу <span class="raw">√ᾱ</span> уздовж
+    ланцюга, смуга під нею — як та сама фігура псується за цим розкладом.</p>
+  <div class="panel">
+    <div><canvas id="cSch" width="940" height="360" aria-label="Криві частки сигналу для трьох розкладів шуму і смуга зіпсованих зображень за обраним розкладом"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">розклад</span>
+        <div class="seg tight" id="segSch">
+          <button data-i="0" aria-pressed="true">книжковий</button>
+          <button data-i="1" aria-pressed="false">стиснутий</button>
+          <button data-i="2" aria-pressed="false">косинусний</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="tSch">кроків <span class="raw">T</span> <output id="tSchOut">200</output></label>
+        <input type="range" id="tSch" min="50" max="1000" step="50" value="200">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сума <span class="raw">β</span></b><i id="sc1">—</i></div>
+        <div class="cellv"><b><span class="raw">√ᾱ</span> у кінці</b><i id="sc2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>де <span class="raw">√ᾱ</span> &lt; 0.5</b><i id="sc3">—</i></div>
+        <div class="cellv"><b>зсув середнього</b><i id="sc4">—</i></div>
+      </div>
+      <div class="verdict" id="scVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав книжковий розклад і потягни <span class="raw">T</span> до
+    1000</b> — частка сигналу в кінці впаде з 0.3636 до 0.0067, і зелений вердикт
+    повернеться. Це і є той самий рецепт із першої статті про DDPM, у своїх рідних
+    умовах. Косинусний розклад доходить до нуля за будь-якого
+    <span class="raw">T</span>, бо його <span class="raw">β</span> задані не числами,
+    а формою кривої. «Зсув середнього» тут — це
+    <span class="raw">√ᾱ<span class="sub">T</span></span> × (−0.6919): рівно стільки
+    оригіналу лишається в кінці ланцюга, а −0.6919 — заміряне зошитом середнє
+    справжніх фігур у діапазоні <span class="raw">[−1, 1]</span>.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Мережа</span>Втрата, яку можна читати</h2>
+
+<p>Тепер про єдину навчану частину. Мережа дістає на вхід дві речі: зіпсоване
+зображення <span class="raw">x<span class="sub">t</span></span> і <b>номер кроку</b>
+<span class="raw">t</span>. Номер кроку обовʼязковий: те саме сіре місиво на кроці 30
+й на кроці 180 треба чистити по-різному, і без підказки, наскільки все зіпсовано,
+мережа мусила б угадувати.</p>
+
+<p>Число <span class="raw">t</span> подають <b>набором синусів і косинусів різної
+частоти</b> — так само, як позиції токенів у трансформері з
+<a href="../20-vision-transformer/lecture.html">теми 20</a>, і з тієї самої причини:
+одне сире число погано розчиняється по мережі, а тридцять два періодичні канали дають
+і грубий масштаб («ми в кінці ланцюга»), і точний («саме крок 137»).</p>
+
+<p>Сама мережа — маленький U-Net із <a href="../30-unet/lecture.html">теми 30</a>:
+28×28 → 14×14 → 7×7 і назад, зі скіп-зʼєднаннями. Вибір не випадковий: вихід має бути
+того самого розміру, що вхід, і мусить тримати і грубу форму (видно на 7×7), і чіткий
+край (живе тільки на 28×28). У нашій моделі <b>21 697</b> ваг.</p>
+
+<div class="eq">L = середнє по всіх прикладах і всіх <span class="raw">t</span> від &nbsp;‖ ε − ε̂(x<span class="sub">t</span>, t) ‖<span class="sup">2</span></div>
+
+<p>Словами: <b>беремо шум, який самі підмішали, віднімаємо шум, який передбачила
+мережа, підносимо різницю до квадрата й усереднюємо.</b> Це звичайна середня
+квадратична похибка — та сама, що в <a href="../../02-ai-ml/index.html">регресії</a>.
+Ніякої другої мережі, ніякого змагання.</p>
+
+<p>І тут проходить межа з темою 38. <b>Втрата дифузії щось означає.</b> Якщо вона
+впала, модель справді краще вгадує шум. У GAN такого зчитування немає: там втрата
+генератора вимірюється проти дискримінатора, який сам змінюється, і падіння може
+означати як «генератор порозумнішав», так і «дискримінатор здурнішав».</p>
+
+<p>Але «означає» — заява, яку теж треба перевіряти, а не проголошувати. Зошит рахує
+втрату після кожної епохи, а в трьох контрольних точках ще й відбирає по 120
+зображень і міряє їхню якість. Якщо крива втрати щось каже про якість картинок, ці
+два числа мусять рухатись разом.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Втрата й якість поруч</p>
+  <p class="fig-sub">Ліворуч — втрата в чотирьох точках, які зошит надрукував;
+    праворуч — якість згенерованого в трьох із них, де відбір справді робився.</p>
+  <div class="panel">
+    <div><canvas id="cLoss" width="940" height="300" aria-label="Крива втрати по епохах із трьома контрольними точками, у яких поруч показано FID згенерованих зображень"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">контрольна точка</span>
+        <div class="seg" id="segLoss">
+          <button data-i="0" aria-pressed="true">4 епохи</button>
+          <button data-i="1" aria-pressed="false">10</button>
+          <button data-i="2" aria-pressed="false">22</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>втрата</b><i id="ls1">—</i></div>
+        <div class="cellv"><b>FID</b><i id="ls2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>класів із 6</b><i id="ls3">—</i></div>
+        <div class="cellv"><b>розкид FID</b><i id="ls4">—</i></div>
+      </div>
+      <div class="verdict" id="lsVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Обидва числа падають разом.</b> Це й означає «втрату можна
+    читати»: не те, що вона гарна, а те, що її падіння відповідає покращенню
+    картинок. Три точки — мало для серйозної статистики, і ми цього не приховуємо:
+    твердження тут не «кореляція дорівнює 0.9969», хоч зошит її і друкує, а «за весь
+    час навчання жодного разу не сталося, щоб втрата впала, а якість погіршилась».
+    Точки між виміряними ми не домальовуємо: відбір коштує дорого, і зошит зробив
+    його рівно тричі.</figcaption>
+</figure>
+
+
+<h2 id="s6"><span class="num">06 / Зворотний хід</span>Із шуму у фігуру</h2>
+
+<p>Мережа вміє відповідати на питання «який тут шум?». Перетворимо це вміння на
+малювання.</p>
+
+<p>Перший крок очевидний. Закриту формулу
+<span class="raw">x<span class="sub">t</span> = √ᾱ·x₀ + √(1−ᾱ)·ε</span> можна
+розвʼязати відносно <span class="raw">x₀</span>: підставляємо замість
+<span class="raw">ε</span> передбачення мережі й дістаємо <b>здогад про чисте
+зображення</b> прямо з будь-якого кроку:</p>
+
+<div class="eq">x̂₀ = ( x<span class="sub">t</span> − √(1 − ᾱ<span class="sub">t</span>) · ε̂ ) / √ᾱ<span class="sub">t</span></div>
+
+<p>Здавалося б, готово: подаємо чистий шум, отримуємо <span class="raw">x̂₀</span>,
+і все. Але ні. На великому <span class="raw">t</span> знаменник
+<span class="raw">√ᾱ</span> крихітний — на останньому кроці це 0.0055, — і будь-яка
+похибка мережі множиться на 180. Одним стрибком із шуму виходить розмита каша:
+модель дає <b>усереднену</b> фігуру, бо не має підстав обрати конкретну.</p>
+
+<p>Тому йдуть по одному кроку — до <span class="raw">x<span class="sub">t−1</span></span>,
+а не одразу до <span class="raw">x₀</span>: на маленькому кроці похибка ще не встигає
+розлетітись. Правило переходу — це умовний розподіл
+<span class="raw">x<span class="sub">t−1</span></span>, коли відомі і
+<span class="raw">x<span class="sub">t</span></span>, і здогад
+<span class="raw">x̂₀</span>. На практиці воно має вигляд «зважена суміш двох відомих
+картинок плюс дрібка свіжого шуму»:</p>
+
+<div class="eq left">x<span class="sub">t−1</span> = a · x̂₀ &nbsp;+&nbsp; b · x<span class="sub">t</span> &nbsp;+&nbsp; σ · z
+a = √ᾱ<span class="sub">t−1</span>·β<span class="sub">t</span> / (1 − ᾱ<span class="sub">t</span>)
+b = √α<span class="sub">t</span>·(1 − ᾱ<span class="sub">t−1</span>) / (1 − ᾱ<span class="sub">t</span>)
+σ<span class="sup">2</span> = β<span class="sub">t</span>·(1 − ᾱ<span class="sub">t−1</span>) / (1 − ᾱ<span class="sub">t</span>)</div>
+
+<p><span class="raw">a</span> і <span class="raw">b</span> — це просто ваги:
+наскільки вірити здогаду про чисте зображення й наскільки — тому, що вже є на руках.
+На початку ланцюга <span class="raw">a</span> мала, під кінець росте. А
+<span class="raw">σ·z</span> — дрібка нового шуму, яка робить кожен запуск іншим. Цей
+рецепт і зветься <b>DDPM</b>.</p>
+
+<div class="note warn"><b>Граблі, на які стане кожен.</b> Здогад
+<span class="raw">x̂₀</span> прийнято обрізати до <span class="raw">[−1, 1]</span>:
+картинка не буває яскравішою за біле. Я так і зробив — і <b>ланцюг розійшовся</b>, бо
+записав перехід в еквівалентному вигляді «через <span class="raw">x̂₀</span> і
+<span class="raw">ε̂</span>» замість «через <span class="raw">x̂₀</span> і
+<span class="raw">x<span class="sub">t</span></span>». Дві форми рівні <b>лише</b>
+поки <span class="raw">x<span class="sub">t</span> = √ᾱ·x̂₀ + √(1−ᾱ)·ε̂</span>.
+Обрізання цю рівність ламає, доданки перестають узгоджуватись, і похибка
+накопичується по кроках: розкид <span class="raw">x</span> сягав <b>153</b> замість
+одиниці, а на виході виходили однакові плями. Лікування — брати формулу через
+<span class="raw">x<span class="sub">t</span></span>, як вище. Симптом підступний тим,
+що жодна перевірка не падає: числа скінченні, картинки є, просто неправильні.</div>
+<h2 id="s7"><span class="num">07 / Вибір</span>Передбачати шум чи зображення</h2>
+
+<p>Мережу можна вчити двом різним речам. Або нехай передбачає <b>підмішаний шум</b>
+<span class="raw">ε</span> — так зроблено в оригінальному DDPM і так робить наша
+модель. Або нехай одразу передбачає <b>чисте зображення</b>
+<span class="raw">x₀</span>. Одне з іншого перераховується тією самою закритою
+формулою, тож на папері це два записи однієї моделі.</p>
+
+<p>На папері — так, а на практиці ні: вони по-різному зважують кроки ланцюга.
+Передбачення шуму нескладне на початку і дуже складне в кінці; з передбаченням
+зображення все навпаки. Вибір цілі — це прихований спосіб сказати мережі, на яких
+кроках старатися більше. Канонічна порада — «передбачай шум». Перевірмо її: три зерна
+на варіант, той самий кістяк, розклад і відбір.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>що передбачає</th><th>FID</th><th>розкид</th><th>по зернах</th><th>класів із 6</th></tr>
+<tr><td>шум <span class="raw">ε</span></td><td>181.84</td><td>±36.38</td><td>139.1 · 228.0 · 178.4</td><td>4 · 4 · 4</td></tr>
+<tr><td>зображення <span class="raw">x₀</span></td><td>938.54</td><td>±225.39</td><td>651.5 · 962.0 · 1202.1</td><td>3 · 1 · 1</td></tr>
+</table></div>
+
+<p><b>Тут купи не перетинаються</b>: найгірше зерно в передбачення шуму — 228.0, найкраще в передбачення зображення — 651.5. За критерієм курсу це справжня різниця, а не шум: на наших даних канонічна порада <b>підтверджується</b>. Покриття каже те саме — 4 · 4 · 4 проти 3 · 1 · 1. Причина, найімовірніше, у кінці ланцюга: там <span class="raw">√ᾱ</span> дорівнює 0.0055, і передбачати зображення доводиться майже з нічого, тоді як передбачення шуму в цьому місці тривіальне.</p>
+
+<div class="note"><b>Чому це важливіше за саму відповідь.</b> Три зерна — мінімум,
+який курс вимагає від будь-якого порівняння, і зміст вимоги саме такий: дивитись не
+на різницю середніх, а на те, чи <b>перетинаються купи</b>. Купи, що перетинаються,
+означають: на іншому наборі зерен упорядкування могло б перевернутись. Так само ми
+чинили в <a href="../26-one-stage/lecture.html">темі 26</a> і в
+<a href="../38-gan/lecture.html">темі 38</a>.</div>
+
+<h2 id="s8"><span class="num">08 / Метрика</span>Її спершу калібрують</h2>
+
+<p>Тут головний розділ теми, і він не про дифузію, а про те, як узагалі міряють
+генерацію.</p>
+
+<p>У класифікації є правильна відповідь, і метрика питає про неї. У генерації
+правильної відповіді <b>немає</b>: модель намалювала фігуру, якої ніхто не малював,
+і порівнювати її нема з чим. Тому міряють не окрему картинку, а <b>купу</b>:
+наскільки розподіл згенерованого схожий на розподіл справжнього. Так і придумали
+<a href="../glossary.html#t-fid">FID</a>.</p>
+
+<div class="eq left">FID = ‖μ<span class="sub">A</span> − μ<span class="sub">B</span>‖<span class="sup">2</span> + tr( Σ<span class="sub">A</span> + Σ<span class="sub">B</span> − 2·√(Σ<span class="sub">A</span>Σ<span class="sub">B</span>) )</div>
+
+<p>Словами: <b>наскільки далеко центри двох хмар</b> (<span class="raw">μ</span> —
+середнє) <b>і наскільки різна їхня форма</b> (<span class="raw">Σ</span> —
+коваріація, тобто як ознаки розкидані й повʼязані між собою;
+<span class="raw">tr</span> — сума діагоналі матриці). Хмари яких чисел? Ознак,
+знятих із якоїсь мережі: у статтях це Inception, навчений на ImageNet. У нас його
+немає, тож ознаки беремо з власного <b>судді</b> — класифікатора шести фігур,
+навченого на справжніх даних. Його точність <b>0.9983</b>.</p>
+
+<div class="note warn"><b>Наше число FID не порівнюване з опублікованими.</b>
+Воно порахованe на ознаках нашого судді, а не Inception, на 300 зображеннях, а не
+на 50 000. Воно годиться рівно на одне: порівнювати <b>наші</b> моделі між собою.
+Ставити його поруч із числом зі статті не можна — це різні лінійки.</div>
+
+<h3>Тепер найважливіше: перш ніж вірити метриці, її треба зламати навмисне</h3>
+
+<p>Будь-яка метрика впорядкує тобі варіанти. Питання лише в тому, чи це те
+впорядкування, яке ти маєш на увазі. Перевірити просто: підсунути їй набори, про які
+<b>ми заздалегідь знаємо відповідь</b>. Зошит будує вісім таких. «Лише кола» — це
+повний <a href="../glossary.html#t-modecollapse">колапс мод</a>: один клас із шести,
+картинки бездоганні. «Розмита каша» — навпаки: усі класи на місці, але форми немає.
+«Усе чорне» й «усе біле» — це навіть не зображення. Метрика, яка поставить хоч щось
+із цього <b>краще</b> за робочу модель, непридатна, і всі числа, поміряні нею,
+доводиться викинути.</p>
+
+<p>Рахуємо двома наборами ознак. Перший — <b>64 числа з передостаннього шару
+судді</b>: там ще жива форма фігури. Другий — <b>32 «слабкі» ознаки</b>: карти
+згорток, усереднені по простору. Усереднення викидає форму й лишає щось на кшталт
+«скільки чорнила де». Саме така версія метрики і є класичною пасткою.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>що подаємо</th><th>FID судді</th><th>FID слабкий</th><th>класів із 6</th></tr>
+<tr class="good"><td>справжні (інша вибірка)</td><td>3.0352</td><td>0.0003</td><td>6</td></tr>
+<tr class="hot"><td>лише кола</td><td>423.1416</td><td>0.0238</td><td>1</td></tr>
+<tr class="hot"><td>кола + квадрати</td><td>435.2284</td><td>0.0240</td><td>2</td></tr>
+<tr class="hot"><td>розмита каша</td><td>1132.0793</td><td>0.1898</td><td>2</td></tr>
+<tr><td>середнє всіх фігур</td><td>1221.9978</td><td>0.2274</td><td>1</td></tr>
+<tr><td>усе чорне</td><td>1254.3291</td><td>0.2595</td><td>1</td></tr>
+<tr><td>чистий шум</td><td>1499.1358</td><td>0.4270</td><td>1</td></tr>
+<tr><td>усе біле</td><td>1693.2820</td><td>4.5929</td><td>1</td></tr>
+</table></div>
+
+<p>Обидві версії впорядковують набори правильно: чим гірший набір, тим більше число. Порядок — не те, що треба перевіряти. Перевіряти треба <b>запас</b>: у скільки разів зіпсований набір гірший за робочу модель. Наша модель (розділ 9) дістане <b>175.78</b> за метрикою судді й <b>0.0235</b> за слабкою, і зошит друкує обидва запаси. Найменший запас метрики судді — <b>2.41×</b> на рядку «лише кола». Найменший запас слабкої — <b>1.01×</b> на тому самому рядку.<br><br>Прочитай це ще раз. «Лише кола» — це повний колапс мод, один клас із шести. Слабка метрика ставить його на <b>один відсоток</b> гірше за робочу модель, тобто не відрізняє їх узагалі. Саме цим і небезпечні усереднені ознаки: вони не брешуть відверто, вони просто перестають бачити те, заради чого метрику заводили.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Підсунь метриці завідомо погане</p>
+  <p class="fig-sub">Обери набір — і подивись, що скажуть про нього обидві версії
+    FID і покриття класів. Пунктир на смугах — місце, де стоїть наша робоча модель.</p>
+  <div class="panel">
+    <div><canvas id="cCal" width="940" height="330" aria-label="Приклади завідомо поганого набору, дві смуги з відстанню FID у двох просторах ознак і розкладка згенерованого по шести класах"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">набір</span>
+        <div class="seg wrap" id="segCal">
+          <button data-i="0" aria-pressed="true">справжні</button>
+          <button data-i="1" aria-pressed="false">лише кола</button>
+          <button data-i="2" aria-pressed="false">кола + квадрати</button>
+          <button data-i="3" aria-pressed="false">розмита каша</button>
+          <button data-i="4" aria-pressed="false">середнє фігур</button>
+          <button data-i="5" aria-pressed="false">усе чорне</button>
+          <button data-i="6" aria-pressed="false">чистий шум</button>
+          <button data-i="7" aria-pressed="false">усе біле</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>FID судді</b><i id="cl1">—</i></div>
+        <div class="cellv"><b>FID слабкий</b><i id="cl2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>класів із 6</b><i id="cl3">—</i></div>
+        <div class="cellv"><b>запас проти моделі</b><i id="cl4" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="calVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Постав «лише кола» й порівняй дві смуги.</b> Обидві метрики
+    впорядковують набори однаково правильно — але шкала в них різна, і саме в шкалі
+    вся справа. Числа тут із зошита; картинки ліворуч канва малює сама за тими
+    самими правилами, що й зошит.</figcaption>
+</figure>
+
+<div class="note"><b>Правило, яке з цього виходить.</b> Метрика генерації — це
+<b>пара</b>, а не число. FID каже, наскільки хмара згенерованого схожа на хмару
+справжнього; покриття класів каже, чи не забула модель половину даних. Поодинці не
+працює жодне: FID майже не розрізняє «лише кола» й «кола + квадрати» (423.1416 проти 435.2284), а
+покриття нічого не знає про те, наскільки криво намальована фігура. Далі скрізь
+друкуємо обидва числа й базову лінію поруч.</div>
+
+<h2 id="s9"><span class="num">09 / Ціна</span>Скільки кроків насправді треба</h2>
+
+<p>Тепер, коли метриці можна вірити, можна питати головне. Дифузія дорога рівно тому,
+що одна картинка коштує стільки проходів мережею, скільки кроків у відборі: сто кроків
+— у сто разів дорожче за GAN. Зошит проганяє відбір із 2, 5, 20 і 200 кроків, по три
+зерна на точку, і міряє парою метрик.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>кроків</th><th>FID судді</th><th>розкид</th><th>класів із 6</th><th>FID слабкий</th></tr>
+<tr class="hot"><td>2</td><td>6033.76</td><td>±915.23</td><td>1 · 1 · 1</td><td>1.4241</td></tr>
+<tr><td>5</td><td>218.05</td><td>±34.71</td><td>4 · 4 · 3</td><td>0.0330</td></tr>
+<tr class="good"><td>20</td><td>181.84</td><td>±36.38</td><td>4 · 4 · 4</td><td>0.0229</td></tr>
+<tr><td>200</td><td>175.78</td><td>±38.82</td><td>4 · 4 · 4</td><td>0.0235</td></tr>
+</table></div>
+
+<p>Відповідь різка й не така, як очікуєш. <b>Два кроки — катастрофа</b>: 6033.76 при одному класі з шести на всіх трьох зернах. Але вже з <b>пʼяти</b> кроків модель повертається в робочий діапазон, а <b>з двадцяти крива стає плоскою</b>: 181.84 проти 175.78 при двохстах. Різниця 6.06 — вшестеро менша за розкид по зернах (±36.38), тобто <b>за критерієм курсу різниці немає</b>.<br><br>Отже, на наших фігурах двадцяти кроків із двохсот досить, а решта сто вісімдесят проходів витрачаються дарма. Це не спростування того, що великим моделям потрібні десятки кроків: наші шість фігур простіші за фотографію на кілька порядків, а чим простіший розподіл, тим менше кроків треба, щоб у нього потрапити. Але для нашої задачі число саме таке, і воно поміряне, а не вгадане.</p>
+
+<div class="note warn"><b>Чому цей розділ стоїть після розділу 8.</b> Останній
+стовпчик — та сама метрика з мізерним запасом. Тут вона називає найкращою кількість
+кроків <b>20</b>, а справна — <b>200</b>. Розходження невелике,
+і саме тому воно небезпечне: метрика, яка на одному питанні відповідає правильно, а на
+іншому ставить колапс мод урівень із робочою моделлю, не стає придатною — вона просто
+вгадала. Довіра до числа береться з калібрування, а не з того, що воно здалося
+розумним.</div>
+
+<div class="note warn"><b>Тепер найнеприємніше в цій таблиці, і я не буду це
+ховати.</b> Подивись на два рядки DDPM. Із пʼятьма кроками він дає
+<b>312.53</b> при покритті 5 · 3 · 4, а з двомастами —
+<b>430.90</b> при 5 · 2 · 4. Тобто <b>більше кроків гірше</b>, і
+пара метрик цього не рятує: обидва числа кажуть одне й те саме.
+
+<br><br>Спокуслива відповідь — «метрика знову бреше». Але вона щойно пройшла
+калібрування із запасом 2.41×, тож звалювати на неї не можна. Правильна відповідь про
+нашу модель: DDPM домішує свіжий шум <b>на кожному кроці</b>, і кожен крок мусить
+прибрати те, що додав попередній. Коли <span class="raw">ε̂</span> точний, це працює;
+коли модель груба, похибка накопичується рівно стільки разів, скільки кроків.
+Перевірка тут же в таблиці: <b>DDIM, який не домішує нічого, поводиться монотонно</b> —
+218.05 → 181.84 → 175.78. Це властивість недонавченої моделі, а не дифузії, і сказати
+так чесніше, ніж списати на метрику.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Кроки, якість і покриття</p>
+  <p class="fig-sub">Ліворуч — FID залежно від кількості кроків для обох схем
+    відбору, праворуч — скільки класів із шести застало кожне зерно окремо.</p>
+  <div class="panel">
+    <div><canvas id="cSteps" width="940" height="330" aria-label="Криві FID у двох просторах ознак залежно від кількості кроків відбору і стовпчики часток шести класів для обраної точки"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">схема відбору</span>
+        <div class="seg" id="segSteps">
+          <button data-i="0" aria-pressed="true">DDIM</button>
+          <button data-i="1" aria-pressed="false">DDPM</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="kSteps">кроків <output id="kStepsOut">20</output></label>
+        <input type="range" id="kSteps" min="0" max="3" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>FID судді</b><i id="st1">—</i></div>
+        <div class="cellv"><b>розкид</b><i id="st2">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>класів із 6</b><i id="st3">—</i></div>
+        <div class="cellv"><b>проходів мережею</b><i id="st4">—</i></div>
+      </div>
+      <div class="verdict" id="stVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Перемкни на DDPM і пройди від пʼяти кроків до двохсот.</b> Крива
+    піде <b>вгору</b>, а не вниз: схема, що домішує свіжий шум на кожному кроці,
+    накопичує похибку недонавченої мережі рівно стільки разів, скільки кроків. У DDIM,
+    який не домішує нічого, та сама крива йде вниз і виходить на полицю. Два кроки
+    для DDPM ми не міряли — на такому пропуску його виведення вже не має сили.
+    Числа з зошита, три зерна на точку.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / DDIM</span>Відбір без жеребу</h2>
+
+<p>У формулі переходу з розділу 6 є доданок <span class="raw">σ·z</span> — свіжий
+шум на кожному кроці. Постає природне питання: а що, як його не додавати?</p>
+
+<p>Виявляється, можна. Якщо взяти <span class="raw">σ = 0</span>, перехід стає
+детермінованим: з того самого початкового шуму виходить те саме зображення, щоразу.
+Це і є <b>DDIM</b>. Дві властивості роблять його стандартом практики.</p>
+
+<ul>
+  <li><b>Він переживає пропуск кроків.</b> Виведення DDPM спирається на те, що кроки
+    маленькі й між сусідніми <span class="raw">t</span> майже нічого не змінюється.
+    Перескочивши через пʼятдесят кроків одразу, ти порушуєш це припущення. DDIM
+    виведений інакше — не як ланцюг випадкових кроків, а як траєкторія, — і пропуск
+    для нього законний.</li>
+  <li><b>Він відтворюваний.</b> Той самий вхідний шум дає те саме зображення. Саме це
+    дозволяє «зафіксувати seed» і крутити інші налаштування, бачачи їхній вплив, а
+    ще — плавно ходити між двома результатами, змішуючи два початкові шуми, як в
+    автоенкодері з <a href="../37-autoencoders/lecture.html">теми 37</a>.</li>
+</ul>
+
+<p>Ціна теж є, і про неї кажуть рідше: <b>детермінованість зменшує різноманіття</b>.
+Увесь випадковий вибір тепер зосереджений у першому кидку.</p>
+
+<p>На наших числах це видно так: на двохстах кроках DDIM дає <b>175.78 ± 38.82</b>, а DDPM — <b>430.90 ± 146.03</b>, і <b>купи не перетинаються</b>. На пʼяти кроках — 218.05 проти 312.53, і там купи вже перетинаються, тобто різниці не доведено. Читається це так: перевага DDIM у нас росте разом із довжиною ланцюга, і росте вона саме тому, що DDPM щокроку домішує шум, який недонавчена мережа не встигає прибрати. На добре навченій моделі різниця була б меншою — цього ми не перевіряли й не стверджуємо.</p>
+
+<h2 id="s11"><span class="num">11 / Умова</span>Як просити фігуру на замовлення</h2>
+
+<p>Досі модель малювала будь-що. Тепер найдешевша зміна в усій темі, з якої виростає
+вся керована генерація. Мережа вже приймає номер кроку <span class="raw">t</span> — ми перетворюємо його
+на вектор і додаємо всередині кожного блоку. Додати клас коштує рівно те саме:
+заводимо таблицю з семи векторів (шість фігур плюс позначка «невідомо»), беремо
+потрібний рядок і <b>додаємо його до вектора часу</b>. Один шар
+<code>nn.Embedding</code>, три рядки коду.</p>
+
+<div class="eq left">умова = вектор_часу(t) + вектор_класу(y)</div>
+
+<p>Далі тонкість, заради якої і зроблено сьому позначку. У десяти відсотках
+навчальних прикладів ми <b>ховаємо клас</b>, підставляючи «невідомо». Через це одна
+мережа вчиться обом режимам: малювати на замовлення й малювати будь-що. З цієї ж пари
+режимів виростає прийом, який зветься <b>classifier-free guidance</b>: під час відбору
+беруть обидва прогнози й підсилюють різницю між ними. Ми його не робимо — він у
+домашньому завданні.</p>
+
+<p>Перевіримо, чи модель слухається: просимо по 50 зображень кожного класу, три
+зерна, і питаємо суддю. Поруч ставимо те, що та сама модель малює <b>без</b>
+замовлення — інакше число «влучили» нічого не означає: якщо модель і так малює
+переважно хрести, то влучання в хрест не є заслугою умови.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>замовили</th><th>без умови</th><th>на замовлення</th><th>підйом</th><th>по зернах</th></tr>
+<tr><td>коло</td><td>0.030</td><td>0.0067</td><td>0.22×</td><td>0 · 0.02 · 0</td></tr>
+<tr><td>квадрат</td><td>0.003</td><td>0.0000</td><td>0.00×</td><td>0 · 0 · 0</td></tr>
+<tr><td>ромб</td><td>0.110</td><td>0.0867</td><td>0.79×</td><td>0.06 · 0.16 · 0.04</td></tr>
+<tr class="good"><td>кільце</td><td>0.233</td><td>0.3933</td><td>1.69×</td><td>0.64 · 0.1 · 0.44</td></tr>
+<tr><td>хрест</td><td>0.317</td><td>0.3200</td><td>1.01×</td><td>0.4 · 0.08 · 0.48</td></tr>
+<tr><td>трикутник</td><td>0.307</td><td>0.3067</td><td>1.00×</td><td>0.22 · 0.4 · 0.3</td></tr>
+</table></div>
+
+<p><b>Доводиться сказати неприємне: на нашому бюджеті умова майже не працює.</b> Середнє влучання по шести класах — <b>0.1856</b> при 0.1667 у чистого вгадування. Підйом помітно більший за одиницю є рівно в <b>одного</b> класу з шести — кільця (1.69×). Хрест і трикутник лишаються там, де були (1.01× і 1.00×), а коло й квадрат на замовлення виходять <b>рідше</b>, ніж без нього.<br><br>Причина видна в другому стовпчику, і вона не в механізмі умови. Безумовна модель сама покриває лише чотири класи з шести: квадрат вона малює у 0.003 випадків, коло — у 0.030. <b>Не можна замовити те, чого модель не вивчила.</b> Умова вміє перерозподілити ймовірність між тим, що модель уміє малювати, і не вміє вигадати новий клас. У нашої моделі 21 697 ваг і двадцять сім секунд навчання — на цьому масштабі вона просто не встигла вивчити всі шість фігур. Механізм правильний, даних під ним замало, і це чесніший висновок, ніж підібрати зерно, на якому вийшло красиво.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Замовлення й що з нього виходить</p>
+  <p class="fig-sub">Обери, що замовити моделі — і подивись, що суддя побачив у
+    відповіді. Останній варіант «без умови» показує, що модель малює, коли її не
+    просять.</p>
+  <div class="panel">
+    <div><canvas id="cCond" width="940" height="300" aria-label="Стовпчики часток шести класів у відповідях моделі на замовлення обраного класу, поруч зі значеннями по трьох зернах"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">замовлення</span>
+        <div class="seg wrap" id="segCond">
+          <button data-i="0" aria-pressed="true">коло</button>
+          <button data-i="1" aria-pressed="false">квадрат</button>
+          <button data-i="2" aria-pressed="false">ромб</button>
+          <button data-i="3" aria-pressed="false">кільце</button>
+          <button data-i="4" aria-pressed="false">хрест</button>
+          <button data-i="5" aria-pressed="false">трикутник</button>
+          <button data-i="6" aria-pressed="false">без умови</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>влучань</b><i id="cd1">—</i></div>
+        <div class="cellv"><b>підйом проти «без умови»</b><i id="cd2">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>по зернах</b><i id="cd3" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="cdVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Рамка на кожному стовпчику — це частка того самого класу без
+    замовлення.</b> Там, де суцільний стовпчик виходить за рамку, умова щось змінила;
+    там, де не виходить, — не змінила нічого. Числа з зошита, три зерна на клас.</figcaption>
+</figure>
+
+<p>І головне про цей розділ: <b>нічого принципово іншого у великих моделях немає</b>.
+У Stable Diffusion замість номера класу з шести подають послідовність векторів від
+текстового енкодера CLIP із <a href="../22-clip/lecture.html">теми 22</a>, а замість
+додавання одного вектора — <a href="../19-conv-to-attention/lecture.html">перехресну
+увагу</a>. Механізм той самий: <b>підказка входить у мережу разом із номером кроку й
+міняє те, що мережа бачить у шумі</b>.</p>
+
+<h2 id="s12"><span class="num">12 / Масштаб</span>Латентна дифузія і Stable Diffusion</h2>
+
+<p>Наші фігури — 28×28, тобто 784 числа. Фотографія 512×512 у трьох каналах — це
+786 432 числа, у тисячу разів більше, і кожен крок зворотного ходу проганяє мережу
+по всьому цьому масиву. Помножимо на пʼятдесят кроків — і зрозуміло, чому перші
+дифузійні моделі малювали одну картинку хвилинами на дорогій відеокарті.</p>
+
+<p>Розвʼязок, який зробив ці моделі масовими, звучить нахабно просто: <b>шуміти не в
+пікселях</b>. Спершу навчають автоенкодер із
+<a href="../37-autoencoders/lecture.html">теми 37</a>, який стискає зображення 512×512
+у карту 64×64 з чотирма каналами — 16 384 числа замість 786 432, <b>у 48 разів
+менше</b>. Уся дифузія відбувається в цьому
+<a href="../glossary.html#t-latent">латентному просторі</a>, а наприкінці декодер
+розгортає результат назад у пікселі.</p>
+
+<p>Це і є <a href="../glossary.html#t-sd">Stable Diffusion</a>. Три частини, кожна з
+яких у курсі вже була:</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>частина</th><th>звідки в курсі</th><th>що робить</th></tr>
+<tr><td>енкодер і декодер (VAE)</td><td>тема 37</td><td>стискає зображення в латентну карту й розгортає назад</td></tr>
+<tr><td>U-Net зі self-attention</td><td>теми 30 і 20</td><td>знешумлює латентну карту, крок за кроком</td></tr>
+<tr><td>текстовий енкодер CLIP</td><td>тема 22</td><td>перетворює запит на вектори, які керують знешумленням</td></tr>
+</table></div>
+
+<p>Третій рядок — рівно те, що ми зробили в розділі 11, тільки замість номера класу
+з шести туди подають ембединги слів.</p>
+
+<div class="note"><b>Числа з літератури, не наші.</b> В оригінальній статті про
+латентну дифузію стиснення в 8 разів по кожному боку (тобто в 48 разів за обсягом
+із урахуванням каналів) дало приблизно на порядок дешевше навчання при
+порівнянній якості; ваги Stable Diffusion 1.5 важать близько 4 ГБ, а сама модель
+навчалась на підмножині LAION-5B. Ці числа <b>процитовані</b>, а не заміряні нами:
+у нас немає ні таких даних, ні таких машин. Усе, що зошит цієї теми друкує сам, —
+на шести фігурах 28×28.</div>
+
+<div class="note warn"><b>Ціна стиснення, про яку кажуть рідше.</b> Автоенкодер — теж
+модель із похибкою, і все, чого він не вміє відновити, дифузія не намалює в принципі:
+дрібний текст, тонкі ґратки, обличчя на задньому плані. Класична скарга «не вміє
+малювати руки й літери» має дві причини, і одна з них саме тут — частина деталей
+губиться ще до того, як почалась дифузія.</div>
+
+<h2 id="s13"><span class="num">13 / Межа</span>Що з усім цим не так</h2>
+
+<p>Підсумуймо, що ця тема справді показала, і одразу — чого вона не показала.</p>
+
+<p><b>Показала.</b> Дифузія міняє змагання на регресію, і від цього зʼявляється
+крива втрати, яку можна читати. Прямий процес має закриту формулу, тому навчання
+дешеве. Розклад шуму — не декорація: числа з чужої статті, перенесені без
+<span class="raw">T</span>, ламають генерацію мовчки. Детермінований відбір дозволяє
+пропускати кроки. Умова на вході коштує один ембединг — і саме з неї виростає
+керування текстом.</p>
+
+<p><b>Не показала.</b> Наша модель — двадцять одна тисяча ваг, навчена за пів хвилини
+на шести геометричних фігурах; вона не доводить нічого про фотографії. Наш FID
+порахований на ознаках власного судді й <b>не порівнюваний</b> із жодним
+опублікованим числом. І головне: у розділі 8 ми на власних числах побачили, що
+метрику генерації <b>доводиться перевіряти перед тим, як їй вірити</b> — а це вже
+твердження не про дифузію, а про всю галузь.</p>
+
+<p>Саме тут курс і закінчується — не тому, що теми скінчились, а тому, що далі
+питання перестають бути технічними. Модель, яка малює переконливе зображення чого
+завгодно, — це ще й спосіб зробити фотографію події, якої не було. Метрика, якій не
+можна вірити без калібрування, — це ще й спосіб показати замовнику красиве число. А
+датасет, на якому все це навчено, — це чиїсь фотографії, яких ніхто не питав.</p>
+
+<p><a href="../40-limits-ethics/lecture.html">Тема 40</a> — про це: що з усім
+побудованим не так, де межа застосовності, і що з цього зобовʼязаний знати
+інженер, а не тільки юрист.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../38-gan/lecture.html"><span class="dir">попередня</span><span class="ttl">38. GAN</span></a>
+    <a class="next" href="../40-limits-ethics/lecture.html"><span class="dir">наступна</span><span class="ttl">40. Межі й етика CV</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+/* Детермінований генератор: та сама картинка у всіх читачів.
+
+   Класичний LCG тут не годиться, і це перевірено, а не припущено. Фігура 2
+   складає 199 послідовних гаусових доданків, і сусідні значення LCG настільки
+   корельовані, що накопичений розкид виходить 0.6745 замість теоретичних 0.9301
+   — тобто інтерактив «доводив» би, що формула неправильна. Той самий дефект
+   малює діагональні смуги на шумі в канві. Тому беремо генератор на лічильнику:
+   номер виклику перемішується хеш-функцією, і сусідні значення незалежні. */
+function LCG(seed){
+  var s=seed>>>0; if(!isFinite(s)||s===0) s=1;
+  var n=0;
+  return function(){
+    n=(n+1)>>>0;
+    var x=(s^Math.imul(n,2654435761))>>>0;
+    x^=x>>>15; x=Math.imul(x,2246822507); x^=x>>>13;
+    x=Math.imul(x,3266489909); x^=x>>>16;
+    return (x>>>0)/4294967296;
+  };
+}
+function mkNorm(rnd){
+  return function(){
+    var u=0, v=0;
+    while(!u) u=rnd();
+    while(!v) v=rnd();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  };
+}
+
+/* ═══════════════ спільне: фігури, розклади, малювання ═══════════════ */
+var SH=28;                       /* усі зображення блоку 8 — 28×28 */
+var SHAPE_NAMES=['коло','квадрат','ромб','кільце','хрест','трикутник'];
+/* середнє яскравості справжніх фігур у діапазоні [-1, 1] — число з зошита */
+var MEAN_X0=-0.6919;
+
+/* та сама геометрія, що в draw_shape зошита */
+function shapeField(kind, cy, cx, r, seed){
+  var f=new Float32Array(SH*SH), y, x, dy, dx, d2, inside;
+  for(y=0;y<SH;y++) for(x=0;x<SH;x++){
+    dy=y-cy; dx=x-cx; d2=dy*dy+dx*dx; inside=false;
+    if(kind===0) inside = d2 <= r*r;
+    else if(kind===1) inside = (Math.abs(dy)<=r*0.85 && Math.abs(dx)<=r*0.85);
+    else if(kind===2) inside = (Math.abs(dy)+Math.abs(dx)) <= r;
+    else if(kind===3) inside = (d2 <= r*r && d2 >= (r-3)*(r-3));
+    else if(kind===4) inside = (Math.abs(dy)<=2 && Math.abs(dx)<=r) ||
+                               (Math.abs(dx)<=2 && Math.abs(dy)<=r);
+    else inside = (dy >= -r*0.8 && dy <= r*0.8 && Math.abs(dx) <= (dy+r*0.8)*0.6);
+    if(inside) f[y*SH+x]=1;
+  }
+  var nrm=mkNorm(LCG(seed*7919+31)), k;
+  for(k=0;k<f.length;k++){
+    f[k]=Math.max(0, Math.min(1, f[k]+0.06*nrm()));   /* шум датасету σ = 0.06 */
+  }
+  return f;
+}
+
+/* зображення 28×28 → канва. putImageData лише в offscreen (грабля №1) */
+var off=document.createElement('canvas'); off.width=SH; off.height=SH;
+var offg=off.getContext('2d');
+function drawField(g, field, x, y, size, lo, hi){
+  var img=offg.createImageData(SH,SH), k, v, b;
+  for(k=0;k<SH*SH;k++){
+    v=(field[k]-lo)/(hi-lo);
+    b=Math.max(0, Math.min(255, Math.round(v*255)));
+    img.data[k*4]=b; img.data[k*4+1]=b; img.data[k*4+2]=b; img.data[k*4+3]=255;
+  }
+  offg.putImageData(img,0,0);
+  g.imageSmoothingEnabled=false;
+  g.drawImage(off, x, y, size, size);
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.strokeRect(x+0.5, y+0.5, size-1, size-1);
+}
+
+/* розклади шуму. «стиснутий» = книжкові числа, домножені на 1000/T */
+function schedule(kind, T){
+  var b=new Float64Array(T), ab=new Float64Array(T), acc=1, i, s=0;
+  if(kind===2){
+    var prev=1, f0=Math.pow(Math.cos((0.008/1.008)*Math.PI/2),2), cur;
+    for(i=0;i<T;i++){
+      cur=Math.pow(Math.cos((((i+1)/T)+0.008)/1.008*Math.PI/2),2)/f0;
+      b[i]=Math.max(1e-4, Math.min(0.999, 1-cur/prev));
+      prev=cur;
+    }
+  }else{
+    var lo=1e-4, hi=0.02, mul=(kind===1)?(1000/T):1;
+    for(i=0;i<T;i++) b[i]=(lo+(hi-lo)*(T===1?0:i/(T-1)))*mul;
+  }
+  for(i=0;i<T;i++){ b[i]=Math.min(b[i], 0.999); acc*=(1-b[i]); ab[i]=acc; s+=b[i]; }
+  return {beta:b, ab:ab, T:T, sum:s};
+}
+
+/* ═══════════════ Інтерактив 1 · пряма дифузія ═══════════════ */
+(function(){
+  var cv=I('cFwd'); if(!cv) return;
+  var kind=0, T=200, sch=schedule(0,T);
+
+  function noised(field, t, seed){
+    var ab=sch.ab[t], sa=Math.sqrt(ab), sn=Math.sqrt(1-ab);
+    var nrm=mkNorm(LCG(seed)), out=new Float32Array(field.length), k;
+    for(k=0;k<field.length;k++) out[k]=sa*(field[k]*2-1)+sn*nrm();
+    return out;
+  }
+
+  function draw(){
+    var t=+I('tFwd').value, g=dpr(cv), W=LW(cv);
+    var ab=sch.ab[t], sa=Math.sqrt(ab), sn=Math.sqrt(1-ab);
+    I('tFwdOut').textContent=t;
+    var base=shapeField(kind, 13.5, 13.5, 7, 5);
+
+    capt(g,'x₀ — ОРИГІНАЛ',24,32,css('--soft'),10,true);
+    drawField(g, base, 24, 42, 120, 0, 1);
+    capt(g,'xₜ — ПІСЛЯ '+t+' КРОКІВ',176,32,css('--rose'),10,true);
+    drawField(g, noised(base, t, 77), 176, 42, 120, -1, 1);
+
+    /* стовпчики часток */
+    var bx=340, bw=W-bx-24, by=54;
+    capt(g,'ЧАСТКА СИГНАЛУ √ᾱ = '+f4(sa),bx,by-8,css('--soft'),11,true);
+    g.fillStyle=css('--hair'); g.fillRect(bx,by,bw,22);
+    g.fillStyle=css('--teal'); g.fillRect(bx,by,bw*sa,22);
+    capt(g,'ЧАСТКА ШУМУ √(1−ᾱ) = '+f4(sn),bx,by+52,css('--soft'),11,true);
+    g.fillStyle=css('--hair'); g.fillRect(bx,by+60,bw,22);
+    g.fillStyle=css('--rose'); g.fillRect(bx,by+60,bw*sn,22);
+    capt(g,'ᾱ = '+f4(ab)+'   ·   β цього кроку = '+sch.beta[t].toFixed(5),
+         bx,by+108,css('--ink'),12,false);
+
+    /* смуга: увесь ланцюг одразу */
+    var n=8, i, tt, sz=72, gap=(W-48-n*sz)/(n-1), x;
+    capt(g,'УВЕСЬ ЛАНЦЮГ ВІД ПОЧАТКУ ДО КІНЦЯ',24,196,css('--soft'),10,true);
+    for(i=0;i<n;i++){
+      tt=Math.round(i*(T-1)/(n-1)); x=24+i*(sz+gap);
+      drawField(g, noised(base, tt, 77), x, 206, sz, -1, 1);
+      capt(g,'t = '+tt, x+sz/2, 300, (tt===t?css('--rose'):css('--soft')), 11, tt===t, 'center');
+    }
+
+    I('fw1').textContent=f4(ab);
+    I('fw2').textContent=f4(sa);
+    I('fw3').textContent=f4(sn);
+    I('fw4').textContent=sch.beta[t].toFixed(5);
+
+    if(sa>=0.95)
+      verd('fwVd','t-ok','СИГНАЛ ПЕРЕВАЖАЄ',
+        'Частка сигналу '+f4(sa)+' — фігуру видно майже без зусиль. Перші десятки '+
+        'кроків майже нічого не псують, бо β там крихітна.');
+    else if(sa>=0.4)
+      verd('fwVd','t-mid','ФОРМА ЩЕ ВГАДУЄТЬСЯ',
+        'Частка сигналу '+f4(sa)+' проти '+f4(sn)+' шуму. Це середина ланцюга — '+
+        'саме тут мережа й робить основну роботу.');
+    else
+      verd('fwVd','t-no','ФІГУРИ ВЖЕ НЕ ВИДНО',
+        'Частка сигналу впала до '+f4(sa)+'. Але й це <b>не нуль</b>: на останньому '+
+        'кроці книжкового розкладу лишається 0.3636. Розділ 4 про те, чому це біда.');
+  }
+  on('tFwd','input',draw);
+  segment('segFwd', function(i){ kind=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════════════ Інтерактив 2 · ланцюг проти стрибка ═══════════════ */
+(function(){
+  var cv=I('cJump'); if(!cv) return;
+  var T=200, sch=schedule(0,T), NIMG=24;
+
+  function bank(){
+    var arr=[], i;
+    for(i=0;i<NIMG;i++) arr.push(shapeField(i%6, 13.5, 13.5, 7, 100+i));
+    return arr;
+  }
+  var imgs=bank();
+
+  function run(t, seed){
+    /* чесний ланцюг: t кроків по одному */
+    var nrm=mkNorm(LCG(seed*131+7)), i, k, cur=[], sum=0, cnt=0, step;
+    for(i=0;i<NIMG;i++){
+      cur.push(new Float32Array(SH*SH));
+      for(k=0;k<SH*SH;k++) cur[i][k]=imgs[i][k]*2-1;
+    }
+    for(step=0;step<t;step++){
+      var a=Math.sqrt(1-sch.beta[step]), b=Math.sqrt(sch.beta[step]);
+      for(i=0;i<NIMG;i++) for(k=0;k<SH*SH;k++) cur[i][k]=a*cur[i][k]+b*nrm();
+    }
+    /* стрибок формулою — свій, незалежний жереб */
+    var ab=sch.ab[t-1>=0?t-1:0], sa=Math.sqrt(ab), sn=Math.sqrt(1-ab);
+    var nrm2=mkNorm(LCG(seed*977+13)), jump=[];
+    for(i=0;i<NIMG;i++){
+      jump.push(new Float32Array(SH*SH));
+      for(k=0;k<SH*SH;k++) jump[i][k]=sa*(imgs[i][k]*2-1)+sn*nrm2();
+    }
+    /* розмах доданого шуму: різниця з приглушеним оригіналом */
+    function sigma(set){
+      var s=0, s2=0, n=0, ii, kk, d;
+      for(ii=0;ii<NIMG;ii++) for(kk=0;kk<SH*SH;kk++){
+        d=set[ii][kk]-sa*(imgs[ii][kk]*2-1); s+=d; s2+=d*d; n++;
+      }
+      return Math.sqrt(Math.max(0, s2/n-(s/n)*(s/n)));
+    }
+    return {chain:cur, jump:jump, sc:sigma(cur), sj:sigma(jump), th:sn};
+  }
+
+  function draw(){
+    var t=+I('tJump').value, seed=+I('sJump').value, g=dpr(cv), W=LW(cv);
+    I('tJumpOut').textContent=t; I('sJumpOut').textContent=seed;
+    var r=run(t, seed);
+
+    capt(g,'ЛАНЦЮГОМ: '+t+' КРОКІВ ПО ОДНОМУ',24,32,css('--rose'),10,true);
+    drawField(g, r.chain[0], 24, 42, 110, -1, 1);
+    drawField(g, r.chain[1], 142, 42, 110, -1, 1);
+    capt(g,'ФОРМУЛОЮ: ОДИН СТРИБОК',276,32,css('--teal'),10,true);
+    drawField(g, r.jump[0], 276, 42, 110, -1, 1);
+    drawField(g, r.jump[1], 394, 42, 110, -1, 1);
+
+    /* криві розмаху шуму вздовж ланцюга — теорія проти двох способів */
+    var ox=550, oy=42, ow=W-ox-30, oh=110, i, x, y, v;
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(ox,oy); g.lineTo(ox,oy+oh); g.lineTo(ox+ow,oy+oh); g.stroke();
+    g.strokeStyle=css('--soft'); g.lineWidth=1.6; g.beginPath();
+    for(i=0;i<T;i++){
+      v=Math.sqrt(1-sch.ab[i]); x=ox+ow*i/(T-1); y=oy+oh-oh*v;
+      if(i===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke();
+    x=ox+ow*(t-1)/(T-1);
+    g.strokeStyle=css('--rose'); g.setLineDash([3,3]); g.beginPath();
+    g.moveTo(x,oy); g.lineTo(x,oy+oh); g.stroke(); g.setLineDash([]);
+    g.fillStyle=css('--teal');
+    g.beginPath(); g.arc(x, oy+oh-oh*r.sj, 4, 0, 6.284); g.fill();
+    g.fillStyle=css('--rose');
+    g.beginPath(); g.arc(x, oy+oh-oh*r.sc, 4, 0, 6.284); g.fill();
+    capt(g,'РОЗМАХ ДОДАНОГО ШУМУ ВЗДОВЖ ЛАНЦЮГА',ox,32,css('--soft'),10,true);
+    capt(g,'t = 0',ox,oy+oh+16,css('--soft'),10);
+    capt(g,'t = 199',ox+ow,oy+oh+16,css('--soft'),10,false,'right');
+
+    /* смуга: пари «ланцюг / формула» для шести фігур */
+    capt(g,'ШІСТЬ ФІГУР: ЗГОРИ ЛАНЦЮГ, ЗНИЗУ ФОРМУЛА',24,196,css('--soft'),10,true);
+    /* два ряди по 58 px мають вміститись у канву 330 px разом із підписом (грабля №7) */
+    var n=6, sz=58, gap=(W-48-n*sz)/(n-1), xx;
+    for(i=0;i<n;i++){
+      xx=24+i*(sz+gap);
+      drawField(g, r.chain[i], xx, 204, sz, -1, 1);
+      drawField(g, r.jump[i], xx, 204+sz+6, sz, -1, 1);
+    }
+
+    I('jp1').textContent=f4(r.sc);
+    I('jp2').textContent=f4(r.sj);
+    I('jp3').textContent=f4(r.th);
+    var diff=Math.max(Math.abs(r.sc-r.th), Math.abs(r.sj-r.th));
+    I('jp4').textContent=f4(diff);
+
+    if(diff<0.02)
+      verd('jpVd','t-ok','ЗБІГАЄТЬСЯ',
+        'Ланцюг дає '+f4(r.sc)+', формула '+f4(r.sj)+', теорія '+f4(r.th)+
+        '. Найбільший відступ від теорії — '+f4(diff)+', тобто менший за 0.02. '+
+        'На 24 зображеннях це розкид вибірки, а не помилка виведення.');
+    else
+      verd('jpVd','t-mid','ВІДСТУП ВІД ТЕОРІЇ ПОМІТНИЙ',
+        'Ланцюг '+f4(r.sc)+', формула '+f4(r.sj)+', теорія '+f4(r.th)+
+        ' — найбільший відступ '+f4(diff)+'. На 24 зображеннях так буває від '+
+        'жеребу: потягни повзунок «жереб» і подивись, чи відступ тримається.');
+  }
+  on('tJump','input',draw);
+  on('sJump','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════════════ Інтерактив 3 · три розклади шуму ═══════════════ */
+(function(){
+  var cv=I('cSch'); if(!cv) return;
+  var kind=0;
+  var NAMES=['книжковий','стиснутий','косинусний'];
+
+  function draw(){
+    var T=+I('tSch').value, g=dpr(cv), W=LW(cv), i, x, y;
+    I('tSchOut').textContent=T;
+    var all=[schedule(0,T), schedule(1,T), schedule(2,T)], sch=all[kind];
+    var COL=[css('--rose'), css('--teal'), css('--amber')], j;
+
+    /* криві частки сигналу */
+    var ox=54, oy=34, ow=W-ox-30, oh=140;
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(ox,oy); g.lineTo(ox,oy+oh); g.lineTo(ox+ow,oy+oh); g.stroke();
+    for(i=0;i<=2;i++){
+      y=oy+oh-oh*i/2;
+      g.strokeStyle=css('--hair'); g.setLineDash([2,4]);
+      g.beginPath(); g.moveTo(ox,y); g.lineTo(ox+ow,y); g.stroke(); g.setLineDash([]);
+      capt(g,f1(i/2),ox-8,y+4,css('--soft'),10,false,'right');
+    }
+    for(j=0;j<3;j++){
+      g.strokeStyle=COL[j]; g.lineWidth=(j===kind)?2.4:1;
+      g.globalAlpha=(j===kind)?1:0.45;
+      g.beginPath();
+      for(i=0;i<T;i++){
+        x=ox+ow*i/(T-1); y=oy+oh-oh*Math.sqrt(all[j].ab[i]);
+        if(i===0) g.moveTo(x,y); else g.lineTo(x,y);
+      }
+      g.stroke(); g.globalAlpha=1;
+    }
+    capt(g,'ЧАСТКА СИГНАЛУ √ᾱ',ox,24,css('--soft'),10,true);
+    for(j=0;j<3;j++){
+      g.fillStyle=COL[j];
+      g.fillRect(ox+ow-282+j*96, 16, 9, 9);
+      capt(g, NAMES[j], ox+ow-268+j*96, 25, (j===kind)?css('--ink'):css('--soft'),
+           10, j===kind);
+    }
+    capt(g,'крок 0',ox,oy+oh+16,css('--soft'),10);
+    capt(g,'крок '+(T-1),ox+ow,oy+oh+16,css('--soft'),10,false,'right');
+
+    /* рівень «шум досяг мети» */
+    g.strokeStyle=css('--teal'); g.setLineDash([5,4]); g.lineWidth=1;
+    y=oy+oh-oh*0.02;
+    g.beginPath(); g.moveTo(ox,y); g.lineTo(ox+ow,y); g.stroke(); g.setLineDash([]);
+    capt(g,'0.02 — межа «дійшли до шуму»',ox+ow,y-6,css('--teal'),10,false,'right');
+
+    /* смуга: як псується фігура за обраним розкладом */
+    var base=shapeField(3, 13.5, 13.5, 7, 5), n=8, sz=72, gap=(W-48-n*sz)/(n-1);
+    capt(g,'ТА САМА ФІГУРА ЗА РОЗКЛАДОМ «'+NAMES[kind].toUpperCase()+'»',24,222,css('--soft'),10,true);
+    for(i=0;i<n;i++){
+      var tt=Math.round(i*(T-1)/(n-1)), ab=sch.ab[tt];
+      var sa=Math.sqrt(ab), sn=Math.sqrt(1-ab);
+      var nrm=mkNorm(LCG(555)), out=new Float32Array(SH*SH), k;
+      for(k=0;k<SH*SH;k++) out[k]=sa*(base[k]*2-1)+sn*nrm();
+      x=24+i*(sz+gap);
+      drawField(g, out, x, 232, sz, -1, 1);
+      capt(g,'t = '+tt, x+sz/2, 324, css('--soft'), 10, false, 'center');
+    }
+
+    var last=sch.ab[T-1], slast=Math.sqrt(last), half=-1;
+    for(i=0;i<T;i++){ if(Math.sqrt(sch.ab[i])<0.5){ half=i; break; } }
+    var meanT=slast*MEAN_X0;
+    I('sc1').textContent=f2(sch.sum);
+    I('sc2').textContent=slast<0.001?slast.toExponential(1):f4(slast);
+    I('sc3').textContent=(half<0?'не досяг':String(half));
+    I('sc4').textContent=sgn(meanT);
+
+    if(slast<0.02)
+      verd('scVd','t-ok','ЛАНЦЮГ ДОХОДИТЬ ДО ШУМУ',
+        'У кінці лишається '+(slast<0.001?slast.toExponential(1):f4(slast))+
+        ' сигналу, середнє <span class="raw">x<sub>T</sub></span> зсунуте лише на '+
+        sgn(meanT)+'. Починати відбір із <span class="raw">N(0, 1)</span> тут чесно.');
+    else if(slast<0.1)
+      verd('scVd','t-mid','МАЙЖЕ, АЛЕ НЕ ЗОВСІМ',
+        'У кінці ще '+f4(slast)+' сигналу, середнє зсунуте на '+sgn(meanT)+
+        '. Мережа побачить на вході трохи не те, на чому вчилась.');
+    else
+      verd('scVd','t-no','КІНЕЦЬ ЛАНЦЮГА — НЕ ШУМ',
+        'У кінці лишається '+f4(slast)+' сигналу, а середнє '+
+        '<span class="raw">x<sub>T</sub></span> дорівнює '+sgn(meanT)+' замість нуля. '+
+        'Відбір починається з <span class="raw">N(0, 1)</span> — тобто з того, чого '+
+        'мережа не бачила жодного разу.');
+  }
+  on('tSch','input',draw);
+  segment('segSch', function(i){ kind=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════ числа з зошита (practice.html) ═══════
+   JS не відтворює torch, тому всі виміряні числа перенесені сюди руками.
+   Правлячи зошит, перевір цей блок. */
+var D = {
+ "base": 3.0352,
+ "baseWeak": 0.0003,
+ "model": 175.7757,
+ "modelWeak": 0.0235,
+ "cal": [
+  {
+   "n": "справжні",
+   "s": 3.0352,
+   "w": 0.0003,
+   "c": 6
+  },
+  {
+   "n": "лише кола",
+   "s": 423.1416,
+   "w": 0.0238,
+   "c": 1
+  },
+  {
+   "n": "кола + квадрати",
+   "s": 435.2284,
+   "w": 0.024,
+   "c": 2
+  },
+  {
+   "n": "розмита каша",
+   "s": 1132.0793,
+   "w": 0.1898,
+   "c": 2
+  },
+  {
+   "n": "середнє всіх фігур",
+   "s": 1221.9978,
+   "w": 0.2274,
+   "c": 1
+  },
+  {
+   "n": "усе чорне",
+   "s": 1254.3291,
+   "w": 0.2595,
+   "c": 1
+  },
+  {
+   "n": "чистий шум",
+   "s": 1499.1358,
+   "w": 0.427,
+   "c": 1
+  },
+  {
+   "n": "усе біле",
+   "s": 1693.282,
+   "w": 4.5929,
+   "c": 1
+  }
+ ],
+ "lossSeeds": [
+  0.9504,
+  0.8617,
+  0.9288
+ ],
+ "ckpt": [
+  {
+   "ep": 4,
+   "loss": 0.2627,
+   "fid": 896.92,
+   "sd": 447.26,
+   "cls": 1.7
+  },
+  {
+   "ep": 10,
+   "loss": 0.1469,
+   "fid": 334.3,
+   "sd": 67.17,
+   "cls": 2.3
+  },
+  {
+   "ep": 22,
+   "loss": 0.1004,
+   "fid": 182.23,
+   "sd": 35.18,
+   "cls": 4.0
+  }
+ ],
+ "steps": {
+  "DDIM": {
+   "2": {
+    "f": 6033.76,
+    "sd": 915.23,
+    "c": 1.0,
+    "seeds": [
+     1,
+     1,
+     1
+    ]
+   },
+   "5": {
+    "f": 218.05,
+    "sd": 34.71,
+    "c": 3.7,
+    "seeds": [
+     4,
+     4,
+     3
+    ]
+   },
+   "20": {
+    "f": 181.84,
+    "sd": 36.38,
+    "c": 4.0,
+    "seeds": [
+     4,
+     4,
+     4
+    ]
+   },
+   "200": {
+    "f": 175.78,
+    "sd": 38.82,
+    "c": 4.0,
+    "seeds": [
+     4,
+     4,
+     4
+    ]
+   }
+  },
+  "DDPM": {
+   "5": {
+    "f": 312.53,
+    "sd": 102.93,
+    "c": 4.0,
+    "seeds": [
+     5,
+     3,
+     4
+    ]
+   },
+   "200": {
+    "f": 430.9,
+    "sd": 146.03,
+    "c": 3.7,
+    "seeds": [
+     5,
+     2,
+     4
+    ]
+   }
+  }
+ },
+ "cond": [
+  {
+   "hit": 0.0067,
+   "sd": 0.0094,
+   "seeds": [
+    0.0,
+    0.02,
+    0.0
+   ]
+  },
+  {
+   "hit": 0.0,
+   "sd": 0.0,
+   "seeds": [
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "hit": 0.0867,
+   "sd": 0.0525,
+   "seeds": [
+    0.06,
+    0.16,
+    0.04
+   ]
+  },
+  {
+   "hit": 0.3933,
+   "sd": 0.2229,
+   "seeds": [
+    0.64,
+    0.1,
+    0.44
+   ]
+  },
+  {
+   "hit": 0.32,
+   "sd": 0.1728,
+   "seeds": [
+    0.4,
+    0.08,
+    0.48
+   ]
+  },
+  {
+   "hit": 0.3067,
+   "sd": 0.0736,
+   "seeds": [
+    0.22,
+    0.4,
+    0.3
+   ]
+  }
+ ],
+ "uncond": [
+  0.03,
+  0.003,
+  0.11,
+  0.233,
+  0.317,
+  0.307
+ ],
+ "uncondClasses": 4
+};
+
+/* ═══════════════ Інтерактив 4 · втрата й якість ═══════════════ */
+(function(){
+  var cv=I('cLoss'); if(!cv) return;
+  var pick=0;
+  /* втрата після першої епохи — середнє трьох зерен, які надрукував зошит */
+  var firstLoss=(D.lossSeeds[0]+D.lossSeeds[1]+D.lossSeeds[2])/3;
+  var pts=[{ep:1, loss:firstLoss}].concat(D.ckpt.map(function(c){
+    return {ep:c.ep, loss:c.loss};
+  }));
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), i, x, y;
+    var ox=58, oy=44, ow=W-370, oh=170, maxEp=pts[pts.length-1].ep;
+    var lo=0, hi=pts[0].loss*1.08;
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(ox,oy); g.lineTo(ox,oy+oh); g.lineTo(ox+ow,oy+oh); g.stroke();
+    capt(g,'ВТРАТА, СЕРЕДНЄ ПО ТРЬОХ ЗЕРНАХ',ox,30,css('--soft'),10,true);
+    capt(g,f2(hi),ox-8,oy+6,css('--soft'),10,false,'right');
+    capt(g,'0.00',ox-8,oy+oh,css('--soft'),10,false,'right');
+    function px(ep){ return ox+ow*(ep-1)/(maxEp-1); }
+    function py(v){ return oy+oh-oh*(v-lo)/(hi-lo); }
+    g.strokeStyle=css('--teal'); g.lineWidth=2; g.beginPath();
+    for(i=0;i<pts.length;i++){
+      if(i===0) g.moveTo(px(pts[i].ep),py(pts[i].loss));
+      else g.lineTo(px(pts[i].ep),py(pts[i].loss));
+    }
+    g.stroke();
+    for(i=0;i<pts.length;i++){
+      var isPick=(i>0 && i-1===pick);
+      g.fillStyle=isPick?css('--rose'):css('--teal');
+      g.beginPath(); g.arc(px(pts[i].ep),py(pts[i].loss),isPick?6:4,0,6.284); g.fill();
+      /* крайні точки стоять на межах поля — підписи зсуваємо всередину,
+         інакше вони накладаються на шкалу й на сусідній блок (грабля №12) */
+      var last=(i===pts.length-1), align=(i===0?'left':(last?'right':'center'));
+      var dx=(i===0?14:(last?-2:0));
+      capt(g, f4(pts[i].loss), px(pts[i].ep)+dx, py(pts[i].loss)-12,
+           isPick?css('--rose'):css('--soft'), 11, isPick, align);
+      capt(g, 'епоха '+pts[i].ep, px(pts[i].ep)+dx, oy+oh+18,
+           isPick?css('--rose'):css('--soft'), 10, isPick, align);
+    }
+    capt(g,'виміряно чотири точки, між ними нічого не домальовано',
+         ox, oy+oh+40, css('--soft'), 11);
+
+    var bx=W-250, bw=222, maxf=0;
+    for(i=0;i<D.ckpt.length;i++) maxf=Math.max(maxf, D.ckpt[i].fid);
+    capt(g,'FID ТАМ, ДЕ РОБИВСЯ ВІДБІР',bx,30,css('--soft'),10,true);
+    for(i=0;i<D.ckpt.length;i++){
+      y=oy+22+i*62;
+      g.fillStyle=css('--hair'); g.fillRect(bx,y,bw,22);
+      g.fillStyle=css('--rose'); g.globalAlpha=(i===pick)?1:0.45;
+      g.fillRect(bx,y,Math.max(3,bw*D.ckpt[i].fid/maxf),22); g.globalAlpha=1;
+      capt(g,'епоха '+D.ckpt[i].ep+'  —  '+f1(D.ckpt[i].fid)+' ± '+f1(D.ckpt[i].sd),
+           bx, y-6, (i===pick)?css('--ink'):css('--soft'), 10, i===pick);
+      capt(g,'класів '+f1(D.ckpt[i].cls)+' із 6', bx+6, y+38, css('--soft'), 10);
+    }
+
+    I('ls1').textContent=f4(D.ckpt[pick].loss);
+    I('ls2').textContent=f1(D.ckpt[pick].fid);
+    I('ls3').textContent=f1(D.ckpt[pick].cls)+' / 6';
+    I('ls4').textContent='±'+f1(D.ckpt[pick].sd);
+
+    var first=D.ckpt[0], cur=D.ckpt[pick];
+    if(pick===0)
+      verd('lsVd','t-mid','ПОЧАТОК НАВЧАННЯ',
+        'Втрата '+f4(cur.loss)+', FID '+f1(cur.fid)+', класів '+f1(cur.cls)+
+        ' із шести. Це відправна точка — далі обидва числа мають рухатись разом.');
+    else if(cur.fid<first.fid && cur.loss<first.loss)
+      verd('lsVd','t-ok','ОБИДВА ЧИСЛА ВПАЛИ',
+        'Втрата '+f4(first.loss)+' → '+f4(cur.loss)+', FID '+f1(first.fid)+' → '+
+        f1(cur.fid)+', покриття '+f1(first.cls)+' → '+f1(cur.cls)+' класів. '+
+        'Втрата впала, і якість справді покращилась — саме це й означає '+
+        '«криву можна читати».');
+    else
+      verd('lsVd','t-no','ЧИСЛА РОЗІЙШЛИСЯ',
+        'Втрата '+f4(first.loss)+' → '+f4(cur.loss)+', а FID '+f1(first.fid)+' → '+
+        f1(cur.fid)+'. Тут читати криву не можна.');
+  }
+  segment('segLoss', function(i){ pick=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════════════ Інтерактив 5 · калібрування метрики ═══════════════ */
+(function(){
+  var cv=I('cCal'); if(!cv) return;
+  var pick=0;
+
+  /* набори будуємо тими самими правилами, що в зошиті */
+  function batch(idx, n){
+    var out=[], i, k, f, base, sum;
+    for(i=0;i<n;i++){
+      if(idx===0) out.push(shapeField(i%6, 13.5, 13.5, 7, 900+i));
+      else if(idx===1) out.push(shapeField(0, 13.5, 13.5, 7, 900+i));
+      else if(idx===2) out.push(shapeField(i%2, 13.5, 13.5, 7, 900+i));
+      else if(idx===3){
+        base=shapeField(i%6, 13.5, 13.5, 7, 900+i);
+        out.push(blur(blur(blur(base))));
+      }
+      else if(idx===4){
+        f=new Float32Array(SH*SH);
+        for(k=0;k<6;k++){
+          var one=shapeField(k, 13.5, 13.5, 7, 900+k);
+          for(var j=0;j<f.length;j++) f[j]+=one[j]/6;
+        }
+        out.push(f);
+      }
+      else if(idx===5) out.push(new Float32Array(SH*SH));
+      else if(idx===6){
+        f=new Float32Array(SH*SH); var rnd=LCG(1234+i);
+        for(k=0;k<f.length;k++) f[k]=rnd();
+        out.push(f);
+      }
+      else { f=new Float32Array(SH*SH); f.fill(1); out.push(f); }
+    }
+    return out;
+  }
+  function blur(f){
+    var out=new Float32Array(SH*SH), y, x, a, b, s, c, yy, xx;
+    for(y=0;y<SH;y++) for(x=0;x<SH;x++){
+      s=0; c=0;
+      for(a=-2;a<=2;a++) for(b=-2;b<=2;b++){
+        yy=Math.max(0,Math.min(SH-1,y+a)); xx=Math.max(0,Math.min(SH-1,x+b));
+        s+=f[yy*SH+xx]; c++;
+      }
+      out[y*SH+x]=s/c;
+    }
+    return out;
+  }
+
+  function logbar(g, x, y, w, value, base, worst, color){
+    /* логарифмічна смуга: інакше «усе біле» розчавить решту в нуль */
+    var lv=Math.log10(Math.max(value, base)/base), lw=Math.log10(worst/base);
+    g.fillStyle=css('--hair'); g.fillRect(x,y,w,20);
+    g.fillStyle=color; g.fillRect(x,y,Math.max(2, w*lv/lw),20);
+    return x+Math.max(2, w*lv/lw);
+  }
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), i, x, row=D.cal[pick];
+    var imgs=batch(pick, 6), sz=88, gap=10;
+    capt(g,'ЩО САМЕ ПОДАЄМО МЕТРИЦІ',24,28,css('--soft'),10,true);
+    for(i=0;i<6;i++) drawField(g, imgs[i], 24+i*(sz+gap), 38, sz, 0, 1);
+
+    var bx=24, bw=W-48, worstS=D.cal[7].s, worstW=D.cal[7].w;
+    capt(g,'FID НА ОЗНАКАХ СУДДІ (ЛОГАРИФМІЧНА ШКАЛА): '+f4(row.s),bx,158,css('--soft'),10,true);
+    logbar(g, bx, 166, bw, row.s, D.base, worstS, css('--teal'));
+    x=bx+bw*Math.log10(Math.max(D.model,D.base)/D.base)/Math.log10(worstS/D.base);
+    g.strokeStyle=css('--ink'); g.setLineDash([3,3]); g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(x,162); g.lineTo(x,190); g.stroke(); g.setLineDash([]);
+    capt(g,'наша модель',x+5,203,css('--ink'),10);
+
+    capt(g,'FID НА СЛАБКИХ ОЗНАКАХ (ТА САМА ШКАЛА): '+f4(row.w),bx,232,css('--soft'),10,true);
+    logbar(g, bx, 240, bw, row.w, D.baseWeak, worstW, css('--rose'));
+    x=bx+bw*Math.log10(Math.max(D.modelWeak,D.baseWeak)/D.baseWeak)/Math.log10(worstW/D.baseWeak);
+    g.strokeStyle=css('--ink'); g.setLineDash([3,3]); g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(x,236); g.lineTo(x,264); g.stroke(); g.setLineDash([]);
+    capt(g,'наша модель',x+5,277,css('--ink'),10);
+
+    /* покриття класів */
+    capt(g,'КЛАСІВ ІЗ ЧАСТКОЮ ≥ 5 %: '+row.c+' із 6',bx,304,
+         row.c===6?css('--teal'):css('--rose'),11,true);
+
+    I('cl1').textContent=f4(row.s);
+    I('cl2').textContent=f4(row.w);
+    I('cl3').textContent=row.c+' / 6';
+    I('cl4').textContent=f2(row.s/D.model)+'× / '+f2(row.w/D.modelWeak)+'×';
+
+    var gs=row.s/D.model, gw=row.w/D.modelWeak;
+    if(pick===0)
+      verd('calVd','t-ok','БАЗОВА ЛІНІЯ',
+        'Справжні фігури проти інших справжніх дають '+f4(row.s)+' і '+f4(row.w)+
+        '. Це не нуль і не мусить ним бути: 200 зображень — скінченна вибірка. '+
+        'Цю лінію треба друкувати поруч із будь-яким FID.');
+    else if(gs<=1 || gw<=1)
+      verd('calVd','t-no','МЕТРИКА ПОМИЛИЛАСЬ',
+        'Набір дістав '+f4(row.s)+' і '+f4(row.w)+', а робоча модель — '+f1(D.model)+
+        ' і '+f4(D.modelWeak)+'. Хоча б одна метрика ставить зіпсоване <b>краще</b> '+
+        'за модель. Числа, поміряні такою метрикою, доводиться викидати.');
+    else if(gw<1.2)
+      verd('calVd','t-mid','ЗАПАС СЛАБКОЇ МЕТРИКИ МІЗЕРНИЙ',
+        'Метрика судді ставить цей набір у <b>'+f2(gs)+'×</b> гірше за робочу модель — '+
+        'це справжній запас. Слабка — лише в <b>'+f2(gw)+'×</b>, тобто фактично не '+
+        'відрізняє повний колапс мод від робочої моделі. Формально вона не помилилась; '+
+        'практично вірити їй не можна.');
+    else
+      verd('calVd','t-ok','ОБИДВІ МЕТРИКИ ПРАВІ',
+        'Набір дістав '+f4(row.s)+' і '+f4(row.w)+' — гірше за робочу модель ('+
+        f1(D.model)+' і '+f4(D.modelWeak)+') у '+f2(gs)+'× і '+f2(gw)+
+        '× відповідно. Обидві метрики тут працюють.');
+  }
+  segment('segCal', function(i){ pick=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════════════ Інтерактив 6 · кроки, якість і покриття ═══════════════ */
+(function(){
+  var cv=I('cSteps'); if(!cv) return;
+  var scheme=0, GRID=[2,5,20,200], NAMES=['DDIM','DDPM'];
+
+  function row(sc, steps){ return D.steps[NAMES[sc]][String(steps)] || null; }
+
+  function draw(){
+    var ki=+I('kSteps').value, steps=GRID[ki], g=dpr(cv), W=LW(cv), i, x, y, r;
+    I('kStepsOut').textContent=steps;
+
+    var ox=54, oy=42, ow=W-330, oh=190;
+    var vals=[], j, s;
+    for(j=0;j<2;j++) for(i=0;i<GRID.length;i++){
+      s=row(j, GRID[i]); if(s) vals.push(s.f);
+    }
+    /* шкала логарифмічна: два кроки дають 6033, решта — близько 200,
+       на лінійній осі решта злиплася б в одну лінію */
+    var hi=Math.max.apply(null, vals), lo=Math.min.apply(null, vals);
+    var top=Math.log10(hi*1.6), bot=Math.log10(Math.min(lo, D.base)*0.7);
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(ox,oy); g.lineTo(ox,oy+oh); g.lineTo(ox+ow,oy+oh); g.stroke();
+    capt(g,'FID НА ОЗНАКАХ СУДДІ, ЛОГАРИФМІЧНА ШКАЛА (МЕНШЕ — КРАЩЕ)',
+         ox,30,css('--soft'),10,true);
+
+    function px(i){ return ox+ow*i/(GRID.length-1); }
+    function py(v){ return oy+oh-oh*(Math.log10(Math.max(v,1e-3))-bot)/(top-bot); }
+    var dec, dv;
+    for(dec=Math.ceil(bot); dec<=Math.floor(top); dec++){
+      dv=Math.pow(10,dec); y=py(dv);
+      g.strokeStyle=css('--hair'); g.setLineDash([2,4]);
+      g.beginPath(); g.moveTo(ox,y); g.lineTo(ox+ow,y); g.stroke(); g.setLineDash([]);
+      capt(g, String(dv), ox-8, y+4, css('--soft'), 10, false, 'right');
+    }
+    var COL=[css('--teal'), css('--rose')];
+    for(j=0;j<2;j++){
+      g.strokeStyle=COL[j]; g.lineWidth=(j===scheme)?2.4:1.2;
+      g.globalAlpha=(j===scheme)?1:0.4;
+      g.beginPath(); var started=false;
+      for(i=0;i<GRID.length;i++){
+        s=row(j, GRID[i]); if(!s) continue;
+        if(!started){ g.moveTo(px(i),py(s.f)); started=true; } else g.lineTo(px(i),py(s.f));
+      }
+      g.stroke();
+      for(i=0;i<GRID.length;i++){
+        s=row(j, GRID[i]); if(!s) continue;
+        g.fillStyle=COL[j];
+        g.beginPath(); g.arc(px(i),py(s.f),(j===scheme&&i===ki)?6:3.5,0,6.284); g.fill();
+      }
+      g.globalAlpha=1;
+      g.fillStyle=COL[j]; g.fillRect(ox+ow-190+j*96, 20, 9, 9);
+      capt(g, NAMES[j], ox+ow-176+j*96, 29, (j===scheme)?css('--ink'):css('--soft'), 10, j===scheme);
+    }
+    for(i=0;i<GRID.length;i++)
+      capt(g, String(GRID[i]), px(i), oy+oh+18,
+           (i===ki)?css('--rose'):css('--soft'), 10, i===ki, 'center');
+    capt(g,'кроків відбору',ox+ow/2,oy+oh+38,css('--soft'),10,false,'center');
+
+    /* базова лінія метрики */
+    y=py(D.base);
+    if(y>oy && y<oy+oh){
+      g.strokeStyle=css('--ink'); g.setLineDash([4,4]); g.lineWidth=1;
+      g.beginPath(); g.moveTo(ox,y); g.lineTo(ox+ow,y); g.stroke(); g.setLineDash([]);
+      capt(g,'базова лінія '+f2(D.base),ox+4,y-5,css('--ink'),10);
+    }
+
+    /* покриття класів по кожному зерну окремо — воно надруковане для всіх точок */
+    r=row(scheme, steps);
+    var bx=W-250, bw=226, bh=26, k;
+    capt(g,'КЛАСІВ ІЗ ШЕСТИ, КОЖНЕ ЗЕРНО ОКРЕМО',bx,30,css('--soft'),10,true);
+    if(r){
+      for(k=0;k<3;k++){
+        y=oy+k*44;
+        g.fillStyle=css('--hair'); g.fillRect(bx,y,bw,bh);
+        g.fillStyle=(r.seeds[k]>=4)?css('--teal'):css('--rose');
+        g.fillRect(bx,y,bw*r.seeds[k]/6,bh);
+        capt(g,'зерно '+k, bx+8, y+18, css('--ink'), 12);
+        capt(g, r.seeds[k]+' із 6', bx+bw-8, y+18, css('--ink'), 12, false, 'right');
+      }
+      x=bx+bw;
+      g.strokeStyle=css('--ink'); g.setLineDash([3,3]); g.lineWidth=1;
+      g.beginPath(); g.moveTo(x,oy-6); g.lineTo(x,oy+3*44-10); g.stroke(); g.setLineDash([]);
+      capt(g,'усі шість фігур були б тут', bx, oy+3*44+14, css('--soft'), 10);
+      capt(g,'середнє покриття '+f1(r.c)+' із 6', bx, oy+3*44+34, css('--ink'), 12, true);
+    }
+
+    if(r){
+      I('st1').textContent=f1(r.f);
+      I('st2').textContent='±'+f1(r.sd);
+      I('st3').textContent=f1(r.c)+' / 6';
+      I('st4').textContent=String(steps);
+    }else{
+      I('st1').textContent='—'; I('st2').textContent='—';
+      I('st3').textContent='—'; I('st4').textContent=String(steps);
+    }
+
+    var full=row(scheme, 200);
+    if(!r)
+      verd('stVd','t-mid','ЦІЄЇ ТОЧКИ НЕ МІРЯЛИ',
+        'DDPM ми міряли на 5 і 200 кроках: проміжні точки нічого не додають, '+
+        'а відбір коштує дорого. Постав повзунок на виміряну точку.');
+    else if(r.c<=2)
+      verd('stVd','t-no','ПОКРИТТЯ ЗЛАМАНЕ',
+        f1(r.f)+' при покритті '+f1(r.c)+' класу з шести. Тут FID уже не важливий: '+
+        'модель малює одне й те саме, і жодна кількість кроків цього не виправить.');
+    else if(steps===200)
+      verd('stVd','t-mid','ЦЕ Й Є ПОВНИЙ ЛАНЦЮГ',
+        f1(r.f)+' ± '+f1(r.sd)+' при покритті '+f1(r.c)+' — усі 200 кроків, тобто '+
+        'найдорожчий можливий відбір. Порівнюй із ним решту точок.');
+    else if(full && Math.abs(r.f-full.f) <= full.sd)
+      verd('stVd','t-ok','ЦИХ КРОКІВ ДОСИТЬ',
+        f1(r.f)+' ± '+f1(r.sd)+' при покритті '+f1(r.c)+' проти '+f1(full.f)+' ± '+
+        f1(full.sd)+' на повних 200 кроках. Різниця '+f1(Math.abs(r.f-full.f))+
+        ' менша за розкид ±'+f1(full.sd)+', тобто різниці немає — а мережу '+
+        'проганяємо у '+f1(200/steps)+' рази рідше.');
+    else
+      verd('stVd','t-mid','РІЗНИЦЯ З ПОВНИМ ЛАНЦЮГОМ ПОМІТНА',
+        f1(r.f)+' ± '+f1(r.sd)+' при покритті '+f1(r.c)+' проти '+f1(full.f)+' ± '+
+        f1(full.sd)+' на 200 кроках. Різниця '+f1(Math.abs(r.f-full.f))+
+        ' більша за розкид ±'+f1(full.sd)+' — економія тут коштує якості.');
+  }
+  on('kSteps','input',draw);
+  segment('segSteps', function(i){ scheme=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════════════ Інтерактив 7 · умовна генерація ═══════════════ */
+(function(){
+  var cv=I('cCond'); if(!cv) return;
+  var pick=0;
+
+  function draw(){
+    var g=dpr(cv), W=LW(cv), i, x, y;
+    var ox=24, ow=W-300, oy=48, bh=26, gapy=34;
+
+    if(pick<6){
+      capt(g,'НА ЗАМОВЛЕННЯ (СУЦІЛЬНЕ) ПРОТИ БЕЗ УМОВИ (РАМКА), ТРИ ЗЕРНА',
+           ox,30,css('--soft'),10,true);
+      for(i=0;i<6;i++){
+        y=oy+i*gapy;
+        g.fillStyle=css('--hair'); g.fillRect(ox,y,ow,bh);
+        g.fillStyle=(i===pick)?css('--rose'):css('--teal');
+        g.globalAlpha=(i===pick)?1:0.45;
+        g.fillRect(ox,y,ow*Math.min(1,D.cond[i].hit/0.6),bh); g.globalAlpha=1;
+        g.strokeStyle=css('--ink'); g.lineWidth=1.5;
+        g.strokeRect(ox+0.5, y+0.5, Math.max(2, ow*Math.min(1,D.uncond[i]/0.6))-1, bh-1);
+        capt(g, SHAPE_NAMES[i], ox+8, y+18, css('--ink'), 12, i===pick);
+        capt(g, f4(D.cond[i].hit)+'  /  '+f3(D.uncond[i]), ox+ow-8, y+18,
+             css('--ink'), 12, i===pick, 'right');
+      }
+      x=ox+ow*(1/6)/0.6;
+      g.strokeStyle=css('--amber'); g.setLineDash([3,3]); g.lineWidth=1;
+      g.beginPath(); g.moveTo(x,oy-6); g.lineTo(x,oy+6*gapy-2); g.stroke(); g.setLineDash([]);
+      capt(g,'0.1667 — випадкове вгадування',x+6,oy+6*gapy+14,css('--soft'),10);
+    }else{
+      capt(g,'ЧАСТКИ КЛАСІВ, КОЛИ МОДЕЛЬ НЕ ПРОСИЛИ НІ ПРО ЩО',ox,30,css('--soft'),10,true);
+      for(i=0;i<6;i++){
+        y=oy+i*gapy;
+        g.fillStyle=css('--hair'); g.fillRect(ox,y,ow,bh);
+        g.fillStyle=(D.uncond[i]>=0.05)?css('--teal'):css('--rose');
+        g.fillRect(ox,y,ow*Math.min(1,D.uncond[i]/0.5),bh);
+        capt(g, SHAPE_NAMES[i], ox+8, y+18, css('--ink'), 12);
+        capt(g, f3(D.uncond[i]), ox+ow-8, y+18, css('--ink'), 12, false, 'right');
+      }
+      x=ox+ow*(1/6)/0.5;
+      g.strokeStyle=css('--ink'); g.setLineDash([3,3]); g.lineWidth=1;
+      g.beginPath(); g.moveTo(x,oy-6); g.lineTo(x,oy+6*gapy-2); g.stroke(); g.setLineDash([]);
+      capt(g,'рівномірно було б тут',x+6,oy+6*gapy+14,css('--soft'),10);
+    }
+
+    /* три зерна окремо */
+    var sx=W-256, sw=230;
+    capt(g,'ТРИ ЗЕРНА ОКРЕМО',sx,30,css('--soft'),10,true);
+    if(pick<6){
+      var seeds=D.cond[pick].seeds;
+      for(i=0;i<3;i++){
+        y=oy+i*gapy;
+        g.fillStyle=css('--hair'); g.fillRect(sx,y,sw,bh);
+        g.fillStyle=css('--rose'); g.fillRect(sx,y,sw*seeds[i],bh);
+        capt(g,'зерно '+i+'   '+f4(seeds[i]), sx+8, y+18, css('--ink'), 11);
+      }
+      capt(g,'розкид ±'+f4(D.cond[pick].sd), sx, oy+3*gapy+16, css('--soft'), 11);
+    }else{
+      capt(g,'без умови зерна не порівнюємо:', sx, oy+14, css('--soft'), 11);
+      capt(g,'тут показано розкладку зерна 0', sx, oy+32, css('--soft'), 11);
+      capt(g,'класів із часткою ≥ 5 %: '+D.uncondClasses, sx, oy+56, css('--ink'), 12, true);
+    }
+
+    if(pick<6){
+      I('cd1').textContent=f4(D.cond[pick].hit);
+      I('cd2').textContent=f2(D.cond[pick].hit/Math.max(D.uncond[pick],1e-6))+'×';
+      I('cd3').textContent=D.cond[pick].seeds.map(f3).join('  ')+'   (±'+
+                           f4(D.cond[pick].sd)+')';
+      var h=D.cond[pick].hit, lift=h/Math.max(D.uncond[pick],1e-6);
+      if(lift>=1.5)
+        verd('cdVd','t-ok','УМОВА ПРАЦЮЄ НА ЦЬОМУ КЛАСІ',
+          'Без умови модель малює «'+SHAPE_NAMES[pick]+'» у '+f3(D.uncond[pick])+
+          ' випадків, на замовлення — у '+f4(h)+'. Підйом '+f2(lift)+
+          '×: умова справді зсуває розподіл.');
+      else if(lift>=1.15)
+        verd('cdVd','t-mid','ЗСУВ Є, АЛЕ СЛАБКИЙ',
+          'Без умови '+f3(D.uncond[pick])+', на замовлення '+f4(h)+
+          ' — підйом лише '+f2(lift)+'×. Механізм працює, але наша модель '+
+          'заслабка, щоб ним скористатись.');
+      else
+        verd('cdVd','t-no','НА ЦЬОМУ КЛАСІ УМОВА НЕ ЧУТНА',
+          'Без умови '+f3(D.uncond[pick])+', на замовлення '+f4(h)+', підйом '+
+          f2(lift)+'×. Модель малює приблизно те саме, просили ми її чи ні.');
+    }else{
+      I('cd1').textContent='—';
+      I('cd2').textContent='—';
+      I('cd3').textContent=D.uncond.map(f2).join(' ');
+      verd('cdVd','t-mid','БЕЗ УМОВИ',
+        'Модель малює те, що їй легше: частки класів '+D.uncond.map(f2).join(', ')+
+        ' замість рівних 0.17. Класів із часткою ≥ 5 %: '+D.uncondClasses+
+        ' із шести. Порівняй із будь-яким замовленням поруч.');
+    }
+  }
+  segment('segCond', function(i){ pick=i; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+})();
+</script>
+</body>
+</html>

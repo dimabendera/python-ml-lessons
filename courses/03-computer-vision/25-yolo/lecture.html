@@ -1,0 +1,1823 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YOLO: детекція як регресія за один прохід</title>
+<meta name="description" content="Одноетапна детекція від постановки до чисел. Сітка S×S і правило «клітинка відповідає за предмет, чий центр у ній»; розмір виходу S×S×(B·5+C) — 1470 чисел у YOLOv1 проти 832 у нашій мережі; координати відносно клітинки з кільцевою перевіркою кодування й декодування; корінь із ширини робить штраф на рамці 20 px у 9.03 раза більшим, ніж на 200 px; впевненість як P(предмет)×IoU; розкладка втрати, у якій фон важить 92.3 %; головний замір — сітка 4×4 губить 8.95 % предметів щільної сцени назавжди; один прохід за 1.43 мс проти 26.4 мс на ста кандидат-областях тим самим тілом.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+/* лістинг коду в бічній панелі інтерактиву */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:12.5px; line-height:1.55;
+  background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+  padding:9px 8px; margin-bottom:13px; overflow-x:auto;
+}
+.code div{padding:1px 6px; border-radius:4px; color:var(--soft); white-space:pre}
+.code div.done{color:var(--ink)}
+.code div.on{background:var(--rose-w); color:var(--ink); font-weight:700}
+.code.tight{font-size:11px}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style>
+<style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .topnav a, .pager .dir, .step .dl, .ctl .cap,
+.nums td, .nums th, .nums td:first-child, .plain td:first-child{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:nowrap;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.sumrow td{border-top:1.5px solid var(--hair); font-weight:700; color:var(--ink)}
+.nums tr.sumrow td:first-child{color:var(--soft)}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* заголовок теми короткий, але кегль великий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+</style>
+
+</head>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Компʼютерний зір · Блок 5 · Тема 25</p>
+    <h1>YOLO</h1>
+    <p class="stand">Двоетапний детектор питає двічі: спершу «де тут може бути
+      предмет», потім «що це». YOLO питає інакше — і відповідає на все одразу,
+      одним проходом мережі. Це не прискорена стара схема, а інша постановка
+      задачі. За неї доводиться платити, і в цій темі ми порахуємо, скільки саме.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Інша постановка</a></li>
+        <li><a href="#s2">Сітка ділить відповідальність</a></li>
+        <li><a href="#s3">Що передбачає клітинка</a></li>
+        <li><a href="#s4">Координати відносно клітинки</a></li>
+        <li><a href="#s5">Корінь із ширини й висоти</a></li>
+        <li><a href="#s6">Впевненість</a></li>
+        <li><a href="#s7">Функція втрати</a></li>
+        <li><a href="#s8">Обмеження сітки</a></li>
+        <li><a href="#s9">Дві рамки на клітинку</a></li>
+        <li><a href="#s10">Швидкість</a></li>
+        <li><a href="#s11">Як YOLO розвивалась</a></li>
+        <li><a href="#s12">Що з неї лишилось</a></li>
+        <li><a href="#s13">Підсумок і місток далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../24-two-stage/lecture.html">← 24. Двоетапні детектори</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../26-one-stage/lecture.html">26. Одноетапні: focal loss і anchor-free →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Двоетапний детектор із <a href="../24-two-stage/lecture.html">попередньої
+теми</a> влаштований як конвеєр: спершу окремий механізм пропонує місця, де щось
+може бути, потім кожне запропоноване місце окремо класифікується. Схема працює,
+дає високу якість — і має вбудовану ваду. Вона робить дві різні роботи двома
+різними частинами, і жодна з них не бачить картинку цілком. У 2016 році вийшла
+робота з назвою, що звучала як гасло: <b>You Only Look Once</b>, «дивишся лише
+раз». Ідея всередині була не про швидкість. Вона була про те, що детекцію можна
+не збирати з двох задач, а поставити як <b>одну</b> — і розвʼязувати одним
+проходом мережі.</p>
+
+<h2 id="s1"><span class="num">01 / Постановка</span>Інша постановка, а не швидший конвеєр</h2>
+
+<p>Спершу згадаймо, як виглядає двоетапна схема. Є механізм кандидат-областей: він
+дивиться на зображення й видає кілька сотень або тисяч прямокутників, у яких
+<b>може</b> щось бути. Далі кожен такий прямокутник вирізається з карти ознак,
+приводиться до однакового розміру й подається в голову, яка каже, що там за клас
+і як підправити рамку. Дві частини, два навчання, два набори гіперпараметрів.</p>
+
+<p>Тепер поставимо питання інакше. Уяви, що ти не шукаєш кандидатів, а просто
+<b>заповнюєш анкету</b> фіксованого розміру. Анкета розбита на клітинки — скажімо,
+сім на сім. У кожній клітинці кілька рядків: де центр предмета, який його розмір,
+наскільки я в цьому впевнений і що це за клас. Мережа дивиться на зображення один
+раз і заповнює всю анкету одразу. Ніяких кандидат-областей, ніякого вирізання, ніякого
+другого проходу.</p>
+
+<p>Це і є одноетапна детекція. Формально: <b>детекція як регресія</b>. Вхід —
+зображення, вихід — один тензор фіксованої форми, і між ними одна мережа. Не
+«знайти, потім класифікувати», а «одразу передбачити все».</p>
+
+<div class="note">
+  <b>Чому це принципово, а не косметично.</b> У двоетапній схемі перший етап
+  вирішує, що взагалі буде розглянуто. Якщо кандидат-область не зʼявилась — жодна
+  класифікація вже не допоможе. В одноетапній схемі такого фільтра немає: усі
+  місця розглядаються завжди. Натомість зʼявляється інше обмеження, і воно
+  вбудоване в саму сітку. Про нього — розділ 08, і це найчесніша частина теми.
+</div>
+
+<p>Побічний наслідок постановки — швидкість, і саме він зробив YOLO знаменитою.
+Але швидкість тут <b>наслідок</b>, а не мета. Мета — прибрати проміжну сутність
+під назвою «кандидат-область» й навчати все наскрізно, однією втратою.</p>
+
+<h2 id="s2"><span class="num">02 / Сітка</span>Сітка ділить відповідальність</h2>
+
+<p>Щойно ми сказали «анкета з клітинок», зʼявилось питання: а хто заповнює яку
+клітинку? Якщо на зображенні три предмети, а клітинок сорок девʼять, треба якесь
+правило, інакше всі клітинки почнуть описувати найпомітніший предмет.</p>
+
+<p>Правило YOLO коротке до непристойності. Розділимо зображення на сітку
+<code>S × S</code>. <b>Клітинка відповідає за предмет, чий центр у неї
+потрапив.</b> Не «перетинається з рамкою», не «лежить усередині рамки» — саме
+центр. Предмет може бути втричі більший за клітинку й накривати половину кадру;
+відповідає за нього одна-єдина клітинка, у якій опинилась його середина.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · знайти центр</span>
+    <p>Рамка задана кутами <code>x1, y1, x2, y2</code>. Центр — середина по
+    кожній осі.</p>
+    <div class="eq">cx = (x1 + x2) ÷ 2 &nbsp;&nbsp; cy = (y1 + y2) ÷ 2</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · знайти клітинку</span>
+    <p>Сторона клітинки — це розмір зображення, поділений на <code>S</code>. Номер
+    клітинки — це ціла частина від ділення координати на сторону клітинки. Знак
+    <span class="raw">⌊ ⌋</span> означає «відкинути дробову частину».</p>
+    <div class="eq">cell = SIZE ÷ S &nbsp;&nbsp; col = ⌊cx ÷ cell⌋ &nbsp;&nbsp; row = ⌊cy ÷ cell⌋</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · порахувати на числах</span>
+    <p>Наше полотно — 64 пікселі, сітка 8 на 8, тобто клітинка 8 пікселів. Нехай
+    центр предмета в точці (46.5, 19.5). Тоді <code>col = ⌊46.5 ÷ 8⌋ = 5</code>
+    і <code>row = ⌊19.5 ÷ 8⌋ = 2</code>. Відповідає клітинка в рядку 2, стовпці 5.
+    Це число надрукує зошит на справжній сцені.</p>
+  </div>
+</div>
+
+<p>Уся простота правила окупається двічі. По-перше, воно не потребує жодного
+навчання: центр або в клітинці, або ні. По-друге, воно робить ціль
+<b>однозначною</b> — для кожного предмета є рівно один правильний адресат, тож
+мережа не отримує суперечливих сигналів від сусідніх клітинок. Порівняй із
+детектором <a href="../23-detection-setup/lecture.html">теми 23</a>: там
+позитивною була <b>кожна</b> клітинка, чий центр опинився всередині рамки, і на
+один предмет припадало по чотири-пʼять клітинок. Це теж працює, але й дублікатів
+породжує вчетверо більше.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Сітка й відповідальність</p>
+  <p class="fig-sub">Сцена 64×64 з предметами. Повзунок міняє густину сітки:
+    видно, як разом із нею змінюється те, яка саме клітинка відповідає за який
+    предмет. Лінія веде від центра предмета до його клітинки.</p>
+  <div class="panel">
+    <div><canvas id="cGrid" width="940" height="430" aria-label="Сцена з фігурами, накрита сіткою; підсвічені клітинки, відповідальні за кожен предмет"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="sGrid">сітка S <output id="sGridv">8</output></label>
+        <input type="range" id="sGrid" min="2" max="16" step="1" value="8">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>клітинок</b><i id="gCells">—</i></div>
+        <div class="cellv"><b>сторона</b><i id="gSide">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>предметів</b><i id="gObj">—</i></div>
+        <div class="cellv"><b>у цілі</b><i id="gIn">—</i></div>
+      </div>
+      <button id="gNext" type="button">інша сцена</button>
+      <div class="verdict" id="gVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Сітка — це не розрізання зображення.</b> Мережа однаково бачить
+    увесь кадр: сітка живе тільки у вихідному тензорі й каже, хто за що звітує.
+    Тому предмет, більший за клітинку, чудово описується — рамка не обмежена
+    межами клітинки, обмежений лише <b>центр</b>.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">03 / Вихід</span>Що передбачає клітинка</h2>
+
+<p>Тепер запишемо анкету точно. Кожна клітинка передбачає <code>B</code> рамок і
+<code>C</code> чисел класів. Кожна рамка — це пʼять чисел: <code>x</code>,
+<code>y</code>, <code>w</code>, <code>h</code> і впевненість. Класи —
+<b>одні на всю клітинку</b>, не на кожну рамку окремо; це особливість першої
+YOLO, і в розділі 11 ми побачимо, як від неї відмовились.</p>
+
+<div class="eq">розмір виходу = S × S × (B · 5 + C)</div>
+
+<p>Прочитаймо формулу словами. <code>S × S</code> — скільки клітинок. Множник
+<code>5</code> — це чотири числа рамки плюс одне число впевненості.
+<code>B · 5</code> — усе, що клітинка каже про свої рамки. Плюс <code>C</code> —
+по одному числу на клас. Глибина не залежить від того, скільки предметів у кадрі:
+вихід має <b>фіксований розмір завжди</b>, і в цьому вся суть постановки.</p>
+
+<p>Підставимо числа першої YOLO: сітка 7 на 7, дві рамки на клітинку, двадцять
+класів набору Pascal VOC.</p>
+
+<div class="eq">7 × 7 × (2 · 5 + 20) = 7 × 7 × 30 = 1470</div>
+
+<p>Тисяча чотириста сімдесят чисел — уся відповідь мережі на зображення. Для
+порівняння, наша навчальна мережа працює на сітці 8 на 8 із трьома класами:
+<code>8 × 8 × 13 = 832</code> числа. Обидва числа друкує зошит.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Структура виходу</p>
+  <p class="fig-sub">Три повзунки задають сітку, кількість рамок на клітинку й
+    кількість класів. Угорі — вміст однієї клітинки по числах, унизу — весь
+    тензор і його розмір.</p>
+  <div class="panel">
+    <div><canvas id="cOut" width="940" height="400" aria-label="Схема вихідного тензора: смуга чисел однієї клітинки й брусок усього тензора"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="oS">сітка S <output id="oSv">7</output></label>
+        <input type="range" id="oS" min="2" max="16" step="1" value="7">
+      </div>
+      <div class="ctl">
+        <label for="oB">рамок на клітинку B <output id="oBv">2</output></label>
+        <input type="range" id="oB" min="1" max="5" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="oC">класів C <output id="oCv">20</output></label>
+        <input type="range" id="oC" min="1" max="20" step="1" value="20">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>глибина</b><i id="oDepth">—</i></div>
+        <div class="cellv"><b>рамок усього</b><i id="oBoxes">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>чисел на зображення</b><i id="oTotal">—</i></div>
+      </div>
+      <div class="verdict" id="oVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Густіша сітка коштує дешевше, ніж здається.</b> Додати клітинок —
+    це збільшити два перші виміри; глибина лишається та сама, бо голова
+    застосовується до кожної клітинки однаково. Додати рамку на клітинку — це +5
+    до глибини, тобто +5 на кожну клітинку одразу.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Координати</span>Координати відносно клітинки</h2>
+
+<p>Тут ховається деталь, повз яку легко пройти, а вона визначає, чи мережа взагалі
+навчиться. Числа <code>x</code> і <code>y</code> — це <b>не</b> координати в
+пікселях. Це положення центра <b>всередині своєї клітинки</b>: нуль — лівий
+верхній кут клітинки, одиниця — правий нижній. А <code>w</code> і <code>h</code> —
+навпаки, частки від <b>усього зображення</b>.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>число</th><th>відносно чого</th><th>діапазон</th><th>чому саме так</th></tr>
+  <tr><td>x, y</td><td>своєї клітинки</td><td>0…1</td><td>голова однакова для всіх клітинок і не знає своїх координат</td></tr>
+  <tr><td>w, h</td><td>усього зображення</td><td>0…1</td><td>предмет буває більший за клітинку, тож у межах клітинки розмір не запишеш</td></tr>
+</table></div>
+
+<p>Друге пояснення варте окремого абзацу. Голова YOLO — це згортка 1×1: одні й ті
+самі ваги проходять по всіх клітинках. Така голова <b>не має способу дізнатись</b>,
+у якій клітинці вона зараз працює. Якби ми вимагали від неї абсолютну координату в
+пікселях, їй довелося б вивчити сорок девʼять різних відповідей на однаковий вхід —
+задача без розвʼязку. Вимагаючи зсув усередині клітинки, ми робимо задачу
+однаковою скрізь: «наскільки центр зміщений від лівого краю моєї клітинки».
+Номер клітинки додається вже після мережі, під час декодування.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">кодування · із пікселів у числа мережі</span>
+    <div class="eq left">col = ⌊cx ÷ cell⌋       row = ⌊cy ÷ cell⌋
+x = cx ÷ cell − col     y = cy ÷ cell − row
+w = ширина ÷ SIZE       h = висота ÷ SIZE</div>
+  </div>
+  <div class="step">
+    <span class="lbl">декодування · назад у пікселі</span>
+    <div class="eq left">cx = (col + x) · cell   cy = (row + y) · cell
+ширина = w · SIZE       висота = h · SIZE</div>
+    <p>Дві формули обертають одна одну. Зошит перевіряє це не на слово: кодує всі
+    247 істинних рамок перевірного набору, одразу декодує назад і порівнює.
+    Найбільше розходження — <code>9.5 · 10⁻⁷</code> пікселя, тобто чиста похибка
+    округлення <code>float32</code>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">приклад руками</span>
+    <p>Клітинка в рядку 3, стовпці 5, сторона клітинки 8 пікселів. Мережа видала
+    <code>x = 0.25</code>, <code>y = 0.75</code>. Тоді центр по горизонталі —
+    <code>(5 + 0.25) · 8 = 42.0</code>, по вертикалі — <code>(3 + 0.75) · 8 = 30.0</code>.
+    Це саме те число, яке друкує зошит.</p>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Координати: що саме передбачає мережа</p>
+  <p class="fig-sub">Рухай рамку по сцені 64×64 й міняй її розмір. Праворуч —
+    чотири числа, які мережа мусить видати для цієї рамки, і клітинка, від якої
+    вони рахуються.</p>
+  <div class="panel">
+    <div><canvas id="cCoord" width="940" height="430" aria-label="Сцена з сіткою й рухомою рамкою; підсвічена відповідальна клітинка й розкладені чотири числа цілі"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="ccx">центр по x <output id="ccxv">42</output></label>
+        <input type="range" id="ccx" min="6" max="58" step="1" value="42">
+      </div>
+      <div class="ctl">
+        <label for="ccy">центр по y <output id="ccyv">30</output></label>
+        <input type="range" id="ccy" min="6" max="58" step="1" value="30">
+      </div>
+      <div class="ctl">
+        <label for="ccw">ширина <output id="ccwv">16</output></label>
+        <input type="range" id="ccw" min="6" max="48" step="1" value="16">
+      </div>
+      <div class="ctl">
+        <label for="cch">висота <output id="cchv">23</output></label>
+        <input type="range" id="cch" min="6" max="48" step="1" value="23">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>клітинка</b><i id="ccCell">—</i></div>
+        <div class="cellv"><b>x, y у клітинці</b><i id="ccXY">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>w, h від кадру</b><i id="ccWH">—</i></div>
+        <div class="cellv"><b>корені</b><i id="ccRt">—</i></div>
+      </div>
+      <div class="verdict" id="ccVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Рамка вільно виходить за межі своєї клітинки.</b> Клітинка
+    обмежує лише те, де може бути <b>центр</b>: як тільки центр переїжджає межу,
+    відповідальність миттєво переходить сусідці, і чотири числа перераховуються
+    від нової точки відліку.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">05 / Корінь</span>Корінь із ширини й висоти</h2>
+
+<p>У попередній таблиці <code>w</code> і <code>h</code> були просто частками від
+розміру зображення. Насправді рання YOLO регресує не їх, а <b>корені</b>:
+<code>√w</code> замість <code>w</code>. Виглядає як довільна витівка. Насправді це
+виправлення цілком конкретної несправедливості.</p>
+
+<p>Уяви дві рамки: одна шириною 20 пікселів, друга — 200. Мережа обидві промахнула
+на 5 пікселів. Квадратична помилка каже, що це однакова біда: <code>5² = 25</code>
+в обох випадках. А тепер подивись на IoU — метрику, заради якої все й робиться.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>ширина рамки</th><th>(Δw)²</th><th>(Δ√w)²</th><th>IoU при похибці 5 px</th></tr>
+  <tr class="hot"><td>20 px</td><td>25.0</td><td>0.27864</td><td>0.6400</td></tr>
+  <tr><td>50 px</td><td>25.0</td><td>0.11912</td><td>0.8264</td></tr>
+  <tr><td>100 px</td><td>25.0</td><td>0.06098</td><td>0.9070</td></tr>
+  <tr class="hot"><td>200 px</td><td>25.0</td><td>0.03087</td><td>0.9518</td></tr>
+</table></div>
+
+<p>Читаємо середню колонку проти правої. Без кореня штраф на рамці 20 пікселів і
+на рамці 200 пікселів однаковий — відношення рівно <code>1 : 1</code>. А шкода
+різна: у першому випадку IoU падає до <b>0.64</b>, у другому лишається
+<b>0.95</b>, тобто помилки практично не видно. З коренем відношення штрафів стає
+<b>9.03 : 1</b> — маленька рамка кричить у девʼять разів голосніше за велику,
+приблизно так само, як кричить IoU.</p>
+
+<div class="note">
+  <b>Чому саме корінь, а не щось точніше.</b> Корінь не виводиться з IoU — його
+  ніхто не оптимізував під метрику. Це найдешевша монотонна функція, яка стискає
+  великі значення сильніше за малі, і в статті вона так і названа частковим
+  розвʼязком. Пізніші версії пішли далі: замість підганяти штраф під IoU вони
+  почали <b>оптимізувати сам IoU</b> — про це в розділі 11.
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Що робить корінь зі штрафом</p>
+  <p class="fig-sub">Перемикач обирає, що саме регресує мережа: сиру ширину чи
+    корінь із неї. Повзунок задає похибку в пікселях. Стовпчики показують штраф
+    для рамок різного розміру, зведений до найменшої.</p>
+  <div class="panel">
+    <div><canvas id="cRoot" width="940" height="400" aria-label="Дві рамки різного розміру з однаковою похибкою й стовпчики штрафів під двома режимами"></canvas></div>
+    <div>
+      <div class="ctl">
+        <span class="cap">що регресуємо</span>
+        <div class="seg" id="segRoot">
+          <button type="button" data-i="0" aria-pressed="false">ширину w</button>
+          <button type="button" data-i="1" aria-pressed="true">корінь із w</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="eRoot">похибка, px <output id="eRootv">5</output></label>
+        <input type="range" id="eRoot" min="1" max="20" step="1" value="5">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>штраф, 20 px</b><i id="rSmall">—</i></div>
+        <div class="cellv"><b>штраф, 200 px</b><i id="rBig">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>відношення</b><i id="rRatio">—</i></div>
+        <div class="cellv"><b>IoU, 20 / 200</b><i id="rIou">—</i></div>
+      </div>
+      <div class="verdict" id="rVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Стовпчики зведено до найменшої рамки.</b> У режимі сирої ширини
+    всі чотири однакової висоти — метриці байдуже, велику рамку зіпсували чи
+    малу. У режимі кореня стовпчики спадають, і спадають приблизно так само, як
+    росте IoU на табло праворуч.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Впевненість</span>Впевненість — це не ймовірність класу</h2>
+
+<p>Пʼяте число рамки зветься впевненістю (confidence), і його зміст у YOLO
+незвичний. Це <b>не</b> «ймовірність, що тут кіт». Це добуток двох речей:</p>
+
+<div class="eq">впевненість = P(предмет є) × IoU(моя рамка, істинна рамка)</div>
+
+<p>Перший множник — «чи тут узагалі щось є». Другий — «наскільки добре я поставив
+рамку». Перемножені, вони дають одне число, яке відповідає на питання «наскільки
+корисне це передбачення». Якщо предмета немає, впевненість має бути нулем. Якщо
+предмет є, але рамка поставлена криво, впевненість має бути невеликою — навіть
+попри те, що предмет справді там.</p>
+
+<p>Найдивніше тут — що <b>ціллю для навчання є сам IoU</b>. Не одиниця, а
+фактичне значення перекриття, яке ця рамка щойно дала. Мережу вчать передбачати
+власну якість: «ось моя рамка, і ось наскільки, на мою думку, вона влучна».</p>
+
+<div class="note">
+  <b>Навіщо це, якщо є ймовірності класів.</b> Ймовірність класу відповідає на
+  питання «що це, <b>якщо</b> тут щось є» — вона умовна. Впевненість відповідає
+  на питання «чи є». Перемножені, вони дають остаточну оцінку рамки:
+  <code>оцінка = впевненість × P(клас | предмет)</code>. Саме ця оцінка йде
+  в <a href="../23-detection-setup/lecture.html">NMS</a> і в криву
+  точність-повнота. Розділення не косметичне: клітинка, яка впевнена, що предмет
+  є, але не знає, кіт це чи собака, поводиться інакше, ніж клітинка, яка нічого
+  не бачить.
+</div>
+
+<h2 id="s7"><span class="num">07 / Втрата</span>Функція втрати та її ваги</h2>
+
+<p>Тепер зберемо все в одну втрату. Вона складається з чотирьох доданків, і
+головне в ній — <b>де саме кожен доданок рахується</b>. Не по всій сітці, а
+кожен по своїй частині.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>доданок</th><th>де рахується</th><th>вага</th></tr>
+  <tr><td>x, y</td><td>тільки у відповідальної рамки</td><td>λ_coord</td></tr>
+  <tr><td>√w, √h</td><td>тільки у відповідальної рамки</td><td>λ_coord</td></tr>
+  <tr><td>впевненість, коли предмет є</td><td>тільки у відповідальної рамки</td><td>1</td></tr>
+  <tr><td>впевненість, коли предмета немає</td><td>у всіх інших рамок</td><td>λ_noobj</td></tr>
+  <tr><td>класи</td><td>у клітинок із предметом</td><td>1</td></tr>
+</table></div>
+
+<p>Усі доданки — квадрати різниць, підсумовані. Це найпростіша можлива втрата, і
+автори прямо визнають, що обрали її за легкість оптимізації, а не за
+правильність: вона однаково важить помилку локалізації й помилку класифікації,
+хоча оптимізуємо ми зовсім не це.</p>
+
+<h3>Звідки взялися дві дивні ваги</h3>
+
+<p>Порахуймо, скільки в сітці рамок і скільки з них про щось звітують. У нашій
+мережі 8 × 8 клітинок по 2 рамки — це <b>128 рамок на сцену</b>. Предметів у
+сцені один-три, тобто відповідальних рамок у середньому <b>2.05</b>. Решта 126 —
+фон, який має сказати «мене немає».</p>
+
+<p>Якщо всі доданки важать однаково, сума по 126 фонових рамках просто задавить
+суму по двох відповідальних. Це не здогад — зошит рахує розкладку втрати
+<b>до будь-якого навчання</b>, на свіжій мережі:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>ваги</th><th>координати</th><th>предмет є</th><th>фон</th><th>класи</th><th>разом</th></tr>
+  <tr><td>1 і 1</td><td>0.485</td><td>0.110</td><td>25.915</td><td>1.551</td><td>28.062</td></tr>
+  <tr class="sumrow"><td>частки</td><td>1.7 %</td><td>0.4 %</td><td>92.3 %</td><td>5.5 %</td><td>100 %</td></tr>
+  <tr><td>5 і 0.5</td><td>2.426</td><td>0.110</td><td>12.958</td><td>1.551</td><td>17.045</td></tr>
+  <tr class="sumrow"><td>частки</td><td>14.2 %</td><td>0.6 %</td><td>76.0 %</td><td>9.1 %</td><td>100 %</td></tr>
+</table></div>
+
+<p>З рівними вагами <b>92.3 %</b> усієї втрати — це крик фону. Градієнт майже
+цілком складається з вимоги «мовчи», а на координати припадає <b>1.7 %</b>.
+Мережі буквально вигідніше не побачити нічого, ніж навчитися ставити рамку.
+Канонічні ваги першої YOLO — <code>λ_coord = 5</code> і
+<code>λ_noobj = 0.5</code> — піднімають координати вдесятеро відносно фону: частка
+координат росте до 14.2 %, частка фону падає до 76.0 %.</p>
+
+<div class="note warn">
+  <b>Чесний результат заміру, який не підтвердив очікування.</b> Ми навчили
+  обидві настройки по три зерна. Канонічні ваги дали середній
+  <code>mAP@0.5 = 0.9761</code>, рівні — <code>0.9714</code>. Різниця
+  <b>0.0047</b>, а розкид усередині однієї настройки сягає <b>0.0141</b> — тобто
+  різниця тоне в шумі, і на двох зернах із трьох канонічні ваги виграли, а на
+  третьому програли. <b>На нашому датасеті ваги не вирішують нічого.</b> Наші
+  сцени занадто легкі: три великі предмети на порожньому полотні, мережа
+  виїжджає й із поганим балансом. Не переноси цей результат на справжні дані —
+  переноси метод: перш ніж вірити в гіперпараметр, поміряй його на трьох зернах
+  і порівняй виграш із розкидом.
+</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Ваги втрати</p>
+  <p class="fig-sub">Два повзунки міняють ваги. Стовпчики — фактичні складники
+    втрати свіжої мережі на нашій партії; числа під ними — те саме у відсотках.
+    Дві точки, які ми справді навчили, підписані заміряним mAP.</p>
+  <div class="panel">
+    <div><canvas id="cLoss" width="940" height="400" aria-label="Стовпчики чотирьох складників втрати YOLO з підписаними частками"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="lamC">вага координат <span class="raw">λ_coord</span> <output id="lamCv">5.0</output></label>
+        <input type="range" id="lamC" min="0" max="10" step="0.5" value="5">
+      </div>
+      <div class="ctl">
+        <label for="lamN">вага фону <span class="raw">λ_noobj</span> <output id="lamNv">0.5</output></label>
+        <input type="range" id="lamN" min="0" max="3" step="0.1" value="0.5">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>частка фону</b><i id="lBg">—</i></div>
+        <div class="cellv"><b>частка координат</b><i id="lCo">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>сума втрати</b><i id="lSum">—</i></div>
+      </div>
+      <button id="lReset" type="button">канонічні 5 і 0.5</button>
+      <div class="verdict" id="lVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Ваги не міняють, що мережа рахує — вони міняють, на що вона
+    дивиться.</b> Сирі суми складників тут фіксовані, це заміряні числа свіжої
+    мережі; повзунки лише перерозподіляють увагу між ними. Крайні положення
+    ламають навчання з обох боків: при нульовій вазі фону мережа не має жодної
+    причини мовчати там, де порожньо.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Межа</span>Обмеження сітки: чого YOLO не бачить у принципі</h2>
+
+<p>Настав час чесної частини. Правило «клітинка відповідає за предмет, чий центр
+у ній» має зворотний бік: <b>клітинка відповідає щонайбільше за один предмет</b>.
+Якщо центри двох предметів упали в одну клітинку, другий предмет просто <b>не
+потрапляє в ціль</b>. Мережа ніколи не отримає за нього градієнта й ніколи не
+навчиться його бачити. Це не поганий поріг, не брак даних і не помилка
+навчання — це властивість постановки.</p>
+
+<p>Порахуємо, скільки це коштує. Зошит бере по тисячі сцен двох видів — рідкі
+(один-три великі предмети) і щільні (чотири-шість дрібніших) — і рахує, скільки
+предметів губиться.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>сітка S</th><th>клітинка</th><th>рідкі: втрачено</th><th>щільні: втрачено</th><th>щільні: зіпсовано сцен</th></tr>
+  <tr class="hot"><td>4 × 4</td><td>16.0 px</td><td>2.45 %</td><td>8.95 %</td><td>39.2 %</td></tr>
+  <tr><td>7 × 7</td><td>9.1 px</td><td>0.45 %</td><td>1.71 %</td><td>8.3 %</td></tr>
+  <tr><td>8 × 8</td><td>8.0 px</td><td>0.30 %</td><td>1.30 %</td><td>6.4 %</td></tr>
+  <tr><td>13 × 13</td><td>4.9 px</td><td>0.10 %</td><td>0.12 %</td><td>0.6 %</td></tr>
+</table></div>
+
+<p>Головне число тут — <b>8.95 %</b>. На сітці 4 × 4 щільна сцена втрачає кожен
+одинадцятий предмет, а зіпсовано виявляється <b>39.2 %</b> усіх сцен: у чотирьох
+із десяти кадрів мережа фізично не може знайти все. Дрібніша сітка лікує це
+швидко: на 13 × 13 втрата падає до 0.12 %.</p>
+
+<p>Наші сцени рідкі, і на них ефект малий — це теж треба сказати прямо. Але
+справжня фотографія так себе не поводить. Чого чекати на щільній сцені, можна
+порахувати не генеруючи її. Задача та сама, що у відомому «парадоксі днів
+народження»: якщо <code>k</code> предметів розкидати по <code>n = S²</code>
+клітинках навмання, імовірність, що хоча б двоє попадуть в одну, дорівнює
+одиниці мінус добуток спадних часток.</p>
+
+<div class="eq left">P(зіткнення) = 1 − (n ÷ n) · ((n−1) ÷ n) · … · ((n−k+1) ÷ n)</div>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>предметів</th><th>S = 4 (16 кл.)</th><th>S = 7 (49)</th><th>S = 8 (64)</th><th>S = 13 (169)</th></tr>
+  <tr><td>3</td><td>18.0 %</td><td>6.0 %</td><td>4.6 %</td><td>1.8 %</td></tr>
+  <tr><td>5</td><td>50.0 %</td><td>19.0 %</td><td>14.8 %</td><td>5.8 %</td></tr>
+  <tr><td>10</td><td>97.4 %</td><td>62.6 %</td><td>52.3 %</td><td>23.8 %</td></tr>
+  <tr class="hot"><td>20</td><td>100.0 %</td><td>98.9 %</td><td>96.4 %</td><td>69.0 %</td></tr>
+</table></div>
+
+<p>Ось відповідь на питання, чому першу YOLO лаяли за дрібні предмети. На
+фотографії з двома десятками обʼєктів сітка 7 × 7 майже напевно щось загубить —
+<b>98.9 %</b> імовірності зіткнення. У статті це визнано прямо: модель погано
+працює з дрібними предметами, що зʼявляються групами, і як приклад названо зграю
+птахів. Оцінка вище — верхня: справжні предмети розкидані не зовсім рівномірно,
+але напрямок вона показує без помилки.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Конфлікт у клітинці</p>
+  <p class="fig-sub">Головний замір теми. Ліворуч — одна сцена: предмети, чиї
+    центри зіткнулись, перекреслені. Праворуч — стовпчики втрати по всіх сітках,
+    порахованої тут же на 300 сценах. Другий повзунок міняє щільність сцени.</p>
+  <div class="panel">
+    <div><canvas id="cClash" width="940" height="440" aria-label="Сцена з конфліктами центрів і стовпчики частки втрачених предметів для різних сіток"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="sClash">сітка S <output id="sClashv">7</output></label>
+        <input type="range" id="sClash" min="2" max="16" step="1" value="7">
+      </div>
+      <div class="ctl">
+        <label for="kClash">предметів у сцені <output id="kClashv">8</output></label>
+        <input type="range" id="kClash" min="2" max="20" step="1" value="8">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>предметів усього</b><i id="clAll">—</i></div>
+        <div class="cellv"><b>втрачено</b><i id="clLost">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>частка втрати</b><i id="clPct">—</i></div>
+        <div class="cellv"><b>зіпсовано сцен</b><i id="clSc">—</i></div>
+      </div>
+      <div class="verdict" id="clVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Перекреслені предмети не «погано знайдені» — їх немає в цілі
+    взагалі.</b> Скільки не навчай, скільки не знижуй поріг, ці рамки не зʼявляться:
+    мережа жодного разу не бачила за них градієнта. Тому головний важіль тут —
+    не навчання, а густина сітки.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / Дві рамки</span>Дві рамки на клітинку — і навіщо</h2>
+
+<p>Якщо клітинка однаково відповідає за один предмет, навіщо їй дві рамки? Не для
+двох предметів — для <b>спеціалізації за формою</b>.</p>
+
+<p>Під час навчання відповідальною призначається та з двох рамок, чий IoU з
+істинною рамкою більший <b>саме зараз</b>. Друга в цьому кроці не отримує
+градієнта по координатах узагалі. Через сотні кроків виходить розподіл праці: одна
+рамка поступово стає кращою на високих і вузьких предметах, друга — на широких і
+низьких. У статті це названо своїм іменем: кожен передбачувач стає кращим на
+певних розмірах, співвідношеннях сторін і класах, і від цього росте повнота.</p>
+
+<div class="note">
+  <b>Тонкість, яку легко проґавити.</b> Спеціалізація тут <b>ніде не задана</b>.
+  Ніхто не сказав рамці 0 бути вертикальною. Вона стає такою сама, бо кожен раз,
+  коли їй трапляється вертикальний предмет, вона трохи ближча до нього й тому
+  отримує градієнт. Це самопідсилення: невелика випадкова перевага на старті
+  перетворюється на стійку роль. Рівно та сама ідея, доведена до логічного кінця,
+  дасть у другій версії <b>якорі</b> — тільки там форми не виникають самі, а
+  задаються наперед.
+</div>
+
+<p>Ціна теж є, і вона видна в арифметиці розділу 03: кожна додаткова рамка додає
+пʼять чисел до глибини виходу для <b>кожної</b> клітинки. Дві рамки на сітці 7 × 7
+дають 98 рамок на зображення — саме стільки передбачала перша YOLO. Для порівняння,
+двоетапна схема розглядала кілька тисяч місць.</p>
+
+<h2 id="s10"><span class="num">10 / Швидкість</span>Швидкість: наслідок постановки</h2>
+
+<p>Тепер про те, за що YOLO запамʼятали. Одноетапна схема коштує <b>один</b> прохід
+мережі. Класична R-CNN проганяла мережу по кожній кандидат-області окремо. Порівняймо
+це чесно, у двох варіантах.</p>
+
+<p><b>Варіант перший — однакова ємність.</b> Беремо наше тіло мережі й міряємо
+його двічі: один прохід по цілій сцені 64 × 64 проти ста проходів по вирізаних
+кандидат-областях 32 × 32. Той самий код, ті самі ваги, різна лише постановка.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>схема</th><th>проходів по вмісту</th><th>час</th><th>відношення</th></tr>
+  <tr class="hot"><td>одноетапна</td><td>1</td><td>1.43 мс</td><td>1×</td></tr>
+  <tr><td>по 100 кандидат-областях</td><td>100</td><td>26.4 мс</td><td>18×</td></tr>
+</table></div>
+
+<div class="note warn">
+  <b>Ці мілісекунди — не константа світу.</b> Вони заміряні на чотирьох ядрах
+  без відеокарти й залежать від машини та від того, чим вона зайнята: у
+  сусідніх прогонах того самого зошита виходило від 1.41 до 1.43 мс і від 26.4
+  до 27.8 мс. Абсолютні числа плавають, стійке тут <b>відношення</b> — близько
+  вісімнадцяти-двадцяти разів. Запускаючи зошит у себе, звіряй саме його, а не
+  мілісекунди.
+</div>
+
+<p><b>Варіант другий — проти справжнього Faster R-CNN.</b> Будуємо
+<code>fasterrcnn_resnet50_fpn</code> без ваг і міряємо його прохід на тому самому
+вході: <b>177 мс</b> проти наших <b>1.43 мс</b>, тобто <b>124 рази</b>. Але тут
+треба сказати вголос: у цій моделі 41 362 531 параметр проти наших 61 421, тобто
+в <b>673 рази</b> більше. Більша частина розриву — це розмір моделі, а не
+постановка. Внесок самої постановки — це перша таблиця, вісімнадцять разів.</p>
+
+<h3>Швидша, але не краща</h3>
+
+<p>Ось те, чого не буває в рекламних графіках. Перша YOLO працювала на 45 кадрах
+за секунду й давала <b>63.4</b> mAP на Pascal VOC 2007. Faster R-CNN із тілом
+VGG-16 на тих самих даних давав <b>73.2</b> mAP — але на 7 кадрах за секунду.
+Полегшена Fast YOLO розганялась до 155 кадрів і падала до <b>52.7</b> mAP.
+<b>Це числа з оригінальної статті, наведені як цитата</b>, а не наш замір.</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th>модель (з літератури)</th><th>mAP, VOC 2007</th><th>кадрів за секунду</th></tr>
+  <tr><td>Fast YOLO</td><td>52.7</td><td>155</td></tr>
+  <tr class="hot"><td>YOLO</td><td>63.4</td><td>45</td></tr>
+  <tr><td>Fast R-CNN</td><td>70.0</td><td>0.5</td></tr>
+  <tr class="hot"><td>Faster R-CNN VGG-16</td><td>73.2</td><td>7</td></tr>
+</table></div>
+
+<p>Розрив у майже десять пунктів mAP — це не дрібниця. І він не рівномірний:
+розбір помилок у тій самій статті показав, що <b>помилок локалізації в YOLO
+більше, ніж усіх інших її помилок разом</b>, тоді як Fast R-CNN промахується
+рамкою значно рідше. Дзеркально: у Fast R-CNN <b>13.6 %</b> найкращих
+передбачень — це фон, у якому взагалі немає предмета, і за цим показником він
+приблизно <b>втричі</b> гірший за YOLO.</p>
+
+<p>Дві моделі помиляються по-різному, і це не риторична фігура: у статті їх
+поєднали — YOLO прибирала фонові спрацювання Fast R-CNN — і 71.8 mAP
+перетворилось на <b>75.0</b>. Одна модель відповідала за точність рамки, друга —
+за відсутність привидів.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Один прохід проти багатьох</p>
+  <p class="fig-sub">Повзунок задає, скільки кандидат-областей розглядає двоетапна схема.
+    Час порахований із наших замірів: 1.43 мс на прохід по цілій сцені й 0.264 мс
+    на одну кандидат-область тим самим тілом.</p>
+  <div class="panel">
+    <div><canvas id="cSpeed" width="940" height="380" aria-label="Дві горизонтальні смуги часу: один прохід проти багатьох проходів по кандидат-областях"></canvas></div>
+    <div>
+      <div class="ctl">
+        <label for="nProp">кандидат-областей <output id="nPropv">100</output></label>
+        <input type="range" id="nProp" min="10" max="300" step="10" value="100">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>одноетапна</b><i id="spOne">—</i></div>
+        <div class="cellv"><b>двоетапна</b><i id="spTwo">—</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>у скільки разів</b><i id="spRat">—</i></div>
+        <div class="cellv"><b>кадрів за секунду</b><i id="spFps">—</i></div>
+      </div>
+      <div class="verdict" id="spVd"></div>
+    </div>
+  </div>
+  <figcaption><b>Час одноетапної схеми — горизонтальна лінія.</b> Він не залежить
+    від кількості предметів у кадрі й від того, скільки місць варто було б
+    перевірити: прохід один завжди. Час двоетапної росте разом із кількістю
+    кандидат-областей, і саме цей нахил вирішує все.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Розвиток</span>Як YOLO розвивалась: що саме змінили</h2>
+
+<p>Далі — короткий огляд без наших замірів. Важливо не «стало краще», а що
+конкретно замінили.</p>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>версія</th><th>що саме змінилось</th></tr>
+  <tr><td>v1</td><td>сітка 7 × 7, дві рамки на клітинку, класи одні на клітинку, координати з повнозвʼязних шарів, втрата — сума квадратів</td></tr>
+  <tr><td>v2</td><td>прибрано повнозвʼязні шари, введено <b>якорі</b>; вхід 416 замість 448, щоб сітка вийшла 13 × 13 із непарним центром; форми якорів підібрані <b>k-середніми</b> по даних, а не руками; клас і обʼєктність передбачаються для кожного якоря окремо</td></tr>
+  <tr><td>v3</td><td><b>багатомасштабність</b>: передбачення на трьох рівнях різної роздільності, девʼять якорів розподілено по три на рівень; softmax по класах замінено на незалежні логістичні класифікатори, тобто предмет може мати кілька міток одночасно</td></tr>
+  <tr><td>v4, v5</td><td>інженерія без зміни постановки: інше тіло, інша шия, важка аугментація (зокрема мозаїка з чотирьох зображень), нові прийоми навчання</td></tr>
+  <tr><td>v6-v8</td><td><b>anchor-free</b>: якорі прибрано зовсім, клітинка знову передбачає рамку прямо; голова <b>розділена</b> на дві гілки — окрему для рамки й окрему для класів; замість фіксованого правила «центр у клітинці» — навчене призначення відповідальності</td></tr>
+</table></div>
+
+<h3>Два числа, які варто зіставити</h3>
+
+<p>Перехід до якорів у другій версії — рідкісний випадок, коли автори чесно
+показали, що метрика впала. Без якорів модель давала 69.5 mAP при повноті 81 %;
+із якорями — 69.2 mAP при повноті <b>88 %</b>. Точність трохи гірша, зате
+знайдено на сім пунктів більше предметів, і саме цей запас дозволив рости далі.
+<b>Числа цитовані зі статті про YOLOv2.</b></p>
+
+<p>А ось замір, який можна зробити самому й офлайн. Бібліотека
+<code>ultralytics</code> дозволяє зібрати архітектуру YOLOv8 без жодних ваг.
+Подивимось на її голову й порівняймо з першою версією:</p>
+
+<div class="scroll-x"><table class="nums">
+  <tr><th></th><th>YOLOv1</th><th>YOLOv8n (зібрано офлайн)</th></tr>
+  <tr><td>масштабів</td><td>1</td><td>3</td></tr>
+  <tr><td>позицій сітки</td><td>49</td><td>8400</td></tr>
+  <tr><td>чисел на позицію</td><td>30</td><td>144</td></tr>
+  <tr class="sumrow"><td>чисел разом</td><td>1470</td><td>1 209 600</td></tr>
+</table></div>
+
+<p>Але цікавіше не розмір, а <b>з чого складаються ці 144 числа</b>: 80 класів
+плюс 4 × 16. Ані сліду впевненості. Окремого числа «тут є предмет» у YOLOv8 немає
+взагалі — його роль перебрала найбільша ймовірність класу. А четвірка помножена
+на 16 означає, що кожна сторона рамки передбачається не одним числом, а
+<b>розподілом по шістнадцяти позиціях</b>, з якого потім береться середнє. Голова
+складається з двох окремих гілок: одна рахує рамку, друга — класи. Ці числа зошит
+друкує сам, зібравши модель із конфігурації.</p>
+
+<h2 id="s12"><span class="num">12 / Спадок</span>Що з YOLO лишилось у сучасних детекторах</h2>
+
+<p>Від першої версії не лишилось майже нічого з деталей: ані сітки 7 × 7, ані
+кореня з ширини, ані двох ваг, ані спільних класів на клітинку. Лишилось три речі,
+і вони визначають вигляд усіх швидких детекторів сьогодні.</p>
+
+<ul>
+  <li><b>Одноетапність.</b> Немає окремого механізму кандидат-областей. Мережа дивиться
+  на зображення один раз і одразу видає всі рамки. RetinaNet, SSD, FCOS, уся лінія
+  YOLO — усі влаштовані так.</li>
+  <li><b>Щільна голова.</b> Передбачення робиться в <b>кожній</b> позиції карти
+  ознак однією й тією самою згорткою 1×1. Позицій тепер тисячі, а не десятки, але
+  принцип не змінився: однакова голова, застосована скрізь.</li>
+  <li><b>Наскрізне навчання.</b> Одна втрата на всю мережу, від пікселів до
+  рамок. Немає окремого етапу, який треба навчати першим і від якого залежать
+  решта.</li>
+</ul>
+
+<p>Це і є справжня спадщина YOLO — не швидкість, а те, що детекцію перестали
+збирати з двох задач.</p>
+
+<h2 id="s13"><span class="num">13 / Підсумок</span>Підсумок і місток далі</h2>
+
+<div class="scroll-x"><table class="plain">
+  <tr><th>ідея</th><th>у чому суть</th></tr>
+  <tr><td>Регресія за один прохід</td><td>вихід фіксованої форми <code>S × S × (B·5+C)</code>; у нас 832 числа, у YOLOv1 — 1470</td></tr>
+  <tr><td>Сітка як розподіл ролей</td><td>клітинка відповідає за предмет, чий центр у ній</td></tr>
+  <tr><td>Координати відносно клітинки</td><td>інакше згортка 1×1 мусила б знати, де вона</td></tr>
+  <tr><td>Корінь із розміру</td><td>штраф на рамці 20 px стає в 9.03 раза більший, ніж на 200 px</td></tr>
+  <tr><td>Впевненість</td><td>P(предмет) × IoU — мережа передбачає власну якість</td></tr>
+  <tr><td>Ваги втрати</td><td>без них фон важить 92.3 % суми; на нашому датасеті це, утім, не змінило mAP</td></tr>
+  <tr><td>Ціна сітки</td><td>на щільних сценах сітка 4 × 4 губить 8.95 % предметів назавжди</td></tr>
+</table></div>
+
+<p>Головне число, яке варто винести: <b>8.95 %</b>. Не «YOLO гірша на дрібних
+предметах», а «стільки предметів не існує для моделі ще до початку навчання». І
+головна пара чисел: <code>1.43 мс</code> проти <code>26.4 мс</code> при однаковій
+ємності — приблизно вісімнадцять-двадцять разів лише за те, що тіло проганяється
+один раз замість ста.</p>
+
+<p>Одноетапна ідея дала швидкість, але принесла проблему, якої у двоетапних
+детекторів не було. Двоетапна схема мала фільтр: перший етап відбирав кілька
+сотень місць, і серед них співвідношення «предмет проти фону» було ще стерпним.
+Одноетапна голова дивиться <b>всюди</b>, і фон її топить. У
+<a href="../23-detection-setup/lecture.html">темі 23</a> ми вже дістали це число
+на наших сценах: <b>85.4 %</b> клітинок — чистий фон. У нашій YOLO-подібній
+мережі з двома рамками на клітинку співвідношення ще різкіше: відповідальних
+рамок 2.05 зі 128, тобто <b>1.6 %</b>.</p>
+
+<p>Витягувати сигнал із такої суміші вагами <code>λ_noobj</code> — спосіб грубий:
+ми бачили, що на легких даних він нічого не дає, а підібрати його на важких
+доводиться наосліп. <a href="../26-one-stage/lecture.html">Наступна тема</a>
+береться саме за це: як переписати саму втрату так, щоб легкі фонові приклади
+затихали <b>автоматично</b>, і як позбутися якорів, які YOLO встигла завести й
+почати від них відмовлятись. Focal loss і anchor-free — це продовження історії,
+яку ми щойно почали.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../24-two-stage/lecture.html"><span class="dir">попередня</span><span class="ttl">24. Двоетапні детектори</span></a>
+    <a class="next" href="../26-one-stage/lecture.html"><span class="dir">наступна</span><span class="ttl">26. Одноетапні: focal loss і anchor-free</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+/* 20480 → «20 480» */
+function gr(n){
+  var s=String(Math.round(n)), out='', k, c=0;
+  for(k=s.length-1;k>=0;k--){ out=s.charAt(k)+out; c++; if(c%3===0 && k>0) out=' '+out; }
+  return out;
+}
+/* сегментний перемикач */
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+/* «1 рамка», «2 рамки», «5 рамок» — без цього підпис у канві виглядає неписьменно */
+function boxWord(n){
+  var d=n%10, dd=n%100;
+  if(d===1 && dd!==11) return 'рамка';
+  if(d>=2 && d<=4 && (dd<12 || dd>14)) return 'рамки';
+  return 'рамок';
+}
+/* детермінований генератор: картинка однакова у всіх читачів */
+function LCG(s){
+  if(!isFinite(s) || s<=0) s=1;
+  var x=(s>>>0)||1;
+  return function(){ x=(Math.imul(x,1664525)+1013904223)>>>0; return x/4294967296; };
+}
+
+/* ═══════ дані: усе поміряно зошитом practice.ipynb ═══════ */
+var SIZE=64;
+/* сирі суми складників утрати свіжої мережі на партії з 32 сцен */
+var LOSS={coord:0.485, obj:0.110, noobj:25.915, cls:1.551};
+/* заміряні mAP@0.5 двох настройок (середнє з трьох зерен) */
+var MAP={canon:0.9761, equal:0.9714, spread:0.0141};
+/* швидкість: мілісекунди */
+var SPEED={one:1.43, perProposal:0.264, faster:177};
+
+/* спільний малювальник фігури сцени */
+function drawShape(g, o, ox, oy, K, color){
+  g.fillStyle=color;
+  if(o.kind===0){
+    g.beginPath(); g.arc(ox+o.cx*K, oy+o.cy*K, o.r*K, 0, 6.2832); g.fill();
+  }else if(o.kind===1){
+    g.fillRect(ox+(o.cx-o.r)*K, oy+(o.cy-o.r)*K, 2*o.r*K, 2*o.r*K);
+  }else{
+    g.beginPath();
+    g.moveTo(ox+o.cx*K, oy+(o.cy-o.r)*K);
+    g.lineTo(ox+(o.cx+o.r)*K, oy+(o.cy+o.r)*K);
+    g.lineTo(ox+(o.cx-o.r)*K, oy+(o.cy+o.r)*K);
+    g.closePath(); g.fill();
+  }
+}
+/* сцена: k фігур, що майже не злипаються — те саме правило, що в зошиті */
+function makeScene(seed, k, rmin, rmax){
+  var rnd=LCG(seed), out=[], i, t;
+  for(i=0;i<k;i++){
+    for(t=0;t<80;t++){
+      var rad=rmin+Math.floor(rnd()*(rmax-rmin+1));
+      var cx=rad+1+Math.floor(rnd()*(SIZE-2*rad-2));
+      var cy=rad+1+Math.floor(rnd()*(SIZE-2*rad-2));
+      var ok=true, j;
+      for(j=0;j<out.length;j++){
+        if(Math.abs(cx-out[j].cx) < rad+out[j].r-2 &&
+           Math.abs(cy-out[j].cy) < rad+out[j].r-2){ ok=false; break; }
+      }
+      if(!ok) continue;
+      out.push({cx:cx, cy:cy, r:rad, kind:Math.floor(rnd()*3)});
+      break;
+    }
+  }
+  return out;
+}
+function cellOf(o, S){
+  var cell=SIZE/S;
+  return {row:Math.floor(o.cy/cell), col:Math.floor(o.cx/cell)};
+}
+/* хто з предметів не влізе в ціль: клітинка бере лише першого */
+function markLost(objs, S){
+  var taken={}, k, lost=0;
+  for(k=0;k<objs.length;k++){
+    var c=cellOf(objs[k],S), key=c.row+':'+c.col;
+    if(taken[key]){ objs[k].lost=true; lost++; }
+    else { taken[key]=1; objs[k].lost=false; }
+  }
+  return lost;
+}
+function gridLines(g, S, ox, oy, K, hair){
+  var k, side=SIZE*K/S;
+  g.strokeStyle=hair; g.lineWidth=1; g.globalAlpha=0.9;
+  for(k=0;k<=S;k++){
+    g.beginPath(); g.moveTo(ox+k*side, oy); g.lineTo(ox+k*side, oy+SIZE*K); g.stroke();
+    g.beginPath(); g.moveTo(ox, oy+k*side); g.lineTo(ox+SIZE*K, oy+k*side); g.stroke();
+  }
+  g.globalAlpha=1;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 1 · Сітка й відповідальність
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cGrid'); if(!cv) return;
+  var sceneSeed=11;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose'), amber=css('--amber');
+    var S=+I('sGrid').value; I('sGridv').textContent=S;
+    var objs=makeScene(sceneSeed, 3, 6, 10);
+    var lost=markLost(objs, S);
+    var K=5.6, ox=26, oy=26, side=SIZE*K/S, cell=SIZE/S, k;
+
+    /* полотно сцени */
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,SIZE*K,SIZE*K);
+
+    /* підсвічуємо відповідальні клітинки */
+    for(k=0;k<objs.length;k++){
+      var c=cellOf(objs[k],S);
+      g.fillStyle=objs[k].lost? rose : teal;
+      g.globalAlpha=objs[k].lost? 0.30 : 0.20;
+      g.fillRect(ox+c.col*side, oy+c.row*side, side, side);
+      g.globalAlpha=1;
+    }
+    gridLines(g, S, ox, oy, K, hair);
+
+    /* самі фігури й лінія «центр — клітинка» */
+    for(k=0;k<objs.length;k++){
+      g.globalAlpha=0.72;
+      drawShape(g, objs[k], ox, oy, K, objs[k].lost? rose : ink);
+      g.globalAlpha=1;
+      var c2=cellOf(objs[k],S);
+      var px=ox+objs[k].cx*K, py=oy+objs[k].cy*K;
+      var qx=ox+(c2.col+0.5)*side, qy=oy+(c2.row+0.5)*side;
+      g.strokeStyle=objs[k].lost? rose : teal; g.lineWidth=1.6;
+      g.setLineDash([4,3]);
+      g.beginPath(); g.moveTo(px,py); g.lineTo(qx,qy); g.stroke();
+      g.setLineDash([]);
+      g.fillStyle=amber;
+      g.beginPath(); g.arc(px,py,3.4,0,6.2832); g.fill();
+    }
+    /* обвід відповідальної клітинки малюємо ПОВЕРХ фігур — інакше темна фігура
+       накриває підсвітку, і головне в інтерактиві стає невидимим */
+    for(k=0;k<objs.length;k++){
+      var c4=cellOf(objs[k],S);
+      g.strokeStyle=objs[k].lost? rose : teal; g.lineWidth=2.4;
+      g.strokeRect(ox+c4.col*side, oy+c4.row*side, side, side);
+    }
+    g.strokeStyle=soft; g.lineWidth=1.5; g.strokeRect(ox,oy,SIZE*K,SIZE*K);
+    capt(g,'сцена 64 на 64 пікселі',ox,oy+SIZE*K+20,soft,11);
+    capt(g,'бурштинова крапка — центр предмета',ox,oy+SIZE*K+38,soft,11);
+
+    /* права колонка */
+    var X=430, Y=44, L=23;
+    capt(g,'ХТО ЗА ЩО ВІДПОВІДАЄ',X,Y,soft,11,true); Y+=28;
+    capt(g,'сітка '+S+' на '+S+', клітинка '+cell.toFixed(1)+' px',X,Y,ink,13); Y+=L+8;
+    var names=['коло','квадрат','трикутник'];
+    for(k=0;k<objs.length;k++){
+      var c3=cellOf(objs[k],S);
+      var col=objs[k].lost? rose : ink;
+      capt(g,names[objs[k].kind]+' у ('+objs[k].cx+', '+objs[k].cy+')',X,Y,col,13,true); Y+=20;
+      capt(g,'   рядок '+c3.row+', стовпець '+c3.col+(objs[k].lost?'  зайнято':''),
+           X,Y,objs[k].lost? rose : soft,12); Y+=L+4;
+    }
+    Y+=10;
+    capt(g,'предметів у цілі: '+(objs.length-lost)+' із '+objs.length,X,Y,
+         lost? rose : teal,14,true);
+
+    I('gCells').textContent=gr(S*S);
+    I('gSide').textContent=cell.toFixed(1)+' px';
+    I('gObj').textContent=objs.length;
+    I('gIn').textContent=(objs.length-lost);
+
+    if(lost>0) verd('gVd','t-no','КОНФЛІКТ',
+      'При S = '+S+' клітинка завбільшки '+cell.toFixed(1)+' px, і центри двох предметів '
+      +'упали в одну. Другий предмет у ціль не потрапляє: у ній '+(objs.length-lost)
+      +' предмети замість '+objs.length+'. Збільш S — і він знайдеться.');
+    else if(S<=3) verd('gVd','t-mid','ВСЕ ВЛІЗЛО, АЛЕ ЛЕДВЕ',
+      'Клітинка '+cell.toFixed(1)+' px — більша за самі предмети. Тут пощастило: усі '
+      +objs.length+' центри розійшлись по різних клітинках. Натисни «інша сцена».');
+    else verd('gVd','t-ok','ОДНОЗНАЧНО',
+      'Кожен із '+objs.length+' предметів має рівно одну відповідальну клітинку з '
+      +gr(S*S)+'. Решта '+gr(S*S-objs.length)+' клітинок мають сказати «мене немає».');
+  }
+  on('sGrid','input',draw);
+  on('gNext','click',function(){ sceneSeed=(sceneSeed*7+13)%9973; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 2 · Структура виходу
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cOut'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose'), amber=css('--amber'), k, j;
+    var S=+I('oS').value, B=+I('oB').value, C=+I('oC').value;
+    I('oSv').textContent=S; I('oBv').textContent=B; I('oCv').textContent=C;
+    var depth=B*5+C, total=S*S*depth;
+
+    /* верхня смуга: вміст однієї клітинки */
+    capt(g,'ЩО ЛЕЖИТЬ В ОДНІЙ КЛІТИНЦІ',30,32,soft,11,true);
+    var bw=Math.min(24, 860/depth), bx=30, by=48, bh=34;
+    var lab=['x','y','w','h','c'];
+    for(k=0;k<B;k++){
+      for(j=0;j<5;j++){
+        var x=bx+(k*5+j)*bw;
+        g.fillStyle=(j===4)? amber : rose;
+        g.globalAlpha=(j===4)?0.55:0.30; g.fillRect(x,by,bw-1.5,bh); g.globalAlpha=1;
+        g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(x,by,bw-1.5,bh);
+        if(bw>=15) capt(g,lab[j],x+bw/2-1,by+22,ink,11,true,'center');
+      }
+    }
+    for(k=0;k<C;k++){
+      var xc=bx+(B*5+k)*bw;
+      g.fillStyle=teal; g.globalAlpha=0.28; g.fillRect(xc,by,bw-1.5,bh); g.globalAlpha=1;
+      g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(xc,by,bw-1.5,bh);
+    }
+    capt(g,B+' '+boxWord(B)+' по 5 чисел = '+(B*5),bx,by+bh+20,rose,12,true);
+    capt(g,C+' чисел класів',bx+B*5*bw,by+bh+20,teal,12,true);
+    capt(g,'разом глибина '+depth,bx,by+bh+40,ink,13,true);
+
+    /* нижня частина: сама сітка */
+    var top=200;
+    capt(g,'СІТКА '+S+' НА '+S,30,top-14,soft,11,true);
+    var gs=Math.min(150/S, 18), gx=30, gy=top;
+    for(k=0;k<S;k++) for(j=0;j<S;j++){
+      g.fillStyle=(k===0&&j===0)? rose : hair;
+      g.globalAlpha=(k===0&&j===0)?0.5:0.65;
+      g.fillRect(gx+j*gs, gy+k*gs, gs-1.5, gs-1.5);
+      g.globalAlpha=1;
+    }
+    capt(g,'кожна клітинка — така сама смуга',gx,gy+S*gs+22,soft,11);
+
+    /* права колонка з арифметикою */
+    var X=330, Y=top+6, L=26;
+    capt(g,'РОЗМІР ВИХОДУ',X,Y,soft,11,true); Y+=30;
+    capt(g,S+' × '+S+' × ('+B+' · 5 + '+C+')',X,Y,ink,15); Y+=L;
+    capt(g,'= '+S+' × '+S+' × '+depth,X,Y,ink,15); Y+=L;
+    capt(g,'= '+gr(total)+' чисел',X,Y,rose,17,true); Y+=L+10;
+    capt(g,'рамок на зображення: '+gr(S*S*B),X,Y,ink,13); Y+=22;
+    capt(g,'для порівняння, YOLOv1: 1 470 чисел',X,Y,soft,12);
+
+    I('oDepth').textContent=depth;
+    I('oBoxes').textContent=gr(S*S*B);
+    I('oTotal').textContent=gr(total);
+
+    if(S===7 && B===2 && C===20) verd('oVd','t-ok','ЦЕ РІВНО YOLOv1',
+      'Сітка 7 на 7, дві рамки, двадцять класів Pascal VOC: 7 × 7 × 30 = 1 470 чисел '
+      +'і 98 рамок на зображення. Саме ця конфігурація описана в першій статті.');
+    else if(total>1470) verd('oVd','t-mid','БІЛЬШЕ ЗА YOLOv1',
+      gr(total)+' чисел проти 1 470 у YOLOv1 — у '+(total/1470).toFixed(1)+' раза більше. '
+      +'Рамок на зображення '+gr(S*S*B)+' проти 98. Густіша сітка бачить більше '
+      +'предметів, але й дублікатів дає більше.');
+    else verd('oVd','t-mid','МЕНШЕ ЗА YOLOv1',
+      gr(total)+' чисел проти 1 470 у YOLOv1. Рамок на зображення '+gr(S*S*B)
+      +' проти 98 — вихід дешевший, зате в одну клітинку тепер частіше падають '
+      +'два центри одразу.');
+  }
+  on('oS','input',draw); on('oB','input',draw); on('oC','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 3 · Координати відносно клітинки
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cCoord'); if(!cv) return;
+  var S=8;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose'), amber=css('--amber');
+    var cx=+I('ccx').value, cy=+I('ccy').value, w=+I('ccw').value, h=+I('cch').value;
+    I('ccxv').textContent=cx; I('ccyv').textContent=cy;
+    I('ccwv').textContent=w; I('cchv').textContent=h;
+
+    var K=5.6, ox=26, oy=26, cell=SIZE/S, side=SIZE*K/S;
+    var col=Math.floor(cx/cell), row=Math.floor(cy/cell);
+    var xo=cx/cell-col, yo=cy/cell-row, wn=w/SIZE, hn=h/SIZE;
+
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,SIZE*K,SIZE*K);
+    g.fillStyle=teal; g.globalAlpha=0.20;
+    g.fillRect(ox+col*side, oy+row*side, side, side); g.globalAlpha=1;
+    gridLines(g, S, ox, oy, K, hair);
+
+    g.strokeStyle=rose; g.lineWidth=2.4;
+    g.strokeRect(ox+(cx-w/2)*K, oy+(cy-h/2)*K, w*K, h*K);
+    g.fillStyle=amber;
+    g.beginPath(); g.arc(ox+cx*K, oy+cy*K, 4, 0, 6.2832); g.fill();
+    g.strokeStyle=soft; g.lineWidth=1.5; g.strokeRect(ox,oy,SIZE*K,SIZE*K);
+    capt(g,'рамка вільно виходить за межі клітинки',ox,oy+SIZE*K+20,soft,11);
+    capt(g,'бірюзова клітинка — відповідальна',ox,oy+SIZE*K+38,teal,11);
+
+    /* збільшена клітинка */
+    var Z=150, zx=430, zy=52;
+    capt(g,'КЛІТИНКА ЗБЛИЗЬКА',zx,zy-16,soft,11,true);
+    g.fillStyle=teal; g.globalAlpha=0.14; g.fillRect(zx,zy,Z,Z); g.globalAlpha=1;
+    g.strokeStyle=teal; g.lineWidth=2; g.strokeRect(zx,zy,Z,Z);
+    var px=zx+xo*Z, py=zy+yo*Z;
+    g.strokeStyle=amber; g.lineWidth=1.5; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(zx,py); g.lineTo(px,py); g.stroke();
+    g.beginPath(); g.moveTo(px,zy); g.lineTo(px,py); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle=amber; g.beginPath(); g.arc(px,py,5,0,6.2832); g.fill();
+    capt(g,'0',zx-4,zy-6,soft,11,false,'right');
+    capt(g,'1',zx+Z+4,zy-6,soft,11);
+    capt(g,'x = '+xo.toFixed(3),zx+Z/2,zy+Z+20,amber,12,true,'center');
+    capt(g,'y = '+yo.toFixed(3),zx+Z+10,zy+Z/2,amber,12,true);
+
+    /* чотири числа цілі */
+    var X=660, Y=52, L=25;
+    capt(g,'ЧОТИРИ ЧИСЛА ЦІЛІ',X,Y,soft,11,true); Y+=30;
+    capt(g,'клітинка: рядок '+row+', стовп. '+col,X,Y,ink,13); Y+=L+6;
+    capt(g,'x = '+cx+' ÷ 8 − '+col+' = '+xo.toFixed(3),X,Y,ink,13); Y+=L;
+    capt(g,'y = '+cy+' ÷ 8 − '+row+' = '+yo.toFixed(3),X,Y,ink,13); Y+=L;
+    capt(g,'w = '+w+' ÷ 64 = '+wn.toFixed(3),X,Y,ink,13); Y+=L;
+    capt(g,'h = '+h+' ÷ 64 = '+hn.toFixed(3),X,Y,ink,13); Y+=L+10;
+    capt(g,'під коренем, як у YOLO:',X,Y,soft,12); Y+=22;
+    capt(g,'√w = '+Math.sqrt(wn).toFixed(3),X,Y,rose,13,true); Y+=22;
+    capt(g,'√h = '+Math.sqrt(hn).toFixed(3),X,Y,rose,13,true); Y+=L+10;
+    capt(g,'назад: ('+col+' + '+xo.toFixed(3)+') × 8',X,Y,soft,12); Y+=20;
+    capt(g,'      = '+cx.toFixed(1)+' пікселя',X,Y,teal,13,true);
+
+    I('ccCell').textContent=row+', '+col;
+    I('ccXY').textContent=xo.toFixed(3)+' / '+yo.toFixed(3);
+    I('ccWH').textContent=wn.toFixed(3)+' / '+hn.toFixed(3);
+    I('ccRt').textContent=Math.sqrt(wn).toFixed(3)+' / '+Math.sqrt(hn).toFixed(3);
+
+    var out = (cx-w/2<0)||(cy-h/2<0)||(cx+w/2>SIZE)||(cy+h/2>SIZE);
+    var bigger = (w>cell)||(h>cell);
+    if(out) verd('ccVd','t-mid','РАМКА ВИЛІЗЛА ЗА КАДР',
+      'Числа цілі лишаються чинними — вони описують центр і розмір, а не кути. '
+      +'Але частина рамки за межами зображення, і істинна рамка з маски такою '
+      +'ніколи не буває: там краї обрізані по кадру.');
+    else if(bigger) verd('ccVd','t-ok','ПРЕДМЕТ БІЛЬШИЙ ЗА КЛІТИНКУ',
+      'Розмір '+w+' на '+h+' пікселів проти клітинки у 8 пікселів — і жодної '
+      +'проблеми. Клітинка обмежує тільки центр: x = '+xo.toFixed(3)+', y = '
+      +yo.toFixed(3)+' лежать у межах 0…1, а w і h міряються від усього кадру.');
+    else verd('ccVd','t-ok','ЧОТИРИ ЧИСЛА В МЕЖАХ 0…1',
+      'x = '+xo.toFixed(3)+' і y = '+yo.toFixed(3)+' — усередині клітинки ('+row+', '+col
+      +'). w = '+wn.toFixed(3)+' і h = '+hn.toFixed(3)+' — частки кадру. Саме такий '
+      +'вигляд має ціль, яку бачить мережа.');
+  }
+  on('ccx','input',draw); on('ccy','input',draw);
+  on('ccw','input',draw); on('cch','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 4 · Корінь із ширини
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cRoot'); if(!cv) return;
+  var useRoot=1;
+  var WS=[20,50,100,200];
+  function penalty(w,e){
+    if(useRoot) return Math.pow(Math.sqrt(w)-Math.sqrt(w+e),2);
+    return e*e;
+  }
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose'), amber=css('--amber'), k;
+    var e=+I('eRoot').value; I('eRootv').textContent=e;
+
+    /* дві рамки в одному масштабі */
+    var K=1.28, ox=34, oy=54;
+    capt(g,'ОДНАКОВА ПОХИБКА НА РАМКАХ РІЗНОГО РОЗМІРУ',ox,34,soft,11,true);
+    var smallY=oy+120, bigY=oy;
+    g.strokeStyle=teal; g.lineWidth=2;
+    g.strokeRect(ox, bigY, 200*K, 200*K*0.72);
+    g.strokeStyle=rose; g.lineWidth=2; g.setLineDash([5,4]);
+    g.strokeRect(ox-e*K/2, bigY-e*K*0.36, (200+e)*K, (200+e)*K*0.72);
+    g.setLineDash([]);
+    capt(g,'рамка 200 px',ox+4,bigY+18,teal,12,true);
+    capt(g,'IoU = '+(200*200/((200+e)*(200+e))).toFixed(4),ox+4,bigY+36,ink,12);
+
+    var sx2=ox+300;
+    g.strokeStyle=teal; g.lineWidth=2;
+    g.strokeRect(sx2, bigY+70, 20*K, 20*K*0.72);
+    g.strokeStyle=rose; g.lineWidth=2; g.setLineDash([5,4]);
+    g.strokeRect(sx2-e*K/2, bigY+70-e*K*0.36, (20+e)*K, (20+e)*K*0.72);
+    g.setLineDash([]);
+    capt(g,'рамка 20 px',sx2-2,bigY+58,teal,12,true);
+    capt(g,'IoU = '+(20*20/((20+e)*(20+e))).toFixed(4),sx2-2,bigY+130,ink,12);
+    capt(g,'той самий масштаб, та сама похибка '+e+' px',ox,LH(cv)-22,soft,11);
+
+    /* стовпчики штрафу */
+    var X=470, Y=54, BW=64, GAP=26, H=200;
+    capt(g,useRoot? 'ШТРАФ, ЯКЩО РЕГРЕСУЄМО КОРІНЬ' : 'ШТРАФ, ЯКЩО РЕГРЕСУЄМО ШИРИНУ',
+         X,34,soft,11,true);
+    var base=penalty(WS[0],e), maxv=base;
+    for(k=0;k<WS.length;k++) maxv=Math.max(maxv,penalty(WS[k],e));
+    for(k=0;k<WS.length;k++){
+      var v=penalty(WS[k],e), rel=v/base, hgt=Math.max(3,H*v/maxv);
+      g.fillStyle=(k===0||k===3)? rose : soft;
+      g.globalAlpha=(k===0||k===3)?0.85:0.45;
+      g.fillRect(X+k*(BW+GAP), Y+H-hgt, BW, hgt);
+      g.globalAlpha=1;
+      capt(g,rel.toFixed(2)+'×',X+k*(BW+GAP)+BW/2, Y+H-hgt-8, ink,12,true,'center');
+      capt(g,WS[k]+' px',X+k*(BW+GAP)+BW/2, Y+H+20, soft,11,false,'center');
+    }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(X-8,Y+H); g.lineTo(X+4*(BW+GAP),Y+H); g.stroke();
+    capt(g,'висота зведена до рамки 20 px',X,Y+H+42,soft,11);
+
+    var small=penalty(20,e), big=penalty(200,e), ratio=small/big;
+    I('rSmall').textContent=useRoot? small.toFixed(5) : small.toFixed(1);
+    I('rBig').textContent=useRoot? big.toFixed(5) : big.toFixed(1);
+    I('rRatio').textContent=ratio.toFixed(2)+' : 1';
+    I('rIou').textContent=(400/((20+e)*(20+e))).toFixed(3)+' / '
+                          +(40000/((200+e)*(200+e))).toFixed(3);
+
+    var iouSmall=400/((20+e)*(20+e)), iouBig=40000/((200+e)*(200+e));
+    if(!useRoot) verd('rVd','t-no','ШТРАФ ОДНАКОВИЙ, ШКОДА РІЗНА',
+      'Відношення штрафів рівно '+ratio.toFixed(2)+' : 1 — метриці байдуже, яку рамку '
+      +'зіпсували. А IoU каже інше: '+iouSmall.toFixed(3)+' на малій проти '
+      +iouBig.toFixed(3)+' на великій. Мережа вчиться доглядати великі рамки, бо '
+      +'на них помилка в пікселях набирається швидше.');
+    else verd('rVd','t-ok','ШТРАФ ІДЕ ЗА ШКОДОЮ',
+      'Корінь робить штраф на рамці 20 px у '+ratio.toFixed(2)+' раза більшим, ніж на '
+      +'рамці 200 px. IoU при цьому '+iouSmall.toFixed(3)+' проти '+iouBig.toFixed(3)
+      +' — тобто напрямок збігається. Точної відповідності немає й не планувалось: '
+      +'корінь це наближення, а не виведення з IoU.');
+  }
+  segment('segRoot', function(i){ useRoot=i; draw(); });
+  on('eRoot','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 5 · Ваги втрати
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cLoss'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose'), amber=css('--amber'), k;
+    var lc=+I('lamC').value, ln=+I('lamN').value;
+    I('lamCv').textContent=lc.toFixed(1); I('lamNv').textContent=ln.toFixed(1);
+
+    var vals=[lc*LOSS.coord, LOSS.obj, ln*LOSS.noobj, LOSS.cls];
+    var names=['координати','предмет є','фон','класи'];
+    var cols=[rose, amber, soft, teal];
+    var total=vals[0]+vals[1]+vals[2]+vals[3];
+    var maxv=Math.max(vals[0],vals[1],vals[2],vals[3],0.001);
+
+    capt(g,'СКЛАДНИКИ ВТРАТИ СВІЖОЇ МЕРЕЖІ НА ПАРТІЇ З 32 СЦЕН',30,32,soft,11,true);
+    var X=60, Y=62, BW=90, GAP=54, H=210;
+    for(k=0;k<4;k++){
+      var hgt=Math.max(2, H*vals[k]/maxv);
+      g.fillStyle=cols[k]; g.globalAlpha=0.8;
+      g.fillRect(X+k*(BW+GAP), Y+H-hgt, BW, hgt); g.globalAlpha=1;
+      capt(g,vals[k].toFixed(3),X+k*(BW+GAP)+BW/2, Y+H-hgt-9, ink,13,true,'center');
+      capt(g,names[k],X+k*(BW+GAP)+BW/2, Y+H+20, soft,11,false,'center');
+      capt(g,(100*vals[k]/total).toFixed(1)+' %',X+k*(BW+GAP)+BW/2, Y+H+40,
+           cols[k],13,true,'center');
+    }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(X-14,Y+H); g.lineTo(X+4*(BW+GAP)-20,Y+H); g.stroke();
+
+    var P=640, Q=70, L=25;
+    capt(g,'РАМОК У СІТЦІ',P,Q,soft,11,true); Q+=28;
+    capt(g,'усього 128 на сцену',P,Q,ink,13); Q+=22;
+    capt(g,'відповідальних 2.05',P,Q,rose,13,true); Q+=22;
+    capt(g,'фонових 125.95',P,Q,soft,13); Q+=L+14;
+    capt(g,'ЗАМІРЯНО НА ЦИХ ВАГАХ',P,Q,soft,11,true); Q+=28;
+    if(lc===5 && Math.abs(ln-0.5)<0.001){
+      capt(g,'mAP@0.5 = '+MAP.canon.toFixed(4),P,Q,teal,15,true); Q+=22;
+      capt(g,'середнє з трьох зерен',P,Q,soft,11);
+    }else if(lc===1 && Math.abs(ln-1)<0.001){
+      capt(g,'mAP@0.5 = '+MAP.equal.toFixed(4),P,Q,teal,15,true); Q+=22;
+      capt(g,'середнє з трьох зерен',P,Q,soft,11);
+    }else{
+      capt(g,'ці ваги ми не навчали',P,Q,soft,13); Q+=22;
+      capt(g,'заміряно лише 5 і 0.5 та 1 і 1',P,Q,soft,11);
+    }
+
+    var bgShare=100*vals[2]/total, coShare=100*vals[0]/total;
+    I('lBg').textContent=bgShare.toFixed(1)+' %';
+    I('lCo').textContent=coShare.toFixed(1)+' %';
+    I('lSum').textContent=total.toFixed(3);
+
+    if(bgShare>=85) verd('lVd','t-no','ФОН ЗАДАВИВ УСЕ',
+      'Фон важить '+bgShare.toFixed(1)+' % усієї втрати, координати — лише '
+      +coShare.toFixed(1)+' %. Градієнт майже цілком складається з вимоги «мовчи», '
+      +'і мережі вигідніше нічого не бачити, ніж учитися ставити рамку.');
+    else if(bgShare<=25) verd('lVd','t-no','ФОН МАЙЖЕ НЕ ШТРАФУЄТЬСЯ',
+      'На фон припадає лише '+bgShare.toFixed(1)+' % втрати. Мовчати там, де порожньо, '
+      +'мережі тепер невигідно: вона малюватиме впевнені рамки на всіх '
+      +'126 фонових місцях, і точність упаде в підлогу.');
+    else if(coShare<8) verd('lVd','t-mid','КООРДИНАТИ ЛИШИЛИСЬ ПОЗАДУ',
+      'Баланс фону вже стерпний ('+bgShare.toFixed(1)+' %), але на координати припадає '
+      +coShare.toFixed(1)+' % — рамка вчиться повільніше за все інше.');
+    else verd('lVd','t-ok','БАЛАНС РОБОЧИЙ',
+      'Фон '+bgShare.toFixed(1)+' %, координати '+coShare.toFixed(1)
+      +' %. Канонічні 5 і 0.5 дають саме такий порядок величин. Нагадування з '
+      +'розділу 07: на наших легких сценах різниця в mAP між 5 / 0.5 та 1 / 1 '
+      +'склала 0.0047 при розкиді 0.0141, тобто загубилась у шумі.');
+  }
+  on('lamC','input',draw); on('lamN','input',draw);
+  on('lReset','click',function(){ I('lamC').value=5; I('lamN').value=0.5; draw(); });
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 6 · Конфлікт у клітинці
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cClash'); if(!cv) return;
+  var SCENES=300, GRIDS=[2,3,4,5,6,7,8,10,13,16], cache={};
+  function batch(k){
+    if(cache[k]) return cache[k];
+    var list=[], i;
+    for(i=0;i<SCENES;i++) list.push(makeScene(1000+i*37, k, 3, 6));
+    cache[k]=list;
+    return list;
+  }
+  function stats(k, S){
+    var list=batch(k), all=0, lost=0, bad=0, i;
+    for(i=0;i<list.length;i++){
+      var objs=list[i], taken={}, here=0, j;
+      for(j=0;j<objs.length;j++){
+        all++;
+        var c=cellOf(objs[j],S), key=c.row+':'+c.col;
+        if(taken[key]) here++; else taken[key]=1;
+      }
+      lost+=here;
+      if(here) bad++;
+    }
+    return {all:all, lost:lost, bad:bad, pct:all? 100*lost/all : 0,
+            badPct:100*bad/list.length};
+  }
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose'), k;
+    var S=+I('sClash').value, kk=+I('kClash').value;
+    I('sClashv').textContent=S; I('kClashv').textContent=kk;
+
+    /* одна показова сцена: беремо з набору першу, де конфлікт справді стався,
+       інакше головний інтерактив теми показував би порожній екран */
+    var list=batch(kk), pick=0, lostHere=0, objs=null, q;
+    for(q=0;q<list.length;q++){
+      var trial=list[q].slice();
+      if(markLost(trial, S)>0){ pick=q; break; }
+    }
+    objs=list[pick];
+    lostHere=markLost(objs, S);
+    var K=5.2, ox=26, oy=44, side=SIZE*K/S;
+    capt(g,'СЦЕНА №'+(pick+1)+' ІЗ 300, СІТКА '+S+' НА '+S,ox,32,soft,11,true);
+    g.fillStyle=css('--paper'); g.fillRect(ox,oy,SIZE*K,SIZE*K);
+    for(k=0;k<objs.length;k++) if(objs[k].lost){
+      var c=cellOf(objs[k],S);
+      g.fillStyle=rose; g.globalAlpha=0.28;
+      g.fillRect(ox+c.col*side, oy+c.row*side, side, side); g.globalAlpha=1;
+    }
+    gridLines(g, S, ox, oy, K, hair);
+    for(k=0;k<objs.length;k++){
+      drawShape(g, objs[k], ox, oy, K, objs[k].lost? rose : ink);
+      if(objs[k].lost){
+        var px=ox+objs[k].cx*K, py=oy+objs[k].cy*K, d=objs[k].r*K+3;
+        g.strokeStyle=rose; g.lineWidth=2.4;
+        g.beginPath(); g.moveTo(px-d,py-d); g.lineTo(px+d,py+d); g.stroke();
+        g.beginPath(); g.moveTo(px+d,py-d); g.lineTo(px-d,py+d); g.stroke();
+      }
+    }
+    g.strokeStyle=soft; g.lineWidth=1.5; g.strokeRect(ox,oy,SIZE*K,SIZE*K);
+    capt(g,'перекреслені — не потрапили в ціль',ox,oy+SIZE*K+20,rose,11);
+    capt(g, lostHere? ('у цій сцені втрачено '+lostHere+' із '+objs.length)
+                    : ('конфліктів немає в жодній із 300 сцен'),
+         ox,oy+SIZE*K+38, lostHere? ink : teal, 12, true);
+
+    /* стовпчики по всіх сітках */
+    var st=stats(kk,S);
+    var X=420, Y=64, H=230, BW=36, GAP=16;
+    capt(g,'ЧАСТКА ВТРАЧЕНИХ ПРЕДМЕТІВ, 300 СЦЕН',X,32,soft,11,true);
+    var maxp=0.001;
+    var vals=[];
+    for(k=0;k<GRIDS.length;k++){
+      var s=stats(kk,GRIDS[k]); vals.push(s.pct); maxp=Math.max(maxp,s.pct);
+    }
+    for(k=0;k<GRIDS.length;k++){
+      var hgt=Math.max(2, H*vals[k]/maxp), hot=(GRIDS[k]===S);
+      g.fillStyle=hot? rose : soft; g.globalAlpha=hot?0.9:0.35;
+      g.fillRect(X+k*(BW+GAP), Y+H-hgt, BW, hgt); g.globalAlpha=1;
+      if(hot) capt(g,vals[k].toFixed(2)+' %',X+k*(BW+GAP)+BW/2, Y+H-hgt-9, rose,12,true,'center');
+      capt(g,String(GRIDS[k]),X+k*(BW+GAP)+BW/2, Y+H+18, hot? ink : soft,11,hot,'center');
+    }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(X-8,Y+H); g.lineTo(X+GRIDS.length*(BW+GAP),Y+H); g.stroke();
+    capt(g,'сітка S',X+GRIDS.length*(BW+GAP)/2, Y+H+40, soft,11,false,'center');
+    capt(g,'клітинка при S = '+S+': '+(SIZE/S).toFixed(1)+' px',X,Y+H+70,ink,12);
+    capt(g,'зіпсовано сцен: '+st.badPct.toFixed(1)+' %',X,Y+H+90,ink,12);
+
+    I('clAll').textContent=gr(st.all);
+    I('clLost').textContent=gr(st.lost);
+    I('clPct').textContent=st.pct.toFixed(2)+' %';
+    I('clSc').textContent=st.badPct.toFixed(1)+' %';
+
+    if(st.pct>=5) verd('clVd','t-no','СІТКА ЗАМАЛА',
+      'При S = '+S+' і '+kk+' предметах у кадрі мережа втрачає '+st.pct.toFixed(2)
+      +' % предметів — '+gr(st.lost)+' із '+gr(st.all)+'. Зіпсовано '
+      +st.badPct.toFixed(1)+' % сцен. Це не поганий поріг і не брак даних: цих '
+      +'предметів немає в цілі, і градієнта за них не буде ніколи.');
+    else if(st.pct>=1) verd('clVd','t-mid','ВТРАТА ПОМІТНА',
+      st.pct.toFixed(2)+' % предметів гине через конфлікт центрів ('+gr(st.lost)+' із '
+      +gr(st.all)+'), зіпсовано '+st.badPct.toFixed(1)+' % сцен. На такій сітці стеля '
+      +'повноти вже нижча за одиницю, хоч би як добре мережа навчилась.');
+    else verd('clVd','t-ok','СІТКА ВПОРАЛАСЬ',
+      'Втрата '+st.pct.toFixed(2)+' % — '+gr(st.lost)+' предметів із '+gr(st.all)
+      +'. Клітинка '+(SIZE/S).toFixed(1)+' px достатньо дрібна для '+kk
+      +' предметів у кадрі. Спробуй додати предметів або зменшити S.');
+  }
+  on('sClash','input',draw); on('kClash','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ────────────────────────────────────────────────────────────────
+   Інтерактив 7 · Один прохід проти багатьох
+   ──────────────────────────────────────────────────────────────── */
+(function(){
+  var cv=I('cSpeed'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv), soft=css('--soft'), ink=css('--ink'), hair=css('--hair'),
+        teal=css('--teal'), rose=css('--rose');
+    var n=+I('nProp').value; I('nPropv').textContent=n;
+    var two=n*SPEED.perProposal, one=SPEED.one;
+    var maxT=300*SPEED.perProposal;
+
+    var X=200, W=620, Y=70, BH=52;
+    capt(g,'ЧАС ОДНОГО ЗОБРАЖЕННЯ',30,34,soft,11,true);
+
+    g.fillStyle=teal; g.globalAlpha=0.85;
+    g.fillRect(X, Y, Math.max(3, W*one/maxT), BH); g.globalAlpha=1;
+    capt(g,'одноетапна',X-12,Y+32,ink,13,true,'right');
+    capt(g,one.toFixed(2)+' мс',X+Math.max(3,W*one/maxT)+10,Y+32,teal,14,true);
+    capt(g,'1 прохід по вмісту',X,Y+BH+20,soft,11);
+
+    var Y2=Y+110;
+    g.fillStyle=rose; g.globalAlpha=0.85;
+    g.fillRect(X, Y2, Math.max(3, W*two/maxT), BH); g.globalAlpha=1;
+    capt(g,'двоетапна',X-12,Y2+32,ink,13,true,'right');
+    capt(g,two.toFixed(1)+' мс',X+Math.max(3,W*two/maxT)+10,Y2+32,rose,14,true);
+    capt(g,n+' проходів по вмісту',X,Y2+BH+20,soft,11);
+
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(X,Y-14); g.lineTo(X,Y2+BH+30); g.stroke();
+
+    var Y3=Y2+118;
+    capt(g,'ТЕ САМЕ ТІЛО, ТІ САМІ ВАГИ, РІЗНА ПОСТАНОВКА',30,Y3,soft,11,true);
+    capt(g,'з літератури: YOLO 63.4 mAP при 45 кадрах за секунду,',30,Y3+24,soft,12);
+    capt(g,'Faster R-CNN VGG-16 — 73.2 mAP при 7 кадрах.',30,Y3+42,soft,12);
+    capt(g,'Одноетапна швидша, але помітно гірша за якістю.',30,Y3+60,ink,12,true);
+
+    I('spOne').textContent=one.toFixed(2)+' мс';
+    I('spTwo').textContent=two.toFixed(1)+' мс';
+    I('spRat').textContent=(two/one).toFixed(0)+'×';
+    I('spFps').textContent=Math.round(1000/one)+' / '+Math.round(1000/two);
+
+    if(two<=one) verd('spVd','t-mid','КАНДИДАТ-ОБЛАСТЕЙ ЗАМАЛО',
+      'При '+n+' кандидат-областях двоетапна схема коштує '+two.toFixed(1)+' мс проти '
+      +one.toFixed(2)+' мс одноетапної — виграшу вже майже немає. Але стільки '
+      +'кандидат-областей на справжній сцені не вистачить: класичні реалізації брали дві '
+      +'тисячі.');
+    else verd('spVd','t-ok','ОДИН ПРОХІД ПРОТИ '+n,
+      'Двоетапна схема витрачає '+two.toFixed(1)+' мс проти '+one.toFixed(2)
+      +' мс — у '+(two/one).toFixed(0)+' разів більше, тобто '+Math.round(1000/two)
+      +' кадрів за секунду проти '+Math.round(1000/one)+'. Час одноетапної не '
+      +'залежить від кількості предметів у кадрі: прохід один завжди.');
+  }
+  on('nProp','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* перемальовуємо все при зміні теми: кольори беруться з CSS-змінних */
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', function(){
+    window.dispatchEvent(new Event('resize'));
+  });
+}
+})();
+</script>
+</body>
+</html>

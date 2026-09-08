@@ -1,0 +1,2073 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PEFT і LoRA</title>
+<meta name="description" content="Повне донавчання дороге не обчисленнями, а памʼяттю: ваги, градієнти й два моменти Adam дають 16 байтів на кожну вагу, тобто 112 ГБ на модель у 7 мільярдів. LoRA замінює поправку добутком двох вузьких матриць і на нашому стенді чіпає 4 354 ваг замість 1 407 874 — 0.3093 %, — даючи macro-F1 0.8622 між рубежем знизу 0.7775 (лінійна проба) і рубежем зверху 0.8917 (повне донавчання). BitFit на 3 586 вагах дає 0.8604. Дві рівності перевірено числом: LoRA з нульовою B тотожна основі, злиття точне. Плюс QLoRA: 4 біти, подвійне квантування, і чому 0.5 біта на вагу перетворюються на 0.127.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code,
+td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+/* ── компоненти теми 39 ─────────────────────────────────────── */
+.money{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:24px 0}
+.money div{background:var(--raise);border:1px solid var(--hair);border-radius:10px;padding:12px 14px}
+.money b{display:block;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--soft);font-weight:400;margin-bottom:4px}
+.money i{font-style:normal;font-family:"JetBrains Mono",monospace;font-size:19px;font-weight:700;
+  color:var(--rose);font-variant-numeric:tabular-nums}
+.money s{display:block;text-decoration:none;font-size:13px;color:var(--soft);margin-top:2px;
+  font-family:Literata,Georgia,serif}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 8 · Тема 39</p>
+    <h1>PEFT і LoRA</h1>
+    <p class="stand">У попередній темі ми навчили модель виконувати вказівку — і зробили
+      це єдиним способом, який знали: змінили всі її ваги. Для моделі на сім мільярдів
+      ваг це означає сто дванадцять гігабайтів оперативної памʼяті прискорювача на один
+      прогін і окрему копію моделі на кожне завдання. Питання теми просте й дуже
+      практичне: <b>скільки ваг насправді треба чіпати</b>, щоб модель навчилась
+      нової справи? Відповідь виявиться меншою, ніж підказує здоровий глузд, — і ми
+      побачимо її не в переказі чужої статті, а на власному стенді, де є рубіж знизу,
+      рубіж зверху й однаковий бюджет усім учасникам.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Дві ціни повного донавчання</a></li>
+        <li><a href="#s2">Порахуймо памʼять</a></li>
+        <li><a href="#s3">Друга ціна: копія на кожне завдання</a></li>
+        <li><a href="#s4">Сімʼя PEFT: чотири способи не чіпати вагу</a></li>
+        <li><a href="#s5">Що таке ранг матриці</a></li>
+        <li><a href="#s6">Гіпотеза малого рангу</a></li>
+        <li><a href="#s7">LoRA покроково</a></li>
+        <li><a href="#s8">Чому <span class="raw">B</span> ініціалізують нулями</a></li>
+        <li><a href="#s9">Що таке альфа</a></li>
+        <li><a href="#s10">До яких матриць прикладати</a></li>
+        <li><a href="#s11">Злиття: нуль затримки на виведенні</a></li>
+        <li><a href="#s12">Наш стенд</a></li>
+        <li><a href="#s13">Головне число теми</a></li>
+        <li><a href="#s14">Бюджет — теж вісь</a></li>
+        <li><a href="#s15">Квантування і QLoRA</a></li>
+        <li><a href="#s16">Де LoRA програє</a></li>
+        <li><a href="#s17">Межі цього заміру</a></li>
+        <li><a href="#s18">Що з цього забрати</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../38-instruction-tuning-rlhf/lecture.html">← 38. Instruction tuning і RLHF</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../40-limits/lecture.html">40. Межі мовних моделей →</a></nav>
+  </div>
+</header>
+<main class="col">
+
+<p class="lead">Уяви бібліотеку, у якій стоїть одна-єдина енциклопедія на сорок томів.
+Приходить читач і просить пристосувати її під кулінарію: не переписати, а саме
+пристосувати — щоб на ті самі питання вона відповідала кулінарною мовою. Найпряміший
+спосіб — переписати всі сорок томів від руки. Він працює. Він же коштує сорок томів
+паперу, кількох років і — головне — робить неможливим наступне прохання: бо коли
+прийде читач із медициною, доведеться переписувати знову, і в бібліотеці стоятиме
+вже дві енциклопедії замість однієї.</p>
+
+<p>Другий спосіб: лишити енциклопедію як є, а на кожній сторінці покласти тонку
+кальку з поправками. Калька важить у тисячу разів менше за том. Кальок може бути
+багато — по одній на кожне ремесло. І коли поправки остаточно усталяться, кальку
+можна вдрукувати в сторінку, і читач навіть не помітить, що вона колись була окремою.</p>
+
+<p>Ця друга картинка й називається <b>PEFT</b> — <i>parameter-efficient fine-tuning</i>,
+донавчання, ощадне за параметрами. Найпоширеніший його вид зветься <b>LoRA</b>
+(<i>low-rank adaptation</i>, адаптація малого рангу), і саме він виявився тією
+калькою, яку справді можна вдрукувати назад. Розберімо, чому вона така тонка.</p>
+
+<h2 id="s1"><span class="num">Розділ 01</span>Дві ціни повного донавчання</h2>
+
+<p><b>Донавчання</b> (fine-tuning) — це коли ми беремо вже навчену модель і продовжуємо
+навчати її на новій, зазвичай значно меншій, вибірці під нове завдання. Курс робив це
+не раз: у темі 25 ми показали, що передтренована модель випереджає навчену з нуля, а в
+темі 27 донавчали BERT під класифікацію. Досі ми робили це найпростішим способом:
+дозволяли змінюватися <b>всім</b> вагам моделі.</p>
+
+<p>Здається, що головна ціна такого донавчання — обчислення. Це неправда, і саме тут
+починається тема. Обчислень воно бере не набагато більше, ніж проста подача даних
+через модель: один прохід уперед, один назад — приблизно втричі більше арифметики,
+ніж лише прохід уперед, і ця трійка не залежить від того, скільки ваг ми дозволили
+змінювати. Заморозивши девʼяносто девʼять відсотків моделі, ти <b>не</b> зекономиш
+девʼяносто девʼять відсотків арифметики: сигнал усе одно мусить пройти крізь усі
+шари вперед, і градієнт усе одно мусить пройти крізь них назад, щоб дістатись до
+тієї частини, яка вчиться.</p>
+
+<div class="note"><b>Одразу знімемо непорозуміння.</b> PEFT ощадний за
+<b>параметрами</b>, а не за обчисленнями. Виграш у нього в іншій валюті — у памʼяті
+й у розмірі того, що доводиться зберігати й возити між машинами.
+
+<p style="margin:10px 0 0">Точніше кажучи, економія обчислень усе-таки є, але
+вона мала. Порахуймо. Прохід уперед коштує одну умовну одиницю роботи. Прохід назад
+коштує <b>дві</b>, бо складається з двох окремих множень: градієнт по <b>входу</b>
+шару (його треба передати далі назад) і градієнт по <b>вагах</b> шару. Разом три
+одиниці. Заморожена вага не потребує другого множення — отже, зникає щонайбільше
+<b>одна одиниця з трьох</b>. Плюс сам крок оптимізатора, який на замороженій вазі
+теж не робиться.</p>
+<p style="margin:10px 0 0">Так і виходить на практиці: для моделі на 175 мільярдів
+ваг повідомляють про зростання пропускної здатності з <b>32.5 до 43.1</b> токена за
+секунду на карту. Помітно — але це десятки відсотків, а не тисячі разів, як у
+розмірі того, що зберігаєш.</p></div>
+
+<p>Справжня ціна — <b>памʼять</b>. І щоб побачити її, треба перелічити, що саме
+одночасно лежить у памʼяті прискорювача, поки триває крок навчання. Це не одна
+величина, а чотири, і три з них — накладні.</p>
+<h2 id="s2"><span class="num">Розділ 02</span>Порахуймо памʼять</h2>
+
+<p>Візьмемо найпоширеніший оптимізатор сучасних мовних моделей — <b>Adam</b> (і його
+різновид AdamW, яким користуємось і ми). Ти міг зустрічати його раніше як звичайний рядок у коді навчання;
+тут важлива одна його властивість, про яку зазвичай не думають: Adam
+тримає <b>власну памʼять на кожну вагу</b>.</p>
+
+<p>Що це за памʼять. Звичайний градієнтний спуск робить крок у бік, протилежний
+градієнту: <span class="eq" style="display:inline;padding:2px 6px">w ← w − η·g</span>.
+Adam робить складніше. Він веде для кожної ваги два «плинні середні»:</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">перший момент</span>
+    <div class="eq">m ← β<span class="sub">1</span>·m + (1 − β<span class="sub">1</span>)·g</div>
+    <p>Це усереднений напрямок градієнта за останні кроки — щось на кшталт швидкості.
+    Він гасить сіпання: якщо градієнт на сусідніх кроках смикається то вгору, то вниз,
+    середнє лишається спокійним.</p>
+  </div>
+  <div class="step"><span class="lbl">другий момент</span>
+    <div class="eq">v ← β<span class="sub">2</span>·v + (1 − β<span class="sub">2</span>)·g<span class="sup">2</span></div>
+    <p>Це усереднений <b>квадрат</b> градієнта — міра того, наскільки взагалі великі
+    градієнти в цієї конкретної ваги. Вагу, у якої градієнти стабільно великі, Adam
+    рухає обережніше.</p>
+  </div>
+  <div class="step"><span class="lbl">крок</span>
+    <div class="eq">w ← w − η · m / (√v + ε)</div>
+    <p>Ділення на корінь другого моменту й дає ту саму «адаптивність» у назві: кожна
+    вага дістає свій масштаб кроку. <span class="raw">η</span> — швидкість навчання,
+    <span class="raw">ε</span> — крихітне число (близько 10<span class="sup">−8</span>),
+    щоб не ділити на нуль.</p>
+  </div>
+</div>
+
+<p>Тепер порахуймо. Нехай у моделі <span class="raw">N</span> ваг, і кожне число
+займає <b>4 байти</b> (звичайна одинарна точність, <code>float32</code>). На один крок
+навчання в памʼяті мусять лежати одночасно:</p>
+
+<div class="scroll-x"><table class="nums"><thead><tr><th>що лежить</th><th>скільки чисел</th><th>байтів</th></tr></thead>
+<tbody>
+<tr><td>самі ваги</td><td>N</td><td>4N</td></tr>
+<tr><td>градієнти</td><td>N</td><td>4N</td></tr>
+<tr><td>перший момент <span class="raw">m</span></td><td>N</td><td>4N</td></tr>
+<tr><td>другий момент <span class="raw">v</span></td><td>N</td><td>4N</td></tr>
+<tr class="hot"><td>разом</td><td>4N</td><td><b>16N</b></td></tr>
+</tbody></table></div>
+
+<p><b>Шістнадцять байтів на кожну вагу.</b> Це і є число, з якого починається вся
+тема. Для моделі на <b>7 мільярдів</b> ваг:</p>
+
+<div class="eq">16 × 7 000 000 000 = 112 000 000 000 байтів ≈ <b>112 ГБ</b></div>
+
+<p>Сто дванадцять гігабайтів — і це ще без проміжних значень, які треба тримати між
+проходом уперед і проходом назад. Найбільша поширена відеокарта на момент письма має
+80 ГБ. Тобто модель, яка спокійно <b>працює</b> на одному прискорювачі
+(7 млрд × 4 байти = 28 ГБ, а в половинній точності й зовсім 14 ГБ), <b>не
+донавчається</b> на ньому — не через брак швидкості, а через брак місця.</p>
+
+<p>А тепер найважливіше спостереження, заради якого ми це рахували. З чотирьох
+доданків <b>тільки перший</b> потрібен усій моделі. Градієнт і два моменти потрібні
+лише тим вагам, які ми <b>дозволили змінювати</b>. Заморозивши більшість ваг, ми
+викидаємо три чверті рахунку — залишається</p>
+
+<div class="eq">4·N<span class="sub">усіх</span> + 12·N<span class="sub">навчених</span></div>
+
+<p>і якщо <span class="raw">N</span><span class="sub">навчених</span> — це частки
+відсотка від <span class="raw">N</span><span class="sub">усіх</span>, другий доданок
+просто зникає. Замість 16 байтів на вагу лишається 4. Учетверо менше.</p>
+
+<figure>
+  <p class="fig-head">Куди йде памʼять на одному кроці навчання</p>
+  <p class="fig-sub">Ваги потрібні всі. Градієнти й моменти Adam — лише тим, що вчаться.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="n1">ваг у моделі <output id="n1o">7 млрд</output></label>
+        <input type="range" id="n1" min="0" max="7" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <span class="cap">що донавчаємо</span>
+        <div class="seg" id="m1">
+          <button data-i="0" aria-pressed="true">усе</button>
+          <button data-i="1">LoRA <span class="raw">r=4</span></button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>разом</b><i id="r1a">112 ГБ</i></div>
+        <div class="cellv"><b>байтів на вагу</b><i id="r1b">16.00</i></div>
+      </div>
+      <div class="verdict" id="v1"></div>
+    </div>
+  </div>
+  <figcaption>Ліва смуга — самі ваги, вона однакова в обох станах: заморожену вагу
+  все одно треба тримати, щоб порахувати вихід. Три смуги праворуч — накладні витрати
+  оптимізатора, і вони пропорційні лише <b>навченим</b> вагам. Частка 0.3093 % — це
+  наш заміряний розмір LoRA рангу 4 на стенді цієї теми.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">Розділ 03</span>Друга ціна: копія на кожне завдання</h2>
+
+<p>Памʼять — ціна, яку платять один раз, поки триває навчання. Є друга, яку платять
+щодня.</p>
+
+<p>Повне донавчання дає на виході <b>нову модель</b>. Не поправку до старої, а
+повністю нову тушу тих самих розмірів: усі 7 мільярдів ваг зрушили з місця, і жодна
+з них уже не дорівнює тому, що було. Якщо компанія обслуговує двадцять завдань —
+підтримку клієнтів, юридичний пошук, розбір резюме, — вона зберігає й возить
+<b>двадцять</b> копій моделі по 28 ГБ кожна. Це майже шістсот гігабайтів, які треба
+десь тримати, кудись копіювати й якось версіонувати.</p>
+
+<p>Гірше того: перемкнути завдання на живому сервері означає вивантажити з памʼяті
+28 ГБ і завантажити інші 28 ГБ. Тримати всі двадцять у памʼяті одночасно неможливо.</p>
+
+<p>Кальковий підхід міняє це докорінно. Основа одна, вона лежить у памʼяті постійно.
+Поправка під кожне завдання важить одиниці мегабайтів, і перемкнути її — справа
+мілісекунд. Це не оптимізація, це інша архітектура обслуговування.</p>
+
+<p>Ось той самий рахунок у числах, які повідомляють для моделі на 175 мільярдів ваг.
+Повне збереження такої моделі — <b>350 ГБ</b>. Поправка LoRA рангу 4 на матрицях
+запиту й значення — <b>35 МБ</b>, тобто в <b>десять тисяч разів</b> менша. А тепер
+помнож на сто завдань:</p>
+
+<div class="eq left">сто повних копій:      100 × 350 ГБ  ≈  35 ТБ
+основа плюс сто кальок: 350 ГБ + 100 × 35 МБ  ≈  354 ГБ</div>
+
+<p>Різниця майже в сто разів — і вона не в швидкості, не в якості, а в тому, що
+взагалі можливо тримати на диску й у памʼяті.</p>
+
+<div class="note warn"><b>Не плутай два числа, які часто зливають в одне.</b>
+«У десять тисяч разів» — це про <b>розмір збереженого</b>, тобто про кальку. Памʼять
+під час навчання тієї самої моделі падає значно скромніше — з 1.2 ТБ до 350 ГБ,
+приблизно <b>втричі</b>, рівно як каже наша арифметика 16 проти 4 байтів на вагу.
+І на виведенні основа однаково потрібна вся: жодна LoRA не робить модель на
+175 мільярдів меншою за 350 ГБ.</div>
+<h2 id="s4"><span class="num">Розділ 04</span>Сімʼя PEFT: чотири способи не чіпати вагу</h2>
+
+<p>Ідея «навчати не все» стара, і за кілька років накопичилось чотири принципово різні
+відповіді на питання, <b>де саме</b> тримати нове знання. Вони не варіанти одного
+методу — вони чіпляються до моделі в різних місцях, і в кожної свій рахунок.</p>
+
+<p><b>1. Адаптери.</b> Усередину кожного блока трансформера вставляють нову маленьку
+підмережу: беруть вектор розміру <span class="raw">d</span>, стискають його до
+розміру <span class="raw">m</span> (значно меншого), проганяють через нелінійність і
+розтискають назад до <span class="raw">d</span>. Це називають «пляшковим горлом»
+(bottleneck). Параметрів у ній —
+<span class="raw">2md + d + m</span>, і при <span class="raw">m</span> у десятки разів
+меншому за <span class="raw">d</span> це справді дрібниця. Модель навколо заморожена;
+вчиться лише вставка. Щоб на старті вставка нічого не зіпсувала, її роблять близькою
+до тотожного перетворення: усередині є власний пропуск (skip-connection), а проєкції
+ініціалізують майже нулями.</p>
+
+<p><b>2. Префіксні токени.</b> Ваги не чіпають узагалі. Замість цього до входу
+дописують кілька <b>вигаданих токенів</b> — не слів зі словника, а просто навчуваних
+векторів, які модель бачить як початок послідовності. Уся нова інформація живе в цих
+векторах. Це найдешевший спосіб за кількістю параметрів, але він зʼїдає довжину
+контексту: якщо префікс займає двісті позицій, на справжній текст лишається на двісті
+менше.</p>
+
+<p><b>3. BitFit.</b> Найпростіша ідея з усіх: у трансформері є ваги-матриці й
+ваги-<b>зсуви</b> (bias) — ті додатки, що приписуються до результату множення.
+Заморозимо всі матриці й навчатимемо лише зсуви. Нічого нового не додається взагалі,
+просто вибирається підмножина старого. У BERT зсуви складають
+<b>0.08–0.09 %</b> усіх ваг — залежно від розміру моделі.</p>
+
+<p><b>4. LoRA.</b> Ваги теж не чіпають, але до кожної обраної матриці додають
+<b>поправку</b>, розкладену в добуток двох дуже вузьких матриць. Про це — весь
+подальший текст.</p>
+
+<figure>
+  <p class="fig-head">Мапа: де саме кожен метод чіпляється до блока трансформера</p>
+  <p class="fig-sub">Одна схема, чотири місця. Сірим — те, що лишається замороженим.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c2" width="960" height="330" data-lw="960" data-lh="330"></canvas>
+  </div>
+  <figcaption>Префіксні токени сидять <b>перед</b> блоком, у самому вході. Адаптери —
+  <b>нові шари всередині</b>, після уваги й після мережі прямого поширення. BitFit
+  бере <b>вже наявні зсуви</b>. LoRA приписує паралельну гілку <b>до самих
+  матриць</b> — і саме тому її, на відміну від решти, можна потім прибрати, вливши
+  в матрицю.</figcaption>
+</figure>
+
+<div class="scroll-x"><table class="plain"><thead><tr><th>метод</th><th>що додається</th><th>де живе нове знання</th><th>затримка на виведенні</th></tr></thead>
+<tbody>
+<tr><td>адаптери</td><td>дві проєкції + нелінійність у кожному блоці</td><td>у нових шарах</td><td><b>додається</b>: шар не прибрати</td></tr>
+<tr><td>префіксні токени</td><td>кілька навчуваних векторів на вході</td><td>у входовій послідовності</td><td>додається: довші послідовності</td></tr>
+<tr><td>BitFit</td><td>нічого; вчаться наявні зсуви</td><td>у самих зсувах</td><td><b>нуль</b></td></tr>
+<tr><td>LoRA</td><td>дві вузькі матриці біля кожної обраної</td><td>у поправці до матриці</td><td><b>нуль після злиття</b></td></tr>
+</tbody></table></div>
+
+<div class="note"><b>Числа, які варто знати.</b> Адаптери на наборі GLUE дають
+<b>80.0</b> балів проти <b>80.4</b> у повного донавчання, додаючи <b>3.6 %</b>
+параметрів на кожне завдання (за повного донавчання їх 100 %). BitFit на тому самому
+GLUE, навчаючи <b>0.08 %</b>, дає на перевірній частині 84.2 проти 84.1 у повного
+донавчання — але на закритому тесті вже 80.9 проти 81.8, тобто перемога на перевірці
+не дожила до тесту. Префіксні токени на генерації таблиця→текст із <b>0.1 %</b>
+параметрів дають BLEU 69.7 проти 68.2 у повного донавчання — а на сумаризації з
+тим самим бюджетом програють 35.05 проти 37.25 за ROUGE-L. <b>Жоден із методів не
+виграє скрізь</b>, і це важливіше за будь-яке окреме число.
+
+<p style="margin:10px 0 0">Усі числа цієї врізки — чужі, з великих моделей. Два з
+чотирьох методів — BitFit і LoRA — ми заміряли самі на власному стенді, і їхні числа
+стоять у розділі 13. Адаптерів і префіксних токенів ми не міряли, тож про них у цій
+лекції лише переказ, і так це й читай.</p></div>
+
+<h2 id="s5"><span class="num">Розділ 05</span>Що таке ранг матриці</h2>
+
+<p>Далі буде потрібне одне поняття з лінійної алгебри, і його треба ввести чесно, бо
+без нього LoRA — просто набір букв. Обіцяю: ніякої вищої математики, лише таблиця
+чисел і множення.</p>
+
+<p><b>Матриця</b> — це прямокутна таблиця чисел. У нейромережі матриця
+<span class="raw">W</span> розміру <span class="raw">d</span><span class="sub">вих</span> × <span class="raw">d</span><span class="sub">вх</span>
+перетворює вхідний вектор на вихідний: кожне число виходу — це зважена сума входу,
+а ваги стоять у рядку матриці.</p>
+
+<p><b>Ранг</b> матриці — це кількість справді незалежних напрямків у ній. Найлегше
+відчути це через протилежність: ранг <b>1</b> означає, що вся таблиця породжується
+<b>двома векторами</b> — стовпчиком і рядком, — і кожна клітинка є добутком
+відповідних чисел.</p>
+
+<p>Порахуймо руками. Візьмемо стовпчик <span class="raw">u = (2, 1, 3)</span> і рядок
+<span class="raw">a = (5, 10, 2, 4)</span>. Їхній <b>зовнішній добуток</b> — таблиця
+3×4, у якій клітинка на перетині рядка <span class="raw">i</span> й стовпця
+<span class="raw">j</span> дорівнює <span class="raw">u<span class="sub">i</span> · a<span class="sub">j</span></span>:</p>
+
+<div class="eq left">        5    10    2    4
+  2 ‖  10    20    4    8
+  1 ‖   5    10    2    4
+  3 ‖  15    30    6   12</div>
+
+<p>У цій таблиці <b>12 чисел</b>, але щоб її задати, досить <b>3 + 4 = 7</b>. І
+подивись на рядки: другий рядок — це перший, поділений на два; третій — перший,
+помножений на півтора. Тобто справжній рядок тут один, решта — його масштаби. Оце й
+означає «ранг 1».</p>
+
+<p>Ранг <span class="raw">r</span> — те саме, тільки таких пар «стовпчик × рядок» не
+одна, а <span class="raw">r</span>, і матриця є їхньою сумою. Записують це як добуток
+двох вузьких матриць: <span class="raw">B</span> розміру
+<span class="raw">d</span><span class="sub">вих</span> × <span class="raw">r</span>
+і <span class="raw">A</span> розміру
+<span class="raw">r</span> × <span class="raw">d</span><span class="sub">вх</span>.
+Ключове число:</p>
+
+<div class="eq">чисел у <span class="raw">B·A</span>: r · (d<span class="sub">вих</span> + d<span class="sub">вх</span>)
+&nbsp;&nbsp;проти&nbsp;&nbsp; чисел у повній матриці: d<span class="sub">вих</span> · d<span class="sub">вх</span></div>
+
+<p>Множення перетворилось на додавання, і в цьому вся економія. Для матриці 4096×4096
+повна таблиця — 16.8 мільйона чисел; ранг 4 коштує 4 × (4096 + 4096) = 32 768. Це
+<b>у 512 разів</b> менше.</p>
+
+<figure>
+  <p class="fig-head">Ранг 1: уся таблиця з одного стовпчика й одного рядка</p>
+  <p class="fig-sub">Покрути числа — і побачиш, що змінюється вся таблиця одразу.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="u3">перше число стовпчика <output id="u3o">2</output></label>
+        <input type="range" id="u3" min="1" max="6" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="a3">третє число рядка <output id="a3o">2</output></label>
+        <input type="range" id="a3" min="1" max="9" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>чисел у таблиці</b><i>12</i></div>
+        <div class="cellv"><b>треба задати</b><i id="r3b">7</i></div>
+      </div>
+      <div class="verdict" id="v3"></div>
+    </div>
+  </div>
+  <figcaption>Один рух повзунка міняє цілий рядок або цілий стовпець — бо всі
+  клітинки привʼязані до тих самих семи чисел. Матриця рангу 1 не вміє
+  задати клітинку окремо, і саме ця несвобода є її дешевизною.</figcaption>
+</figure>
+<h2 id="s6"><span class="num">Розділ 06</span>Гіпотеза малого рангу</h2>
+
+<p>Тепер головна здогадка теми, і вона дуже проста на словах.</p>
+
+<div class="note"><b>Гіпотеза.</b> Різниця між донавченою й початковою матрицею —
+<span class="raw">ΔW = W</span><span class="sub">після</span> − <span class="raw">W</span><span class="sub">до</span> —
+хоч і має ті самі розміри, що й <span class="raw">W</span>, але <b>бідна на
+незалежні напрямки</b>: у ній мало рангу. А отже, її можна з доброю точністю
+записати добутком двох вузьких матриць.</div>
+
+<div class="note warn"><b>Одразу застережу від найпоширенішого перекручення цієї
+гіпотези.</b> Її часто переказують як «донавчання змінює ваги <b>мало</b>». Це не
+те саме, і на нашому стенді це просто неправда. Ми заміряли, наскільки велика
+навчена поправка LoRA порівняно з матрицею, до якої вона приписана: у рангу 4
+відношення <span class="raw">‖B·A·α/r‖</span> до
+<span class="raw">‖W‖</span> дорівнює <b>1.1607</b> — тобто поправка за величиною
+<b>не менша за саму матрицю</b>. Гіпотеза каже не «зміна мала», а <b>«зміна
+вузька»</b>: вона велика, але вміщається в кілька напрямків. Плутати ці два
+твердження — те саме, що плутати довжину вектора з кількістю його координат.</div>
+
+<p>Чому в це взагалі можна вірити? Тому що передтренована модель уже вміє майже все,
+що потрібно. Вона знає мову, знає, що слово «не» перевертає зміст, знає, що після
+«помилка» часто йде «доступу». Донавчання під класифікацію не вчить її мови заново —
+воно повертає вже наявні здібності в потрібний бік. Такий поворот і є «мало
+незалежних напрямків».</p>
+
+<p>Це саме <b>гіпотеза</b>, а не теорема. Вона може бути неправдою — наприклад, коли
+нове завдання вимагає знання, якого в моделі не було зовсім. Ми до цього повернемось
+у розділі про межі. Але спершу подивімось, як гіпотеза перетворюється на механізм.</p>
+
+<h2 id="s7"><span class="num">Розділ 07</span>LoRA покроково</h2>
+
+<p>Ось увесь метод, крок за кроком. Нічого, крім того, що вже введено.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · що робив шар</span>
+    <div class="eq">h = W · x</div>
+    <p>Вхідний вектор <span class="raw">x</span> множиться на матрицю
+    <span class="raw">W</span>, виходить <span class="raw">h</span>. Це звичайний
+    лінійний шар, їх у трансформері десятки.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · що зробило б повне донавчання</span>
+    <div class="eq">h = (W + ΔW) · x</div>
+    <p>Донавчання не замінює матрицю чимось геть іншим — воно додає до неї поправку
+    <span class="raw">ΔW</span> тих самих розмірів. Поки що це просто інший спосіб
+    записати те саме.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · накладаємо гіпотезу</span>
+    <div class="eq">ΔW ≈ B · A</div>
+    <p>Якщо поправка бідна на незалежні напрямки, її можна записати добутком
+    <span class="raw">B</span> (розміру
+    <span class="raw">d</span><span class="sub">вих</span>×<span class="raw">r</span>)
+    і <span class="raw">A</span> (розміру
+    <span class="raw">r</span>×<span class="raw">d</span><span class="sub">вх</span>).
+    Число <span class="raw">r</span> — <b>ранг</b>, і воно зазвичай крихітне:
+    1, 2, 4, 8, 16.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4 · додаємо масштаб</span>
+    <div class="eq">h = W·x + (B·A·x) · α/r</div>
+    <p>Ось і вся LoRA. <span class="raw">W</span> <b>заморожена</b>: вона не має
+    градієнта, не має моментів Adam і не займає нічого, крім себе самої. Вчаться лише
+    <span class="raw">A</span> і <span class="raw">B</span>. Множник
+    <span class="raw">α/r</span> — про нього окремий розділ нижче.</p>
+  </div>
+</div>
+
+<p>Порядок обчислень тут не випадковий. Дужки в <span class="raw">(B·A·x)</span>
+розкриваються справа наліво: спершу <span class="raw">A·x</span> — це стискає вектор
+із <span class="raw">d</span><span class="sub">вх</span> до
+<span class="raw">r</span> чисел, — і лише потім <span class="raw">B</span> розтискає
+його назад. Якби ми спершу перемножили <span class="raw">B·A</span> в повну матрицю,
+економії обчислень не було б зовсім; так само й памʼяті на проміжні значення.
+Пляшкове горло шириною <span class="raw">r</span> — це і є те місце, крізь яке
+проходить усе нове знання шару.</p>
+
+<figure>
+  <p class="fig-head">Дві дороги через шар</p>
+  <p class="fig-sub">Заморожена матриця й паралельна вузька гілка. Повзунок міняє ранг.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="r4">ранг <span class="raw">r</span> <output id="r4o">4</output></label>
+        <input type="range" id="r4" min="1" max="64" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <label for="d4">розмір матриці <output id="d4o">4096</output></label>
+        <input type="range" id="d4" min="0" max="4" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ваг у <span class="raw">W</span></b><i id="r4a">16.8 млн</i></div>
+        <div class="cellv"><b>ваг у <span class="raw">A</span>+<span class="raw">B</span></b><i id="r4b">32 768</i></div>
+      </div>
+      <div class="verdict" id="v4"></div>
+    </div>
+  </div>
+  <figcaption>Товщина вузької гілки — це <span class="raw">r</span>. Зверни увагу, як
+  повільно росте вартість поправки: подвоєння рангу подвоює її, тоді як повна матриця
+  від рангу не залежить узагалі. Саме тому LoRA лишається дешевою навіть при
+  <span class="raw">r = 64</span>.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">Розділ 08</span>Чому <span class="raw">B</span> ініціалізують нулями</h2>
+
+<p>Деталь, яку легко проґавити, а вона вирішує, чи метод узагалі працює.</p>
+
+<p>На початку донавчання ми хочемо, щоб модель була <b>точно</b> тією самою, якою
+вийшла з передтренування. Не «приблизно», не «майже» — точно. Інакше перші кроки
+навчання витрачаються на те, щоб позбутися шуму, який ми самі й додали, а на великій
+моделі це може зіпсувати її незворотно.</p>
+
+<p>Умова проста: поправка <span class="raw">B·A</span> має на старті дорівнювати
+<b>нулю</b>. Занулити обидві матриці не можна — тоді градієнт по них теж буде нулем
+назавжди, і вони ніколи не зрушать (переконайся сам: похідна добутку
+<span class="raw">B·A</span> по <span class="raw">A</span> містить множник
+<span class="raw">B</span>, а по <span class="raw">B</span> — множник
+<span class="raw">A</span>; якщо обидві нульові, обидві похідні нульові).</p>
+
+<p>Тому роблять <b>несиметрично</b>:</p>
+
+<ul>
+<li><span class="raw">A</span> — випадкова, з малим нормальним розкидом;</li>
+<li><span class="raw">B</span> — <b>рівно нулі</b>.</li>
+</ul>
+
+<p>Тоді добуток на старті нульовий, а градієнт — ні: похідна по
+<span class="raw">B</span> містить множник <span class="raw">A</span>, і він не
+нульовий. Отже <span class="raw">B</span> рушить із місця на першому ж кроці, а за
+ним і <span class="raw">A</span>.</p>
+
+<div class="note"><b>Це не абстракція — це можна перевірити числом.</b> На нашому
+стенді ми взяли передтреновану модель, обвішали її гілками LoRA й прогнали ті самі
+шістдесят чотири речення крізь обидві версії. Найбільша різниця виходів —
+<b>2.086 · 10<span class="sup">−7</span></b>. Це рівно нуль у точності
+<code>float32</code>, де числа мають близько семи значущих цифр. Модель із LoRA на
+старті <b>не відрізняється</b> від початкової.</div>
+
+<h2 id="s9"><span class="num">Розділ 09</span>Що таке альфа</h2>
+
+<p>У формулі стоїть множник <span class="raw">α/r</span>, і його призначення часто
+пояснюють туманно. Насправді ідея дуже проста, а її наслідок — трохи незручний.</p>
+
+<p><b>Що робить <span class="raw">α</span>.</b> Це просто число, на яке домножується
+поправка. Більше <span class="raw">α</span> — сильніший вплив LoRA на вихід шару.
+Менше — слабший. Усе.</p>
+
+<p><b>Навіщо ділити на <span class="raw">r</span>.</b> Чим більший ранг, тим більше
+доданків у сумі <span class="raw">B·A</span>, а отже тим більший за величиною сам
+добуток. Ділення на <span class="raw">r</span> це компенсує: змінивши ранг з 4 на 16,
+ти не отримуєш автоматично вчетверо сильнішої поправки. Без цього дільника кожна
+зміна рангу вимагала б наново добирати швидкість навчання.</p>
+
+<p><b>А тепер незручна частина.</b> Подивись на формулу ще раз:</p>
+
+<div class="eq">h = W·x + (B·A·x) · α/r</div>
+
+<p>Поправка входить у вихід <b>лінійно</b>, помножена на константу. Отже подвоїти
+<span class="raw">α</span> — приблизно те саме, що дозволити
+<span class="raw">B</span> вирости вдвічі, тобто приблизно те саме, що збільшити
+швидкість навчання. Дві ручки крутять майже одне й те саме. Автори методу це
+визнають прямо: підбір <span class="raw">α</span> вони називають майже тим самим, що
+підбір швидкості навчання, і тому просто ставлять
+<span class="raw">α</span> рівним першому <span class="raw">r</span>, який пробують,
+і більше не чіпають.</p>
+
+<div class="note warn"><b>Поширений міф.</b> Правила «<span class="raw">α</span>
+завжди дорівнює <span class="raw">2r</span>» не існує. У самій роботі, що ввела LoRA,
+співвідношення <span class="raw">α/r</span> у різних дослідах дорівнює 1, 2 і 8 —
+залежно від моделі. Це підібране число, а не константа природи.</div>
+
+<p>Практичний наслідок для чесного порівняння: у LoRA <b>ручок більше</b>, ніж у
+повного донавчання. Крок навчання є в обох, а <span class="raw">r</span> і
+<span class="raw">α</span> — лише в LoRA. Якщо порівнювати їх, підібравши крок обом,
+але <span class="raw">α</span> зафіксувавши навмання, порівняння вже нерівне — і не
+на користь LoRA. Ми до цього ще повернемось із числами.</p>
+<h2 id="s10"><span class="num">Розділ 10</span>До яких матриць прикладати</h2>
+
+<p>У блоці трансформера лінійних матриць багато. Нагадаймо, які саме (тема 21 їх
+уводила, але тут вони потрібні поіменно, тож перелічимо ще раз):</p>
+
+<div class="scroll-x"><table class="plain"><thead><tr><th>матриця</th><th>що робить</th><th>розмір</th></tr></thead>
+<tbody>
+<tr><td><span class="raw">W</span><span class="sub">q</span></td><td>робить із входу <b>запит</b>: «що я шукаю»</td><td>d × d</td></tr>
+<tr><td><span class="raw">W</span><span class="sub">k</span></td><td>робить <b>ключ</b>: «що я пропоную»</td><td>d × d</td></tr>
+<tr><td><span class="raw">W</span><span class="sub">v</span></td><td>робить <b>значення</b>: «що я віддам, якщо мене оберуть»</td><td>d × d</td></tr>
+<tr><td><span class="raw">W</span><span class="sub">o</span></td><td>змішує результати голів назад в один вектор</td><td>d × d</td></tr>
+<tr><td>дві матриці <span class="raw">FFN</span></td><td>мережа прямого поширення після уваги</td><td>d × 4d і 4d × d</td></tr>
+</tbody></table></div>
+
+<p>Дві матриці мережі прямого поширення разом важать <b>у вісім разів</b> більше за
+одну матрицю уваги — саме там сидить більшість ваг трансформера. Здавалося б, туди й
+треба цілити. Автори LoRA зробили навпаки: обмежились матрицями уваги, а мережу
+прямого поширення заморозили повністю. Причину вони називають чесно й скромно —
+<b>«для простоти й задля ощадності за параметрами»</b>, а не через якусь теорію про
+те, що увага важливіша.</p>
+
+<p>А от <b>яку саме</b> пару матриць уваги брати — це вже вирішив замір, і замір
+поставлено правильно: <b>за однакової кількості навчуваних ваг</b>. Якщо на всі
+матриці разом виділено 18 мільйонів ваг, то на одну матрицю припадає ранг 8, на дві —
+ранг 4, на всі чотири — ранг 2. Ось що вийшло на моделі на 175 мільярдів ваг:</p>
+
+<div class="scroll-x"><table class="nums"><thead><tr><th>адаптуємо</th><th>ранг</th><th>WikiSQL</th><th>MultiNLI</th></tr></thead>
+<tbody>
+<tr><td>лише <span class="raw">W</span><span class="sub">q</span></td><td>8</td><td>70.4</td><td>91.0</td></tr>
+<tr><td>лише <span class="raw">W</span><span class="sub">k</span></td><td>8</td><td>70.0</td><td>90.8</td></tr>
+<tr><td>лише <span class="raw">W</span><span class="sub">v</span></td><td>8</td><td>73.0</td><td>91.0</td></tr>
+<tr><td>лише <span class="raw">W</span><span class="sub">o</span></td><td>8</td><td>73.2</td><td>91.3</td></tr>
+<tr><td><span class="raw">W</span><span class="sub">q</span>, <span class="raw">W</span><span class="sub">k</span></td><td>4</td><td>71.4</td><td>91.3</td></tr>
+<tr class="hot"><td><span class="raw">W</span><span class="sub">q</span>, <span class="raw">W</span><span class="sub">v</span></td><td>4</td><td><b>73.7</b></td><td>91.3</td></tr>
+<tr class="hot"><td>усі чотири</td><td>2</td><td><b>73.7</b></td><td><b>91.7</b></td></tr>
+</tbody></table></div>
+
+<div class="note warn"><b>Прочитай таблицю уважно — вона каже не те, що зазвичай
+переказують.</b> «LoRA ставлять на <span class="raw">W</span><span class="sub">q</span>
+і <span class="raw">W</span><span class="sub">v</span>» — це правда лише як
+«найкраща <b>пара</b>». Розкидати той самий бюджет на <b>всі чотири</b> матриці з
+удвічі меншим рангом виявилось не гірше на WikiSQL і <b>краще</b> на MultiNLI.
+Висновок самих авторів звучить так: краще адаптувати більше матриць меншим рангом,
+ніж одну матрицю більшим. Це прямо суперечить звичному переказу — тож перевіряй
+таблиці, а не перекази.</div>
+
+<p>Друга частина того самого досліду — <b>скільки рангу треба</b>. Тут результат
+здивував самих авторів:</p>
+
+<div class="scroll-x"><table class="nums"><thead><tr><th>WikiSQL, точність</th><th>r=1</th><th>r=2</th><th>r=4</th><th>r=8</th><th>r=64</th></tr></thead>
+<tbody>
+<tr><td>лише <span class="raw">W</span><span class="sub">q</span></td><td>68.8</td><td>69.6</td><td>70.5</td><td>70.4</td><td>70.0</td></tr>
+<tr class="hot"><td><span class="raw">W</span><span class="sub">q</span>, <span class="raw">W</span><span class="sub">v</span></td><td><b>73.4</b></td><td>73.3</td><td>73.7</td><td>73.8</td><td>73.5</td></tr>
+<tr><td>усі чотири</td><td>74.1</td><td>73.7</td><td>74.0</td><td>74.0</td><td>73.9</td></tr>
+</tbody></table></div>
+
+<p>Дивись на середній рядок: між рангом <b>1</b> і рангом <b>64</b> різниця —
+<b>0.4</b> пункту, і вона в межах заявленої похибки ±0.5. Ранг, збільшений у
+шістдесят чотири рази, не дає нічого. А от у верхньому рядку — де адаптують лише
+одну матрицю — ранг таки має значення: 68.8 при <span class="raw">r=1</span> проти
+70.5 при <span class="raw">r=4</span>. Тобто <b>ранг і кількість матриць — ручки
+одного налаштування</b>, і крутити варто ту, що дешевша.</p>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Злиття: нуль затримки на виведенні</h2>
+
+<p>Тепер найкрасивіша властивість методу, і вона випливає просто з алгебри.</p>
+
+<p>Поки триває навчання, LoRA живе як <b>окрема гілка</b>: вихід шару складається з
+двох доданків, і це справді трохи повільніше за один. Але щойно навчання скінчилось,
+<span class="raw">A</span> і <span class="raw">B</span> більше не змінюються — а
+отже, їхній добуток є фіксованою матрицею тих самих розмірів, що й
+<span class="raw">W</span>. Її можна просто <b>додати</b>:</p>
+
+<div class="eq">W′ = W + B·A · α/r</div>
+
+<p>Після цього гілки немає. Є одна матриця <span class="raw">W′</span>, яка робить
+рівно те саме, що робили дві дороги разом. Модель не відрізнити від донавченої
+звичайним способом — ані за розміром, ані за швидкістю, ані за кодом. Затримка на
+виведенні <b>нульова за побудовою</b>, а не «майже нульова».</p>
+
+<p>Ось чим це відрізняється від адаптерів. Адаптер — це <b>новий шар із
+нелінійністю</b> всередині. Нелінійність не можна влити в сусідню матрицю: дві
+лінійні операції зливаються в одну, а лінійна з нелінійною — ні. Тому адаптер
+лишається в моделі назавжди й додає свій час на кожному прогоні, скільки б він не
+важив у параметрах.</p>
+
+<div class="note"><b>І це теж заміряне число, а не обіцянка.</b> Ми взяли модель із
+навченими (навмисно ненульовими) гілками LoRA, порахували її вихід, потім влили
+поправки в самі матриці за формулою вище й порахували вихід знову. Найбільша різниця
+на тих самих шістдесяти чотирьох реченнях — <b>1.490 · 10<span class="sup">−7</span></b>.
+Знову рівно нуль у межах точності <code>float32</code>. Злиття — це тотожність, а
+не наближення.</div>
+
+<figure>
+  <p class="fig-head">Три стани однієї моделі</p>
+  <p class="fig-sub">Навчання · злиття · виведення. Ліворуч дві дороги, праворуч — одна.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c5" width="960" height="270" data-lw="960" data-lh="270"></canvas>
+  </div>
+  <figcaption>Під час навчання градієнт іде тільки у вузьку гілку — товста матриця
+  сіра. Після злиття від гілки не лишається сліду: <span class="raw">W′</span> має
+  ті самі розміри, що й <span class="raw">W</span>. Ціна злиття — втрата можливості
+  швидко перемкнути завдання: щоб поставити іншу кальку, треба або відняти цю назад,
+  або тримати незлиту версію.</figcaption>
+</figure>
+
+<p>Остання фраза підпису важлива, і про неї рідко пишуть. Злиття й швидке перемикання
+завдань — це <b>вибір «або-або»</b>. Якщо в один прогін треба обслужити запити з
+різних завдань, доводиться лишати гілки незлитими й платити ту саму невелику затримку,
+від якої ми нібито позбулись. Автори методу це визнають прямо: батчувати входи з
+різними <span class="raw">A</span> і <span class="raw">B</span> в одному проході
+непросто саме тоді, коли поправки влиті в <span class="raw">W</span>.</p>
+<h2 id="s12"><span class="num">Розділ 12</span>Наш стенд</h2>
+
+<p>Тепер відкладімо чужі числа й порахуймо своє. Великої моделі в нас немає, відеокарти
+теж — тож ми зводимо явище до найменшого стенда, на якому воно ще видно, і міряємо
+його там.</p>
+
+<p><b>Основа.</b> Трансформер із розміром вектора 128, двома шарами й чотирма
+головами уваги. Він передтренований як мовна модель на українських повідомленнях
+програм — тому самому корпусі, з якого зроблено кілька тем цього курсу. Дві тисячі
+кроків, пʼять зерен: якість на перевірній частині лягла в
+<b>4.6601..4.6739 ната</b>. Це не якась абстракція: те саме число відтворилось у
+трьох різних скриптах, і саме воно каже, що модель мови таки навчилась.</p>
+
+<p><b>Завдання для донавчання.</b> Класифікація повідомлення на два класи: чи
+повідомляє воно про <b>збій</b>. Мітку беремо з англійського оригіналу, де розробник
+сам написав <code>error</code>, <code>failed</code>, <code>cannot</code>, а
+класифікуємо український переклад. Це <b>проксі</b>, а не еталонна розмітка:
+правило по ключових словах не ловить «could not» і «is not able to», тож частина
+збоїв дістає мітку «не збій». Стеля задачі через це нижча за одиницю — так і
+скажемо, замість того щоб робити вигляд, ніби її немає.</p>
+
+<p>Вибірка: <b>70 767</b> навчальних повідомлень, <b>8 846</b>
+відкладених, <b>8 846</b> перевірних; частка класу «збій» —
+<b>0.1863</b>. Міряємо <b>macro-F1</b> — середнє F1 по обох класах: звичайна
+точність тут нічого б не показала, бо модель, яка завжди каже «не збій», дістала б
+понад 80&nbsp;%.</p>
+
+<div class="note warn"><b>А ось де ця схема все одно дірява — і ми це заміряли.</b>
+Крок навчання кожній гілці обрано на <b>одному</b> зерні: прогнати вісім точок сітки
+на пʼятьох зернах було б удесятеро дорожче. Але різниця між трьома найкращими
+точками сітки часто <b>менша</b>, ніж розкид тієї самої гілки по пʼятьох зернах.
+Таких гілок <b>3 із 10</b>, і найгостріше це видно на самій лінійній пробі. На відкладеній
+частині крок 0.03 дав 0.8035, а 0.003 — 0.7903, тож процедура обрала 0.03. Але на
+перевірній частині обраний крок дає купу <b>0.7314..0.8070</b>
+завширшки 0.0756 — у 5.7 раза
+ширшу за ту перевагу в 0.0132, на підставі якої його обрали. «Обраний крок» тут обрано шумом. Ми лишаємо все як є й кажемо це
+вголос, бо чесніше показати дірку, ніж заховати її за трьома знаками після коми.</div>
+
+<div class="note"><b>Три правила, без яких порівняння нічого не варте.</b>
+<b>(1)</b> Однакова основа: усі гілки виходять із тих самих передтренованих ваг,
+зерно в зерно. <b>(2)</b> Однаковий бюджет донавчання: <b>400 кроків</b>, пачка 64,
+AdamW — усім. <b>(3)</b> Однакове зусилля на підбір: кожна гілка дістала ту саму
+логарифмічну сітку швидкості навчання з <b>восьми</b> точок від 0.0001 до 0.3, і
+своє найкраще значення обрала на <b>відкладеній</b> частині. Перевірної частини
+жодна гілка не бачила, поки все не було вирішено. Пʼять зерен на кожну точку.</div>
+
+<h2 id="s13"><span class="num">Розділ 13</span>Головне число теми</h2>
+
+<div class="scroll-x"><table class="nums"><thead><tr><th>гілка</th><th>навчуваних ваг</th>
+<th>від повного</th><th>крок</th><th>macro-F1</th><th>купа по 5 зернах</th></tr></thead>
+<tbody>
+<tr class="hot"><td>лінійна проба</td><td>258</td><td>0.0183&nbsp;%</td><td>0.03</td><td>0.7775</td><td>0.7314..0.8070</td></tr>
+<tr><td>LoRA Wq,Wv r=1</td><td>1 282</td><td>0.0911&nbsp;%</td><td>0.01</td><td>0.8536</td><td>0.8471..0.8593</td></tr>
+<tr><td>LoRA Wq,Wv r=2</td><td>2 306</td><td>0.1638&nbsp;%</td><td>0.01</td><td>0.8588</td><td>0.8534..0.8657</td></tr>
+<tr><td>BitFit</td><td>3 586</td><td>0.2547&nbsp;%</td><td>0.01</td><td>0.8604</td><td>0.8513..0.8667</td></tr>
+<tr class="hot"><td>LoRA Wq,Wv r=4</td><td>4 354</td><td>0.3093&nbsp;%</td><td>0.01</td><td>0.8622</td><td>0.8503..0.8713</td></tr>
+<tr><td>LoRA лише Wq r=8</td><td>4 354</td><td>0.3093&nbsp;%</td><td>0.03</td><td>0.8385</td><td>0.8034..0.8525</td></tr>
+<tr><td>LoRA Wq,Wv r=8</td><td>8 450</td><td>0.6002&nbsp;%</td><td>0.01</td><td>0.8622</td><td>0.8579..0.8649</td></tr>
+<tr><td>LoRA Wq,Wv r=16</td><td>16 642</td><td>1.1821&nbsp;%</td><td>0.01</td><td>0.8653</td><td>0.8598..0.8711</td></tr>
+<tr><td>LoRA усі шість r=4</td><td>18 690</td><td>1.3275&nbsp;%</td><td>0.003</td><td>0.8755</td><td>0.8732..0.8793</td></tr>
+<tr class="hot"><td>повне донавчання</td><td>1 407 874</td><td>100.0000&nbsp;%</td><td>0.003</td><td>0.8917</td><td>0.8891..0.8933</td></tr>
+</tbody></table></div>
+
+<p>Читай цю таблицю знизу вгору й згори вниз одночасно. <b>Рубіж знизу</b> —
+лінійна проба: тіло заморожене повністю, вчиться сама лише голова на
+258 ваг, і вона дає <b>0.7775</b>. <b>Рубіж
+зверху</b> — повне донавчання: усі 1 407 874 ваги, і це дає
+<b>0.8917</b>. Між ними лежить увесь простір, який тут узагалі є що
+вигравати, і він дорівнює <b>0.1142</b>.</p>
+
+<p>А тепер головне число теми. LoRA рангу 4 на матрицях
+<span class="raw">W</span><span class="sub">q</span> і
+<span class="raw">W</span><span class="sub">v</span> чіпає
+<b>4 354 ваги</b> — це <b>0.3093&nbsp;%</b> від того, що
+чіпає повне донавчання, тобто одна вага з 323.
+І дає <b>0.8622</b>, закриваючи <b>74&nbsp;%</b>
+доступного простору.</p>
+
+<figure>
+  <p class="fig-head">Головне число теми</p>
+  <p class="fig-sub">По горизонталі — скільки ваг дозволено змінювати. По вертикалі — якість.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c6" width="960" height="420" data-lw="960" data-lh="420"></canvas>
+  </div>
+  <figcaption>Вертикальні риски — купа по пʼятьох зернах, точка — середнє. Рожева
+  лінія веде по гілках LoRA рангів 1, 2, 4, 8, 16. Головне тут — <b>форма кривої</b>:
+  вона круто підіймається від рубежу знизу й рано лягає плазом. Три сірі точки
+  осторонь — BitFit, LoRA лише на <span class="raw">W</span><span class="sub">q</span>
+  (вона накладається на ранг 4, бо ваг у них порівну) і LoRA на всіх шести
+  матрицях.</figcaption>
+</figure>
+
+<p><b>Що видно на кривій.</b> Ранг 1 дає 0.8536, ранг 16 — 0.8653: за 13-кратного зростання ваг середнє підіймається лише на <b>0.0117</b>. Формально купи не перекриваються, але зазор між ними — <b>0.0005</b>, а всі проміжні ранги перекриваються і з тим, і з тим. Читай це як «ранг вичерпується майже одразу», а не як «більший ранг кращий».
+Купа LoRA рангу 4 (0.8503..0.8713) і купа повного донавчання (0.8891..0.8933) <b>не перекриваються</b>: повне донавчання таки виграє, і виграє 0.0295.</p>
+
+<p>І окремо — <b>BitFit</b>: 3 586 ваг, самі лише зсуви й
+параметри нормалізації, жодної нової матриці, і <b>0.8604</b>. Найпростіша
+ідея сімʼї тримається на рівні набагато складніших. Це варто памʼятати щоразу, коли
+хочеться взяти найновіший метод: рубіж треба ставити не лише знизу й зверху, а й
+збоку.</p>
+
+<h3>Однаковий бюджет ваг, різні місця</h3>
+
+<p>Тепер найцікавіше. Питання: що важливіше — <b>ранг</b> чи <b>кількість матриць</b>?
+Щоб відповісти чесно, треба порівнювати гілки з <b>однаковим</b> числом навчуваних
+ваг. У нас таких пар дві.</p>
+
+<p><b>Пара перша, точна.</b> Ранг 8 на самій лише
+<span class="raw">W</span><span class="sub">q</span> — це рівно
+4 354 ваги. Ранг 4 на <span class="raw">W</span><span class="sub">q</span>
+і <span class="raw">W</span><span class="sub">v</span> — теж рівно
+4 354. Один бюджет, дві розкладки.</p>
+
+<p><b>Пара друга, майже точна.</b> Ранг 16 на двох матрицях — 16 642 ваги.
+Ранг 4 на всіх шести (три проєкції уваги, вихідна проєкція й обидві матриці мережі
+прямого поширення) — 18 690. Тут бюджети <b>не рівні</b>: у другої
+гілки ваг на 12&nbsp;% більше. Це
+послаблює саме цю пару, і ми це кажемо наперед — сама по собі вона нічого не
+доводить. Її роль — показати <b>напрямок</b>, який перша пара вже показала за
+точної рівності.</p>
+
+<figure>
+  <p class="fig-head">Той самий бюджет ваг, різні місця</p>
+  <p class="fig-sub">Дві пари. У кожній парі верхня гілка кладе бюджет вужче, нижня — ширше.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c7" width="960" height="290" data-lw="960" data-lh="290"></canvas>
+  </div>
+  <figcaption>Горизонтальні риски — купа по пʼятьох зернах. У першій парі бюджет
+  збігається <b>до одиниці</b> — вона й несе доказ. У другій у переможниці ваг на
+  12&nbsp;% більше, тож вона лише
+  повторює напрямок.</figcaption>
+</figure>
+
+<p><b>Обидві пари кажуть одне.</b> У першій парі дві матриці рангу 4 дають 0.8622 (купа 0.8503..0.8713) проти 0.8385 (купа 0.8034..0.8525) в однієї матриці рангу 8 — і купи по пʼятьох зернах ледь торкаються краями, тож на пʼятьох зернах це напрямок, а не доведена різниця. У другій — шість матриць рангу 4 дають 0.8755 (купа 0.8732..0.8793) проти 0.8653 (купа 0.8598..0.8711) у двох матриць рангу 16, і тут купи не перекриваються зовсім.</p>
+
+<p>Це той самий висновок, до якого дійшли автори методу на моделі в мільйон разів
+більшій: краще розкидати бюджет на <b>більше матриць меншим рангом</b>, ніж
+зосередити його в одній із великим. У них це видно на 96 шарах і 175 мільярдах ваг,
+у нас — на двох шарах і півтора мільйона. Спільне тут <b>напрямок</b>; величина
+розриву від стенда залежить, і ми її не переносимо.</p>
+
+<h3>А тепер найдешевша гілка з усіх</h3>
+
+<p>Подивись у таблиці на рядок <b>BitFit</b>: 3 586 ваг —
+самі лише зсуви (bias) і параметри нормалізації, жодної нової матриці, жодного
+рангу, жодної альфи — і <b>0.8604</b>. Її купа перекривається з купами LoRA рангів 1, 2, 4, 8, 16 — тобто на цьому стенді відрізнити їх ми не можемо.</p>
+
+<p>Це не привід не вчити LoRA: BitFit не вміє зливатись у матрицю окремим модулем,
+не масштабується рангом і на великих завданнях відстає. Але це привід ставити рубіж
+не тільки знизу й зверху, а й <b>збоку</b>: перш ніж хвалити новий метод, перевір
+його проти найдурнішого з можливих.</p>
+
+<h3>Альфа й швидкість навчання крутять одне й те саме</h3>
+
+<p>У розділі 09 ми сказали, що <span class="raw">α</span> входить у вихід лінійно,
+а тому підбір <span class="raw">α</span> майже збігається з підбором швидкості
+навчання. Це твердження можна перевірити, і ми перевірили: узяли LoRA рангу 4 й
+прогнали сітку «альфа × крок».</p>
+
+<figure>
+  <p class="fig-head">Альфа проти швидкості навчання</p>
+  <p class="fig-sub">Дві ручки, які крутять майже одне й те саме.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c10" width="960" height="300" data-lw="960" data-lh="300"></canvas>
+  </div>
+  <figcaption>Кожен рядок — своя альфа, кожен стовпець — свій крок навчання. Якби
+  це були дві незалежні ручки, найкращі клітинки стояли б де завгодно. Вони ж
+  вишиковуються по діагоналі: більша альфа хоче меншого кроку.</figcaption>
+</figure>
+
+<p><b>Практичний наслідок.</b> Якщо ти вже сумлінно підбираєш крок навчання, то
+підбирати ще й <span class="raw">α</span> — здебільшого марна робота: ти вдруге
+крутиш ту саму ручку. Значно важливіше не забути, що <b>крок для LoRA інший</b>,
+ніж для повного донавчання. У нашому заміру повне донавчання обрало
+<b>0.003</b>, а LoRA рангу 4 — <b>0.01</b>, тобто
+утричі більший.
+Дати обом однаковий крок — і порівняння виміряло б не методи, а недбалість.</p>
+<h3>Провал посеред сітки</h3>
+
+<p>Ми дібрали крок і сказали «найкраще значення опинилось усередині сітки». Тепер
+подивись на <b>всю</b> криву, а не лише на її вершину.</p>
+
+<figure>
+  <p class="fig-head">Якість від швидкості навчання: уся крива, а не лише максимум</p>
+  <p class="fig-sub">Три ранги LoRA, вісім точок сітки, відкладена частина.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c11" width="960" height="400" data-lw="960" data-lh="400"></canvas>
+  </div>
+  <figcaption>Крива <b>не одномодальна</b>: у r=4 вона
+  падає до 0.6650 при кроці 0.1 — гірше, ніж та сама гілка дає на
+  <b>найменшому</b> кроці сітки (0.7433) — і знову
+  підіймається до 0.8201 при 0.3. Це не округлення: провал
+  завглибшки 0.2059 macro-F1.</figcaption>
+</figure>
+
+<p><b>Що саме там ламається.</b> Ми взяли ті самі три моделі й заміряли на них три
+речі, яких жодна метрика якості не показує.</p>
+
+<div class="scroll-x"><table class="nums"><thead><tr><th>крок</th>
+<th>‖B·A·α/r‖ ÷ ‖W‖</th><th>ефективний ранг представлення</th>
+<th>частка передбачених «збій»</th><th>macro-F1</th></tr></thead>
+<tbody>
+<tr><td>0.01</td><td>1.16</td><td>63</td><td>0.2406</td><td>0.8709</td></tr>
+<tr class="hot"><td>0.1</td><td><b>39.03</b></td><td><b>12</b></td><td><b>0.4124</b></td><td>0.6650</td></tr>
+<tr><td>0.3</td><td>4.63</td><td>63</td><td>0.2089</td><td>0.8201</td></tr>
+</tbody></table></div>
+
+<p>Перша колонка — наскільки поправка велика проти матриці, до якої приписана.
+Друга — скільки незалежних напрямків лишилось у векторах, які модель подає голові
+(рахували через сингулярні числа: скільки їх тримає 90&nbsp;% розкиду). Третя —
+скільки повідомлень модель назвала збоєм; насправді їх 0.1888.</p>
+
+<p><b>Ось і вироджений розвʼязок.</b> При кроці 0.1 поправка стає в
+<b>39 разів</b> більшою за саму матрицю, і представлення
+осідає з 63 незалежних напрямків до <b>12</b>. Модель
+не перетворюється на константу — вона й далі читає текст: збіг її передбачень із
+найкращим правилом «довжина повідомлення ≥ 10» становить
+0.5291, а саме те правило дає лише 0.4706. Але вона починає
+кричати «збій» у 2.2 раза частіше, ніж треба.</p>
+
+<div class="note warn"><b>А тепер те, чого можна було не чекати.</b> Здається природним,
+що в провалі всі ранги падають в <b>одну</b> яму. Ми це перевірили — і ні. Збіг
+передбачень між рангами: при кроці 0.01 це 0.9754, 0.9708,
+0.9790; при кроці 0.1 — 0.8734, 0.7809,
+0.7651. На доброму кроці ранги <b>погоджуються</b> між собою, у провалі —
+<b>розходяться</b>. Це не спільний вироджений розвʼязок, а <b>хаотичний режим</b>, де
+результат вирішує випадкова ініціалізація. Побічний доказ: при іншій ініціалізації
+<span class="raw">A</span> провал припадає на інші ранги й має іншу глибину.</div>
+
+<p><b>Чому якість вертається при 0.3.</b> Причина не в LoRA, а в оптимізаторі. AdamW
+застосовує спад ваг (weight decay) окремо від градієнта, і його доданок дорівнює
+<span class="raw">lr · wd · w</span> — тобто <b>сила спаду пропорційна кроку</b>. При
+0.3 він утричі сильніший, ніж при 0.1, і встигає стягнути
+<span class="raw">B</span> назад: норма поправки падає з 39.03 до
+4.63, а ранг представлення вертається з 12 до
+63. </p><div class="note"><b>Перевірили це прямо — і гіпотеза підтвердилась.</b> Той самий прогін, той самий крок 0.3, різниця в одному числі: спад ваг увімкнено чи ні.</p><div class="scroll-x"><table class="nums"><thead><tr><th>спад ваг</th><th>крок 0.01</th><th>крок 0.1</th><th>крок 0.3</th></tr></thead><tbody><tr><td>0.01 (як у нас)</td><td>0.8709</td><td>0.6650</td><td>0.8201</td></tr><tr class="hot"><td>вимкнено</td><td>0.8703</td><td>0.6255</td><td><b>0.3988</b></td></tr><tr><td>‖dW‖÷‖W‖ без спаду</td><td>1.2</td><td>32.0</td><td><b>677</b></td></tr></tbody></table></div><p style="margin:10px 0 0">Без спаду ваг відновлення при 0.3 зникає <b>повністю</b>: поправка розганяється до <b>677</b> норм самої матриці, а якість падає до 0.3988 — це <b>нижче</b> за тривіальний рубіж «усе не збій» (0.4479). Отже вертає модель до тями не якась властивість LoRA, а рядок <code>weight_decay=0.01</code> в оптимізаторі.</div><p></p>
+
+<div class="note"><b>Урок, вартий цілого розділу.</b> «Мінімум усередині сітки»
+гарантує менше, ніж здається: він каже лише те, що <b>дві сусідні точки гірші</b>.
+Якщо крива має провал, сітка може його перестрибнути — і ти цього не побачиш ніколи,
+бо жоден показник не скаржиться. Єдина чесна перевірка — <b>намалювати всю криву</b>,
+а не звітувати її аргмаксимум.</div>
+
+<h2 id="s14"><span class="num">Розділ 14</span>Бюджет — теж вісь</h2>
+
+<p>Ми дали всім гілкам по 400 кроків і назвали це чесністю. Це справді чесно — але
+число 400 узяте нами, і варто спитати, чи не воно вирішує вирок. Курс уже
+обпікався на цьому: гілка, у якої власна стадія підготовки не доведена до кінця,
+дає «різниці немає», і це виглядає як результат, хоч це відсутність результату.</p>
+
+<p>Тому бюджет ми прогнали як окрему вісь: від 100 до 800 кроків, три гілки,
+три зерна на точку. Ця вісь <b>нічого не обирає</b> — вона лише показує, наскільки
+вирок від неї залежить.</p>
+
+<figure>
+  <p class="fig-head">Якість від кількості кроків донавчання</p>
+  <p class="fig-sub">Три гілки, пʼять бюджетів. Пунктир — той бюджет, на якому зроблено таблицю вище.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c8" width="960" height="400" data-lw="960" data-lh="400"></canvas>
+  </div>
+  <figcaption>Розрив між повним донавчанням і LoRA на 100 кроках дорівнює
+  <b>0.0546</b>, на 800 — <b>0.0191</b>: гілки сходяться. Вертикальні
+  риски — купа по трьох зернах.</figcaption>
+</figure>
+
+<p><b>Висновок, який тут важливіший за самі числа.</b> «Однаковий бюджет» — це не
+нейтральна умова, а <b>вибір</b>, і його треба називати вголос разом із результатом.
+Речення «LoRA дорівнює повному донавчанню» без згадки про бюджет неповне; правильне
+речення звучить як «за такого-то бюджету на такому-то завданні різниця така-то».</p>
+<h2 id="s15"><span class="num">Розділ 15</span>Квантування і QLoRA</h2>
+
+<p>LoRA прибрала три доданки з чотирьох: градієнти й обидва моменти Adam. Лишився
+перший — самі ваги, 4 байти на кожну. Для моделі на 65 мільярдів це 260 ГБ, і жодна
+одинарна карта такого не тримає. Питання: а чи справді на вагу треба чотири байти?</p>
+
+<p><b>Квантування</b> — це зберігання числа з меншою точністю. Ідея на пальцях: замість
+того щоб записувати кожну вагу з семи значущих цифр, домовимось, що ваги в межах
+одного блоку зберігатимемо як номер із короткого списку дозволених значень.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · блок</span>
+    <p>Беремо підряд, скажімо, 64 ваги. Знаходимо серед них найбільшу за модулем —
+    назвемо її <span class="raw">c</span>. Це <b>константа масштабу</b> блоку.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · нормування</span>
+    <p>Ділимо кожну вагу на <span class="raw">c</span>. Тепер усі 64 числа лежать
+    у відрізку від −1 до +1.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · округлення</span>
+    <p>На цьому відрізку заздалегідь розставлено <b>16 позначок</b> (бо
+    2<span class="sup">4</span> = 16 — саме стільки різних значень уміщається
+    в чотири біти). Кожну вагу замінюємо на номер найближчої позначки: число від 0
+    до 15.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4 · зберігання</span>
+    <p>Замість 64 чисел по 32 біти зберігаємо 64 номери по 4 біти <b>плюс</b> одну
+    константу <span class="raw">c</span>. Розгортання назад — множення позначки на
+    <span class="raw">c</span>.</p>
+  </div>
+</div>
+
+<p><b>NF4.</b> Ключове питання — <b>де саме</b> ставити ті 16 позначок. Рівномірно?
+Ваги навченої мережі розподілені приблизно нормально: біля нуля їх густо, на краях
+рідко. Рівномірна сітка витрачає половину позначок на майже порожні краї. Тому
+позначки розставляють так, щоб <b>у кожен кошик потрапляла однакова кількість ваг</b>
+за нормального розподілу. Це і зветься <b>NormalFloat 4</b>, або NF4.</p>
+
+<p><b>Подвійне квантування.</b> А тепер дрібниця, яка виявляється не дрібницею.
+Константа <span class="raw">c</span> — одна на блок, але вона 32-бітна. При блоці
+з 64 ваг це</p>
+
+<div class="eq">32 біти / 64 ваги = <b>0.5 біта на кожну вагу</b></div>
+
+<p>Тобто службова інформація коштує <b>восьму частину</b> самих даних (0.5 біта проти
+4). Лікування очевидне, щойно його побачив: проквантуємо самі константи. Їх складають
+у блоки по 256 і зберігають 8-бітними числами, а на кожні 256 констант заводять одну
+32-бітну константу другого рівня:</p>
+
+<div class="eq">8/64 + 32/(64 × 256) = 0.125 + 0.002 = <b>0.127 біта на вагу</b></div>
+
+<p>Економія — <b>0.373 біта на вагу</b>. Для моделі на 65 мільярдів це близько
+<b>3 ГБ</b>. Не переворот, але саме ці три гігабайти вирішують, чи влізе модель
+у карту на 48 ГБ.</p>
+
+<figure>
+  <p class="fig-head">Куди дівається памʼять: 65 мільярдів ваг</p>
+  <p class="fig-sub">Чотири стани — від повного 16-бітного донавчання до QLoRA.</p>
+  <div class="panel" style="grid-template-columns:1fr">
+    <canvas id="c9" width="960" height="340" data-lw="960" data-lh="340"></canvas>
+  </div>
+  <figcaption>Заміряні числа з роботи, що ввела QLoRA: повне 16-бітне донавчання
+  моделі на 65 млрд ваг потребує <b>понад 780 ГБ</b>, QLoRA — <b>менш ніж 48 ГБ</b>,
+  тобто вміщається в одну карту. Смуги «градієнти» й «моменти» в правих двох станах
+  не зникають зовсім — вони стають мізерними, бо навчуваних ваг лишились частки
+  відсотка.</figcaption>
+</figure>
+
+<div class="note"><b>Що з цього ми можемо перевірити самі, а що ні.</b> Перехід
+«16 байтів на вагу → 4 байти», на якому все тримається, — це наша арифметика з
+розділу 02, і вона дає <b>учетверо</b>. У роботі про LoRA для моделі на
+175 мільярдів повідомляють про падіння з <b>1.2 ТБ до 350 ГБ</b>, тобто приблизно
+<b>втричі</b>. Два числа не збігаються, і чесна відповідь — <b>ми не знаємо, з чого
+саме складається їхній 1.2 ТБ</b>: розкладки там не наведено, а при різних
+точностях зберігання (половинна для ваг, одинарна для моментів) множник виходить
+інший. Спільне в них те, що це <b>кілька разів</b>, а не тисячі — і саме це
+твердження від розкладки не залежить. А от
+самого квантування в 4 біти ми не перевіряли: <code>float32</code> — це те, з чим
+працює наш torch без додаткових бібліотек, і вдавати, що ми заміряли NF4, було б
+неправдою.</div>
+
+<p><b>Третя складова QLoRA — «сторінковий» оптимізатор.</b> Памʼять під час навчання
+витрачається нерівно: коли трапляється особливо довга послідовність, потреба
+стрибає, і прогін падає з переповнення. Сторінковий оптимізатор дозволяє тимчасово
+виштовхнути стан оптимізатора в оперативну памʼять машини й забрати назад — так само,
+як операційна система працює зі сторінками. Чесно кажучи: самі автори не наводять для
+цього механізму жодного заміру, бо спрацьовує він рідко.</p>
+
+<div class="note"><b>Головне число QLoRA й чого воно не означає.</b> Модель Guanaco,
+навчена цим способом, набрала <b>99.3 %</b> від рівня ChatGPT на наборі Vicuna за
+<b>24 години</b> на одній карті. Але подивись, як це число зроблено: судить
+<b>GPT-4</b>, а не люди; довірчий інтервал <b>±4.4 %</b>; і воно є середнім двох
+прогонів, що різняться <b>порядком</b> показу відповідей — 96.7 % в один бік і
+101.9 % в інший. Самі автори в тій самій роботі пишуть, що поточні тести чат-ботів
+не заслуговують довіри, і окремо зазначають, що <b>не встановили</b> рівності QLoRA
+й повного 16-бітного донавчання на розмірах 33 і 65 мільярдів — на це не вистачило
+ресурсів.</div>
+
+<p>І ще одна деталь, яка добре показує, як швидко «канонічні поради» перестають бути
+канонічними: у QLoRA гілки LoRA ставлять на <b>всі</b> лінійні шари з рангом
+<b>64</b> — тобто рівно навпаки до «лише
+<span class="raw">W</span><span class="sub">q</span> і
+<span class="raw">W</span><span class="sub">v</span>, малий ранг». Автори прямо
+кажуть, що саме це й дозволило не втратити якості.</p>
+
+<h2 id="s16"><span class="num">Розділ 16</span>Де LoRA програє</h2>
+
+<p>Тема була б нечесною без цього розділу. Почнімо з того, що ми заміряли самі,
+і лише потім перейдімо до того, що заміряли інші.</p>
+
+<div class="note warn"><b>Найперше: на нашому стенді LoRA повному донавчанню
+<b>не</b> дорівнює.</b> Найкраща з ощадних гілок відстала, і купи по пʼятьох зернах
+не перекрились. Правильне формулювання результату звучить не «не гірша», а
+<b>«закриває стільки-то відсотків розриву, чіпаючи стільки-то відсотків ваг»</b> —
+і саме в такому вигляді воно чесне. Числа стоять у розділі 13.</div>
+
+<p>А тепер чотири місця, де малий ранг перестає рятувати взагалі.</p>
+
+<p><b>1. Коли треба вивчити нове, а не повернути наявне.</b> Гіпотеза малого рангу
+спирається на те, що модель уже вміє потрібне, і донавчання лише перерозподіляє
+акценти. Якщо ж завдання вимагає знання, якого в передтренуванні не було зовсім —
+нова мова, нова предметна область із власною термінологією, — поправка перестає бути
+бідною на напрямки, і вузьке горло стає стелею.</p>
+
+<p><b>2. Коли даних багато.</b> Ощадні методи послідовно виграють у режимі малих
+даних і послідовно віддають перевагу повному донавчанню, коли даних стає багато. Це
+заміряно не раз: у BitFit прямо показано, що на малій частині даних він випереджає
+повне донавчання, а зі зростанням обсягу напрямок <b>перевертається</b>. Префіксні
+токени випереджають повне донавчання на вибірках у 50–500 прикладів, і розрив
+<b>звужується</b> з ростом набору. Читай це так: PEFT — це спосіб не перенавчити
+велику модель на маленьких даних, і коли даних вистачає, ця його чеснота стає
+непотрібною.</p>
+
+<p><b>3. Коли завдання не одне.</b> Злиття дає нуль затримки — але тільки поки в
+памʼяті одна калька. Обслуговувати десять завдань одним прогоном означає лишити
+гілки незлитими.</p>
+
+<p><b>4. Коли ручки не підібрано.</b> У LoRA більше гіперпараметрів, ніж у повного
+донавчання: крок, ранг, альфа, набір матриць. Погано підібрана LoRA легко програє
+добре підібраному повному донавчанню — і це буде висновок про підбір, а не про метод.</p>
+<h2 id="s17"><span class="num">Розділ 17</span>Межі цього заміру</h2>
+
+<p>Розділ, без якого попередні числа були б рекламою. Ось усе, чого наш стенд
+<b>не</b> доводить.</p>
+
+<p><b>Модель крихітна.</b> Усього 1 407 874 ваги у класифікаторі
+й <b>два</b> шари. У
+моделях, заради яких PEFT придумали, шарів вісімдесят, а ваг у тисячі разів більше.
+Наша економія памʼяті вимірюється кілобайтами й нікого не рятує — рятує вона там,
+де ті самі відсотки перетворюються на сотні гігабайтів. Відтворюється тут
+<b>форма</b>: що частка ваг може бути крихітною, а якість — ні. Масштаб наслідків
+не відтворюється.</p>
+
+<p><b>Завдання одне, і воно легке для гіпотези.</b> Два класи, коротке
+повідомлення, і те, що треба вирішити, модель фактично вже вміє — вона бачила ці
+слова під час передтренування. Це саме той режим, у якому гіпотеза малого рангу
+справджується найлегше. На завданні, що вимагає знання, якого в передтренуванні
+не було, крива виглядала б інакше, і ми цього не міряли.</p>
+
+<p><b>Мітка — проксі.</b> Вона зроблена правилом по англійських ключових словах, і
+частина повідомлень про збій позначена неправильно. Усі гілки страждають від цього
+однаково, тож порівнянню це не шкодить, а от абсолютні значення F1 нижчі за те, що
+дало б чесне розмічування.</p>
+
+<p><b>Ми не міряли часу.</b> Машина, на якій усе рахувалось, поділена з іншими
+завданнями, і будь-яке число секунд тут було б неперевірюваним. Тому в лекції немає
+жодного твердження виду «у стільки-то разів швидше». Виграш LoRA — у памʼяті й у
+розмірі того, що зберігаєш, а не у швидкості; це видно з арифметики розділу 02, і
+її годинник не псує.</p>
+
+<p><b>Одна гілка перевіряє одне.</b> Ми ставили LoRA на матриці уваги обох шарів
+однаково. Питання «а чи всі шари однаково потребують поправки» ми не чіпали — і на
+двох шарах воно й не має сенсу.</p>
+
+<div class="note"><b>А ось що від стенда не залежить зовсім.</b> Дві рівності, які
+ми надрукували в розділах 08 і 11 — що LoRA з нульовою
+<span class="raw">B</span> тотожна основі й що злиття точне, — це не властивість
+нашого корпусу й не наслідок вдалого зерна. Це <b>алгебра</b>: сума з нулем і
+розкриття дужок. Вони справджуються на будь-якій моделі, будь-яких даних і
+будь-якому масштабі, і саме тому їх варто було перевірити числом один раз —
+щоб більше не сумніватись.</div>
+
+<h2 id="s18"><span class="num">Розділ 18</span>Що з цього забрати</h2>
+
+<p>Тема відповідала на одне питання: <b>скільки ваг насправді треба чіпати</b>. Ось
+відповідь у трьох реченнях.</p>
+
+<ol>
+<li><b>Мало — але не «скільки завгодно мало».</b> На нашому стенді
+0.3093&nbsp;% ваг закрили 74&nbsp;% простору між рубежем знизу
+й рубежем зверху, а 1.3275&nbsp;% — уже 86&nbsp;%.
+Решту не закрила жодна ощадна гілка: повне донавчання виграло в усіх, і купи не
+перекрились. На великих моделях повідомляють про скорочення навчуваних параметрів у
+тисячі разів і розміру збереженого — з 350 ГБ до 35 МБ.</li>
+<li><b>Але це число нічого не варте без трьох рамок.</b> Рубіж знизу
+(0.7775), рубіж зверху (0.8917) і однаковий бюджет усім.
+Прибери будь-яку з них — і лишиться число, яким можна довести що завгодно.</li>
+<li><b>Ощадність — це про памʼять і про зберігання, не про швидкість.</b>
+Обчислень PEFT економить небагато — щонайбільше третину кроку, бо сигнал усе одно
+йде крізь усі шари вперед, а градієнт — назад.</li>
+</ol>
+
+<p>І остання думка, яка веде далі. Усе, що ми робили в цьому блоці — збільшували
+масштаб, учили виконувати вказівку, донавчали ощадно, — робить модель
+<b>кориснішою</b>. Жодна з цих операцій не робить її <b>правдивішою</b>. Наступна,
+остання тема курсу — про те, звідки беруться збої мовних моделей, чому вони
+випливають із самої будови, і чого масштаб не лікує.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../38-instruction-tuning-rlhf/lecture.html"><span class="dir">попередня</span><span class="ttl">38. Instruction tuning і RLHF</span></a>
+    <a class="next" href="../40-limits/lecture.html"><span class="dir">наступна</span><span class="ttl">40. Межі мовних моделей</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id,fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click',function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'),k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function bar(g,x,y,w,h,fill,alpha){
+  g.globalAlpha=(alpha===undefined?1:alpha); g.fillStyle=fill;
+  g.fillRect(x,y,Math.max(w,0),h); g.globalAlpha=1;
+}
+function box(g,x,y,w,h,fill,stroke){
+  if(fill){g.fillStyle=fill; g.fillRect(x,y,w,h);}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=1.5; g.strokeRect(x+0.5,y+0.5,w-1,h-1);}
+}
+function arrow(g,x0,y0,x1,y1,color,width){
+  g.strokeStyle=color; g.lineWidth=width||1.5;
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke();
+  var a=Math.atan2(y1-y0,x1-x0);
+  g.fillStyle=color; g.beginPath();
+  g.moveTo(x1,y1);
+  g.lineTo(x1-6*Math.cos(a-0.4),y1-6*Math.sin(a-0.4));
+  g.lineTo(x1-6*Math.cos(a+0.4),y1-6*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+function dot(g,x,y,r,color){ g.fillStyle=color; g.beginPath(); g.arc(x,y,r,0,6.2832); g.fill(); }
+function ring(g,x,y,r,color,w){ g.strokeStyle=color; g.lineWidth=w||2;
+  g.beginPath(); g.arc(x,y,r,0,6.2832); g.stroke(); }
+function dash(g,x0,y0,x1,y1,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y0+0.5); g.lineTo(x1,y1+0.5); g.stroke(); g.restore();
+}
+function chip(g,txt,x,y,h,fill,stroke,ink,px){
+  g.font=mono(px||11,false);
+  var w=g.measureText(txt).width+14;
+  box(g,x,y,w,h,fill,stroke);
+  capt(g,txt,x+w/2,y+h/2+4,ink,px||11,false,'center');
+  return w;
+}
+/* осі: рамка й підписи. Малює лише те, що потрібно всім фігурам теми. */
+function frame(g,x0,y0,x1,y1,hair){
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0+0.5,y0); g.lineTo(x0+0.5,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+}
+
+
+
+/* ЧИСЛА ЗАМІРУ — з _course_system/.work/b8/m39b_peft.json і m39c_extra.json */
+var ARM_NAME=['лінійна проба','LoRA Wq,Wv r=1','LoRA Wq,Wv r=2','BitFit','LoRA Wq,Wv r=4','LoRA лише Wq r=8','LoRA Wq,Wv r=8','LoRA Wq,Wv r=16','LoRA усі шість r=4','повне донавчання'];
+var ARM_KIND=['probe','lora','lora','bitfit','lora','other','lora','lora','other','full'];
+var ARM_TAG =['проба','r=1','','BitFit','r=4','лише Wq','','r=16','усі шість','повне'];
+var ARM_W   =[258,1282,2306,3586,4354,4354,8450,16642,18690,1407874];
+var ARM_LR  =[0.03,0.01,0.01,0.01,0.01,0.03,0.01,0.01,0.003,0.003];
+var ARM_MEAN=[0.7775,0.8536,0.8588,0.8604,0.8622,0.8385,0.8622,0.8653,0.8755,0.8917];
+var ARM_LO=[0.7314,0.8471,0.8534,0.8513,0.8503,0.8034,0.8579,0.8598,0.8732,0.8891];
+var ARM_HI=[0.8070,0.8593,0.8657,0.8667,0.8713,0.8525,0.8649,0.8711,0.8793,0.8933];
+var FULL_TRAIN=1407874;
+var LORA_FRAC=0.003093;
+var MEM_NAME=['наш стенд','BERT base','BERT large','GPT-2 XL','7 млрд','13 млрд','65 млрд','175 млрд'];
+var MEM_N=[1407874,110e6,355e6,1.5e9,7e9,13e9,65e9,175e9];
+var Q_MEAS_FULL=780, Q_MEAS_QLORA=48;
+var Q_W16=2*65e9/1e9, Q_W4=(4+0.5)/8*65e9/1e9, Q_W4D=(4+0.127)/8*65e9/1e9;
+var PLACE_NAME=['лише Wq, ранг 8','Wq і Wv, ранг 4','Wq і Wv, ранг 16','усі шість, ранг 4'];
+var PLACE_W=[4354,4354,16642,18690];
+var PLACE_WIDE=[0,1,0,1];
+var PLACE_MEAN=[0.8385,0.8622,0.8653,0.8755];
+var PLACE_LO=[0.8034,0.8503,0.8598,0.8732];
+var PLACE_HI=[0.8525,0.8713,0.8711,0.8793];
+var GRID_LR=[0.0001,0.0003,0.001,0.003,0.01,0.03,0.1,0.3];
+var GRID_NAME=['r=1','r=4','r=16'];
+var GRID_F1=[[0.7226,0.7828,0.8188,0.8286,0.8574,0.8542,0.7903,0.6932],[0.7433,0.7947,0.8300,0.8430,0.8709,0.8613,0.6650,0.8201],[0.7699,0.8094,0.8388,0.8626,0.8668,0.8251,0.8193,0.7871]];
+var BUD_NAME=['лінійна проба','LoRA Wq,Wv r=4','повне донавчання'];
+var BUD_STEPS=[100,200,400,800];
+var BUD_MEAN=[[0.7441,0.7623,0.7859,0.7743],[0.8177,0.8572,0.8568,0.8761],[0.8723,0.8856,0.8916,0.8952]];
+var BUD_LO=[[0.7082,0.7289,0.7537,0.7197],[0.7932,0.8529,0.8503,0.8741],[0.8684,0.8833,0.8891,0.8947]];
+var BUD_HI=[[0.7737,0.7954,0.8070,0.8172],[0.8374,0.8633,0.8603,0.8787],[0.8747,0.8889,0.8933,0.8960]];
+var AL_A=[1,4,16];
+var AL_LR=['0.001','0.003','0.01','0.03'];
+var AL_F1=[[0.8186,0.8308,0.8627,0.8683],[0.8300,0.8430,0.8709,0.8613],[0.8348,0.8614,0.8585,0.7601]];
+var AL_TEXT='Кожен рядок має власний найкращий крок, і зі зростанням alpha він зсувається ліворуч: більша поправка потребує меншого кроку.';
+
+/* ═══════ числа, заміряні для цієї теми ═══════ */
+/* Стенд: українські переклади .mo з машини, на якій рахувалось.
+   Основа — трансформер d=128, 2 шари, 4 голови, 2000 кроків, крок 1e-2,
+   пʼять зерен: 4.6601..4.6739 ната на перевірній частині.
+   Класифікація «збій / не збій»: навч 70767 · відкл 8846 · перев 8846.
+   Донавчання: 400 кроків, пачка 64, AdamW; крок дібрано кожній гілці
+   окремо на однаковій сітці з восьми точок; пʼять зерен на перевірній.
+   Скрипт: _course_system/.work/b8/m39b_peft.py                        */
+
+var FULL_TRAIN=1407874;            /* ваг у класифікаторі, усі навчувані */
+var LORA_FRAC=0.003093;            /* LoRA Wq,Wv r=4: 4354 / 1407874 */
+
+/* памʼять: назви й розміри моделей для фігури 1 */
+var MEM_NAME=['наш стенд','BERT base','BERT large','GPT-2 XL','7 млрд','13 млрд','65 млрд','175 млрд'];
+var MEM_N=[1407874,110e6,355e6,1.5e9,7e9,13e9,65e9,175e9];
+
+/* QLoRA, 65 млрд ваг. Заміряні числа роботи — 780 і 48;
+   решта — арифметика з бітів на вагу, і так підписана.        */
+var Q_MEAS_FULL=780, Q_MEAS_QLORA=48;
+var Q_W16=2*65e9/1e9, Q_W4=(4+0.5)/8*65e9/1e9, Q_W4D=(4+0.127)/8*65e9/1e9;
+
+/* ═══════ спільне для фігур цієї теми ═══════ */
+function humanN(v){
+  if(v>=1e12) return (v/1e12).toFixed(1)+' трлн';
+  if(v>=1e9)  return (v/1e9).toFixed(v>=1e10?0:1)+' млрд';
+  if(v>=1e6)  return (v/1e6).toFixed(v>=1e8?0:1)+' млн';
+  if(v>=1e3)  return (v/1e3).toFixed(1)+' тис';
+  return String(Math.round(v));
+}
+function humanB(v){                       /* байти -> ГБ / МБ / КБ */
+  if(v>=1e9) return (v/1e9).toFixed(v>=1e11?0:1)+' ГБ';
+  if(v>=1e6) return (v/1e6).toFixed(1)+' МБ';
+  if(v>=1e3) return (v/1e3).toFixed(1)+' КБ';
+  return Math.round(v)+' Б';
+}
+function sep(v){                          /* 1407874 -> 1 407 874 */
+  var s=String(Math.round(v)), out='', i, k=0;
+  for(i=s.length-1;i>=0;i--){ out=s[i]+out; k++; if(k%3===0&&i>0) out=' '+out; }
+  return out;
+}
+
+/* ═══════ 1. куди йде памʼять ═══════ */
+var mode1=0;
+function draw1(){
+  var cv=I('c1'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var i=+I('n1').value, N=MEM_N[i], frac=(mode1?LORA_FRAC:1), T=N*frac;
+  I('n1o').textContent=MEM_NAME[i];
+  var parts=[['ваги',4*N,css('--teal')],['градієнти',4*T,css('--rose')],
+             ['момент m',4*T,css('--amber')],['момент v',4*T,css('--amber')]];
+  var tot=4*N+12*T, i2;
+  var L=70,R=W-24,T0=58,B=H-56, mx=0;
+  for(i2=0;i2<4;i2++) mx=Math.max(mx,parts[i2][1]);
+  var bw=(R-L)/4-16;
+  capt(g,'байтів у памʼяті прискорювача',L,22,css('--soft'),11,true);
+  for(i2=0;i2<4;i2++){
+    var x=L+i2*((R-L)/4), h=(B-T0)*parts[i2][1]/mx;
+    bar(g,x,B-h,bw,h,parts[i2][2],0.85);
+    capt(g,parts[i2][0],x+bw/2,B+16,css('--soft'),11,false,'center');
+    capt(g,humanB(parts[i2][1]),x+bw/2,B-h-8,css('--ink'),12,true,'center');
+  }
+  g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(L,B+0.5); g.lineTo(R,B+0.5); g.stroke();
+  capt(g,(mode1?'LoRA r=4: навчається '+(100*LORA_FRAC).toFixed(4)+' % ваг'
+               :'повне донавчання: навчаються всі ваги'),L,B+38,css('--soft'),11.5,true);
+  I('r1a').textContent=humanB(tot);
+  I('r1b').textContent=(tot/N).toFixed(2);
+  var per=tot/N;
+  if(mode1) verd('v1','t-ok','УЧЕТВЕРО МЕНШЕ',
+    'Три праві смуги майже зникли: градієнт і моменти потрібні лише навченим вагам. '+
+    'На вагу виходить '+per.toFixed(2)+' байта замість 16.00.');
+  else if(tot>80e9) verd('v1','t-no','НЕ ВЛІЗЕ',
+    'Разом '+humanB(tot)+' — це більше за 80 ГБ найбільшої поширеної карти. '+
+    'Сама модель важить '+humanB(4*N)+', решта — накладні витрати оптимізатора.');
+  else verd('v1','t-mid','ВЛІЗЕ, АЛЕ ЗАЙВОГО НЕМАЄ',
+    'Разом '+humanB(tot)+'. З них корисні лише '+humanB(4*N)+' — самі ваги; '+
+    'решта '+humanB(12*T)+' існують тільки поки триває навчання.');
+}
+
+/* ═══════ 2. мапа: де чіпляється кожен метод ═══════ */
+function draw2(){
+  var cv=I('c2'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var hair=css('--hair'), soft=css('--soft'), ink=css('--ink'), raise=css('--raise');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var y0=70, bh=54;
+  /* стрічка блока трансформера */
+  var cells=[['вхід',86],['норма',72],['увага\nWq Wk Wv Wo',150],['+',34],
+             ['норма',72],['мережа\nпрямого поширення',170],['+',34],['вихід',80]];
+  var x=40, i, pos=[];
+  for(i=0;i<cells.length;i++){
+    var w=cells[i][1];
+    box(g,x,y0,w,bh,raise,hair);
+    var lines=cells[i][0].split('\n'), k;
+    for(k=0;k<lines.length;k++)
+      capt(g,lines[k],x+w/2,y0+bh/2+5+(k-(lines.length-1)/2)*13,ink,11.5,false,'center');
+    pos.push({x:x,w:w});
+    x+=w+16;
+    if(i<cells.length-1){ arrow(g,x-14,y0+bh/2,x-3,y0+bh/2,soft,1.2); }
+  }
+  /* 1. префіксні токени — перед входом */
+  var p0=pos[0];
+  box(g,p0.x-2,y0-46,p0.w+4,30,'',teal);
+  capt(g,'префіксні токени',p0.x+p0.w/2,y0-27,teal,11,true,'center');
+  arrow(g,p0.x+p0.w/2,y0-14,p0.x+p0.w/2,y0-3,teal,1.4);
+  /* 2. LoRA — паралельна гілка до матриць уваги */
+  var p2=pos[2];
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=rose; g.lineWidth=1.6;
+  g.beginPath(); g.moveTo(p2.x+10,y0+bh); g.lineTo(p2.x+10,y0+bh+34);
+  g.lineTo(p2.x+p2.w-10,y0+bh+34); g.lineTo(p2.x+p2.w-10,y0+bh); g.stroke(); g.restore();
+  chip(g,'LoRA: вузька гілка A, потім B — до Wq і Wv',p2.x+4,y0+bh+44,26,'',rose,rose,11);
+  /* 3. адаптери — нові шари після уваги й після FFN */
+  var p3=pos[3], p6=pos[6];
+  box(g,p3.x-6,y0-42,46,26,'',amber);
+  capt(g,'адаптер',p3.x+17,y0-24,amber,10.5,true,'center');
+  arrow(g,p3.x+17,y0-13,p3.x+17,y0-3,amber,1.4);
+  box(g,p6.x-6,y0-42,46,26,'',amber);
+  capt(g,'адаптер',p6.x+17,y0-24,amber,10.5,true,'center');
+  arrow(g,p6.x+17,y0-13,p6.x+17,y0-3,amber,1.4);
+  /* 4. BitFit — зсуви всередині матриць: позначки в самих блоках, без ліній,
+        бо будь-яка лінія звідси перетинала б підпис LoRA (грабля №12) */
+  var p5=pos[5], k2;
+  var marks=[p2,p5];
+  for(k2=0;k2<2;k2++){
+    box(g,marks[k2].x+marks[k2].w-20,y0+bh-18,14,14,'',rose);
+    capt(g,'b',marks[k2].x+marks[k2].w-13,y0+bh-7,rose,10,true,'center');
+  }
+  box(g,40,y0+bh+92,14,14,'',rose);
+  capt(g,'b',47,y0+bh+103,rose,10,true,'center');
+  capt(g,'BitFit: вчаться лише зсуви (bias) — вони позначені в самих блоках',
+       62,y0+bh+104,ink,12,true);
+  capt(g,'сірий контур = заморожено · кольоровий = вчиться',40,H-14,soft,11,false);
+}
+
+/* ═══════ 3. ранг 1 ═══════ */
+function draw3(){
+  var cv=I('c3'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var u=[+I('u3').value,1,3], a=[5,10,+I('a3').value,4];
+  I('u3o').textContent=u[0]; I('a3o').textContent=a[2];
+  var hair=css('--hair'), soft=css('--soft'), ink=css('--ink'),
+      rose=css('--rose'), teal=css('--teal');
+  var cw=78, ch=42, x0=180, y0=100, i, j;
+  capt(g,'рядок a',x0,y0-40,teal,11.5,true);
+  for(j=0;j<4;j++){
+    box(g,x0+j*cw,y0-32,cw-6,ch-6,'',teal);
+    capt(g,String(a[j]),x0+j*cw+(cw-6)/2,y0-32+24,teal,15,true,'center');
+  }
+  capt(g,'стовпчик u',60,y0-40,rose,11.5,true);
+  for(i=0;i<3;i++){
+    box(g,x0-cw-10,y0+i*ch,cw-6,ch-6,'',rose);
+    capt(g,String(u[i]),x0-cw-10+(cw-6)/2,y0+i*ch+24,rose,15,true,'center');
+  }
+  for(i=0;i<3;i++) for(j=0;j<4;j++){
+    box(g,x0+j*cw,y0+i*ch,cw-6,ch-6,css('--paper'),hair);
+    capt(g,String(u[i]*a[j]),x0+j*cw+(cw-6)/2,y0+i*ch+24,ink,15,false,'center');
+  }
+  capt(g,'кожна клітинка — число зі стовпчика, помножене на число з рядка',
+       x0,y0+3*ch+26,soft,11.5,false);
+  I('r3b').textContent='7';
+  verd('v3','t-ok','РАНГ 1',
+    'Дванадцять клітинок, але вільних чисел лише сім: три в стовпчику й '+
+    'чотири в рядку. Другий рядок таблиці завжди дорівнює першому, помноженому '+
+    'на '+(u[1]/u[0]).toFixed(2)+' — і це не збіг, а будова.');
+}
+function makePlot(g,W,H,opt){
+  var L=opt.left||62, R=W-16, T=opt.top||18, B=H-(opt.bottom||44);
+  var hair=css('--hair'), soft=css('--soft');
+  var lx=opt.logx, ly=opt.logy;
+  function tx(v){ var a=lx?Math.log(opt.x0):opt.x0, b=lx?Math.log(opt.x1):opt.x1,
+                      u=lx?Math.log(v):v; return L+(R-L)*(u-a)/(b-a); }
+  function ty(v){ var a=ly?Math.log(opt.y0):opt.y0, b=ly?Math.log(opt.y1):opt.y1,
+                      u=ly?Math.log(v):v; return B-(B-T)*(u-a)/(b-a); }
+  var i,t;
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(i=0;i<opt.yticks.length;i++){
+    t=opt.yticks[i]; var yy=Math.round(ty(t))+0.5;
+    if(yy<T-1||yy>B+1) continue;
+    g.beginPath(); g.moveTo(L,yy); g.lineTo(R,yy); g.stroke();
+    capt(g,opt.yfmt?opt.yfmt(t):f2(t),L-8,yy+4,soft,10.5,false,'right');
+  }
+  for(i=0;i<opt.xticks.length;i++){
+    t=opt.xticks[i]; var xx=Math.round(tx(t))+0.5;
+    if(xx<L-1||xx>R+1) continue;
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(xx,T); g.lineTo(xx,B); g.stroke();
+    var lab=opt.xfmt?opt.xfmt(t):String(t);
+    g.font=mono(10.5,false);
+    var half=g.measureText(lab).width/2, al='center', px=xx;
+    if(xx+half>R){ al='right'; px=R; }          /* підпис не вилітає за поле */
+    else if(xx-half<L-6){ al='left'; px=L-6; }
+    capt(g,lab,px,B+16,soft,10.5,false,al);
+  }
+  frame(g,L,T,R,B,css('--soft'));
+  if(opt.xlabel) capt(g,opt.xlabel,(L+R)/2,B+34,soft,11,true,'center');
+  if(opt.ylabel){ g.save(); g.translate(14,(T+B)/2); g.rotate(-Math.PI/2);
+    capt(g,opt.ylabel,0,0,soft,11,true,'center'); g.restore(); }
+  return {tx:tx, ty:ty, L:L, R:R, T:T, B:B};
+}
+function ticksLog(lo,hi,n){
+  var out=[],i; for(i=0;i<n;i++) out.push(lo*Math.pow(hi/lo,i/(n-1))); return out;
+}
+function ticksLin(lo,hi,n){
+  var out=[],i; for(i=0;i<n;i++) out.push(lo+(hi-lo)*i/(n-1)); return out;
+}
+function polyline(g,P,xs,ys,color,width,dashed){
+  var i; g.save();
+  g.beginPath(); g.rect(P.L,P.T-1,P.R-P.L,P.B-P.T+2); g.clip();   /* грабля №7 */
+  if(dashed) g.setLineDash([6,4]);
+  g.strokeStyle=color; g.lineWidth=width||2; g.beginPath();
+  for(i=0;i<xs.length;i++){ var x=P.tx(xs[i]), y=P.ty(ys[i]);
+    if(i===0) g.moveTo(x,y); else g.lineTo(x,y); }
+  g.stroke(); g.restore();
+}
+
+
+/* ═══════ 4. дві дороги через шар ═══════ */
+var D4=[256,512,1024,4096,8192];
+function draw4(){
+  var cv=I('c4'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var r=+I('r4').value, d=D4[+I('d4').value];
+  I('r4o').textContent=r; I('d4o').textContent=d;
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), teal=css('--teal'),
+      paper=css('--paper');
+  /* верхня дорога: x -> W -> (+) -> h */
+  var wx=190, wy=44, ws=120, px=390, py=wy+ws/2;
+  capt(g,d+' x '+d,wx+ws/2,wy-10,soft,11,false,'center');
+  box(g,wx,wy,ws,ws,paper,soft);
+  capt(g,'W',wx+ws/2,py-2,soft,24,true,'center');
+  capt(g,'заморожена',wx+ws/2,py+20,soft,10.5,false,'center');
+  arrow(g,110,py,wx-6,py,teal,1.6); capt(g,'x',96,py+5,teal,14,true,'right');
+  arrow(g,wx+ws+6,py,px-14,py,teal,1.6);
+  ring(g,px,py,13,ink,1.4); capt(g,'+',px,py+6,ink,16,true,'center');
+  arrow(g,px+16,py,px+96,py,teal,1.6); capt(g,'h',px+110,py+5,teal,14,true,'left');
+  /* нижня дорога: x -> A (широка, тонка) -> B (вузька, висока) -> угору в (+) */
+  var ah=Math.max(7,Math.min(46,r*1.4)), ay=232;
+  var bw=Math.max(7,Math.min(46,r*1.4)), bx=px-bw/2, by=ay-56;
+  box(g,wx,ay,ws,ah,'',rose);
+  capt(g,'A',wx+ws/2,ay+ah/2+4,rose,12,true,'center');
+  capt(g,r+' x '+d,wx+ws/2,ay-8,rose,10.5,false,'center');
+  box(g,bx,by,bw,ah+56,'',rose);
+  capt(g,'B',bx+bw/2+ (bw<22?18:0),by+18,rose,12,true,(bw<22?'left':'center'));
+  arrow(g,110,ay+ah/2,wx-6,ay+ah/2,rose,1.4);
+  arrow(g,wx+ws+6,ay+ah/2,bx-6,ay+ah/2,rose,1.4);
+  arrow(g,bx+bw/2,by-6,px,py+16,rose,1.4);
+  capt(g,'ранг r = '+r+' — вузьке горло, крізь яке проходить усе нове знання шару',
+       wx-80,H-18,soft,11.5,false);
+  var nw=d*d, nl=2*r*d;
+  I('r4a').textContent=humanN(nw); I('r4b').textContent=sep(nl);
+  var pct=100*nl/nw;
+  if(pct<1) verd('v4','t-ok','ДЕШЕВО',
+    'Поправка коштує '+sep(nl)+' ваг проти '+sep(nw)+' у самій матриці — '+
+    pct.toFixed(2)+' %. Подвоїш ранг — подвоїш поправку, і вона все одно лишиться дрібною.');
+  else if(pct<12) verd('v4','t-mid','ЩЕ ДЕШЕВО',
+    'Поправка — '+pct.toFixed(1)+' % від матриці. Це вже помітно, але економія '+
+    'усе ще майже десятикратна.');
+  else verd('v4','t-no','ЗМІСТ ЗНИКАЄ',
+    'При r = '+r+' на матриці '+d+' x '+d+' поправка важить '+pct.toFixed(0)+' % від самої '+
+    'матриці. Ранг, що наближається до d/2, перестає бути «малим»: дешевше просто '+
+    'навчати матрицю.');
+}
+
+/* ═══════ 5. три стани однієї моделі ═══════ */
+function draw5(){
+  var cv=I('c5'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var hair=css('--hair'), soft=css('--soft'), ink=css('--ink'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+  var pw=(W-80)/3, i, titles=['1 · навчання','2 · злиття','3 · виведення'];
+  for(i=0;i<3;i++){
+    var x=24+i*(pw+16);
+    capt(g,titles[i],x,26,ink,13,true);
+    if(i===0){
+      box(g,x+30,50,110,110,paper,soft);
+      capt(g,'W',x+85,110,soft,22,true,'center');
+      capt(g,'заморожена',x+85,130,soft,10,false,'center');
+      box(g,x+30,180,110,18,'',rose); capt(g,'A',x+85,194,rose,11,true,'center');
+      box(g,x+30,206,110,18,'',rose); capt(g,'B',x+85,220,rose,11,true,'center');
+      capt(g,'градієнт іде лише сюди',x+30,242,rose,11,false);
+    }
+    if(i===1){
+      box(g,x+20,60,90,90,paper,soft);
+      capt(g,'W',x+65,110,soft,20,true,'center');
+      capt(g,'+',x+118,110,ink,20,true,'center');
+      box(g,x+134,60,60,90,'',rose);
+      capt(g,'B·A',x+164,110,rose,13,true,'center');
+      capt(g,'α/r',x+164,132,rose,11,false,'center');
+      arrow(g,x+65,168,x+65,196,teal,1.6);
+      capt(g,'одна матриця W′',x+20,224,teal,12,true);
+      capt(g,'тих самих розмірів',x+20,242,soft,11,false);
+    }
+    if(i===2){
+      box(g,x+30,60,110,110,paper,teal);
+      capt(g,'W′',x+85,120,teal,22,true,'center');
+      capt(g,'гілки немає',x+85,190,ink,12,true,'center');
+      capt(g,'затримка нульова',x+85,210,teal,12,true,'center');
+      capt(g,'за побудовою',x+85,228,soft,11,false,'center');
+    }
+    if(i<2) arrow(g,x+pw-4,120,x+pw+12,120,soft,1.4);
+  }
+}
+
+/* ═══════ 9. памʼять QLoRA ═══════ */
+function draw9(){
+  var cv=I('c9'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'),
+      teal=css('--teal'), amber=css('--amber');
+  var rows=[
+    ['повне 16-бітне донавчання',Q_MEAS_FULL,rose,'заміряно в роботі','понад '],
+    ['основа 16 біт, самі ваги',Q_W16,amber,'арифметика: 2 байти на вагу',''],
+    ['основа 4 біти, самі ваги',Q_W4,amber,'арифметика: (4 + 0.5) біта на вагу',''],
+    ['4 біти + подвійне квантування',Q_W4D,teal,'арифметика: (4 + 0.127) біта на вагу',''],
+    ['QLoRA, увесь прогін навчання',Q_MEAS_QLORA,teal,'заміряно в роботі','менш ніж ']];
+  var L=340,R=W-170,T0=64,i, mx=Q_MEAS_FULL, bh=28, gap=22;
+  capt(g,'гігабайтів на модель у 65 мільярдів ваг',L,26,soft,11.5,true);
+  var x80=L+(R-L)*80/mx, yend=T0+5*(bh+gap)-gap+6;
+  g.save(); g.setLineDash([4,4]); g.strokeStyle=rose; g.lineWidth=1.2;
+  g.beginPath(); g.moveTo(x80,T0-16); g.lineTo(x80,yend); g.stroke(); g.restore();
+  capt(g,'80 ГБ — найбільша поширена карта',x80+8,T0-20,rose,10.5,false);
+  for(i=0;i<rows.length;i++){
+    var y=T0+i*(bh+gap), w=(R-L)*rows[i][1]/mx;
+    bar(g,L,y,w,bh,rows[i][2],0.85);
+    capt(g,rows[i][0],L-12,y+bh/2+4,ink,12,false,'right');
+    capt(g,rows[i][4]+rows[i][1].toFixed(0)+' ГБ',L+w+10,y+bh/2+4,rows[i][2],12.5,true,'left');
+    capt(g,rows[i][3],L-12,y+bh+13,soft,10,false,'right');
+  }
+  capt(g,'Дві крайні смуги — заміряні числа роботи. Три середні — те, скільки місця '+
+        'займають самі ваги, порахуване з бітів на вагу.',24,H-12,soft,11,false);
+}
+
+/* ═══════ 6. головний графік: якість проти кількості навчуваних ваг ═══════ */
+function draw6(){
+  var cv=I('c6'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'),
+      teal=css('--teal'), amber=css('--amber'), hair=css('--hair');
+  var i, lo=1e9, hi=0;
+  for(i=0;i<ARM_LO.length;i++){ lo=Math.min(lo,ARM_LO[i]); hi=Math.max(hi,ARM_HI[i]); }
+  var pad=(hi-lo)*0.18+0.004;
+  var P=makePlot(g,W,H,{left:66,bottom:52,top:20,
+      x0:150,x1:2.4e6,logx:true,y0:lo-pad,y1:hi+pad,
+      xticks:[200,1000,5000,20000,1e5,1e6],
+      yticks:ticksLin(lo-pad,hi+pad,6),
+      xfmt:function(v){return humanN(v);}, yfmt:function(v){return v.toFixed(3);},
+      xlabel:'навчуваних ваг (логарифмічна вісь)', ylabel:'macro-F1'});
+  /* рубежі */
+  var iP=0, iF=ARM_LO.length-1;
+  g.save(); g.setLineDash([5,4]);
+  g.strokeStyle=amber; g.lineWidth=1.3;
+  g.beginPath(); g.moveTo(P.L,P.ty(ARM_MEAN[iP])); g.lineTo(P.R,P.ty(ARM_MEAN[iP])); g.stroke();
+  g.strokeStyle=teal;
+  g.beginPath(); g.moveTo(P.L,P.ty(ARM_MEAN[iF])); g.lineTo(P.R,P.ty(ARM_MEAN[iF])); g.stroke();
+  g.restore();
+  capt(g,'рубіж знизу: лінійна проба',P.R-8,P.ty(ARM_MEAN[iP])+16,amber,10.5,true,'right');
+  capt(g,'рубіж зверху: повне донавчання',P.L+8,P.ty(ARM_MEAN[iF])-8,teal,10.5,true);
+  /* лінія по гілках LoRA Wq,Wv */
+  var lx=[], ly=[];
+  for(i=0;i<ARM_KIND.length;i++) if(ARM_KIND[i]==='lora'){ lx.push(ARM_W[i]); ly.push(ARM_MEAN[i]); }
+  polyline(g,P,lx,ly,rose,2);
+  /* точки з купами */
+  var low=0;
+  for(i=0;i<ARM_W.length;i++){
+    var x=P.tx(ARM_W[i]), c=(ARM_KIND[i]==='lora'?rose:(ARM_KIND[i]==='full'?teal:
+        (ARM_KIND[i]==='probe'?amber:css('--soft'))));
+    g.strokeStyle=c; g.lineWidth=1.6;
+    g.beginPath(); g.moveTo(x,P.ty(ARM_LO[i])); g.lineTo(x,P.ty(ARM_HI[i])); g.stroke();
+    g.beginPath(); g.moveTo(x-4,P.ty(ARM_LO[i])); g.lineTo(x+4,P.ty(ARM_LO[i])); g.stroke();
+    g.beginPath(); g.moveTo(x-4,P.ty(ARM_HI[i])); g.lineTo(x+4,P.ty(ARM_HI[i])); g.stroke();
+    dot(g,x,P.ty(ARM_MEAN[i]),4,c);
+    /* підписи чергуємо вгору/вниз: сусідні гілки бувають майже в одній точці
+       по осі x, і однакова висота підпису дала б накладання (грабля №12) */
+    if(ARM_TAG[i]){
+      var up=(ARM_KIND[i]==='lora'||ARM_KIND[i]==='full'||ARM_KIND[i]==='probe');
+      var yy=up?P.ty(ARM_HI[i])-10:P.ty(ARM_LO[i])+18+(low++%3)*16;
+      capt(g,ARM_TAG[i],x,yy,c,10.5,true,'center');
+    }
+  }
+}
+
+/* ═══════ 7. де ставити поправку при однаковому бюджеті ═══════ */
+function draw7(){
+  var cv=I('c7'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), teal=css('--teal');
+  var k, n=PLACE_NAME.length;
+  var L=250, R=W-140, T0=56, bh=26, gap=16, pairgap=22;
+  var mn=1, mx=0;
+  for(k=0;k<n;k++){ mn=Math.min(mn,PLACE_LO[k]); mx=Math.max(mx,PLACE_HI[k]); }
+  var span=Math.max(mx-mn,0.004), a0=mn-span*0.45, a1=mx+span*0.12;
+  function tx(v){ return L+(R-L)*(v-a0)/(a1-a0); }
+  capt(g,'macro-F1 на перевірній частині, пʼять зерен',L,26,soft,11.5,true);
+  var y=T0;
+  for(k=0;k<n;k++){
+    var c=(PLACE_WIDE[k]?teal:rose);
+    bar(g,L,y,tx(PLACE_MEAN[k])-L,bh,c,0.8);
+    capt(g,PLACE_NAME[k],L-12,y+bh/2+4,ink,12,false,'right');
+    capt(g,sep(PLACE_W[k])+' ваг',L-12,y+bh/2+17,soft,10,false,'right');
+    capt(g,PLACE_MEAN[k].toFixed(4),tx(PLACE_HI[k])+10,y+bh/2+4,c,12.5,true,'left');
+    g.strokeStyle=ink; g.lineWidth=1.3;
+    g.beginPath(); g.moveTo(tx(PLACE_LO[k]),y+bh/2); g.lineTo(tx(PLACE_HI[k]),y+bh/2); g.stroke();
+    g.beginPath(); g.moveTo(tx(PLACE_LO[k]),y+5); g.lineTo(tx(PLACE_LO[k]),y+bh-5); g.stroke();
+    g.beginPath(); g.moveTo(tx(PLACE_HI[k]),y+5); g.lineTo(tx(PLACE_HI[k]),y+bh-5); g.stroke();
+    y += bh + ((k%2===1)?pairgap+gap:gap);
+  }
+  capt(g,'рожеві — одна або дві матриці · бірюзові — більше матриць меншим рангом',
+       L-238,H-14,soft,11,false);
+}
+
+/* ═══════ 8. бюджет донавчання ═══════ */
+function draw8(){
+  var cv=I('c8'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var cols=[amber,rose,teal], i, k, lo=1, hi=0;
+  for(i=0;i<BUD_MEAN.length;i++) for(k=0;k<BUD_MEAN[i].length;k++){
+    lo=Math.min(lo,BUD_LO[i][k]); hi=Math.max(hi,BUD_HI[i][k]); }
+  var pad=(hi-lo)*0.12+0.003;
+  var P=makePlot(g,W,H,{left:66,bottom:52,top:20,
+      x0:BUD_STEPS[0]*0.8,x1:BUD_STEPS[BUD_STEPS.length-1]*1.25,
+      logx:true,y0:lo-pad,y1:hi+pad,
+      xticks:BUD_STEPS, yticks:ticksLin(lo-pad,hi+pad,6),
+      xfmt:function(v){return String(Math.round(v));}, yfmt:function(v){return v.toFixed(3);},
+      xlabel:'кроків донавчання (логарифмічна вісь)', ylabel:'macro-F1'});
+  for(i=0;i<BUD_MEAN.length;i++){
+    polyline(g,P,BUD_STEPS,BUD_MEAN[i],cols[i],2);
+    for(k=0;k<BUD_STEPS.length;k++){
+      var x=P.tx(BUD_STEPS[k]);
+      g.strokeStyle=cols[i]; g.lineWidth=1.4;
+      g.beginPath(); g.moveTo(x,P.ty(BUD_LO[i][k])); g.lineTo(x,P.ty(BUD_HI[i][k])); g.stroke();
+      dot(g,x,P.ty(BUD_MEAN[i][k]),3.5,cols[i]);
+    }
+    capt(g,BUD_NAME[i],P.tx(BUD_STEPS[BUD_STEPS.length-1])-6,
+         P.ty(BUD_MEAN[i][BUD_STEPS.length-1])-9,cols[i],11,true,'right');
+  }
+  g.save(); g.setLineDash([4,4]); g.strokeStyle=soft; g.lineWidth=1;
+  var x4=P.tx(400); g.beginPath(); g.moveTo(x4,P.T); g.lineTo(x4,P.B); g.stroke(); g.restore();
+  /* підпис кривої ставимо ліворуч від останньої точки, щоб не вилітав за поле */
+  capt(g,'наш бюджет',x4+6,P.T+14,soft,10.5,false);
+}
+
+/* ═══════ 10. альфа проти кроку навчання ═══════ */
+function draw10(){
+  var cv=I('c10'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'), hair=css('--hair');
+  var i, j, cw=(W-260)/AL_LR.length, ch=52, x0=200, y0=64, mn=1, mx=0;
+  for(i=0;i<AL_F1.length;i++) for(j=0;j<AL_F1[i].length;j++){
+    mn=Math.min(mn,AL_F1[i][j]); mx=Math.max(mx,AL_F1[i][j]); }
+  capt(g,'macro-F1 на відкладеній частині, LoRA Wq,Wv рангу 4',x0,30,ink,12,true);
+  for(j=0;j<AL_LR.length;j++)
+    capt(g,'крок '+AL_LR[j],x0+j*cw+cw/2,52,soft,11,false,'center');
+  for(i=0;i<AL_F1.length;i++){
+    capt(g,'alpha = '+AL_A[i],x0-14,y0+i*ch+ch/2+4,ink,12.5,false,'right');
+    for(j=0;j<AL_LR[0].length*0+AL_LR.length;j++){
+      var v=AL_F1[i][j], t=(v-mn)/Math.max(mx-mn,1e-9);
+      box(g,x0+j*cw+3,y0+i*ch+3,cw-6,ch-6,'',hair);
+      g.globalAlpha=0.15+0.75*t; g.fillStyle=rose;
+      g.fillRect(x0+j*cw+3,y0+i*ch+3,cw-6,ch-6); g.globalAlpha=1;
+      capt(g,v.toFixed(4),x0+j*cw+cw/2,y0+i*ch+ch/2+5,ink,13,true,'center');
+    }
+  }
+  capt(g,AL_TEXT,x0-190,H-14,soft,11.5,false);
+}
+
+/* ═══════ 11. крива по кроку навчання: провал посеред сітки ═══════ */
+function draw11(){
+  var cv=I('c11'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), ink=css('--ink'), rose=css('--rose'),
+      teal=css('--teal'), amber=css('--amber');
+  var cols=[amber,rose,teal], i, k, lo=1, hi=0;
+  for(i=0;i<GRID_F1.length;i++) for(k=0;k<GRID_F1[i].length;k++){
+    lo=Math.min(lo,GRID_F1[i][k]); hi=Math.max(hi,GRID_F1[i][k]); }
+  var pad=(hi-lo)*0.10+0.004;
+  var P=makePlot(g,W,H,{left:66,bottom:52,top:20,
+      x0:GRID_LR[0]*0.7,x1:GRID_LR[GRID_LR.length-1]*1.5,logx:true,
+      y0:lo-pad,y1:hi+pad,xticks:GRID_LR,yticks:ticksLin(lo-pad,hi+pad,6),
+      xfmt:function(v){return v<0.001?v.toExponential(0):String(v);},
+      yfmt:function(v){return v.toFixed(3);},
+      xlabel:'швидкість навчання (логарифмічна вісь)',
+      ylabel:'macro-F1 на відкладеній'});
+  /* смуга провалу */
+  var xa=P.tx(0.07), xb=P.tx(0.15);
+  g.globalAlpha=0.10; g.fillStyle=rose;
+  g.fillRect(xa,P.T,xb-xa,P.B-P.T); g.globalAlpha=1;
+  capt(g,'провал',(xa+xb)/2,P.T+16,rose,11,true,'center');
+  for(i=0;i<GRID_F1.length;i++){
+    polyline(g,P,GRID_LR,GRID_F1[i],cols[i],2);
+    for(k=0;k<GRID_LR.length;k++) dot(g,P.tx(GRID_LR[k]),P.ty(GRID_F1[i][k]),3,cols[i]);
+    capt(g,GRID_NAME[i],P.tx(GRID_LR[GRID_LR.length-1])-4,
+         P.ty(GRID_F1[i][GRID_LR.length-1])-9,cols[i],11,true,'right');
+  }
+}
+
+/* ═══════ звʼязування ═══════ */
+function redrawAll(){
+  /* малюємо лише те, для чого на сторінці є канва: частина фігур зʼявляється
+     тільки тоді, коли відповідний замір дорахувався */
+  var f=[draw1,draw2,draw3,draw4,draw5,draw6,draw7,draw8,draw9,draw10,draw11];
+  var ids=['c1','c2','c3','c4','c5','c6','c7','c8','c9','c10','c11'], i;
+  for(i=0;i<f.length;i++) if(I(ids[i])) f[i]();
+}
+on('n1','input',draw1);
+segment('m1',function(i){ mode1=i; draw1(); });
+on('u3','input',draw3);
+on('a3','input',draw3);
+on('r4','input',draw4);
+on('d4','input',draw4);
+redrawAll();
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+
+})();
+</script>
+
+</body>
+</html>

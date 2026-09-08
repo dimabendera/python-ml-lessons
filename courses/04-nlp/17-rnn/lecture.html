@@ -1,0 +1,1575 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RNN для тексту</title>
+<meta name="description" content="Рекурентна мережа не має вікна: вона несе стан і оновлює його одним правилом на кожному слові. Ми написали крок tanh(W_x·x + W_h·h + b) руками й дістали збіг із nn.RNN до 5.96 · 10⁻⁸ — рівно половини машинного епсилона float32; на реальному розмірі моделі розбіжність 2.76 · 10⁻⁷. Спільні ваги економлять 720 128 чисел на реченні з 30 слів: 24 832 замість 744 960 — але вся мережа при цьому росте лише в 1.44 раза, бо 98 % ваг займають словникові шари. На 82 441 українському реченні перекладів інтерфейсів RNN зі станом 128 за одну епоху дає перплексію 190.85 ±2.20 проти 268.76 у біграми з добавкою 0.1. Але добавку 0.1 ніхто не добирав: біграма, налаштована на відкладеній вибірці, дає 154.96 і перемагає мережу. Триграма при цьому гірша за біграму (278.21) — лічильники не вміють скористатись довшим контекстом, бо 14.66 % перевірних біграм у навчанні не траплялись жодного разу.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* сегменти цієї теми переносяться по два в рядок */
+.seg.wrap button{flex:1 1 46%}
+/* довгі рядки іграшкового корпусу не мусять розпирати сторінку */
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 4 · Тема 17</p>
+    <h1>RNN для тексту</h1>
+    <p class="stand">Мовна модель із вікном бачить рівно стільки слів, скільки їй
+      відміряли. Рекурентна мережа не має вікна взагалі: вона несе <b>стан</b>, який
+      оновлює одним і тим самим правилом на кожному слові. Ця тема пише те правило
+      руками, звіряє його з <code>nn.RNN</code> — і чесно міряє, що з цього вийшло
+      на нашому корпусі.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Стіна: контекст, якого ніхто не бачив</a></li>
+        <li><a href="#s2">Стан: одна змінна замість вікна</a></li>
+        <li><a href="#s3">Формула кроку, розібрана на частини</a></li>
+        <li><a href="#s4">Розгортка в часі</a></li>
+        <li><a href="#s5">Спільні ваги: порахуймо їх</a></li>
+        <li><a href="#s6">Наш крок проти <code>nn.RNN</code></a></li>
+        <li><a href="#s7">Мовна модель цілком</a></li>
+        <li><a href="#s8">Число — і незручний поворот</a></li>
+        <li><a href="#s9">Що стан тримає всередині</a></li>
+        <li><a href="#s10">Як далеко сягає памʼять</a></li>
+        <li><a href="#s11">Скільки це коштує</a></li>
+        <li><a href="#s12">Що ми забираємо далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../16-language-model/lecture.html">← 16. Мовна модель: наступне слово</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../18-lstm-gru/lecture.html">18. LSTM і GRU →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+<p class="lead">Тема <a href="../16-language-model/lecture.html">16 · Мовна модель</a>
+залишила нас із моделлю, яка вміє рівно одне: подивитись на попереднє слово й
+назвати ймовірності наступного. Природна думка — дивитись на два попередні, на три,
+на пʼять. Ця тема починається з того, що така думка не працює зовсім, а закінчується
+моделлю, у якої вікна немає взагалі. По дорозі ми напишемо один рядок математики,
+проженемо його циклом і переконаємось, що всередині <code>nn.RNN</code> немає нічого,
+крім нього.</p>
+
+<h2 id="s1"><span class="num">01 / Стіна</span>Стіна: контекст, якого ніхто не бачив</h2>
+
+<p>Мовна модель із теми 16 рахує ймовірність наступного слова за <b>контекстом</b> —
+кількома словами перед ним. Біграма бере одне попереднє слово, триграма — два,
+чотириграма — три. Що більше контексту, то точніше передбачення: так підказує здоровий
+глузд, і саме тому варто подивитись на числа.</p>
+
+<p>Наш корпус — 93 392 українські переклади інтерфейсів. Після відсіву дуже коротких
+і дуже довгих речень лишається 91 602, з них <b>82 441</b> навчальних і <b>9 161</b>
+перевірних. Навчальна частина дає <b>633 584</b> цілі (кожне слово плюс службовий
+кінець речення <code>&lt;eos&gt;</code>), перевірна — <b>70 073</b>. Словник із порогом
+входження 5 — <b>8 440</b> одиниць разом зі службовими.</p>
+
+<p>Питання, яке вирішує все: <b>чи бачила модель під час навчання той контекст, який
+їй трапиться на перевірці?</b> Якщо ні, лічильник порожній, і модель може відповісти
+хіба що згладжуванням — тобто, по суті, знизати плечима.</p>
+<figure>
+  <div class="fig-head">Інтерактив 1 · Скільки контексту модель узагалі бачила</div>
+  <p class="fig-sub">Повзунок міняє довжину n-грами. Ліворуч — яка частка перевірних
+    позицій потрапляє в те, що модель зустрічала в навчальній частині. Праворуч —
+    скільки різних контекстів доводиться тримати в памʼяті. Перемикач обирає, що саме
+    рахувати: сам контекст чи повну n-граму разом із наступним словом.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що рахуємо</span>
+        <div class="seg" id="seg1">
+          <button data-i="0" aria-pressed="true">контекст</button>
+          <button data-i="1" aria-pressed="false">повну n-граму</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="n1">довжина n-грами <output id="n1o">2</output></label>
+        <input id="n1" type="range" min="1" max="5" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>бачили</b><i id="v1a">—</i></div>
+        <div class="cellv"><b>не бачили</b><i id="v1b">—</i></div>
+        <div class="cellv"><b>різних у навчанні</b><i id="v1c">—</i></div>
+        <div class="cellv"><b>на одну штуку</b><i id="v1d">—</i></div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>Заміряно на 82 441 навчальному й 9 161 перевірному реченні. «На одну
+    штуку» — скільки в середньому навчальних прикладів припадає на один різний
+    контекст: це і є те, з чого лічильник рахує ймовірність.</figcaption>
+</figure>
+
+<p>Картина різка. Для біграми контекст — одне слово, і його модель бачила <b>завжди</b>:
+різних контекстів усього 8 439, а прикладів на кожен — у середньому 75. Для триграми
+контекст — уже пара слів, різних пар <b>157 478</b>, і в <b>14.5 %</b> перевірних
+позицій такої пари в навчанні не було жодного разу. Для пʼятиграми не бачили вже
+<b>41.7 %</b> контекстів.</p>
+
+<p>Ще гірше з повними n-грамами, тобто з тим, що модель мусить порахувати насправді.
+Навіть у біграми <b>14.66 %</b> перевірних пар «слово → наступне слово» не траплялись
+у навчанні жодного разу. У пʼятиграми таких <b>53.15 %</b> — більше половини.</p>
+
+<div class="note warn"><b>Чому це не лікується більшим корпусом.</b> Різних контекстів
+стає більше рівно так само швидко, як росте текст. Від триграми до пʼятиграми число
+різних контекстів виросло зі 157 478 до 323 741 — удвічі, — а от прикладів на кожен
+контекст стало менше двох. Модель, яка рахує частоти, приречена: щоб надійно оцінити
+ймовірність, їй треба бачити кожен контекст багато разів, а вона бачить кожен раз або
+два. Це <b>розрідженість</b> (sparsity), і в темі
+<a href="../04-bag-of-words/lecture.html">04 · Мішок слів</a> ми вже зустрічали її
+з іншого боку.</div>
+
+<p>Числа підтверджують це повністю — і заразом спростовують здоровий глузд, з якого
+ми почали. Найкраща триграма, яку ми змогли зробити,
+дає перплексію <b>278.21</b>, а найкраща біграма — <b>154.96</b>. Довший контекст
+не допоміг, а <b>погіршив результат майже вдвічі</b>. Не тому, що контекст непотрібний,
+а тому, що спосіб його зберігати — лічильник на кожну комбінацію — не масштабується.</p>
+
+<div class="note"><b>Що таке перплексія, одним реченням.</b> Це «скільки слів модель
+фактично вагається між ними». Перплексія 155 означає, що модель поводиться так, ніби
+щоразу навмання обирає з 155 однаково правдоподібних варіантів. Менше — краще; повний
+розбір є в темі <a href="../16-language-model/lecture.html">16</a>.</div>
+
+<p>Отже, потрібен інший спосіб зберігати контекст. Не список побачених комбінацій, а
+щось, що вміщає довільно довгу історію у фіксований обсяг памʼяті.</p>
+
+<h2 id="s2"><span class="num">02 / Стан</span>Стан: одна змінна замість вікна</h2>
+
+<p>Уяви, що ти читаєш речення вголос і на кожному слові хтось питає: «яке наступне?».
+Ти не тримаєш у голові дослівний список усіх попередніх слів. Ти тримаєш <b>враження</b>:
+про що йдеться, у якому це відмінку, чи почалось перелічення, чи було заперечення.
+Враження оновлюється з кожним новим словом і не росте — воно просто стає іншим.</p>
+
+<p>Це і є стан. У мережі він — вектор фіксованої довжини; назвемо його <span class="raw">h</span>
+(від <i>hidden</i>, прихований). У нашій моделі це <b>128 чисел</b>. Скільки б слів
+не прийшло — пʼять чи пʼятдесят, — чисел лишається 128.</p>
+
+<p>Правило гри просте й має рівно три частини:</p>
+
+<ol>
+  <li>на початку речення стан порожній: усі 128 чисел — нулі;</li>
+  <li>приходить слово; ми беремо <b>старий стан</b> і <b>нове слово</b> й робимо з них
+    <b>новий стан</b>;</li>
+  <li>з поточного стану ми в будь-який момент можемо назвати ймовірності наступного слова.</li>
+</ol>
+
+<p>Другий пункт — уся суть. Функція, яка перетворює «старий стан + слово» на «новий
+стан», <b>одна й та сама на кожному кроці</b>. Не «функція для першого слова» й
+«функція для сьомого», а одна. Саме тому довжина речення перестає бути параметром
+моделі: правило можна застосувати скільки завгодно разів поспіль.</p>
+
+<div class="note"><b>Чому це принципово відрізняється від n-грами.</b> N-грама зберігає
+контекст <b>перелічуванням</b>: кожна нова комбінація слів — новий рядок у таблиці.
+Рекурентна мережа зберігає контекст <b>стисненням</b>: будь-яка історія втискається
+в ті самі 128 чисел. Перше росте вибухово й закінчується порожніми лічильниками, друге
+не росте зовсім — але й вміщає не все. Що саме воно вміщає, ми заміряємо в розділі 10.</div>
+
+<h2 id="s3"><span class="num">03 / Формула</span>Формула кроку, розібрана на частини</h2>
+
+<p>Ось те єдине правило, заради якого написано цю тему:</p>
+
+<div class="eq">h<span class="sub">t</span> = tanh( W<span class="sub">x</span> · x<span class="sub">t</span> + W<span class="sub">h</span> · h<span class="sub">t−1</span> + b )</div>
+
+<p><b>Словами.</b> Новий стан — це старий стан і нове слово, кожне пропущене через свою
+таблицю множників, складені докупи разом зі сталою добавкою і притиснуті до відрізка
+від −1 до +1.</p>
+
+<p>Тепер кожен символ окремо, без пропусків.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">x<span class="sub">t</span> — слово, що прийшло</span>
+    <p>Не саме слово, а його <b>ембединг</b>: вектор чисел, який ми вчимо разом із
+      рештою мережі (тема <a href="../12-word2vec/lecture.html">12</a>). У нас це
+      <b>64 числа</b>. Індекс <span class="raw">t</span> — номер кроку: перше слово
+      речення, друге, третє.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">h<span class="sub">t−1</span> — стан до цього слова</span>
+    <p>128 чисел, які лишились після попереднього кроку. На першому кроці там нулі:
+      історії ще немає.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">W<span class="sub">x</span> · x<span class="sub">t</span> — внесок слова</span>
+    <p><span class="raw">W<span class="sub">x</span></span> — таблиця з 128 рядків і
+      64 стовпців. «Помножити» тут означає: <b>кожен</b> із 128 рядків множимо почленно
+      на 64 числа слова й додаємо результати. Виходить 128 чисел — по одному на рядок.
+      Рядок можна читати як питання до слова: «наскільки в тобі є ознака, за яку я
+      відповідаю».</p>
+  </div>
+  <div class="step">
+    <span class="lbl">W<span class="sub">h</span> · h<span class="sub">t−1</span> — внесок памʼяті</span>
+    <p>Те саме, але таблиця квадратна: 128 рядків на 128 стовпців. Вона перемішує старий
+      стан і каже, як його частини мають перетікати одна в одну. Це єдине місце, де
+      історія взагалі впливає на майбутнє.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">b — зсув</span>
+    <p>128 сталих чисел, які додаються завжди. Вони дають кожній компоненті стану власну
+      «точку спокою» — те значення, до якого вона тяжіє, коли ні слово, ні памʼять
+      нічого не кажуть.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">tanh — притискання</span>
+    <p>Функція, яка будь-яке число перетворює на число від −1 до +1: маленькі майже
+      не міняє, великі притискає до одиниці. Без неї стан на довгому реченні або
+      розлетівся б до величезних значень, або зійшов би до нуля. Із нею кожна з 128
+      компонент завжди лежить у відрізку [−1, 1] — стан не може «вибухнути», хоч би
+      скільки слів прийшло.</p>
+  </div>
+</div>
+
+<p>Порахуймо це руками. Візьмемо іграшкову клітинку: стан із <b>чотирьох</b> чисел,
+ембединги слів по <b>три</b> числа, чотирислівне речення. Усі множники — випадкові,
+округлені до сотих, щоб їх можна було перевірити на папері.</p>
+<figure>
+  <div class="fig-head">Інтерактив 2 · Один крок клітинки, розкладений на доданки</div>
+  <p class="fig-sub">Чотири рядки — чотири числа стану. Для кожного видно, скільки
+    в нього прийшло від слова, скільки від памʼяті, скільки дав зсув, що вийшло в сумі
+    й що лишилось після <span class="raw">tanh</span>. Другий повзунок домножує внесок
+    памʼяті: поставивши його на нуль, ти вимикаєш рекурентність зовсім.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="t2">крок <output id="t2o">4</output></label>
+        <input id="t2" type="range" min="1" max="4" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <label for="g2">множник памʼяті <output id="g2o">1.00</output></label>
+        <input id="g2" type="range" min="0" max="30" step="1" value="20">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сила слова</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>сила памʼяті</b><i id="v2b">—</i></div>
+        <div class="cellv"><b>частка памʼяті</b><i id="v2c">—</i></div>
+        <div class="cellv"><b>стан після tanh</b><i id="v2d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>«Сила» — довжина відповідного вектора доданків, тобто корінь із суми
+    квадратів чотирьох чисел. При множнику <b>1.00</b> числа на екрані збігаються
+    з тим, що друкує зошит; при <b>0.00</b> клітинка перестає бути рекурентною
+    й перетворюється на звичайну функцію одного слова.</figcaption>
+</figure>
+
+<p>Покрути другий повзунок до нуля й подивись, що станеться. Внесок памʼяті зникає,
+і стан на кожному кроці залежить лише від поточного слова. Це вже не мовна модель із
+контекстом — це таблиця «слово → відповідь», тобто уніграма з зайвими обчисленнями.
+Уся здатність рекурентної мережі памʼятати живе в одному доданку
+<span class="raw">W<span class="sub">h</span> · h<span class="sub">t−1</span></span>.</p>
+
+<h2 id="s4"><span class="num">04 / Розгортка</span>Розгортка в часі</h2>
+
+<p>Формула вище описує <b>один</b> крок. Щоб прочитати речення з семи слів, ми
+застосовуємо її сім разів поспіль, передаючи стан далі. Ця картинка — та сама клітинка,
+намальована сім разів у ряд, — називається <b>розгорткою в часі</b> (unrolling).</p>
+
+<p>Розгортка — не окрема модель і не окрема операція. Це <b>спосіб дивитись</b> на цикл:
+замість «крутимо клітинку сім разів» ми малюємо сім однакових блоків. Навіщо потрібне
+таке перемальовування — стане зрозуміло за абзац.</p>
+
+<p>Розгорнута мережа виглядає як звичайна глибока мережа з <span class="raw">T</span>
+шарами. І навчається вона так само: помилка на останньому слові тече назад через
+усі кроки до першого. Цей прохід має власну назву — <b>зворотне поширення в часі</b>
+(backpropagation through time), — але жодної нової математики в ньому немає, це
+звичайне правило ланцюга, застосоване до розгорнутої картинки.</p>
+
+<p>А ось де починається різниця з глибокою мережею. У звичайної мережі кожен шар має
+<b>свої</b> ваги. У розгорнутої RNN усі шари — це <b>одна</b> клітинка, намальована
+кілька разів. Ваги в них не схожі, а буквально ті самі числа в памʼяті.</p>
+<figure>
+  <div class="fig-head">Інтерактив 3 · Одна клітинка чи <span class="raw">T</span> різних</div>
+  <p class="fig-sub">Повзунок міняє довжину речення. Перемикач — між двома влаштуваннями:
+    спільні ваги на всіх кроках (так працює RNN) і окремі ваги на кожен крок (так
+    працювала б звичайна мережа, яку розгорнули).</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">влаштування</span>
+        <div class="seg" id="seg3">
+          <button data-i="0" aria-pressed="true">спільні ваги</button>
+          <button data-i="1" aria-pressed="false">окремі ваги</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="t3">слів у реченні <output id="t3o">7</output></label>
+        <input id="t3" type="range" min="1" max="14" step="1" value="7">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кроків</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>різних наборів ваг</b><i id="v3b">—</i></div>
+        <div class="cellv"><b>ваг у клітинках</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>найдовше речення</b><i id="v3d">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Клітинки одного кольору мають однакові ваги. У режимі «спільні ваги»
+    колір один на всю стрічку, скільки б кроків не було; у режимі «окремі» кожен крок
+    дістає свій відтінок — і своє місце в памʼяті.</figcaption>
+</figure>
+
+<p>Друге читання правого стовпчика — найважливіше. Мережа з окремими вагами вміє читати
+речення <b>рівно тієї довжини</b>, під яку в неї є набори ваг. Дай їй речення на слово
+довше — і для останнього кроку ваг просто немає. Мережа зі спільними вагами читає
+речення будь-якої довжини, зокрема довші за все, що бачила при навчанні: правило одне,
+а скільки разів його застосувати — питання довжини входу, а не будови моделі.</p>
+
+<h2 id="s5"><span class="num">05 / Ваги</span>Спільні ваги: порахуймо їх</h2>
+
+<p>«Спільні ваги» звучить як технічна деталь. Це не деталь, і найкоротший спосіб це
+показати — порахувати числа для нашої моделі.</p>
+
+<p>Наша клітинка: вхід 64 числа (ембединг слова), стан 128 чисел. Отже:</p>
+
+<ul>
+  <li><span class="raw">W<span class="sub">x</span></span> — 128 × 64 = <b>8 192</b> числа;</li>
+  <li><span class="raw">W<span class="sub">h</span></span> — 128 × 128 = <b>16 384</b> числа;</li>
+  <li>зсув — <b>256</b> чисел (у <code>nn.RNN</code> їх два набори по 128, і чому саме
+    так — за розділ);</li>
+  <li>разом рекурентний блок — <b>24 832</b> ваги.</li>
+</ul>
+
+<p>Тепер уяви мережу, у якої на кожному з 30 кроків свій набір. Рекурентний блок
+став би 24 832 × 30 = <b>744 960</b> ваг. Різниця — <b>720 128</b> зайвих чисел,
+яких у RNN просто немає.</p>
+<figure>
+  <div class="fig-head">Інтерактив 4 · Скільки ваг економлять спільні ваги</div>
+  <p class="fig-sub">Дві смуги — та сама мовна модель у двох влаштуваннях. Кожна смуга
+    складається з трьох частин: ембединги слів, рекурентний блок, вихідний шар на весь
+    словник. Повзунок міняє довжину речення, перемикач — розмір стану.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">розмір стану <span class="raw">H</span></span>
+        <div class="seg" id="seg4">
+          <button data-i="0" aria-pressed="false">64</button>
+          <button data-i="1" aria-pressed="true">128</button>
+          <button data-i="2" aria-pressed="false">256</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="t4">довжина речення <span class="raw">T</span> <output id="t4o">30</output></label>
+        <input id="t4" type="range" min="2" max="60" step="1" value="30">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>рекурентний блок, спільний</b><i id="v4a">—</i></div>
+        <div class="cellv"><b>рекурентний блок, окремий</b><i id="v4b">—</i></div>
+        <div class="cellv"><b>усього ваг, RNN</b><i id="v4c">—</i></div>
+        <div class="cellv"><b>усього ваг, окремі</b><i id="v4d">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Ембединги (540 160 ваг при <span class="raw">H</span> будь-якому) і
+    вихідний шар на 8 440 слів однакові в обох влаштуваннях — вони не залежать від
+    того, спільна клітинка чи ні. Уся різниця сидить у середній частині смуги.</figcaption>
+</figure>
+
+<p>Тепер найчесніша частина цього розділу. Економія в рекурентному блоці — рівно
+<b>30 разів</b>, і це вражає. Але вся мережа при цьому росте лише в <b>1.44 раза</b>:
+1 653 752 ваги проти 2 373 880. Чому так мало? Бо в мовній моделі рекурентний блок —
+<b>найменша</b> частина: 24 832 ваги проти 540 160 в ембедингах і 1 088 760 у вихідному
+шарі. Девʼяносто вісім відсотків ваг витрачено на те, щоб перекласти слово в числа
+й числа назад у слово.</p>
+
+<div class="note warn"><b>Отже, спільні ваги — не про економію памʼяті.</b> Якби йшлося
+лише про 720 тисяч чисел, це були б три мегабайти, і ніхто не сперечався б. Спільні
+ваги роблять дві інші речі, і обидві важливіші:
+<br><br>
+<b>1. Знімають обмеження довжини.</b> Модель, навчена на реченнях до 30 слів, читає
+речення на 200 слів без жодної зміни. Модель із окремими вагами на 31-му слові просто
+не має що застосувати.
+<br><br>
+<b>2. Дають правилу в 30 разів більше прикладів.</b> Кожне слово корпусу — приклад для
+<b>тієї самої</b> матриці. У мережі з окремими вагами набір для 27-го кроку побачив би
+лише ті речення, у яких є 27-ме слово, — а таких у нашому корпусі менше відсотка. Він
+би не навчився ніколи.</div>
+
+<p>Другий пункт — той самий довід, що й у згорткових мережах курсу «Компʼютерний зір»:
+ядро згортки спільне для всіх позицій зображення не заради памʼяті, а тому, що
+«вертикальний край» — це те саме поняття в лівому й правому кутку. Тут так само:
+«після прийменника йде іменник» — те саме правило на другому слові й на двадцятому.</p>
+
+<h2 id="s6"><span class="num">06 / Перевірка</span>Наш крок проти <code>nn.RNN</code></h2>
+
+<p>Тепер закриємо головне питання теми: чи справді всередині
+<code>torch.nn.RNN</code> стоїть саме та формула, яку ми щойно розібрали. Питання не
+риторичне — бібліотечний шар написаний іншою мовою, викликає власні ядра й нічого нам
+про себе не розповідає.</p>
+
+<p>Перевірка коштує сім рядків. Беремо <code>nn.RNN</code>, забираємо в нього
+<b>його ж власні</b> ваги й проганяємо ті самі дані циклом за нашою формулою:</p>
+
+<div class="eq left">h = zeros(B, H)
+for t in range(T):
+    h = tanh(x[:, t] @ W_x.T + h @ W_h.T + b_x + b_h)
+    outs.append(h)</div>
+
+<p>Далі порівнюємо наш стек станів із тим, що повернув сам шар. На іграшковому розмірі
+(вхід 5, стан 4, сім кроків, три зерна) найбільша розбіжність — <b>5.96 · 10<span class="sup">−8</span></b>
+на всіх трьох зернах. Це не «майже збіглося»: це <b>рівно половина машинного епсилона</b>
+для <code>float32</code> (1.19 · 10<span class="sup">−7</span>), тобто найменша можлива
+різниця між двома сусідніми числами такої точності. Одне-єдине округлення.</p>
+
+<p>На реальному розмірі моделі (вхід 64, стан 128, тридцять кроків) розбіжність
+накопичується до <b>2.76-3.28 · 10<span class="sup">−7</span></b> — приблизно пʼять
+таких округлень за тридцять кроків. Сьомий знак після коми у нас із бібліотекою
+спільний; далі йде шум арифметики, а не різниця формул.</p>
+
+<div class="note"><b>Чому не збігається побітово.</b> Ми перевірили й це:
+<code>torch.equal</code> дає <code>False</code>. Причина не в математиці, а в порядку
+дій. Бібліотека складає доданки в іншій послідовності й може злити множення з додаванням
+в одну машинну операцію; від перестановки доданків сума чисел зі скінченною точністю
+міняється в останньому знаку. Побітового збігу тут не буває й не мусить бути —
+правильна перевірка звучить «різниця не більша за одиницю останнього розряду», а не
+«числа однакові».</div>
+
+<p>Висновок, заради якого все й робилось: <b>усередині <code>nn.RNN</code> немає нічого,
+крім одного множення на дві матриці, одного додавання й одного
+<span class="raw">tanh</span>, повторених у циклі</b>. Далі ми користуємось бібліотечним
+шаром — але вже знаючи, що він рахує.</p>
+
+<div class="note"><b>Про два зсуви.</b> У формулі один <span class="raw">b</span>, а в
+<code>nn.RNN</code> їх два — <code>bias_ih</code> і <code>bias_hh</code>. Математично це
+надлишок: два сталі вектори, які завжди додаються разом, рівносильні одному їхньому
+сумі. Вони існують заради однаковості з іншими шарами й тому, що для LSTM і GRU (тема
+<a href="../18-lstm-gru/lecture.html">18</a>) роздільні зсуви таки мають сенс. Саме тому
+в нашому циклі стоїть <code>+ b_x + b_h</code>, а в рахунку ваг — 256, а не 128.</div>
+<h2 id="s7"><span class="num">07 / Модель</span>Мовна модель цілком</h2>
+
+<p>Клітинка сама по собі нічого не передбачає — вона лише оновлює стан. Щоб дістати
+мовну модель, до неї треба приробити вхід і вихід. Уся модель — три шари:</p>
+
+<div class="eq left">слово (номер від 0 до 8439)
+   ↓  таблиця ембедингів 8440 × 64
+64 числа
+   ↓  клітинка RNN, стан 128
+128 чисел
+   ↓  лінійний шар 128 × 8440
+8440 оцінок — по одній на кожне слово словника</div>
+
+<p>Останні 8 440 чисел перетворюються на ймовірності <b>softmax</b>-ом: кожне
+підноситься до степеня <span class="raw">e</span>, і всі діляться на свою суму, щоб
+разом дали одиницю. Потім ми дивимось, яку ймовірність модель дала <b>справжньому</b>
+наступному слову, беремо логарифм і міняємо знак — це <b>перехресна ентропія</b>. Її
+середнє по всіх позиціях, узяте в степінь <span class="raw">e</span>, і є перплексія.</p>
+
+<p>Про початок і кінець речення. Модель мусить уміти назвати <b>перше</b> слово, коли
+історії ще немає, і мусить уміти сказати «речення скінчилось». Обидві задачі закриває
+один службовий токен <code>&lt;eos&gt;</code>: ми ставимо його на вхід перед першим
+словом і чекаємо його на виході після останнього. Тому на реченні з семи слів модель
+робить <b>вісім</b> передбачень, і в навчальній частині їх усього 633 584.</p>
+
+<h3>Дві деталі, без яких числа були б інші</h3>
+
+<p><b>Заповнювач.</b> Речення в корпусі різної довжини, а рахувати зручно пачками
+однакової форми. Короткі речення доводиться доповнювати нулями до довжини найдовшого
+в пачці, і ці позиції треба виключити з втрати — інакше модель вчилась би передбачати
+порожнечу. У <code>PyTorch</code> це робить <code>ignore_index</code>.</p>
+
+<p><b>Пачки з речень схожої довжини.</b> Медіана довжини нашого речення — <b>6 слів</b>,
+а найдовше в навчанні має 30. Якщо збирати пачку з випадкових речень, у неї майже
+завжди потрапляє одне довге, і всі інші доводиться доповнювати до нього. Ми заміряли,
+скільки при цьому лишається корисної роботи:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>як збираємо пачку</th><th>справжніх позицій</th><th>секунд на 15 пачок</th></tr>
+  <tr><td>випадкові речення</td><td>33.68 %</td><td>3.69</td></tr>
+  <tr class="hot"><td>речення схожої довжини</td><td>99.89 %</td><td>1.07</td></tr>
+</table>
+</div>
+
+<p>Дві третини роботи йшли в порожнечу. Сортування речень за довжиною перед розбиттям
+на пачки (порядок самих пачок при цьому лишається випадковим) прискорює прохід
+приблизно <b>у 3.45 раза</b> й нічого не міняє в тому, що модель бачить. Це не оптимізація
+заради оптимізації: без неї зошит цієї теми не вкладався б у розумний час.</p>
+
+<div class="note"><b>Конфігурація, під якою заміряно все далі.</b> Ембединг 64, стан
+128, пачка 64 речення, <code>Adam</code> зі швидкістю навчання 0.002,
+<b>одна епоха</b> по всьому навчальному набору, три зерна. Одна епоха — свідоме
+обмеження блоку: усі моделі тем 16-18 дістають однаковий бюджет, щоб їх можна було
+порівнювати. Що буде на другій епосі, перевіряє тема
+<a href="../18-lstm-gru/lecture.html">18</a>.</div>
+
+<h2 id="s8"><span class="num">08 / Число</span>Число — і незручний поворот</h2>
+
+<p>Ось що вийшло. Три зерна, процесорний час, один потік:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>модель</th><th>перплексія</th><th>навчання</th></tr>
+  <tr><td>рівномірна (нічого не знає)</td><td>8 440</td><td>—</td></tr>
+  <tr><td>уніграма, добавка 1</td><td>645.82</td><td>—</td></tr>
+  <tr><td>біграма, добавка 1</td><td>710.10</td><td>0.86 с</td></tr>
+  <tr><td>біграма, добавка 0.1</td><td>268.76</td><td>0.86 с</td></tr>
+  <tr class="hot"><td>RNN, стан 128</td><td>190.85 ±2.20</td><td>97.1 ±2.1 с</td></tr>
+</table>
+</div>
+
+<p>Три зерна дали 189.35, 189.83 і 193.37 — купа вузька, розкид 2.20. Проти біграми з добавкою
+0.1 — того круглого числа, з якого зазвичай починають, — це виграш у <b>77.91</b> пункту
+перплексії. Здавалося б, тему можна закривати.</p>
+
+<p><b>Не можна.</b> Добавка 0.1 не є найкращою біграмою — вона просто кругле число.
+Ми перебрали 13 значень добавки, і щоб не підбирати їх під перевірну частину (це
+було б підглядання у відповідь), відрізали з навчальної частини <b>4 122</b> речення
+на <b>відкладену</b> вибірку, обрали добавку на ній і лише потім заміряли на
+перевірній.</p>
+<figure>
+  <div class="fig-head">Інтерактив 5 · Добавка важить більше, ніж вибір моделі</div>
+  <p class="fig-sub">Крива — перплексія n-грамної моделі залежно від добавки
+    згладжування. Рожева смуга — де опинилась RNN на трьох зернах. Повзунок веде по
+    13 значеннях добавки, перемикач міняє порядок n-грами. Вісь перплексії
+    логарифмічна.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">модель для порівняння</span>
+        <div class="seg" id="seg5">
+          <button data-i="0" aria-pressed="true">біграма</button>
+          <button data-i="1" aria-pressed="false">триграма</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="a5">добавка <output id="a5o">0.1</output></label>
+        <input id="a5" type="range" min="0" max="12" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>на перевірній</b><i id="v5a">—</i></div>
+        <div class="cellv"><b>на відкладеній</b><i id="v5b">—</i></div>
+        <div class="cellv"><b>RNN, три зерна</b><i id="v5c" class="sm">—</i></div>
+        <div class="cellv"><b>різниця з RNN</b><i id="v5d">—</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>Порожній кружечок на кривій — добавка, яку обрала відкладена вибірка;
+    саме її ми маємо право назвати «найкращою», бо перевірну при цьому не чіпали.
+    Заповнений — поточне положення повзунка.</figcaption>
+</figure>
+
+<p>Найкраща біграма дає <b>154.96</b>. Це <b>краще за нашу RNN</b> — і не на межі
+розкиду, а на 35.89 пункту. Модель, яка складається з двох лічильників і однієї
+поділки, обходить нейромережу з 1 653 752 вагами, яка вчилась 97.1 секунди.</p>
+
+<div class="note warn"><b>Порівняння тут нечесне, і саме в цьому урок.</b> Біграма
+дістала ручку — добавку — і ми покрутили її 13 разів. RNN дістала <b>одну</b>
+конфігурацію без жодного добору: розмір стану, швидкість навчання, кількість епох
+задані брифом блоку. Різниця між найгіршою й найкращою біграмою — <b>555.14 пункту</b>
+(710.10 → 154.96). Різниця між біграмою з добавкою 0.1 і нашою мережею — 77.91.
+Тобто <b>налаштування бази важить у 7.1 раза більше за зміну методу</b>.
+<br><br>
+Чесний висновок звучить так: <b>на цьому корпусі, за один прохід і без добору
+гіперпараметрів, RNN не перемагає добре налаштовану біграму</b>. Це не вирок
+рекурентним мережам — це вирок порівнянню, у якому одну сторону налаштували,
+а другу ні.</div>
+
+<p>І тут же — друга половина картини, яку видно тим самим інтерактивом. Перемкни його
+на триграму. Найкраща триграма — <b>278.21</b>, тобто <b>гірша за біграму майже
+вдвічі</b>, хоч вона й бачить удвічі більше контексту. Лічильники не вміють скористатись
+довшою історією: у розділі 1 ми бачили, чому саме.</p>
+
+<p>Отже, у нас три різні речі, а не дві:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>що вміє модель</th><th>біграма</th><th>триграма</th><th>RNN</th></tr>
+  <tr><td>найкраща перплексія</td><td>154.96</td><td>278.21</td><td>190.85</td></tr>
+  <tr><td>довжина контексту</td><td>1 слово</td><td>2 слова</td><td>усе речення</td></tr>
+  <tr><td>чисел у моделі</td><td>170 988</td><td>478 622</td><td>1 653 752</td></tr>
+  <tr><td>росте зі словником</td><td>квадратично</td><td>кубічно</td><td>лінійно</td></tr>
+</table>
+</div>
+
+<p>Біграма виграла <b>на корпусі, де контексту майже немає</b>. Медіана довжини нашого
+речення — шість слів; у половині випадків уся доступна історія — це два-три слова.
+Мережа, здатна нести контекст на пʼятдесят кроків, тут не має чого нести. Наступні два
+розділи міряють це прямо, а не на словах.</p>
+<h2 id="s9"><span class="num">09 / Стан зблизька</span>Що стан тримає всередині</h2>
+
+<p>Перплексія — одне число на весь корпус, і воно нічого не каже про те, <b>де саме</b>
+мережа поводиться інакше за біграму. Подивімось на конкретні речення, крок за кроком:
+що передбачає RNN, що передбачає біграма, і яку ймовірність кожна з них дала слову,
+яке справді стояло далі.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 6 · Дві моделі йдуть реченням поруч</div>
+  <p class="fig-sub">Повзунок веде по реченню зліва направо. На кожній позиції видно
+    трійку найімовірніших наступних слів за версією RNN і за версією біграми, а також
+    ймовірність, яку кожна дала справжньому наступному слову. Смужка внизу — 16 із
+    128 чисел стану, ті, що найсильніше гуляють по цьому реченню.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="400" data-lw="700" data-lh="400"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">речення</span>
+        <div class="seg wrap" id="seg6">
+          <button data-i="0" aria-pressed="true">перше</button>
+          <button data-i="1" aria-pressed="false">друге</button>
+          <button data-i="2" aria-pressed="false">третє</button>
+          <button data-i="3" aria-pressed="false">четверте</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="t6">позиція <output id="t6o">1</output></label>
+        <input id="t6" type="range" min="0" max="6" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>справжнє слово</b><i id="v6a" class="sm">—</i></div>
+        <div class="cellv"><b>у скількох разів</b><i id="v6b">—</i></div>
+        <div class="cellv"><b>RNN дала йому</b><i id="v6c">—</i></div>
+        <div class="cellv"><b>біграма дала йому</b><i id="v6d">—</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>Речення взяті з перевірної частини — мережа їх не бачила. Біграма
+    з добавкою 0.005, тобто та сама найкраща, що виграла в розділі 8. RNN — мережа
+    з зерном 0.</figcaption>
+</figure>
+
+<p>Пройди повзунком уперед і назад по всіх чотирьох реченнях. Видно три речі.</p>
+
+<p><b>На першому слові моделі майже рівні.</b> Історії немає в обох: біграма дивиться
+на <code>&lt;eos&gt;</code>, RNN має нульовий стан. Обидві називають найчастіші початки
+речень корпусу.</p>
+
+<p><b>Далі RNN починає називати слова, яких біграма не бачила після цього слова
+жодного разу.</b> Біграма в таких місцях віддає майже рівну ймовірність усьому
+словнику — це і є те, що ми в розділі 1 назвали «знизати плечима».</p>
+
+<p><b>Але часто трійки збігаються.</b> І це важливо: на реченні з шести слів більшість
+позицій мають один-два слова контексту, а на такому контексті обидві моделі бачать те
+саме. Саме звідси береться підсумкове число розділу 8 — не з поразки RNN у складних
+місцях, а з того, що складних місць у корпусі мало.</p>
+<h2 id="s10"><span class="num">10 / Памʼять</span>Як далеко сягає памʼять</h2>
+
+<p>Стан несе історію — але яку її частину? Питання здається філософським, а насправді
+на нього є прямий дослід: <b>підмінити слово на відстані k і подивитись, чи змінилась
+відповідь</b>.</p>
+
+<p>Ми взяли 200 перевірних речень довжиною щонайменше 10 слів, подали моделі перші
+десять і подивились, що вона передбачає одинадцятим. Потім замінили одне слово —
+те, що стоїть на <span class="raw">k</span> кроків раніше, — на випадкове інше й
+подивились те саме. Дві величини:</p>
+
+<ul>
+  <li><b>зміна передбачення</b> — половина суми модулів різниць між двома розподілами
+    на 8 440 слів. Нуль означає «відповідь та сама», одиниця — «розподіли не мають
+    нічого спільного»;</li>
+  <li><b>зміна стану</b> — на скільки відсотків зрушив сам вектор
+    <span class="raw">h</span> після десятого слова.</li>
+</ul>
+
+<figure>
+  <div class="fig-head">Інтерактив 7 · Слово підмінили — чи модель помітила</div>
+  <p class="fig-sub">Стовпчики — вплив підміни слова на відстані <span class="raw">k</span>
+    від точки передбачення. Повзунок обирає відстань, перемикач — що саме дивитись:
+    зсув відповіді чи зсув самого стану. Вусики — розкид по трьох зернах.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що міряємо</span>
+        <div class="seg" id="seg7">
+          <button data-i="0" aria-pressed="true">зсув відповіді</button>
+          <button data-i="1" aria-pressed="false">зсув стану</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="k7">відстань <span class="raw">k</span> <output id="k7o">1</output></label>
+        <input id="k7" type="range" min="1" max="8" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вплив на відстані k</b><i id="v7a">—</i></div>
+        <div class="cellv"><b>розкид по зернах</b><i id="v7b">—</i></div>
+        <div class="cellv"><b>частка від k = 1</b><i id="v7c">—</i></div>
+        <div class="cellv"><b>спад за крок</b><i id="v7d">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>200 перевірних речень, три навчені мережі, підмінне слово беремо
+    випадково зі словника з фіксованим зерном — тому підміна для всіх трьох мереж та
+    сама.</figcaption>
+</figure>
+
+<p>Це профіль памʼяті нашої мережі, заміряний, а не вигаданий, і він скромний.
+Вплив спадає приблизно <b>вдвічі з кожним кроком назад</b>: 0.4404 на сусідньому
+слові, 0.1680 через одне, 0.0791 через два. На відстані вісім лишається <b>0.0050</b>
+— трохи більше за <b>один відсоток</b> того, що дає сусіднє слово. Практично памʼять
+клітинки закінчується десь на четвертому-пʼятому слові назад.</p>
+
+<p>Але порівняй це з біграмою. У неї вплив на відстані 1 — усе, а на відстані 2 —
+<b>рівно нуль</b>: другого слова назад вона не бачить в принципі. Тобто RNN памʼятає
+не «далеко», а «трохи далі за один крок» — і саме цього мало, щоб перемогти на
+корпусі з медіаною шість слів. Чому затухання таке швидке і що з ним роблять гейти —
+предмет теми <a href="../18-lstm-gru/lecture.html">18</a>.</p>
+
+<p>Другий дослід — та сама думка з іншого боку. Порахуймо перплексію окремо для
+кожної позиції в реченні: перше слово моделі доводиться називати взагалі без контексту,
+друге — маючи одне слово, десяте — маючи девʼять.</p>
+
+<div class="scroll-x">
+<table class="nums" id="postab">
+  <tr><th>позиція в реченні</th><th>1</th><th>2</th><th>3</th><th>5</th><th>8</th><th>12</th></tr>
+  <tr class="hot"><td>RNN</td><td>476.8</td><td>174.1</td><td>214.1</td><td>163.4</td><td>104.9</td><td>190.4</td></tr>
+  <tr><td>біграма, добавка 0.005</td><td>445.7</td><td>115.6</td><td>169.1</td><td>128.2</td><td>89.0</td><td>147.6</td></tr>
+  <tr><td>біграма, добавка 0.1</td><td>435.4</td><td>210.0</td><td>293.3</td><td>252.6</td><td>191.2</td><td>293.7</td></tr>
+</table>
+</div>
+
+<p>Два різні читання однієї таблиці. Проти <b>ненастроєної</b> біграми (добавка 0.1)
+RNN виграє на всіх позиціях, окрім найпершої: перше слово речення біграма просто
+запамʼятала краще, бо контексту там немає в обох, а лічильник точніший за градієнтний
+спуск за одну епоху. Проти <b>настроєної</b> біграми RNN програє скрізь — але
+нерівномірно: найбільше на другій позиції (у 1.51 раза) і найменше в середині речення,
+на позиціях 6-10 (у 1.13-1.18 раза).</p>
+
+<p>Оце відставання в 1.13 раза в середині речення — усе, що наш корпус дає рекурентній
+мережі показати. Далі десятої позиції даних майже немає: на дванадцятому слові в нас
+лишається <b>2 091</b> випадок проти <b>27 483</b> на першому.</p>
+
+<h2 id="s11"><span class="num">11 / Ціна</span>Скільки це коштує</h2>
+
+<p>Тепер про те, що ми заплатили. Біграма будується одним проходом по корпусу за
+<b>0.86 секунди</b> процесорного часу. RNN вчиться <b>97.1 ±2.1 секунди</b>
+на одне зерно — у <b>113 разів</b> дорожче. За ці гроші ми на цьому корпусі
+дістали перплексію <b>гіршу</b> за біграму.</p>
+
+<p>Є й друга, структурна ціна, і про неї треба сказати обережно. Крок
+<span class="raw">t</span> потребує стану <span class="raw">t−1</span> — отже, кроки
+не можна порахувати одночасно, їх доводиться робити по черзі. Це властивість
+<b>залежностей</b>, а не швидкості: з неї не випливає автоматично, що RNN повільна.
+Тема <a href="../20-rnn-limits/lecture.html">20 · Межі RNN</a> міряє це прямо, і
+результат там несподіваний — тому тут ми обмежимось тим, що заміряли самі: одна епоха
+на 82 441 реченні коштує близько 97 секунд процесорного часу на одному ядрі.</p>
+
+<div class="note"><b>Що з цього переносити на свої задачі.</b> Три висновки, які
+пережили наш замір:
+<br><br>
+<b>1. Спочатку налаштуй базу.</b> Не порівнюй нову модель із базою, узятою за
+замовчуванням. Наш приклад: погано налаштована біграма дала 710.10, добре
+налаштована — 154.96, і від того, яку з них назвати «базою», залежить, перемогла
+мережа чи програла.
+<br><br>
+<b>2. Довжина корпусу вирішує, чи має сенс памʼять.</b> Медіана 6 слів — це майже
+відсутність контексту. Модель зі станом на такому матеріалі не може показати, на що
+здатна.
+<br><br>
+<b>3. Спільні ваги — не оптимізація, а умова.</b> Без них модель прибита цвяхами до
+довжини, на якій вчилась.</div>
+<h2 id="s12"><span class="num">12 / Далі</span>Що ми забираємо далі</h2>
+
+<p>Ця тема дала одну формулу й одну ідею. Формула — <span class="raw">h<span class="sub">t</span>
+= tanh(W<span class="sub">x</span>x<span class="sub">t</span> + W<span class="sub">h</span>h<span class="sub">t−1</span> + b)</span>,
+і ми довели, що всередині <code>nn.RNN</code> стоїть саме вона, з точністю до останнього
+розряду <code>float32</code>. Ідея — <b>спільні ваги на всіх кроках</b>: одне правило,
+застосоване стільки разів, скільки слів у реченні, замість окремих ваг на кожну
+позицію.</p>
+
+<p>Обидві переживуть усе, що буде далі. LSTM і GRU з теми
+<a href="../18-lstm-gru/lecture.html">18 · LSTM і GRU</a> — це та сама розгортка з тими
+самими спільними вагами, у яких формула кроку складніша: до неї додаються <b>гейти</b>,
+які вирішують, що з памʼяті лишити, а що стерти. Тема
+<a href="../19-seq2seq/lecture.html">19 · seq2seq</a> ставить дві такі мережі одна проти
+одної й дістає переклад. Тема <a href="../20-rnn-limits/lecture.html">20 · Межі RNN</a>
+доводить конструкцію до стін, на які відповідає блок 5.</p>
+
+<p>А ще ця тема лишає борг. Ми заміряли, як швидко спадає вплив слова з відстанню, —
+але не пояснили <b>чому</b>. Причина в тому самому доданку
+<span class="raw">W<span class="sub">h</span>h<span class="sub">t−1</span></span>:
+щоб градієнт від останнього слова дійшов до першого, він мусить пройти через
+<span class="raw">T</span> множень на ту саму матрицю й через
+<span class="raw">T</span> похідних <span class="raw">tanh</span>, кожна з яких не
+більша за одиницю. Що з цього виходить на десяти, пʼятдесяти й ста кроках, міряє
+тема 18 — і саме заради цього вигадали гейти.</p>
+
+<p>І останнє, що варто забрати звідси у будь-яку свою роботу. Ми чесно показали, що
+на цьому корпусі рекурентна мережа програла добре налаштованій біграмі. Спокуса
+сховати такий результат величезна — а він якраз найкорисніший, бо називає <b>умову</b>,
+за якої модель зі станом має сенс: контекст мусить бути довшим за одне слово й мусить
+нести інформацію. Медіана шість слів такої умови не дає. Тема 19 візьме той самий
+корпус з іншого боку — паралельні пари «оригінал → переклад», — і там довжина нарешті
+почне важити.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../16-language-model/lecture.html"><span class="dir">попередня</span><span class="ttl">16. Мовна модель: наступне слово</span></a>
+    <a class="next" href="../18-lstm-gru/lecture.html"><span class="dir">наступна</span><span class="ttl">18. LSTM і GRU</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+(function(){
+"use strict";
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn4(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thou(n){
+  var s=String(n), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function cut(g,txt,max,px,bold){
+  g.font=mono(px||11,!!bold);
+  if(g.measureText(txt).width<=max) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+function axisX(g,x0,x1,y,lo,hi,step,color){
+  g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+  var v;
+  for(v=lo; v<=hi+1e-9; v+=step){
+    var x=x0+(x1-x0)*(v-lo)/(hi-lo);
+    g.beginPath(); g.moveTo(x+0.5,y); g.lineTo(x+0.5,y+4); g.stroke();
+  }
+}
+
+var NUM = {"V":8440,"tokTrain":633584,"tokVal":70073,"cov":[{"n":1,"contexts":1,"ngrams":8439,"ctx_hit":1.0,"ng_hit":1.0},{"n":2,"contexts":8439,"ngrams":162549,"ctx_hit":1.0,"ng_hit":0.853439},{"n":3,"contexts":157478,"ngrams":321144,"ctx_hit":0.854951,"ng_hit":0.622094},{"n":4,"contexts":284167,"ngrams":381928,"ctx_hit":0.66054,"ng_hit":0.508727},{"n":5,"contexts":323741,"ngrams":401547,"ctx_hit":0.583477,"ng_hit":0.468469}],"par":{"emb":540160,"rec":24832,"out":1088760},"toy":{"Ew":[[0.25,0.79,0.55],[-0.55,-0.4,0.75],[-0.99,0.64,0.59],[-0.06,-0.39,-0.44]],"Wx":[[-0.49,-0.11,0.01],[0.11,0.99,0.59],[0.24,0.98,-0.57],[-0.68,0.23,-0.91]],"Wh":[[-0.74,0.02,-0.05,0.67],[0.21,0.02,-0.01,-0.4],[-0.78,-0.49,0.31,-0.48],[-0.21,-0.79,0.53,-0.55]],"b":[-0.14,0.23,0.01,0.21]},"grid":[1.0,0.5,0.2,0.1,0.05,0.02,0.01,0.005,0.002,0.001,0.0005,0.0002,0.0001],"bi":{"dev":[770.6776,559.0069,377.044,291.0675,234.8803,191.0827,173.5391,165.4352,165.6364,172.399,183.9531,205.6343,226.3689],"val":[710.0963,514.4964,347.3736,268.7556,217.5374,177.8024,162.0491,154.9599,155.5738,162.0233,172.7195,192.3712,210.8635],"bestA":0.005},"tri":{"dev":[2148.1356,1679.1734,1188.4349,913.9511,710.1909,524.53,430.7569,366.2778,314.714,295.7093,291.2278,305.8033,332.0123],"val":[2046.747,1592.3202,1121.3718,860.1589,667.4024,492.8206,405.2027,345.3668,298.1288,281.2996,278.2051,293.5395,319.5617],"bestA":0.0005},"rnnPpl":[189.825,193.3656,189.3463],"rnnMean":190.8457,"hpick":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],"sent":[{"words":["створити","просту","базу","даних","на","основі","текстових","вхідних","даних"],"rnn_top":[[["не",0.14976],["<unk>",0.0485],["у",0.02294]],[["код",0.19533],["дамп",0.07406],["розділ",0.04904]],[["<unk>",0.05331],["для",0.03504],["<eos>",0.01705]],[["даних",0.55277],["<eos>",0.02184],["до",0.01606]],[["<eos>",0.4314],["для",0.04801],["з",0.03978]],[["<eos>",0.18857],["основі",0.05103],["цій",0.04672]],[["<eos>",0.25155],["<unk>",0.06349],["типу",0.02017]],[["<eos>",0.24779],["<unk>",0.05228],["для",0.02174]],[["даних",0.67507],["<eos>",0.08288],["файлів",0.00885]],[["<eos>",0.51798],["не",0.04671],["<unk>",0.02189]]],"rnn_pt":[0.0056525,4.79e-05,0.000296,0.5527663,0.0295845,0.0510324,0.000216,0.0004281,0.6750714,0.5179773],"bi_top":[[["не",0.14906],["<unk>",0.03931],["помилка",0.02799]],[["каталог",0.06182],["код",0.04704],["файл",0.04704]],[["перевірку",0.0416],["локальну",0.02085],["послідовність",0.02085]],[["даних",0.50309],["<eos>",0.03815],["для",0.0229]],[["<eos>",0.36062],["щодо",0.05956],["не",0.04837]],[["<eos>",0.16155],["<unk>",0.06362],["не",0.0412]],[["<eos>",0.16306],["<unk>",0.10454],["файла",0.04183]],[["даних",0.10271],["об'єктів",0.05872],["розділів",0.04406]],[["даних",0.67097],["файлів",0.06783],["параметрах",0.02143]],[["<eos>",0.36062],["щодо",0.05956],["не",0.04837]]],"bi_pt":[0.0042312,3.4e-06,0.0001037,0.5030869,0.0174404,0.0266108,2.09e-05,7.33e-05,0.6709672,0.3606229],"bi_seen":[349,0,0,66,53,197,0,0,188,1096],"h":[[-0.939,-0.656,0.81,0.624,0.986,-0.984,0.974,-0.939,-0.511,-0.909,-0.677,0.252,-0.91,0.969,0.302,-0.755],[0.99,-0.971,0.486,-0.949,0.964,-0.956,0.992,-0.996,-1.0,0.7,0.154,0.954,-0.106,-0.807,0.431,0.493],[-0.027,-0.254,0.719,-0.97,-0.756,0.669,-0.427,0.375,0.99,-0.296,-0.977,0.858,-0.539,-0.829,-0.981,-0.116],[0.3,-0.64,0.991,-0.519,-0.837,0.221,-0.991,0.999,0.981,-0.745,-0.794,-0.955,-0.606,-0.922,-0.925,0.597],[0.98,1.0,-0.959,0.945,-0.99,0.56,-1.0,0.979,0.985,-0.949,-0.973,0.911,0.999,-0.693,-0.907,0.646],[-0.832,-0.999,0.921,-0.955,0.698,-0.983,-1.0,0.998,-0.555,0.921,0.984,-0.993,0.894,0.95,0.987,0.979],[0.953,0.083,-0.991,0.395,-0.97,0.923,-0.997,0.892,1.0,-0.883,0.808,-0.951,0.939,-1.0,-0.515,0.995],[0.795,0.977,0.263,0.972,-1.0,0.954,-0.999,0.993,0.927,-0.921,0.738,-0.765,0.894,-0.965,-0.698,0.929],[0.99,-0.99,0.341,0.953,-0.858,0.968,-1.0,0.997,0.96,-0.99,0.965,-0.587,0.935,-0.996,-0.955,0.989],[0.98,1.0,-0.966,0.982,-0.995,0.87,-1.0,0.981,0.993,-0.996,-0.958,0.804,1.0,-0.86,-0.942,0.638]]},{"words":["не","вдалося","отримати","блокування","читання","на","пристрої"],"rnn_top":[[["не",0.14976],["<unk>",0.0485],["у",0.02294]],[["вдалося",0.62139],["можна",0.0588],["вдається",0.03594]],[["створити",0.16029],["встановити",0.09434],["отримати",0.07004]],[["дані",0.13197],["доступ",0.05989],["інформацію",0.03843]],[["<eos>",0.18955],["для",0.08052],["даних",0.05389]],[["<eos>",0.52983],["для",0.05315],["даних",0.0251]],[["<eos>",0.25601],["основі",0.04138],["цій",0.04038]],[["<eos>",0.60661],["для",0.02856],["у",0.01968]]],"rnn_pt":[0.1497583,0.6213856,0.0700396,0.0011645,0.0013718,0.0078811,0.0110758,0.6066117],"bi_top":[[["не",0.14906],["<unk>",0.03931],["помилка",0.02799]],[["вдалося",0.35235],["можна",0.06321],["є",0.05365]],[["отримати",0.11407],["створити",0.09151],["встановити",0.06744]],[["дані",0.10406],["доступ",0.10272],["список",0.05203]],[["<eos>",0.24475],["для",0.068],["<unk>",0.03401]],[["<eos>",0.25203],["з",0.08773],["даних",0.0376]],[["<eos>",0.16155],["<unk>",0.06362],["не",0.0412]],[["<eos>",0.30857],["не",0.08768],["для",0.02807]]],"bi_pt":[0.1490607,0.3523543,0.1140677,0.0053395,1.7e-05,0.0041841,0.0120225,0.3085729],"bi_seen":[12295,8551,981,8,0,3,89,88],"h":[[-0.939,-0.656,0.81,0.624,0.986,-0.984,0.974,-0.939,-0.511,-0.909,-0.677,0.252,-0.91,0.969,0.302,-0.755],[-0.999,0.972,-0.984,-0.212,0.997,0.934,0.98,-0.956,-0.769,0.979,-0.454,-0.932,-0.916,-0.968,-0.999,-0.988],[-0.987,0.986,0.993,0.996,-0.955,0.967,-0.976,0.985,-0.782,0.994,0.876,0.985,-0.878,0.989,-0.99,-0.997],[0.906,0.913,1.0,-0.987,0.998,-0.41,-0.907,0.999,-0.999,0.994,0.996,0.962,-0.477,-0.77,0.999,-0.791],[0.982,1.0,0.541,-0.993,-0.556,0.474,-0.983,0.998,0.991,-0.485,-0.86,0.964,0.988,-0.36,-0.989,0.748],[0.871,0.964,0.98,-0.85,-0.991,0.053,-1.0,0.999,0.998,-0.632,-0.517,-0.93,0.996,-0.985,0.293,0.986],[-0.921,-0.999,0.964,-0.991,-0.813,-0.99,-1.0,0.999,0.553,0.899,0.763,-0.961,0.866,0.906,0.987,0.972],[0.996,0.993,-0.96,-0.982,-0.966,-0.691,-0.994,0.883,0.997,-0.991,-0.719,-0.99,0.994,-0.997,0.541,0.963]]},{"words":["для","каналу","не","визначено","адреси","призначення"],"rnn_top":[[["не",0.14976],["<unk>",0.0485],["у",0.02294]],[["цього",0.05276],["<unk>",0.03729],["використання",0.02297]],[["<eos>",0.03222],["<unk>",0.02675],["не",0.01916]],[["передбачено",0.12062],["можна",0.07579],["підтримується",0.05657]],[["<eos>",0.46158],["з",0.0416],["у",0.03728]],[["<eos>",0.60696],["для",0.03318],["на",0.02817]],[["<eos>",0.51689],["не",0.11586],["для",0.02823]]],"rnn_pt":[0.01398,0.0006156,0.0191639,0.0078816,0.000309,0.0006517,0.51689],"bi_top":[[["не",0.14906],["<unk>",0.03931],["помилка",0.02799]],[["<eos>",0.11007],["<unk>",0.0487],["цього",0.0202]],[["<eos>",0.22549],["для",0.04423],["не",0.04423]],[["вдалося",0.35235],["можна",0.06321],["є",0.05365]],[["<eos>",0.23376],["у",0.09942],["як",0.04569]],[["<eos>",0.29457],["для",0.06842],["у",0.04942]],[["<eos>",0.27603],["не",0.23758],["для",0.0618]]],"bi_pt":[0.012342,0.0014598,0.0442308,0.0049037,1.34e-05,0.0019099,0.2760299],"bi_seen":[1018,19,10,119,0,1,201],"h":[[-0.939,-0.656,0.81,0.624,0.986,-0.984,0.974,-0.939,-0.511,-0.909,-0.677,0.252,-0.91,0.969,0.302,-0.755],[0.777,0.981,0.025,-0.978,-0.929,0.878,0.967,-1.0,-0.843,-0.905,-0.997,-0.934,-0.776,-0.978,-0.992,-0.735],[0.905,0.894,-0.936,0.975,-0.997,0.805,-0.599,-0.115,1.0,-0.824,-0.999,-0.966,0.978,-0.856,-0.932,-0.791],[-0.996,0.953,-0.995,0.983,0.966,0.964,-0.996,0.904,0.983,0.957,-0.278,-0.981,0.844,-0.998,-1.0,-0.968],[0.994,0.555,0.955,0.975,0.637,-0.73,-0.982,0.973,0.653,0.352,0.927,-0.347,0.393,-0.554,-0.849,0.943],[0.986,0.985,-0.958,-0.702,0.836,-0.985,-0.986,0.987,-0.37,-0.243,0.982,-0.971,0.992,-0.996,0.23,0.993],[-0.05,0.909,0.781,0.784,-0.666,-0.992,-0.961,0.996,0.785,-0.873,-0.805,-0.989,0.997,-0.882,-0.888,0.889]]},{"words":["специфікатор","у","операторі","на","має","значення"],"rnn_top":[[["не",0.14976],["<unk>",0.0485],["у",0.02294]],[["<unk>",0.04238],["не",0.0306],["типу",0.02055]],[["<unk>",0.07309],["форматі",0.05255],["мережі",0.04572]],[["<eos>",0.29003],["на",0.14724],["не",0.06487]],[["<eos>",0.23329],["не",0.04961],["<unk>",0.03217]],[["бути",0.48706],["<unk>",0.04978],["значення",0.0296]],[["<eos>",0.2417],["для",0.0379],["що",0.03505]]],"rnn_pt":[0.0002457,0.0096325,0.0008748,0.1472362,0.007964,0.0296045,0.2416996],"bi_top":[[["не",0.14906],["<unk>",0.03931],["помилка",0.02799]],[["типу",0.05352],["класу",0.05352],["<eos>",0.04461]],[["<eos>",0.07726],["<unk>",0.07557],["форматі",0.03347]],[["на",0.31988],["<eos>",0.1828],["в",0.08489]],[["<eos>",0.16155],["<unk>",0.06362],["не",0.0412]],[["бути",0.35154],["<unk>",0.05551],["значення",0.0296]],[["<eos>",0.1874],["для",0.07935],["не",0.0328]]],"bi_pt":[0.0004001,0.0089572,0.0008015,0.319876,0.0068896,0.0296049,0.187399],"bi_seen":[33,1,9,49,51,72,640],"h":[[-0.939,-0.656,0.81,0.624,0.986,-0.984,0.974,-0.939,-0.511,-0.909,-0.677,0.252,-0.91,0.969,0.302,-0.755],[-0.636,0.995,-0.986,-0.474,0.072,0.724,0.985,-0.999,-0.817,0.881,-0.941,0.86,0.596,-0.04,-0.698,0.956],[0.787,-0.913,-0.987,0.045,0.581,0.873,-0.968,0.991,-0.999,0.814,0.806,0.023,0.584,0.428,0.991,-0.978],[0.999,0.817,-0.969,-0.975,0.415,-0.926,-0.054,0.84,-0.979,-0.978,0.858,0.444,0.806,-0.98,0.998,0.993],[-0.939,-1.0,0.842,-0.994,0.15,-0.991,-0.997,0.987,-0.372,0.972,0.994,-0.991,0.853,0.979,0.999,0.906],[0.859,-0.939,0.728,-0.989,0.907,-0.977,-0.962,1.0,-0.889,-0.987,0.999,0.969,-0.999,-0.992,1.0,0.305],[0.876,0.946,-0.809,0.825,0.257,0.059,-0.963,0.981,-0.39,-0.996,-0.38,-0.922,0.976,-0.671,-0.976,0.582]]}],"inflTV":{"1":{"mean":0.44042,"lo":0.42945,"hi":0.45194},"2":{"mean":0.16804,"lo":0.16067,"hi":0.1775},"3":{"mean":0.07907,"lo":0.07631,"hi":0.08438},"4":{"mean":0.03803,"lo":0.035,"hi":0.04233},"5":{"mean":0.02196,"lo":0.01969,"hi":0.0251},"6":{"mean":0.01196,"lo":0.00995,"hi":0.0132},"7":{"mean":0.00755,"lo":0.0057,"hi":0.00974},"8":{"mean":0.00499,"lo":0.00322,"hi":0.0064}},"inflH":{"1":{"mean":0.92115,"lo":0.90548,"hi":0.93553},"2":{"mean":0.42555,"lo":0.42065,"hi":0.43405},"3":{"mean":0.19521,"lo":0.19266,"hi":0.19851},"4":{"mean":0.09043,"lo":0.08572,"hi":0.09293},"5":{"mean":0.05278,"lo":0.04704,"hi":0.05663},"6":{"mean":0.02868,"lo":0.02355,"hi":0.03262},"7":{"mean":0.01788,"lo":0.01357,"hi":0.02198},"8":{"mean":0.01197,"lo":0.00783,"hi":0.01444}}};
+
+/* «раз / рази / разів» за українським правилом узгодження */
+function razy(n){
+  var t=n%100, o=n%10;
+  if(t>=11 && t<=14) return 'разів';
+  if(o===1) return 'раз';
+  if(o>=2 && o<=4) return 'рази';
+  return 'разів';
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+/* ═══════ фігура 1 · покриття контексту ═══════ */
+var M1 = 0;
+function draw1(){
+  var cv=I('c1'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var n=+I('n1').value; I('n1o').textContent=n;
+  var rows=NUM.cov, i;
+  capt(g,'перевірних позицій: '+thou(NUM.tokVal)+'   ·   '+(M1? 'повна n-грама (контекст разом із наступним словом)':'сам контекст (те, за чим модель шукає в таблиці)'),16,22,css('--soft'),11.5,false);
+  capt(g,M1? 'бачили таку n-граму в навчанні':'бачили такий контекст в навчанні',60,52,css('--ink'),11,true);
+  capt(g,'різних у навчанні',470,52,css('--ink'),11,true);
+  var x0=60,x1=400,y0=76,rh=54;
+  var mx=0; for(i=0;i<5;i++){ var c0=M1?rows[i].ngrams:rows[i].contexts; if(c0>mx) mx=c0; }
+  for(i=0;i<5;i++){
+    var r=rows[i], hit=M1?r.ng_hit:r.ctx_hit, cnt=M1?r.ngrams:r.contexts;
+    var y=y0+i*rh, cur=(r.n===n);
+    g.globalAlpha=cur?1:0.3;
+    capt(g,'n = '+r.n,16,y+15,cur?css('--rose'):css('--soft'),12,cur);
+    g.fillStyle=css('--teal'); g.fillRect(x0,y,(x1-x0)*hit,20);
+    g.fillStyle=css('--rose'); g.fillRect(x0+(x1-x0)*hit,y,(x1-x0)*(1-hit),20);
+    capt(g,(100*hit).toFixed(2)+' %',x1+6,y+15,css('--ink'),11.5,cur);
+    var lw=Math.log(cnt+1)/Math.log(mx+1), bwd=Math.max(2,140*lw);
+    g.fillStyle=css('--amber'); g.fillRect(470,y,bwd,20);
+    capt(g,thou(cnt),470+bwd+6,y+15,css('--soft'),11,false);
+    g.globalAlpha=1;
+  }
+  capt(g,'бірюзове — бачили, рожеве — ні',60,y0+5*rh+16,css('--soft'),11,false);
+  capt(g,'смуга праворуч логарифмічна',470,y0+5*rh+16,css('--soft'),11,false);
+  var d=rows[n-1], hh=M1?d.ng_hit:d.ctx_hit, cc=M1?d.ngrams:d.contexts;
+  I('v1a').textContent=(100*hh).toFixed(2)+' %';
+  I('v1b').textContent=(100*(1-hh)).toFixed(2)+' %';
+  I('v1c').textContent=thou(cc);
+  I('v1d').textContent=(n===1&&!M1)?'—':f1(NUM.tokTrain/cc);
+  var tag=hh>=0.95?'t-ok':(hh>=0.70?'t-mid':'t-no');
+  var ACC=M1?'таку n-граму':'такий контекст';
+  var GEN=M1?'такої n-грами':'такого контексту';
+  var PLU=M1?'n-грам':'контекстів';
+  var per=f1(NUM.tokTrain/cc), miss=(100*(1-hh)).toFixed(2);
+  var txt;
+  if(n===1 && !M1){ tag='t-ok';
+    txt='Контексту в уніграми немає взагалі — вона дивиться в порожнечу й називає найчастіші слова корпусу. Тому «бачила» тут тривіально: шукати нема чого.'; }
+  else if(hh>=0.9999) txt='Модель бачила '+ACC+' <b>завжди</b>: різних усього '+thou(cc)+', і на кожен припадає '+per+' навчальних прикладів. Лічильник тут не порожній ніколи.';
+  else if(hh>=0.70) txt='У <b>'+miss+' %</b> перевірних позицій '+GEN+' у навчанні не було. На кожен із '+thou(cc)+' різних припадає лише '+per+' прикладів — оцінювати частоту вже нема з чого.';
+  else txt='Провал: <b>'+miss+' %</b> перевірних позицій модель бачить уперше. Різних '+PLU+' — '+thou(cc)+', прикладів на кожен — '+per+'. Лічильники порожні частіше, ніж повні.';
+  verd('v1v',tag,'n = '+n,txt);
+}
+
+/* ═══════ фігура 2 · крок клітинки ═══════ */
+function toyRun(steps,gain){
+  var Wx=NUM.toy.Wx, Wh=NUM.toy.Wh, b=NUM.toy.b, Ew=NUM.toy.Ew;
+  var h=[0,0,0,0], out=null, t,i,j;
+  for(t=0;t<steps;t++){
+    var a=[0,0,0,0], c=[0,0,0,0], z=[0,0,0,0], nh=[0,0,0,0];
+    for(i=0;i<4;i++){
+      for(j=0;j<3;j++) a[i]+=Wx[i][j]*Ew[t][j];
+      for(j=0;j<4;j++) c[i]+=Wh[i][j]*h[j];
+      c[i]*=gain; z[i]=a[i]+c[i]+b[i]; nh[i]=Math.tanh(z[i]);
+    }
+    h=nh; out={a:a,c:c,z:z,h:h};
+  }
+  return out;
+}
+function nrm(v){var s=0,i; for(i=0;i<v.length;i++) s+=v[i]*v[i]; return Math.sqrt(s);}
+function draw2(){
+  var cv=I('c2'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var t=+I('t2').value, gain=(+I('g2').value)/20;
+  I('t2o').textContent=t; I('g2o').textContent=gain.toFixed(2);
+  var r=toyRun(t,gain), i;
+  var names=['слово 1','слово 2','слово 3','слово 4'];
+  capt(g,'іграшкова клітинка: стан із 4 чисел, ембединг слова з 3 чисел',16,22,css('--soft'),11.5,false);
+  capt(g,'крок '+t+' — прийшло «'+names[t-1]+'»',16,42,css('--ink'),12,true);
+  var cols=[['від слова',150],['від памʼяті',258],['зсув',340],['сума',424]];
+  for(i=0;i<cols.length;i++) capt(g,cols[i][0],cols[i][1],72,css('--soft'),10.5,false,'right');
+  capt(g,'tanh(сума)',560,72,css('--soft'),10.5,false);
+  var y0=96,rh=56;
+  for(i=0;i<4;i++){
+    var y=y0+i*rh;
+    capt(g,'h'+(i+1),20,y+16,css('--rose'),13,true);
+    capt(g,r.a[i].toFixed(3),150,y+16,css('--teal'),12.5,false,'right');
+    capt(g,r.c[i].toFixed(3),258,y+16,gain>0?css('--amber'):css('--hair'),12.5,false,'right');
+    capt(g,NUM.toy.b[i].toFixed(2),340,y+16,css('--soft'),12.5,false,'right');
+    capt(g,r.z[i].toFixed(3),424,y+16,css('--ink'),12.5,true,'right');
+    var cx=545, hw=80;
+    g.strokeStyle=css('--hair'); g.lineWidth=1;
+    g.beginPath(); g.moveTo(cx-hw,y+22.5); g.lineTo(cx+hw,y+22.5); g.stroke();
+    g.beginPath(); g.moveTo(cx+0.5,y+4); g.lineTo(cx+0.5,y+28); g.stroke();
+    var v=r.h[i];
+    g.fillStyle=v>=0?css('--teal'):css('--rose');
+    g.fillRect(v>=0?cx:cx+hw*v, y+8, Math.abs(hw*v), 12);
+    capt(g,v.toFixed(4),cx+hw+8,y+18,css('--ink'),11.5,false);
+    capt(g,'−1',cx-hw,y+38,css('--soft'),9.5,false); capt(g,'+1',cx+hw-10,y+38,css('--soft'),9.5,false);
+  }
+  var na=nrm(r.a), nc=nrm(r.c);
+  I('v2a').textContent=f3(na); I('v2b').textContent=f3(nc);
+  I('v2c').textContent=(100*nc/(na+nc)).toFixed(1)+' %';
+  I('v2d').textContent=r.h.map(function(v){return v.toFixed(2);}).join(' ');
+  var tag,txt;
+  if(gain===0){ tag='t-no'; txt='Внесок памʼяті рівно <b>0</b>. Стан залежить тільки від поточного слова, і мережа перестала бути рекурентною: на однакове слово вона тепер завжди відповідає однаково, хоч би що стояло перед ним.'; }
+  else if(t===1){ tag='t-mid'; txt='Перший крок: стан до нього нульовий, тому внесок памʼяті дорівнює <b>0.000</b> хоч би за якого множника. Історії ще немає — усе, що є, прийшло зі слова.'; }
+  else { tag=nc/(na+nc)>0.35?'t-ok':'t-mid';
+    txt='На цьому кроці памʼять дає <b>'+(100*nc/(na+nc)).toFixed(1)+' %</b> сили доданків ('+f3(nc)+' проти '+f3(na)+' від слова). Це і є та частка нового стану, яку не можна відтворити, дивлячись лише на поточне слово.'; }
+  verd('v2v',tag,'множник '+gain.toFixed(2),txt);
+}
+
+/* ═══════ фігура 3 · розгортка ═══════ */
+var M3 = 0;
+function draw3(){
+  var cv=I('c3'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var T=+I('t3').value; I('t3o').textContent=T;
+  var bw=Math.min(40, (W-90)/T-10), gap=Math.min(14,(W-90-bw*T)/Math.max(1,T-1));
+  var total=T*bw+(T-1)*gap, x0=(W-total)/2, y=150, bh=54;
+  capt(g,M3? 'окремі ваги: кожен крок має власний набір' : 'спільні ваги: одна клітинка, застосована '+T+' '+razy(T),16,24,css('--ink'),12,true);
+  var i;
+  for(i=0;i<T;i++){
+    var x=x0+i*(bw+gap);
+    var col = M3 ? 'hsl('+(200+i*13)+',55%,50%)' : css('--rose');
+    g.fillStyle = M3 ? col : css('--rose-w');
+    g.strokeStyle = M3 ? col : css('--rose');
+    g.lineWidth=1.5;
+    g.beginPath(); g.roundRect(x,y,bw,bh,7); g.fill(); g.stroke();
+    capt(g,M3?('W'+(i+1)):'W',x+bw/2,y+bh/2+5,M3?'#fff':css('--rose'),bw>26?12:10,true,'center');
+    /* вхід */
+    g.strokeStyle=css('--teal'); g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(x+bw/2,y+bh+30); g.lineTo(x+bw/2,y+bh+6); g.stroke();
+    g.beginPath(); g.moveTo(x+bw/2-3.5,y+bh+11); g.lineTo(x+bw/2,y+bh+5); g.lineTo(x+bw/2+3.5,y+bh+11); g.stroke();
+    if(bw>=24) capt(g,'x'+(i+1),x+bw/2,y+bh+46,css('--teal'),10,false,'center');
+    /* вихід */
+    g.strokeStyle=css('--soft');
+    g.beginPath(); g.moveTo(x+bw/2,y-6); g.lineTo(x+bw/2,y-30); g.stroke();
+    g.beginPath(); g.moveTo(x+bw/2-3.5,y-24); g.lineTo(x+bw/2,y-30); g.lineTo(x+bw/2+3.5,y-24); g.stroke();
+    if(bw>=24) capt(g,'p'+(i+1),x+bw/2,y-36,css('--soft'),10,false,'center');
+    /* стрілка стану */
+    if(i<T-1){
+      g.strokeStyle=css('--amber'); g.lineWidth=1.6;
+      g.beginPath(); g.moveTo(x+bw,y+bh/2); g.lineTo(x+bw+gap,y+bh/2); g.stroke();
+      g.beginPath(); g.moveTo(x+bw+gap-5,y+bh/2-3.5); g.lineTo(x+bw+gap,y+bh/2); g.lineTo(x+bw+gap-5,y+bh/2+3.5); g.stroke();
+    }
+  }
+  capt(g,'h',x0-16,y+bh/2+4,css('--amber'),12,true,'right');
+  capt(g,'0',x0-10,y+bh/2+8,css('--amber'),9,false,'right');
+  capt(g,'помаранчева стрілка — стан, що переходить на наступний крок',16,H-40,css('--soft'),11,false);
+  capt(g,'бірюзова знизу — слово на вході, сіра вгорі — передбачення',16,H-22,css('--soft'),11,false);
+  var rec=NUM.par.rec;
+  I('v3a').textContent=T;
+  I('v3b').textContent=M3?T:1;
+  I('v3c').textContent=thou(M3?rec*T:rec);
+  I('v3d').textContent=M3?String(T):'будь-яке';
+  var tag=M3?'t-no':'t-ok', txt;
+  if(M3) txt='Наборів ваг стільки ж, скільки кроків — <b>'+T+'</b>. Ваг разом: '+thou(rec*T)+'. Речення, у якому слів більше за '+T+', така мережа прочитати не може: для кроку номер '+(T+1)+' ваг просто немає. А набір для останнього кроку вчився лише на тих реченнях, у яких є слово номер '+T+'.';
+  else txt='Набір ваг <b>один</b>: ті самі ваги (їх '+thou(rec)+') працюють на кожному кроці, скільки б кроків не було. Довжина входу до будови моделі не входить узагалі — скільки слів прийде, стільки разів і застосуємо правило.';
+  verd('v3v',tag,M3?'окремі ваги':'спільні ваги',txt);
+}
+
+/* ═══════ фігура 4 · скільки ваг ═══════ */
+var HS=[64,128,256], M4=1;
+function draw4(){
+  var cv=I('c4'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var T=+I('t4').value; I('t4o').textContent=T;
+  var Hh=HS[M4], V=NUM.V, E=64;
+  var emb=V*E, rec=Hh*E+Hh*Hh+2*Hh, out=Hh*V+V;
+  var shared=emb+rec+out, sep=emb+rec*T+out;
+  var x0=30, x1=W-30, mx=sep;
+  function bar(y,label,recTotal,tot){
+    capt(g,label,x0,y-8,css('--ink'),12,true);
+    var w=(x1-x0)*tot/mx, p=x0;
+    var parts=[[emb,css('--teal'),'ембединги'],[recTotal,css('--rose'),'клітинка'],[out,css('--amber'),'вихід']];
+    var i;
+    for(i=0;i<3;i++){
+      var pw=(x1-x0)*parts[i][0]/mx;
+      g.fillStyle=parts[i][1]; g.fillRect(p,y,pw,34); p+=pw;
+    }
+    capt(g,thou(tot)+' ваг',x0,y+52,css('--soft'),11.5,false);
+  }
+  capt(g,'H = '+Hh+', словник '+thou(V)+', ембединг 64, довжина речення T = '+T,16,24,css('--soft'),11.5,false);
+  bar(76,'RNN: спільні ваги',rec,shared);
+  bar(166,'окремі ваги на кожен із '+T+' кроків',rec*T,sep);
+  var lg=[[css('--teal'),'ембединги '+thou(emb)],[css('--rose'),'клітинка'],[css('--amber'),'вихідний шар '+thou(out)]], i;
+  for(i=0;i<3;i++){
+    g.fillStyle=lg[i][0]; g.fillRect(x0+i*220,H-46,12,12);
+    capt(g,lg[i][1],x0+i*220+18,H-35,css('--soft'),11,false);
+  }
+  capt(g,'смуги в одному масштабі: ширша смуга — більше ваг',x0,H-64,css('--soft'),11,false);
+  I('v4a').textContent=thou(rec);
+  I('v4b').textContent=thou(rec*T);
+  I('v4c').textContent=thou(shared);
+  I('v4d').textContent=thou(sep);
+  var save=rec*T-rec, ratio=sep/shared;
+  var tag=ratio>=2?'t-no':(ratio>=1.3?'t-mid':'t-ok');
+  verd('v4v',tag,'T = '+T+', H = '+Hh,
+    'Економія в клітинці — <b>'+thou(save)+'</b>, тобто рівно в '+T+' '+razy(T)+' менше ваг. Але вся мережа росте лише в <b>'+f2(ratio)+' раза</b>: '+thou(shared)+' проти '+thou(sep)+'. Клітинка тут — найменша частина ('+(100*rec/shared).toFixed(1)+' % ваг RNN), решту зʼїдають словникові шари.');
+}
+
+/* ═══════ фігура 5 · перплексія від добавки ═══════ */
+var M5 = 0;
+function draw5(){
+  var cv=I('c5'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var k=+I('a5').value, D=M5?NUM.tri:NUM.bi, i;
+  I('a5o').textContent=NUM.grid[k];
+  var x0=64,x1=W-24,y0=54,y1=H-64;
+  var lo=Math.log(120), hi=Math.log(2600);
+  function Y(v){return y1-(y1-y0)*(Math.log(v)-lo)/(hi-lo);}
+  function X(j){return x0+(x1-x0)*j/(NUM.grid.length-1);}
+  /* сітка */
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  var ticks=[150,200,300,500,1000,2000];
+  for(i=0;i<ticks.length;i++){
+    var y=Y(ticks[i]);
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,String(ticks[i]),x0-8,y+4,css('--soft'),10.5,false,'right');
+  }
+  capt(g,'перплексія',16,26,css('--soft'),11,false);
+  /* смуга RNN */
+  var rlo=Math.min.apply(null,NUM.rnnPpl), rhi=Math.max.apply(null,NUM.rnnPpl);
+  g.fillStyle=css('--rose-w'); g.fillRect(x0,Y(rhi),x1-x0,Math.max(2,Y(rlo)-Y(rhi)));
+  g.strokeStyle=css('--rose'); g.setLineDash([4,3]); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,Y(NUM.rnnMean)+0.5); g.lineTo(x1,Y(NUM.rnnMean)+0.5); g.stroke();
+  g.setLineDash([]);
+  capt(g,'RNN, три зерна',x0+4,Y(NUM.rnnMean)-7,css('--rose'),11,true);
+  /* криві */
+  function curve(arr,color,dash,wid){
+    g.strokeStyle=color; g.lineWidth=wid; g.setLineDash(dash);
+    g.beginPath();
+    for(i=0;i<arr.length;i++){ var xx=X(i), yy=Y(Math.min(2599,arr[i]));
+      if(i===0) g.moveTo(xx,yy); else g.lineTo(xx,yy); }
+    g.stroke(); g.setLineDash([]);
+  }
+  curve(D.dev,css('--soft'),[4,3],1.2);
+  curve(D.val,css('--teal'),[],2);
+  /* точки */
+  var bi=NUM.grid.indexOf(D.bestA);
+  g.strokeStyle=css('--teal'); g.lineWidth=2; g.fillStyle=css('--raise');
+  g.beginPath(); g.arc(X(bi),Y(D.val[bi]),5.5,0,6.284); g.fill(); g.stroke();
+  g.fillStyle=css('--rose');
+  g.beginPath(); g.arc(X(k),Y(Math.min(2599,D.val[k])),5,0,6.284); g.fill();
+  /* вісь x */
+  g.strokeStyle=css('--hair');
+  g.beginPath(); g.moveTo(x0,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+  for(i=0;i<NUM.grid.length;i+=2) capt(g,String(NUM.grid[i]),X(i),y1+16,i===k?css('--rose'):css('--soft'),9.5,i===k,'center');
+  capt(g,'добавка згладжування: більша ліворуч, менша праворуч',x0,H-14,css('--soft'),11,false);
+  capt(g,'суцільна — перевірна частина, пунктир — відкладена',x0+300,26,css('--soft'),11,false);
+  var v=D.val[k], d=D.dev[k], diff=v-NUM.rnnMean;
+  I('v5a').textContent=f2(v); I('v5b').textContent=f2(d);
+  I('v5c').textContent=f2(rlo)+'…'+f2(rhi);
+  I('v5d').textContent=(diff>0?'+':'−')+f2(Math.abs(diff));
+  var tag,txt, nm=M5?'Триграма':'Біграма';
+  if(v>rhi) { tag='t-no'; txt=nm+' з добавкою '+NUM.grid[k]+' дає <b>'+f2(v)+'</b> — гірше за всі три зерна RNN ('+f2(rlo)+'…'+f2(rhi)+'). Мережа виграє тут '+f2(v-NUM.rnnMean)+' пункту перплексії.'; }
+  else if(v<rlo) { tag='t-ok'; txt=nm+' з добавкою '+NUM.grid[k]+' дає <b>'+f2(v)+'</b> — краще за всі три зерна RNN ('+f2(rlo)+'…'+f2(rhi)+'). Лічильники обходять мережу на '+f2(NUM.rnnMean-v)+' пункту перплексії.'; }
+  else { tag='t-mid'; txt=nm+' з добавкою '+NUM.grid[k]+' дає <b>'+f2(v)+'</b> — усередині розкиду RNN ('+f2(rlo)+'…'+f2(rhi)+'). Різниці між моделями на цьому положенні немає.'; }
+  if(k===bi) txt+=' Це і є добавка, яку обрала відкладена вибірка.';
+  verd('v5v',tag,'добавка '+NUM.grid[k],txt);
+}
+
+/* ═══════ фігура 6 · два передбачення поруч ═══════ */
+var S6 = 0;
+function draw6(){
+  var cv=I('c6'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var s=NUM.sent[S6], nsteps=s.words.length+1;
+  var sl=I('t6'); sl.max=String(nsteps-1);
+  var t=Math.min(+sl.value, nsteps-1); sl.value=String(t);
+  I('t6o').textContent=(t+1);
+  /* рядок речення */
+  var toks=['<eos>'].concat(s.words), x=20, i;
+  g.font=mono(12,false);
+  for(i=0;i<toks.length;i++){
+    var wdt=g.measureText(toks[i]).width+12;
+    if(i===t){ g.fillStyle=css('--rose-w'); g.fillRect(x-4,26,wdt,22); }
+    capt(g,toks[i],x+2,42,i===t?css('--rose'):(i<t?css('--ink'):css('--hair')),12,i===t);
+    x+=wdt+4;
+  }
+  capt(g,'модель прочитала слова до рожевого включно й називає наступне',20,66,css('--soft'),11,false);
+  var truth=(t<s.words.length)? s.words[t] : '<eos>';
+  var prevw=toks[t];
+  /* дві колонки */
+  function col(x0,title,rows,color){
+    capt(g,title,x0,96,css('--ink'),12,true);
+    var j;
+    for(j=0;j<3;j++){
+      var y=118+j*38, w=rows[j][0], p=rows[j][1];
+      var hit=(w===truth);
+      g.fillStyle=hit?css('--teal'):color;
+      g.fillRect(x0,y,Math.max(2,250*Math.min(1,p/0.6)),16);
+      capt(g,cut(g,w,150,12,hit)+'  '+(100*p).toFixed(1)+' %',x0+4,y+29,hit?css('--teal'):css('--soft'),11.5,hit);
+    }
+  }
+  col(20,'RNN пропонує',s.rnn_top[t],css('--rose-w'));
+  col(370,'біграма пропонує',s.bi_top[t],css('--rose-w'));
+  capt(g,'бірюзовим — якщо це справді наступне слово; смуга — ймовірність (уся ширина = 60 %)',20,252,css('--soft'),10.5,false);
+  /* стан */
+  capt(g,'стан після цього слова: 16 із 128 чисел',20,286,css('--ink'),11.5,true);
+  var hv=s.h[t], ord=NUM.hpick, cw=40, j2;
+  for(j2=0;j2<16;j2++){
+    var v=hv[ord[j2]], xx=20+j2*cw, yy=298;
+    var al=Math.min(1,0.15+Math.abs(v)*0.85);
+    g.fillStyle=v>=0?css('--teal'):css('--rose');
+    g.globalAlpha=al; g.fillRect(xx,yy,cw-4,30); g.globalAlpha=1;
+    /* на насиченій плитці читається колір тла, на блідій — колір тексту:
+       так підпис лишається контрастним і в світлій, і в темній темі */
+    capt(g,v.toFixed(1),xx+(cw-4)/2,yy+19,al>=0.55?css('--paper'):css('--ink'),10,true,'center');
+  }
+  capt(g,'бірюзове — додатне, рожеве — відʼємне; що яскравіше, то більше за модулем',20,352,css('--soft'),10.5,false);
+  var pr=s.rnn_pt[t], pb=s.bi_pt[t], seen=s.bi_seen[t];
+  function pc(v){ return v>=0.0001? (100*v).toFixed(2)+' %' : (100*v).toFixed(4)+' %'; }
+  I('v6a').textContent=truth;
+  I('v6b').textContent=f1(pr/pb)+' ×';
+  I('v6c').textContent=pc(pr);
+  I('v6d').textContent=pc(pb);
+  var tag= pr>pb*1.5?'t-ok':(pr>pb/1.5?'t-mid':'t-no');
+  var txt='Справжнє наступне слово — «'+esc(truth)+'». RNN дала йому <b>'+pc(pr)+'</b>, біграма — <b>'+pc(pb)+'</b>';
+  if(pr>pb*1.5) txt+=', тобто мережа впевненіша в '+f1(pr/pb)+' раза.';
+  else if(pr>pb/1.5) txt+=' — різниця менша за півтора раза, тобто на цій позиції обидві моделі бачать майже однаково.';
+  else txt+=': тут виграла біграма, у '+f1(pb/pr)+' раза. Один лічильник іноді точніший за стиснуту історію.';
+  if(seen===0) txt+=' Цієї пари слів біграма <b>не бачила жодного разу</b> — усе, що вона дала, це згладжування.';
+  else txt+=' Пару «'+esc(prevw)+' → '+esc(truth)+'» біграма бачила '+seen+' '+razy(seen)+' у навчанні.';
+  verd('v6v',tag,'позиція '+(t+1)+' з '+nsteps,txt);
+}
+
+/* ═══════ фігура 7 · вплив слова на відстані k ═══════ */
+var M7 = 0;
+function draw7(){
+  var cv=I('c7'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var k=+I('k7').value; I('k7o').textContent=k;
+  var D=M7?NUM.inflH:NUM.inflTV, i;
+  var mx=0; for(i=1;i<=8;i++){ if(D[i].hi>mx) mx=D[i].hi; }
+  mx*=1.15;
+  var x0=54,x1=W-24,y0=54,y1=H-58, bw=(x1-x0)/8;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+  var st=mx/4, tk;
+  for(tk=0;tk<=4;tk++){
+    var vv=st*tk, y=y1-(y1-y0)*vv/mx;
+    g.strokeStyle=css('--hair');
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,vv.toFixed(2),x0-8,y+4,css('--soft'),10.5,false,'right');
+  }
+  capt(g, M7?'відносний зсув вектора стану':'відстань між двома розподілами (0 — те саме, 1 — нічого спільного)',16,26,css('--soft'),11,false);
+  for(i=1;i<=8;i++){
+    var d=D[i], x=x0+(i-1)*bw, cur=(i===k);
+    var hgt=(y1-y0)*d.mean/mx;
+    g.globalAlpha=cur?1:0.35;
+    g.fillStyle=cur?css('--rose'):css('--teal');
+    g.fillRect(x+bw*0.18,y1-hgt,bw*0.64,hgt);
+    /* вусики */
+    g.strokeStyle=css('--ink'); g.lineWidth=1.2;
+    var yl=y1-(y1-y0)*d.lo/mx, yh=y1-(y1-y0)*d.hi/mx, xc=x+bw/2;
+    g.beginPath(); g.moveTo(xc,yl); g.lineTo(xc,yh);
+    g.moveTo(xc-5,yl); g.lineTo(xc+5,yl); g.moveTo(xc-5,yh); g.lineTo(xc+5,yh); g.stroke();
+    capt(g,d.mean.toFixed(3),xc,yh-8,css('--ink'),10.5,cur,'center');
+    capt(g,'k = '+i,xc,y1+18,cur?css('--rose'):css('--soft'),11,cur,'center');
+    g.globalAlpha=1;
+  }
+  capt(g,'відстань від точки передбачення, у словах',x0,H-14,css('--soft'),11,false);
+  var d=D[k], d1=D[1], d8=D[8];
+  I('v7a').textContent=f4(d.mean);
+  I('v7b').textContent=f4(d.lo)+'…'+f4(d.hi);
+  I('v7c').textContent=(100*d.mean/d1.mean).toFixed(1)+' %';
+  I('v7d').textContent=(k===1)?'—':f2(D[k-1].mean/d.mean)+' ×';
+  var sh=d.mean/d1.mean;
+  var tag=sh>0.5?'t-ok':(sh>0.2?'t-mid':'t-no');
+  var txt='Підміна слова на відстані <b>'+k+'</b> зсуває '+(M7?'стан':'відповідь')+' на <b>'+f4(d.mean)+'</b> — це '+(100*sh).toFixed(1)+' % від того, що дає сусіднє слово ('+f4(d1.mean)+'). ';
+  if(k===1) txt+='Це найближче слово — те єдине, яке бачить і біграма теж.';
+  else {
+    txt+='За крок від '+(k-1)+' до '+k+' вплив упав у '+f2(D[k-1].mean/d.mean)+' раза. ';
+    txt+= M7 ? 'Стан клітинки ще щось про це слово памʼятає, але дедалі менше.'
+             : 'Біграма ж на відстані '+k+' дає рівно <b>0</b>: другого слова назад вона не бачить у принципі.';
+  }
+  verd('v7v',tag,'k = '+k,txt);
+}
+
+/* ═══════ звʼязування ═══════ */
+if(!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){
+    this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r);
+    this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this;
+  };
+}
+segment('seg1',function(i){M1=i; draw1();});
+on('n1','input',draw1);
+on('t2','input',draw2); on('g2','input',draw2);
+segment('seg3',function(i){M3=i; draw3();});
+on('t3','input',draw3);
+segment('seg4',function(i){M4=i; draw4();});
+on('t4','input',draw4);
+segment('seg5',function(i){M5=i; draw5();});
+on('a5','input',draw5);
+segment('seg6',function(i){S6=i; draw6();});
+on('t6','input',draw6);
+segment('seg7',function(i){M7=i; draw7();});
+on('k7','input',draw7);
+
+function drawAll(){draw1();draw2();draw3();draw4();draw5();draw6();draw7();}
+drawAll();
+window.addEventListener('resize',drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change',drawAll);
+}
+})();
+</script>
+</body>
+</html>

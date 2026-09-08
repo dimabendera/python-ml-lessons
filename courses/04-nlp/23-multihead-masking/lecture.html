@@ -1,0 +1,2850 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Голови, позиції, маски</title>
+<meta name="description" content="Три поправки, які перетворюють голий self-attention на робочий шар трансформера, і чотири абляції на пʼятьох зернах. Багатоголовість не додає жодного параметра — 2 499 831 в моделі з однією головою й із чотирма, — але чотири голови дають перплексію 131.39 проти 142.12 в однієї, і купи по зернах не перетинаються; голови справді розходяться (розрив профілів 0.2030, розходження розподілів у 8.3 раза більше, ніж у ненавченої моделі). Позиційне кодування, навпаки, на цьому корпусі не окупається: 132.61 проти 131.39, купи перекриваються майже цілком — і причина знайшлася: один причинний шар без кодування справді сліпий до порядку (зсув 2.4·10⁻⁷), а вже два шари його відновлюють (зсув 7.2·10⁻⁴, у тисячі разів більше), бо причинна маска сама є каналом для позиції. А без причинної маски модель читає відповідь із власного входу: 49.52 замість 131.39, а з навчуваними позиціями провал удвічі глибший — 22.52. Маска доповнення при цьому виявилась надлишковою: причинна маска вже закрила порожнечу, і перплексія з нею й без неї збігається до останнього знака.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* сегменти цієї теми переносяться по два в рядок */
+.seg.wrap button{flex:1 1 46%}
+/* довгі рядки іграшкового корпусу не мусять розпирати сторінку */
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 5 · Тема 23</p>
+    <h1>Голови, позиції, маски</h1>
+    <p class="stand">Self-attention у чистому вигляді — шар із трьома дірками. Він
+      дає лише один погляд на речення, він не знає, у якому порядку стоять слова, і
+      він дивиться туди, куди дивитись не можна. Три механізми, які ці дірки
+      затуляють, — і три числа, які показують, що буває без кожного.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Шар із трьома дірками</a></li>
+        <li><a href="#s2">Голова — це частка, а не копія</a></li>
+        <li><a href="#s3">Куди в шарі вставлено голови</a></li>
+        <li><a href="#s4">Навіщо кілька голів</a></li>
+        <li><a href="#s5">Чи розходяться голови насправді</a></li>
+        <li><a href="#s6">Скільки коштує голова</a></li>
+        <li><a href="#s7">Увага не бачить порядку</a></li>
+        <li><a href="#s8">Два шари — і порядок повертається</a></li>
+        <li><a href="#s9">Три способи пришити позицію</a></li>
+        <li><a href="#s10">Синусоїда: годинник із багатьма стрілками</a></li>
+        <li><a href="#s11">Скільки коштує порядок слів</a></li>
+        <li><a href="#s12">Причинна маска: модель бачить відповідь</a></li>
+        <li><a href="#s13">Що маска дає задарма</a></li>
+        <li><a href="#s14">Маска доповнення: не рахувати порожнечу</a></li>
+        <li><a href="#s15">Дві маски в одній матриці</a></li>
+        <li><a href="#s16">Шар цілком</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../22-self-attention/lecture.html">← 22. Self-attention покроково</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../24-transformer-training/lecture.html">24. Навчання трансформера →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+<p class="lead">Попередня тема розібрала self-attention до останнього множення: кожне
+слово робить із себе три вектори, запит зустрічається з ключами, softmax перетворює
+збіги на ваги, ваги змішують значення. Механізм красивий і закінчений. Але в такому
+вигляді він у трансформері <b>не стоїть жодного разу</b> — ні в GPT, ні в BERT, ні
+в перекладачі 2017 року. Між тим механізмом і робочим шаром лежать три поправки, і ця
+тема про них. Кожна поправка затуляє свою дірку, кожну ми перевіримо числом, і
+принаймні одна перевірка дасть відповідь, яку важко вгадати наперед.</p>
+
+<h2 id="s1"><span class="num">Розділ 1</span>Шар із трьома дірками</h2>
+
+<p>Спершу нагадаю, що саме ми маємо на руках після теми <code>22-self-attention</code>,
+і зроблю це так, щоб нагадування було самодостатнім.</p>
+
+<p>На вхід шару приходить речення — послідовність із <span class="raw">T</span>
+векторів, по одному на слово. Кожен вектор має <span class="raw">d</span> чисел;
+у нашій конфігурації <span class="raw">d</span> = 128. Шар множить кожен вектор на
+три різні матриці й дістає з нього три нові вектори: <b>запит</b> <code>q</code>
+(«що мені зараз потрібно»), <b>ключ</b> <code>k</code> («що я можу запропонувати»)
+і <b>значення</b> <code>v</code> («що я передам тому, хто мене вибере»). Далі запит
+кожного слова множиться скалярно на ключ кожного слова, отримані числа діляться на
+корінь із розмірності й проганяються через softmax — функцію, яка перетворює будь-який
+набір чисел на набір додатних ваг із сумою одиниця. Вихід слова — це сума значень усіх
+слів, узятих із цими вагами.</p>
+
+<div class="eq">Attention(Q, K, V) = softmax( Q·K<span class="sup">⊤</span> / √d ) · V</div>
+
+<p>Що тут означає кожен знак. <code>Q</code>, <code>K</code>, <code>V</code> — це
+таблиці: у <code>Q</code> стільки рядків, скільки слів, і кожен рядок — запит одного
+слова. Значок <span class="raw">⊤</span> означає «покласти таблицю набік», щоб її
+можна було помножити: після цього <code>Q·K<span class="sup">⊤</span></code> дає
+квадрат <span class="raw">T</span>×<span class="raw">T</span>, де на перетині рядка
+<span class="raw">i</span> й стовпця <span class="raw">j</span> стоїть збіг запиту
+<span class="raw">i</span> з ключем <span class="raw">j</span>. Ділення на <span
+class="raw">√d</span> стримує ці збіги від надто великих значень — інакше softmax
+перетворюється на «все одному, нуль решті». Сам softmax працює по рядках: кожен рядок
+квадрата стає розподілом уваги одного слова.</p>
+
+<div class="note"><b>Що таке softmax, одним реченням.</b><br>
+Функція, яка бере набір довільних чисел, підносить <span class="raw">e</span> до
+кожного з них і ділить кожен результат на суму всіх — на виході набір додатних чисел
+із сумою рівно 1. Ми користуємось нею з теми <a href="../06-text-classification/lecture.html"><code>06-text-classification</code></a>;
+докладна стаття є в глосарії курсу «Машинне навчання».</div>
+
+<p>Тепер про дірки. Їх рівно три, і кожна видима просто з формули, без жодного
+експерименту.</p>
+
+<p><b>Дірка перша: один softmax — один погляд.</b> Softmax по рядку дає <b>один</b>
+розподіл ваг. Слово має рівно одну можливість розподілити свою увагу — і якщо йому
+потрібні дві різні речі з речення, воно змушене поділити увагу між ними, а назад
+дістати їхню суміш. Розділити суміш потім уже не вийде.</p>
+
+<p><b>Дірка друга: у формулі немає позицій.</b> Придивись: індекс <span
+class="raw">j</span> входить у формулу тільки як «номер рядка в таблиці». Ніде — ні
+в збігах, ні в softmax, ні в підсумовуванні — не бере участі саме число <span
+class="raw">j</span>. Це не недогляд, а точна властивість: переставмо слова місцями,
+і вихід просто переставиться так само. Порядку шар не бачить.</p>
+
+<p><b>Дірка третя: шар дивиться всюди.</b> Рядок <span class="raw">i</span> квадрата
+має <span class="raw">T</span> стовпців, і серед них є стовпці з номерами більшими за
+<span class="raw">i</span> — тобто майбутнє. Для мовної моделі, яка вгадує наступне
+слово, це катастрофа: наступне слово лежить у вхідному реченні поруч, і шар його
+бачить. Є й дрібніший різновид тієї самої дірки: у пачці речень різної довжини короткі
+речення доповнюють порожніми місцями, і шар чемно роздає увагу порожнечі.</p>
+
+<div class="note warn"><b>Три поправки на три дірки.</b><br>
+<b>Багатоголова увага</b> дає слову кілька розподілів замість одного.
+<b>Позиційне кодування</b> вписує в кожен вектор його номер.
+<b>Маскування</b> забороняє дивитись туди, куди не можна. Далі — по одній
+на розділ, і кожна з перевіркою.</div>
+
+<h2 id="s2"><span class="num">Розділ 2</span>Голова — це частка, а не копія</h2>
+
+<p>Назва «багатоголова увага» (multi-head attention) підказує неправильну картинку:
+ніби ми взяли механізм із розділу 1 і поставили поруч чотири його копії. Копії
+коштували б учетверо дорожче — і саме тому так ніхто не робить.</p>
+
+<p>Насправді ріжуть не сам вектор слова, а <b>його проєкції</b>. Слово, як і раніше,
+перетворюється на запит, ключ і значення по 128 чисел кожен — а потім кожен із цих
+трьох векторів розрізають на чотири шматки по 32 числа. Голова номер один працює з
+першими 32 координатами запиту, першими 32 координатами ключа й першими 32
+координатами значення; голова номер два — з наступними 32, і так далі. Кожна голова
+робить власний softmax по своїх 32 числах і повертає свої 32 числа на слово.
+Наприкінці чотири відповіді склеюють назад у 128 чисел і пропускають через ще одну
+матрицю <code>W<span class="sub">O</span></code>, яка їх перемішує.</p>
+
+<p>Тобто вся різниця між однією головою й чотирма — у тому, <b>де стоять межі</b>.
+Матриці ті самі за розміром, множень стільки ж; просто в одному випадку softmax
+рахується один раз по 128 координатах, а в другому — чотири рази по 32.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · розкрій</span>
+    <p>Розмірність голови — це просто <span class="raw">d</span>, поділене на
+    кількість голів. У нас <span class="raw">d</span> = 128 і голів 4, тож на голову
+    припадає 32 координати.</p>
+    <div class="eq">d<span class="sub">head</span> = d / h = 128 / 4 = 32</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · кожна голова окремо</span>
+    <p>Голова номер <span class="raw">a</span> робить рівно те саме, що робив увесь
+    шар, тільки на своїх 32 координатах. Ділимо тепер на корінь із 32, а не зі 128.</p>
+    <div class="eq">head<span class="sub">a</span> = softmax( Q<span class="sub">a</span>·K<span class="sub">a</span><span class="sup">⊤</span> / √32 ) · V<span class="sub">a</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · склеїти й перемішати</span>
+    <p>Чотири відповіді по 32 числа ставлять поруч — виходить знову 128 — і множать
+    на квадратну матрицю <code>W<span class="sub">O</span></code> розміру 128×128.
+    Саме вона вирішує, як внески голів поєднати.</p>
+    <div class="eq">MultiHead = [ head<span class="sub">1</span> · head<span class="sub">2</span> · head<span class="sub">3</span> · head<span class="sub">4</span> ] · W<span class="sub">O</span></div>
+  </div>
+</div>
+
+<p>Тепер найважливіше в цьому розділі — <b>арифметика ваг</b>. Проєкції запиту, ключа
+й значення для однієї голови мають розмір 128×32, тобто 4096 чисел кожна. Голів
+чотири, ролей три:</p>
+
+<div class="eq left">4 голови × 3 ролі × (128 × 32) = 49 152 числа
+1 голова  × 3 ролі × (128 × 128) = 49 152 числа</div>
+
+<p>Числа <b>однакові</b>. Скільки б голів ми не поставили, сумарний розмір проєкцій не
+міняється, бо кожна голова дістає рівно стільки координат, скільки в неї відібрали в
+інших. Те саме з обчисленнями: чотири квадрати збігів розміру <span
+class="raw">T</span>×<span class="raw">T</span> по 32 множення на клітинку — це рівно
+стільки ж множень, скільки один квадрат по 128.</p>
+
+<p>Ми перевірили це прямим підрахунком: наша модель має <b>2 499 831</b>
+параметрів і з однією головою, і з двома, і з чотирма, і з вісьмома; на самі шари
+уваги в ній припадає <b>132 096</b> чисел — теж незалежно від кількості
+голів.</p>
+
+<div class="note"><b>Звідси головна думка розділу.</b><br>
+Багатоголовість — <b>не додаткова потужність, а інший розкрій тієї самої</b>. Ми не
+питаємо «чи варто заплатити за голови»; платити нема за що. Ми питаємо інше:
+що корисніше — <b>один</b> розподіл уваги, який тягне за собою 128 координат, чи
+<b>чотири</b> розподіли, кожен по 32. Відповідь на це питання не випливає з
+арифметики, її треба міряти.</div>
+
+<figure>
+  <div class="fig-head">Фігура 1 · Голови ділять проєкцію, а не додають ваг</div>
+  <p class="fig-sub">Смуга — це 128 координат запиту одного слова. Повзунок ріже її
+    на голови. Дивись на нижній рядок чисел: сумарний розмір проєкцій не змінюється
+    ніколи.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="heads1">голів <span class="raw">h</span><output id="heads1o">4</output></label>
+        <input type="range" id="heads1" min="0" max="4" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>координат на голову</b><i id="dh1">32</i></div>
+        <div class="cellv"><b>розподілів на слово</b><i id="nd1">4</i></div>
+        <div class="cellv"><b>чисел у проєкціях</b><i id="pw1">49 152</i></div>
+        <div class="cellv"><b>множень на збіги</b><i id="mm1">—</i></div>
+      </div>
+      <div class="verdict" id="v1"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> голови не додають параметрів. Скільки б їх не було,
+    у проєкціях лишається <b>49 152</b> числа. Змінюється лише розкрій: більше голів —
+    більше окремих розподілів уваги, але кожен дивиться крізь вужчу щілину.</figcaption>
+</figure>
+
+<h2 id="s3"><span class="num">Розділ 3</span>Куди в шарі вставлено голови</h2>
+
+<p>Багатоголова увага не стоїть у трансформері сама по собі — вона вбудована в блок
+із двох обовʼязкових сусідів, і без них не працює. Оскільки в конфігурації нашої
+моделі стоїть рядок <code>norm_first = True</code>, а він саме про цих сусідів, розберу
+їх тут і зараз.</p>
+
+<p><b>Сусід перший — залишкове зʼєднання</b> (residual connection). Вихід блока не
+замінює вхід, а <b>додається</b> до нього: <code>x + Attention(x)</code>. Читач уже
+бачив цей прийом у темі <code>21-transformer-architecture</code>; сенс у тому, що
+кожен блок учить не всю відповідь, а лише поправку до неї, і сигнал має короткий шлях
+крізь усю глибину мережі.</p>
+
+<p><b>Сусід другий — нормалізація шару</b> (layer normalization). Ось її і треба
+пояснити з нуля, бо курс її ще не вводив.</p>
+
+<p>Проблема побутова. Вектор слова — це 128 чисел. Після кількох множень на матриці
+й додавань ці числа можуть розповзтися: в одному слові вони всі близько нуля, в
+іншому — десятками. Наступний шар отримує вхід невідомого масштабу й мусить якось
+із цим давати раду; на практиці це або вбиває навчання, або робить його дуже
+повільним. Нормалізація шару прибирає масштаб примусово.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · середнє й розкид усередині одного вектора</span>
+    <p>Беремо 128 чисел <b>одного</b> слова й рахуємо по них два числа: середнє
+    <span class="raw">μ</span> і середньоквадратичний розкид <span class="raw">σ</span>.
+    Значок Σ означає «додати все, що йде далі»; <span class="raw">x<span class="sub">i</span></span> —
+    <span class="raw">i</span>-та координата вектора.</p>
+    <div class="eq">μ = (1/d) · Σ x<span class="sub">i</span>&nbsp;&nbsp;&nbsp;&nbsp;σ = √( (1/d) · Σ (x<span class="sub">i</span> − μ)<span class="sup">2</span> )</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · зсунути до нуля й стиснути до одиниці</span>
+    <p>Від кожної координати віднімаємо середнє й ділимо на розкид. Тепер у будь-якого
+    слова середнє рівно 0, а розкид рівно 1 — незалежно від того, яким воно прийшло.
+    Мала добавка <span class="raw">ε</span> під коренем існує лише для того, щоб не
+    ділити на нуль, коли всі координати однакові.</p>
+    <div class="eq">x̂<span class="sub">i</span> = (x<span class="sub">i</span> − μ) / (σ + ε)</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · повернути свободу</span>
+    <p>Жорстке «середнє 0, розкид 1» — надто сувора вимога, тож шарові дають дві
+    навчувані ручки на кожну координату: множник <span class="raw">γ</span> і зсув
+    <span class="raw">β</span>. Мережа сама вирішує, наскільки повернути масштаб.</p>
+    <div class="eq">y<span class="sub">i</span> = γ<span class="sub">i</span> · x̂<span class="sub">i</span> + β<span class="sub">i</span></div>
+  </div>
+</div>
+
+<div class="note"><b>Не плутай із пакетною нормалізацією.</b><br>
+У курсі «Машинне навчання» є пакетна нормалізація (batch normalization) — вона рахує
+середнє й розкид <b>по всіх прикладах пачки</b> для кожної координати окремо.
+Нормалізація шару рахує їх <b>усередині одного вектора</b>, по всіх його координатах,
+і жодного сусіда з пачки не питає. Для тексту це принципово: у пачці речення різної
+довжини й купа порожніх місць, тож статистика «по пачці» була б статистикою
+порожнечі. Саме тому в трансформерах стоїть нормалізація шару, а не пакетна.</div>
+
+<p>Лишилось сказати, що означає <code>norm_first</code>. Є два способи скласти блок:</p>
+
+<div class="eq left">norm_first = False:  x → x + Attention( x )        → потім LayerNorm
+norm_first = True:   x → x + Attention( LayerNorm(x) )   → LayerNorm усередині</div>
+
+<p>Перший варіант (post-LN) стоїть в оригінальній статті 2017 року. Другий (pre-LN)
+став типовим пізніше, бо з ним залишковий шлях від входу до виходу лишається
+<b>чистим</b>: нічого не нормалізують уже після додавання, тож сигнал проходить крізь
+усі шари без спотворення. Практична різниця — pre-LN навчається без розігріву
+швидкості навчання, post-LN без нього часто розвалюється. Ми беремо
+<code>norm_first = True</code> саме тому.</p>
+
+<h2 id="s4"><span class="num">Розділ 4</span>Навіщо кілька голів, якщо кожна робить те саме</h2>
+
+<p>Питання чесне, і відповідь «щоб кожна вчила своє» — це припущення, а не доказ. Тому
+спершу я покажу, у чому <b>механічна</b> різниця, яка не залежить від того, чого голови
+навчаться. Вона одна, і вона в softmax.</p>
+
+<p>Softmax дає розподіл: набір ваг, які додаються до одиниці. Вихід уваги — це
+<b>суміш</b> значень із цими вагами. А суміш незворотна: із «половина А плюс половина
+Б» уже не дістати ні А, ні Б окремо. Наступний шар побачить середнє й не знатиме, чи
+це середнє двох, чи один вектор, який просто так виглядає.</p>
+
+<p>Візьмімо речення з нашого корпусу перекладів: <b>«не вдалося зберегти файл на
+диск»</b>. Слово «зберегти» тут повʼязане щонайменше з двома різними речами: із тим,
+<b>що</b> зберігають — це «файл», — і з тим, <b>чим це скінчилось</b>, а це «вдалося».
+Два різні звʼязки, і потрібні вони одночасно.</p>
+
+<p>З одним розподілом слово змушене обрати частку: скажімо, 0.6 на «файл» і 0.4 на
+«вдалося». Назад воно отримає вектор <code>0.6·v(файл) + 0.4·v(вдалося)</code> —
+один вектор, у якому обидва звʼязки розмиті й нерозділювані. З двома розподілами
+перший бере «файл» вагою 1.0, другий бере «вдалося» вагою 1.0, відповіді лягають у
+<b>різні координати</b> вихідного вектора, і матриця <code>W<span
+class="sub">O</span></code> поєднує їх уже свідомо, а не всліпу.</p>
+
+<figure>
+  <div class="fig-head">Фігура 2 · Один розподіл не вміє тримати два звʼязки</div>
+  <p class="fig-sub">Слово «зберегти» тягнеться до двох слів одразу. Повзунок ділить
+    його увагу між ними. Дивись на нижні смуги: з однією головою повнота одного
+    звʼязку завжди відбирається в другого.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">скільки голів</span>
+        <div class="seg" id="seg2">
+          <button data-i="0" aria-pressed="true">одна</button>
+          <button data-i="1" aria-pressed="false">дві</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="alpha2">увага на «файл»<output id="alpha2o">0.60</output></label>
+        <input type="range" id="alpha2" min="0" max="100" step="1" value="60">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>повнота «файл»</b><i id="pa2">0.60</i></div>
+        <div class="cellv"><b>повнота «вдалося»</b><i id="pb2">0.40</i></div>
+        <div class="cellv"><b>гірший із двох</b><i id="pm2">0.40</i></div>
+        <div class="cellv"><b>найкраще можливе</b><i id="pbest2">0.50</i></div>
+      </div>
+      <div class="verdict" id="v2"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> одна голова має один запас уваги, і віддати його
+    двічі не може. Найкраще, чого вона досягає для обох звʼязків одночасно, — по
+    <b>0.50</b> кожному. Дві голови дають <b>1.00</b> обом, не витративши жодного
+    зайвого параметра.</figcaption>
+</figure>
+
+<p>Але в цієї арифметики є зворотний бік, про який зазвичай мовчать. Голова, яка
+дістала 32 координати замість 128, тягне за собою <b>вужчий</b> вектор значення. Її
+відповідь живе в підпросторі розмірності 32, а не 128. Тобто розкрій на голови — це
+обмін: <b>більше розподілів в обмін на менший розмір кожної відповіді</b>.</p>
+
+<div class="note warn"><b>Ось чому відповідь на «скільки голів» не виводиться з
+крісла.</b><br>
+Чотири голови дають чотири незалежні погляди, кожен по 32 координати. Одна голова дає
+один погляд, зате всі 128. Обидва варіанти коштують однаково. Що переможе — залежить
+від того, чого в задачі більше: потреби дивитись у різні боки чи потреби передати
+багато змісту з одного місця. Це вимірюється, і далі ми це виміряємо.</div>
+
+<h2 id="s5"><span class="num">Розділ 5</span>Чи розходяться голови насправді</h2>
+
+<p>У підручниках пишуть красиве: одна голова стежить за узгодженням, друга за
+керуванням, третя за повторами. Звучить переконливо — і саме тому це треба перевірити,
+а не переказати. Ніхто не наказував голові вчити щось своє: усі чотири стартують із
+випадкових ваг, бачать однакові дані й мінімізують однакову втрату. Нічого, що
+змушувало б їх розійтись, у формулі немає.</p>
+
+<p>Тому питання ставимо прямо: <b>чи справді чотири голови нашої моделі роблять різні
+речі — і на скільки різні</b>. Міряти будемо трьома способами, і кожен треба спершу
+пояснити.</p>
+
+<h3>Мірка перша: куди голова дивиться</h3>
+
+<p>Найпростіше — подивитись, на якій <b>відстані</b> від себе голова тримає увагу.
+Для кожного слова беремо його розподіл уваги, дивимось, скільки ваги пішло на слово
+безпосередньо перед ним, скільки на два слова назад, скільки далі, і скільки на нього
+саме. Усереднюємо по всьому корпусу. Виходить профіль голови — чотири-пʼять чисел, які
+кажуть, де вона живе.</p>
+
+<p>Якщо всі голови роблять те саме, профілі будуть однакові. Якщо розійшлись — різні.</p>
+
+<h3>Мірка друга: наскільки розподіли не збігаються</h3>
+
+<p>Профіль — це грубе усереднення. Тонша мірка порівнює <b>самі розподіли уваги</b>
+двох голів на тому самому слові. Для цього беремо <b>розходження Єнсена — Шеннона</b>
+(Jensen — Shannon divergence). Пояснюю з нуля, бо курс його ще не вводив.</p>
+
+<p>Уяви два розподіли: голова A роздала свою одиницю ваги якось, голова B — якось
+інакше. Питання: наскільки ці роздачі різні? Розходження Єнсена — Шеннона рахує
+середній розподіл між ними, а потім міряє, наскільки кожен із двох далекий від цієї
+середини. Число виходить від <b>0</b> (розподіли збігаються точно) до <b>0.693</b>
+(розподіли не мають жодного спільного місця — це натуральний логарифм двійки).
+Проміжні значення читаються як частка цієї відстані.</p>
+
+<div class="eq">JS(p, q) = ½·KL(p ‖ m) + ½·KL(q ‖ m),&nbsp;&nbsp;&nbsp;m = ½(p + q)</div>
+
+<p>Тут <code>KL</code> — «наскільки один розподіл дивує того, хто чекав другого»
+(розбіжність Кульбака — Лейблера), а <code>m</code> — середина між двома розподілами.
+Симетризація через середину потрібна саме для того, щоб число не залежало від того, який
+розподіл назвати першим.</p>
+
+<div class="note"><b>Одне число ще нічого не означає.</b><br>
+Якщо розходження голів вийде 0.05 — це багато чи мало? Само по собі невідомо. Тому
+поруч ми міряємо ту саму величину на <b>ненавченій</b> моделі: голови там випадкові й
+нічого не вчили. Це і є нульова позначка, від якої відлічується справжнє
+розходження.</div>
+
+<h3>Що вийшло</h3>
+
+<p>Коротка відповідь: <b>розходяться</b>, і що вище шар, то сильніше. На першому шарі голови найдужче розходяться по частці «сама позиція»: від <b>0.0563</b> до <b>0.2593</b>, розрив <b>0.2030</b>. Ентропія розподілів гуляє від <b>0.2208</b> (голова 4 — гостра, дивиться майже в одну точку) до <b>0.6372</b> (голова 3 — розмазує увагу по всьому минулому). Голова 3 тримає <b>0.2676</b> своєї ваги на самому початку речення.</p><p>На другому шарі картина ще різкіша: там дві голови перетворились на майже чисті «якорі» — вони віддають початку речення <b>0.9826</b> і <b>0.9253</b> усієї своєї ваги, а їхня ентропія падає до <b>0.0237</b>. Це вже не «трохи різні профілі», а різні ролі: одна голова тримається за початок, друга працює з найближчими сусідами.</p>
+
+<figure>
+  <div class="fig-head">Фігура 3 · Профіль голови: на якій відстані вона тримає увагу</div>
+  <p class="fig-sub">Кожен стовпчик — одна голова, кольорові частки — куди пішла її
+    вага. Перемикач міняє шар. Якщо голови роблять те саме, стовпчики будуть
+    однакові.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">який шар</span>
+        <div class="seg" id="seg3">
+          <button data-i="0" aria-pressed="true">шар 1</button>
+          <button data-i="1" aria-pressed="false">шар 2</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="head3">підсвітити голову<output id="head3o">1</output></label>
+        <input type="range" id="head3" min="0" max="3" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>на сусіда зліва</b><i id="p13">—</i></div>
+        <div class="cellv"><b>на початок речення</b><i id="p03">—</i></div>
+        <div class="cellv"><b>ентропія розподілу</b><i id="e3">—</i></div>
+        <div class="cellv"><b>найбільший розрив</b><i id="sp3">—</i></div>
+      </div>
+      <div class="verdict" id="v3"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> голови одного шару мають <b>різні</b> профілі: найбільший розрив між ними — <b>0.2030</b> по частці «сама позиція». Ніхто їм цих ролей не призначав: усі чотири стартували з випадкових ваг і бачили ті самі дані. Перемкни на другий шар — там розходження ще помітніше.</figcaption>
+</figure>
+
+<figure>
+  <div class="fig-head">Фігура 4 · Наскільки розходяться самі розподіли</div>
+  <p class="fig-sub">Стовпчик — одна пара голів, висота — розходження Єнсена —
+    Шеннона між їхніми розподілами уваги. Сіра лінія — те саме на ненавченій моделі:
+    усе, що вище неї, здобуто навчанням.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">який шар</span>
+        <div class="seg" id="seg4">
+          <button data-i="0" aria-pressed="true">шар 1</button>
+          <button data-i="1" aria-pressed="false">шар 2</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>середнє по парах</b><i id="mj4">—</i></div>
+        <div class="cellv"><b>ненавчена модель</b><i id="rj4">—</i></div>
+        <div class="cellv"><b>найближча пара</b><i id="lo4">—</i></div>
+        <div class="cellv"><b>найдальша пара</b><i id="hi4">—</i></div>
+      </div>
+      <div class="verdict" id="v4"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> середнє розходження між парами голів на першому шарі — <b>0.3529</b>, на другому <b>0.4885</b>, тоді як у ненавченої моделі те саме число дорівнює <b>0.0425</b>. Різниця в <b>8.3</b> і <b>11.4</b> раза відповідно — саме вона показує, що голови розвела <b>робота</b>, а не випадковий старт. Для масштабу: більше за <b>0.693</b> це число не буває взагалі.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">Розділ 6</span>Скільки коштує голова</h2>
+
+<p>Розходяться голови чи ні — цікаво, але це ще не відповідь на питання «чи потрібні
+чотири». Голови можуть розійтись і при цьому не давати жодної користі: розійтись у
+випадкові боки теж можна. Тож поставмо два прямі досліди.</p>
+
+<h3>Дослід перший: погасити голову</h3>
+
+<p>Беремо навчену модель і <b>вимикаємо</b> в ній одну голову — обнуляємо той шматок
+матриці <code>W<span class="sub">O</span></code>, який приймає її внесок. Решта моделі
+лишається недоторканою, нічого не донавчається. Дивимось, наскільки зросла перплексія
+на перевірній вибірці.</p>
+
+<p>Читати результат треба так. Якщо всі голови взаємозамінні, гасіння будь-якої
+коштуватиме приблизно однаково. Якщо якась голова робить щось своє й незамінне, її
+гасіння коштуватиме помітно дорожче за інші.</p>
+
+<figure>
+  <div class="fig-head">Фігура 5 · Що станеться, якщо голову вимкнути</div>
+  <p class="fig-sub">Стовпчик — перплексія моделі, у якої вимкнено рівно цю голову.
+    Пунктир — перплексія цілої моделі. Чим вищий стовпчик, тим незамінніша голова.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="350" data-lw="700" data-lh="350"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">який шар</span>
+        <div class="seg" id="seg5">
+          <button data-i="0" aria-pressed="true">шар 1</button>
+          <button data-i="1" aria-pressed="false">шар 2</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ціла модель</b><i id="b5">—</i></div>
+        <div class="cellv"><b>найдорожча голова</b><i id="mx5">—</i></div>
+        <div class="cellv"><b>найдешевша голова</b><i id="mn5">—</i></div>
+        <div class="cellv"><b>розрив між ними</b><i id="gp5">—</i></div>
+      </div>
+      <div class="verdict" id="v5"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> гасіння голів коштує по-різному: найдорожча (номер 2) додає <b>+3.08</b> пункту перплексії, найдешевша (номер 4) — <b>+0.92</b>. Розрив між ними <b>2.16</b>: якби голови робили одне й те саме, він був би близький до нуля.</figcaption>
+</figure>
+
+<h3>Дослід другий: навчити з однією головою</h3>
+
+<p>Гасіння показує, що робить <b>уже навчена</b> модель. Але справедливіше питання
+інше: а якби ми з самого початку поставили одну голову замість чотирьох — модель
+навчилась би гірше?</p>
+
+<p>Це чиста абляція. Усе однакове: та сама архітектура, той самий корпус, той самий
+поділ, та сама кількість параметрів (нагадаю: <b>2 499 831</b> в обох
+випадках). Змінюється рівно одне число — кількість голів. Швидкість навчання дібрана
+<b>окремо для кожного варіанта</b> на відкладеній вибірці, щоб жоден не програв просто
+через невдалий крок.</p>
+
+<div class="note warn"><b>Чому крок добирають на відкладеній, а не на перевірній.</b><br>
+Якщо перебирати швидкість навчання й щоразу дивитись на перевірну вибірку, ми
+підглядаємо у відповідь: обраний варіант виявиться найкращим саме на цих даних, а не
+взагалі. Тому з навчальної частини заздалегідь відрізано <b>4 122</b> речень —
+відкладену вибірку. На ній перебираємо, на перевірній міряємо один раз. Перевірна
+вибірка бачить кожну модель рівно раз у житті.</div>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>швидкість навчання</th><th>4 голови</th><th>1 голова</th><th>без позиційного</th></tr>
+<tr><td>0.0005</td><td>247.47</td><td>249.39</td><td>247.04</td></tr>
+<tr><td>0.001</td><td>190.61</td><td>192.13</td><td>190.72</td></tr>
+<tr><td>0.002</td><td>156.13</td><td>158.39</td><td>156.07</td></tr>
+<tr><td>0.004</td><td>139.76</td><td><b>144.14</b></td><td>139.08</td></tr>
+<tr class="hot"><td>0.008</td><td><b>133.65</b></td><td>144.42</td><td><b>133.72</b></td></tr>
+<tr><td>0.016</td><td>134.12</td><td>145.66</td><td>138.07</td></tr>
+<tr><td>0.032</td><td>369.96</td><td>176.08</td><td>159.32</td></tr>
+</table></div>
+
+<div class="note warn"><b>Наші числа перплексії живуть лише всередині цієї сторінки.</b><br>
+Перплексія залежить від словника, поділу даних і дібраного кроку — а все це в кожної
+теми своє. Ми міряли на своєму поділі (словник <b>8 183</b>, відкладена вибірка
+<b>4 122</b> речень) і на своєму доборі кроку. Сусідні теми блоку міряють ту саму
+модель зі своїм добором і дістають <b>інші</b> абсолютні числа, і це не суперечність.
+Порівнювати можна тільки рядки однієї таблиці між собою — тобто там, де змінилась одна
+річ, а решта лишилась.</div>
+
+<p>Дивитись тут треба на дві речі. Перша: мінімум кожного стовпчика лежить <b>усередині</b> сітки, а не на її краю — інакше ми б не знали, чи не буде за краєм ще краще. Для чотирьох голів дібрано <b>0.008</b>, для однієї — <b>0.004</b>. Друга: одна голова програє не лише у своїй найкращій точці, а на <b>6</b> кроках сітки із семи. На найбільшому кроці, 0.032, чотириголова модель навпаки розвалюється — і це теж корисно знати: перевага існує в робочому діапазоні, а не скрізь.</p>
+
+<figure>
+  <div class="fig-head">Фігура 6 · Чотири голови проти однієї</div>
+  <p class="fig-sub">Стовпчик — середня перплексія, точки — окремі зерна, вусики —
+    їхній розмах. Параметрів в обох варіантів порівну; різниця лише в розкрої.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показати</span>
+        <div class="seg" id="seg6">
+          <button data-i="0" aria-pressed="true">від нуля</button>
+          <button data-i="1" aria-pressed="false">зблизька</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>4 голови</b><i id="h4v">—</i></div>
+        <div class="cellv"><b>1 голова</b><i id="h1v">—</i></div>
+        <div class="cellv"><b>різниця</b><i id="dh6">—</i></div>
+        <div class="cellv"><b>купи перетинаються</b><i id="ov6">—</i></div>
+      </div>
+      <div class="verdict" id="v6"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> той самий бюджет параметрів, порізаний на чотири голови, дає перплексію <b>131.39</b> проти <b>142.12</b> в однієї — на <b>10.73</b> пункту менше. Купи по пʼятьох зернах не перетинаються (128.53…134.78 проти 139.09…147.94), тож це справжня різниця, а не шум.</figcaption>
+</figure>
+
+<p>Складімо три заміри разом — і зверни увагу, що вони кажуть <b>різні</b> речі.</p><p>Голови <b>розходяться</b>: розрив профілів 0.2030, розходження розподілів у 8.3 раза більше за випадкове. Голови <b>нерівноцінні</b>: гасіння коштує від +0.92 до +3.08 пункту. Але — і ось цікаве — гасіння <b>однієї</b> голови коштує усього кілька пунктів, тоді як навчання з <b>однією</b> головою від початку коштує <b>10.73</b> — у <b>3.5</b> раза більше за найдорожче гасіння. І це не випадковість: у навченої моделі є три інші голови, які частково підхоплять роботу зниклої, а моделі з однією головою підхоплювати нічим.</p><p>Це і є відповідь на питання розділу 4: розкрій на чотири розподіли по 32 координати виявився кращим за один розподіл на 128. Не тому, що голів більше, а тому, що словам нашого корпусу справді потрібно дивитись у різні боки одночасно — і кожен бік окремо коштує дешево, а всі разом важать багато.</p>
+
+<h2 id="s7"><span class="num">Розділ 7</span>Увага не бачить порядку</h2>
+
+<p>Друга дірка — найдивніша з трьох, бо суперечить враженню від слова «увага». Здається,
+що механізм, який дивиться на речення, мусить бачити, де в ньому початок, а де кінець.
+Він не бачить. І це не вада реалізації, а точна властивість формули, яку можна довести
+на папері за чотири рядки.</p>
+
+<p>Спершу назвімо річ своїм імʼям. Кажуть: self-attention <b>еквіваріантний щодо
+перестановки</b> (permutation equivariant). Слово довге, а значення просте: якщо
+переставити слова на вході, вихід не зміниться — він <b>переставиться так само</b>.
+Не «стане іншим», а «поїде за словами». Саме тому це не інваріантність: при
+інваріантності вихід лишався б тим самим, а тут він їде.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · збіги не знають номерів</span>
+    <p>Збіг слова <span class="raw">i</span> зі словом <span class="raw">j</span> —
+    це скалярний добуток запиту й ключа. Обидва зроблені з <b>вмісту</b> слів множенням
+    на матриці. Номер позиції в них ніде не входить.</p>
+    <div class="eq">s<span class="sub">ij</span> = q(x<span class="sub">i</span>) · k(x<span class="sub">j</span>) / √d</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · переставили слова</span>
+    <p>Нехай <span class="raw">π</span> — перестановка, тобто нова розсадка слів по
+    місцях. Слово, що сиділо на місці <span class="raw">j</span>, тепер сидить на місці
+    <span class="raw">π(j)</span>. Оскільки збіг залежить лише від вмісту, у новому
+    реченні він стоїть у переставленій клітинці — і більше нічого не сталось.</p>
+    <div class="eq">s′<span class="sub">π(i)π(j)</span> = s<span class="sub">ij</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · softmax теж не знає номерів</span>
+    <p>Softmax по рядку ділить кожне <span class="raw">e</span> у степені збігу на суму
+    всіх таких у рядку. Сума не залежить від того, у якому <b>порядку</b> лежать
+    доданки: 2 + 5 + 3 і 5 + 3 + 2 — те саме число. Тож ваги теж просто переставились.</p>
+    <div class="eq">w′<span class="sub">π(i)π(j)</span> = w<span class="sub">ij</span></div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · сума теж</span>
+    <p>Вихід — сума значень із цими вагами. Сума знову не залежить від порядку доданків,
+    тож вихід слова, яке переїхало на місце <span class="raw">π(i)</span>, дослівно той
+    самий, що був на місці <span class="raw">i</span>.</p>
+    <div class="eq">y′<span class="sub">π(i)</span> = y<span class="sub">i</span></div>
+  </div>
+</div>
+
+<p>Доказ закінчено, і в ньому не було жодного слова про навчену модель. Це властивість
+<b>механізму</b>, а не результат прогону: вона виконується для будь-яких ваг, навчених
+і ненавчених, для однієї голови й для чотирьох. Перевірити її можна просто —
+переставити слова на вході й порівняти два виходи число в число.</p>
+
+<figure>
+  <div class="fig-head">Фігура 7 · Переставили слова — вихід поїхав за ними</div>
+  <p class="fig-sub">Праворуч від кожного слова — його вихідний вектор (перші вісім
+    координат, колір = знак і величина). Повзунок міняє порядок слів. Дивись, чи змінилися
+    самі числа, чи лише переїхали разом зі словами.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">позиційне кодування</span>
+        <div class="seg" id="seg7">
+          <button data-i="0" aria-pressed="true">вимкнено</button>
+          <button data-i="1" aria-pressed="false">увімкнено</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="perm7">перестановка<output id="perm7o">1</output></label>
+        <input type="range" id="perm7" min="0" max="5" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найбільша різниця</b><i id="gap7">—</i></div>
+        <div class="cellv"><b>у частках від розкиду</b><i id="rel7">—</i></div>
+      </div>
+      <div class="verdict" id="v7"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> без позиційного кодування вихід переставленого речення
+    дорівнює переставленому виходу з точністю до останнього знака <b>float64</b>:
+    різниця або нульова, або порядку 10<span class="sup">−16</span>. Увімкни кодування, і різниця
+    стає більшою за самі числа. Це рахує канва просто зараз, на випадкових вагах —
+    жодного навчання тут немає й не треба.</figcaption>
+</figure>
+
+<h3>Наслідок для одного шару</h3>
+
+<p>У мовної моделі стоїть причинна маска (про неї розділ 12): слово на позиції
+<span class="raw">t</span> бачить лише позиції від першої до <span class="raw">t</span>-ї.
+Складімо це з еквіваріантністю. Вихід шару на позиції <span class="raw">t</span> — це
+суміш значень перших <span class="raw">t</span> слів, а суміш не залежить від того, у
+якому порядку доданки лежали. Отже, <b>один</b> шар self-attention із причинною маскою
+бачить попереднє як <b>мішок</b>: набір слів без порядку.</p>
+
+<div class="note warn"><b>Це буквально мішок слів.</b><br>
+Той самий мішок слів (bag of words), який ми будували в темі
+<a href="../04-bag-of-words/lecture.html"><code>04-bag-of-words</code></a> на лічильниках.
+Один причинний шар уваги без позиційного кодування — це найдорожчий у світі спосіб
+побудувати мішок слів: мільйони параметрів, уміння зважувати вміст мішка, і жодного
+порядку за побудовою.</div>
+
+<p>Класичний приклад: <b>«пес вкусив листоношу»</b> і <b>«листоноша вкусив пса»</b>.
+Мішок в обох випадках однаковий, і один шар, дійшовши до кінця обох фраз, передбачить
+наступне слово однаково.</p>
+
+<div class="note"><b>Одна поправка, без якої твердження неточне.</b><br>
+Вихід на позиції <span class="raw">t</span> — це не лише суміш: до неї додається сам
+вектор слова через залишкове зʼєднання. Тому слово, яке стоїть <b>зараз</b>, шар
+розрізняє завжди. Мішком є те, що було <b>до</b> нього. Саме тому в досліді нижче ми
+переставляємо префікс і <b>лишаємо останнє слово на місці</b> — інакше різниця виникла
+б із тривіальної причини.</div>
+
+<h2 id="s8"><span class="num">Розділ 8</span>Два шари — і порядок повертається</h2>
+
+<p>А тепер найцікавіше, і ми самі в це втрапили, поки писали цю тему. Твердження
+«трансформер без позиційного кодування не бачить порядку» правдиве для <b>одного</b>
+шару. Для двох воно <b>хибне</b>.</p>
+
+<p>Придивись, на що дивиться другий шар. Не на слова — на <b>виходи першого шару</b>.
+А вихід першого шару на позиції <span class="raw">j</span> — це мішок перших
+<span class="raw">j</span> слів. Отже, другий шар на позиції <span class="raw">t</span>
+бачить не один мішок, а <b>послідовність вкладених мішків</b>:</p>
+
+<div class="eq left">позиція 1 → {x₁}
+позиція 2 → {x₁, x₂}
+позиція 3 → {x₁, x₂, x₃}
+   …</div>
+
+<p>І з цієї послідовності порядок відновлюється <b>однозначно</b>: різниця між сусідніми
+мішками — це рівно те слово, яке щойно додалося. Тобто причинна маска сама по собі є
+каналом інформації про позицію, і другий шар цим каналом може скористатися.</p>
+
+<p>Перевіримо це на будові, а не на навчанні. Беремо <b>ненавчену</b> модель, фіксуємо
+останнє слово, переставляємо все, що перед ним, і дивимось, наскільки зсунулись оцінки
+наступного слова. Порівнювати є з чим: самі оцінки мають розмах
+<b>0.5820</b>.</p>
+
+<figure>
+  <div class="fig-head">Фігура 8 · Один шар порядку не бачить, два вже бачать</div>
+  <p class="fig-sub">Стовпчик — наскільки зсунулись оцінки наступного слова після
+    перестановки префікса. Шкала логарифмічна. Сіра лінія — рівень, нижче якого це
+    просто округлення float32.</p>
+  <div class="panel">
+    <canvas id="c14" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="lay14">шарів у моделі<output id="lay14o">2</output></label>
+        <input type="range" id="lay14" min="1" max="3" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>без кодування</b><i id="np14">—</i></div>
+        <div class="cellv"><b>з кодуванням</b><i id="pp14">—</i></div>
+        <div class="cellv"><b>розмах оцінок</b><i id="sc14">—</i></div>
+        <div class="cellv"><b>більше, ніж на 1 шарі</b><i id="rt14">—</i></div>
+      </div>
+      <div class="verdict" id="v14"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> один причинний шар без позиційного кодування зсунувся на <b>2.4·10⁻⁷</b> — це нуль у межах float32 при розмаху оцінок 0.5769. Два шари дають <b>7.2·10⁻⁴</b>, у 3 017 разів більше, і це вже той самий порядок величини, що й у моделі з кодуванням. Порядок проникає в модель через саму причинну маску, і глибина цей канал розширює.</figcaption>
+</figure>
+
+<p>Числа однозначні. <b>Один</b> шар без кодування: зсув <b>2.4·10⁻⁷</b> при розмаху самих оцінок <b>0.5769</b> — тобто нуль, перестановки він не помітив. <b>Два</b> шари: <b>7.2·10⁻⁴</b>, у 3 017 разів більше. <b>Три</b>: <b>1.7·10⁻³</b>. Для порівняння, з увімкненим позиційним кодуванням ті самі три числа — 4.8·10⁻⁴, 1.1·10⁻³ і 2.4·10⁻³.</p><p>Дивись на другий рядок уважно: <b>два причинні шари без жодного кодування зсуваються майже так само, як шар із кодуванням</b>. Це не збіг і не шум: канал для порядку в них є за побудовою, і ми його щойно виміряли. Ніякого навчання для цього не знадобилось — усі ваги випадкові.</p>
+
+<div class="note warn"><b>Що з цього лишається правдою.</b><br>
+Еквіваріантність <b>самого шару</b> нікуди не поділась — вона доведена в розділі 7 і
+показана числом. Хибним було не це, а поспішний наслідок: «отже, модель порядку не
+бачить». Модель — це не шар. Стос причинних шарів має власний канал для порядку, і що
+глибший стос, то ширший цей канал.</div>
+
+<h2 id="s9"><span class="num">Розділ 9</span>Три способи пришити позицію</h2>
+
+<p>Дірку видно, тепер її треба затулити: у вектор слова треба якось домішати його
+номер. Способів історично три, і корисно розібрати всі, бо в різних моделях стоять
+різні.</p>
+
+<h3>Спосіб перший: дописати номер числом</h3>
+
+<p>Найпростіше, що спадає на думку, — додати до вектора ще одну координату й покласти
+в неї номер позиції: 0, 1, 2, 3… Так не роблять, і причин дві. По-перше, масштаб: у
+речення з тридцяти слів остання координата дорівнює 29, тоді як решта координат
+ембедингу гуляють у межах одиниці — одне число заглушить усі інші. По-друге, різниця
+позицій має бути однорідна: «на два слова далі» мусить означати те саме на початку й у
+кінці, а з голим номером модель мусила б вивчати кожну відстань окремо.</p>
+
+<p>Полагодити масштаб можна діленням на довжину — але тоді те саме «на два слова далі»
+дає різні числа в короткому й довгому реченні, і стає ще гірше.</p>
+
+<h3>Спосіб другий: таблиця навчуваних векторів</h3>
+
+<p>Заведімо ще один ембединг — але не для слів, а для <b>позицій</b>. Рядок 0 —
+вектор першої позиції, рядок 1 — другої, і так до максимальної довжини. Ці вектори
+вчаться разом з усім іншим і додаються до ембедингів слів.</p>
+
+<p>Так зроблено в BERT і в GPT. Спосіб працює й нічим не поганий, крім однієї
+властивості: <b>таблиця має край</b>. Якщо навчили на 512 позиціях, то позиції 513
+просто не існує — рядка немає, і модель нічим його замінити не може. Довжину контексту
+доводиться закладати наперед.</p>
+
+<h3>Спосіб третій: синусоїди</h3>
+
+<p>Оригінальна стаття 2017 року робить інакше: вектор позиції не вчиться, а
+<b>рахується формулою</b>. Таблиці немає взагалі — є функція, у яку можна підставити
+будь-який номер, зокрема більший за все, що модель бачила під час навчання. Саме її ми
+беремо у своїй моделі, і саме їй присвячений наступний розділ, бо всередині вона
+влаштована розумніше, ніж здається.</p>
+
+<div class="note"><b>Куди це кодування додається.</b><br>
+Один раз, на самому вході, до ембедингів слів — і далі шари працюють уже з сумою.
+Окремих «позиційних» входів у шарах немає. Це важлива деталь: позиція не подається
+наново на кожному шарі, вона мусить дожити до верху сама, всередині залишкового
+шляху.</div>
+
+<div class="note warn"><b>Чого тут немає, і це чесно назвати.</b><br>
+Є четвертий підхід — <b>відносне</b> кодування, коли моделі дають не номер позиції, а
+різницю номерів двох слів, просто в збіги <code>s<span class="sub">ij</span></code>.
+Так зроблено в T5, у Swin із курсу «Компʼютерний зір» і в сучасному RoPE. Це не
+частина класичного трансформера, і ми його не міряли — тож і не стверджуємо про нього
+нічого, крім того, що він існує.</div>
+
+<h2 id="s10"><span class="num">Розділ 10</span>Синусоїда: годинник із багатьма стрілками</h2>
+
+<p>Формула виглядає страшно, тому спершу — картинка, з якої вона вся й виводиться.</p>
+
+<p>Уяви годинник, у якого багато стрілок. Секундна робить повний оберт за хвилину,
+хвилинна — за годину, годинна — за півдоби, і є ще стрілки, які обертаються за тиждень
+і за рік. Подивившись на всі стрілки одразу, ти назвеш момент часу точно: швидкі
+стрілки дають дрібну точність, повільні — грубий діапазон. Жодна стрілка сама по собі
+моменту не називає, а всі разом — називають однозначно.</p>
+
+<p>Позиційне кодування — рівно такий годинник, у якого <span class="raw">d</span>/2
+стрілок, тобто в нашій моделі 64. Кожній стрілці відповідають дві сусідні координати
+вектора: у першу пишуть синус її кута, у другу — косинус. Пара «синус і косинус» — це
+і є положення стрілки на циферблаті.</p>
+
+<div class="eq">PE(pos, 2i) = sin( pos · ω<span class="sub">i</span> )&nbsp;&nbsp;&nbsp;&nbsp;PE(pos, 2i+1) = cos( pos · ω<span class="sub">i</span> )</div>
+
+<div class="eq">ω<span class="sub">i</span> = 1 / 10000<span class="sup">2i/d</span></div>
+
+<p>Розберімо позначки. <code>pos</code> — номер позиції, ціле число 0, 1, 2, … .
+Індекс <span class="raw">i</span> нумерує стрілки: 0, 1, 2, … , <span
+class="raw">d</span>/2 − 1. Число <span class="raw">ω<span class="sub">i</span></span>
+(грецька «омега») — <b>швидкість</b> цієї стрілки: скільки радіанів вона проходить за
+один крок позиції. Вираз 10000<span class="sup">2i/d</span> робить швидкості
+спадними: у нульової стрілки <span class="raw">ω</span> = 1, у останньої —
+1/10000.</p>
+
+<p>Порахуймо періоди руками. Період — це 2π, поділене на швидкість. Найшвидша стрілка:
+2π / 1 ≈ <b>6.2832</b> позиції на повний оберт. Найповільніша при
+<span class="raw">d</span> = 128: 2π · 10000<span class="sup">126/128</span> ≈
+<b>54 410</b> позицій. Тобто в межах нашого найдовшого речення — тридцять слів —
+повільні стрілки майже не рухаються, і саме вони кажуть «ми на початку тексту»,
+а швидкі кажуть «ми через одне слово після сусіда».</p>
+
+<figure>
+  <div class="fig-head">Фігура 9 · Кожна позиція має свій відбиток</div>
+  <p class="fig-sub">Рядок — позиція, стовпчик — координата вектора. Ліві стовпчики
+    — швидкі стрілки, вони миготять; праві — повільні, вони майже стоять. Двох
+    однакових рядків тут немає.</p>
+  <div class="panel">
+    <canvas id="c8" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="dm8">розмір вектора <span class="raw">d</span><output id="dm8o">128</output></label>
+        <input type="range" id="dm8" min="0" max="3" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <label for="np8">показати позицій<output id="np8o">32</output></label>
+        <input type="range" id="np8" min="8" max="48" step="4" value="32">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>стрілок</b><i id="arr8">64</i></div>
+        <div class="cellv"><b>період найшвидшої</b><i id="fast8">6.28</i></div>
+        <div class="cellv"><b>період найповільнішої</b><i id="slow8">—</i></div>
+        <div class="cellv"><b>довжина вектора</b><i id="norm8">—</i></div>
+        <div class="cellv"><b>найближчі рядки</b><i id="rel8">—</i></div>
+      </div>
+      <div class="verdict" id="v8"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> швидкі координати міняються щокроку, повільні — раз
+    на тисячі кроків. Разом вони дають кожній позиції унікальний візерунок, і для цього
+    не треба ані таблиці, ані навчання.</figcaption>
+</figure>
+
+<p>Тепер найцікавіше — <b>навіщо саме синус із косинусом парою</b>. Відповідь у
+шкільній тригонометрії, і вона того варта.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · формули додавання кутів</span>
+    <p>Дві тотожності, які знає школа: синус суми й косинус суми.</p>
+    <div class="eq">sin(a + b) = sin a · cos b + cos a · sin b
+<br>cos(a + b) = cos a · cos b − sin a · sin b</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · зсув на k позицій — це поворот</span>
+    <p>Підставмо <span class="raw">a</span> = pos·ω та <span class="raw">b</span> = k·ω.
+    Виходить, що пара (sin, cos) для позиції pos + k виражається через пару для позиції
+    pos двома множниками, які залежать лише від <span class="raw">k</span> — і зовсім
+    не залежать від pos.</p>
+    <div class="eq">[ sin, cos ]<span class="sub">pos+k</span> = [ sin, cos ]<span class="sub">pos</span> · R(kω)</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · що це дає моделі</span>
+    <p><code>R(kω)</code> — звичайна матриця повороту 2×2. Отже, «пересунутись на
+    <span class="raw">k</span> кроків» — це одне й те саме лінійне перетворення
+    <b>у будь-якому місці речення</b>. А лінійні перетворення — рівно те, що вміють
+    матриці запиту й ключа. Модель може навчитись питати «дай мені те, що на два слова
+    раніше», один раз — і це працюватиме і на позиції 3, і на позиції 300.</p>
+  </div>
+</div>
+
+<p>З цієї самої властивості випливає перевірюваний факт. Скалярний добуток кодувань
+двох позицій залежить <b>тільки від відстані між ними</b>, а не від того, де вони
+стоять:</p>
+
+<div class="eq">PE(pos) · PE(pos + k) = Σ<span class="sub">i</span> cos( k · ω<span class="sub">i</span> )</div>
+
+<p>Ліворуч — величина, яку можна порахувати для будь-якої пари позицій; праворуч —
+вираз, у якому pos не зустрічається зовсім. Ми перевірили це прямо: при
+<span class="raw">d</span> = 128 добуток для сусідніх позицій дорівнює
+<b>62.0937</b> — і це число однакове для позицій (0, 1), (7, 8), (30, 31) і всіх інших
+пар, які ми пробували; розкид по сорока різних <code>pos</code> склав
+1.14·10<span class="sup">−5</span> у float32, тобто рівно шум округлення. Канва
+нижче рахує те саме у float64 і дістає розкид ще на вісім порядків менший.
+Довжина самого вектора
+кодування теж стала: <b>8.0000</b> для кожної позиції, бо це √(d/2) = √64.</p>
+
+<figure>
+  <div class="fig-head">Фігура 10 · Код знає відстань — але тільки близьку</div>
+  <p class="fig-sub">Крива — скалярний добуток кодувань двох позицій залежно від
+    відстані між ними. Дивись на «різницю з сусідньою <span class="raw">k</span>»
+    праворуч: саме вона каже, чи розрізняє код ці дві відстані.</p>
+  <div class="panel">
+    <canvas id="c9" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="dm9">розмір вектора <span class="raw">d</span><output id="dm9o">128</output></label>
+        <input type="range" id="dm9" min="0" max="3" step="1" value="3">
+      </div>
+      <div class="ctl">
+        <label for="k9">відстань <span class="raw">k</span><output id="k9o">1</output></label>
+        <input type="range" id="k9" min="0" max="30" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>добуток на <span class="raw">k</span></b><i id="dot9">—</i></div>
+        <div class="cellv"><b>у частках від <span class="raw">k</span>=0</b><i id="rat9">—</i></div>
+        <div class="cellv"><b>різниця з сусідньою <span class="raw">k</span></b><i id="nxt9">—</i></div>
+        <div class="cellv"><b>розкид по позиціях</b><i id="var9">—</i></div>
+      </div>
+      <div class="verdict" id="v9"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> добуток різко спадає на перших кроках, а далі йде
+    повільно й хвилями. Синусоїдне кодування впевнено розрізняє «поруч» і «через
+    одне», а на великих відстанях різниця між сусідніми <span class="raw">k</span>
+    падає до частки відсотка. Це не поламка, а межа: код заточений під близькі
+    відстані.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Скільки коштує порядок слів</h2>
+
+<p>Ми знаємо два факти, і вони тягнуть у різні боки. Розділ 7 довів, що
+<b>один</b> шар уваги порядку не бачить. Розділ 8 показав, що <b>два</b> причинні шари
+його вже відновлюють — без жодного кодування. Наша модель має саме два шари. Отже,
+питання «скільки дає позиційне кодування» стає суто емпіричним: чи додасть воно щось
+до того, що модель і так може дізнатись із маски?</p>
+
+<p>Ставимо абляцію: та сама модель, той самий поділ, той самий дібраний крок навчання,
+вимкнено рівно один рядок — додавання позиційного кодування. Пʼять зерен.</p>
+
+<figure>
+  <div class="fig-head">Фігура 11 · З позиційним кодуванням і без нього</div>
+  <p class="fig-sub">Стовпчик — середня перплексія на перевірній вибірці, точки —
+    окремі зерна. Дивись не на висоту стовпчиків, а на те, чи перетинаються купи
+    точок.</p>
+  <div class="panel">
+    <canvas id="c10" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показати</span>
+        <div class="seg" id="seg10">
+          <button data-i="0" aria-pressed="true">від нуля</button>
+          <button data-i="1" aria-pressed="false">зблизька</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>з кодуванням</b><i id="pp10">—</i></div>
+        <div class="cellv"><b>без кодування</b><i id="np10">—</i></div>
+        <div class="cellv"><b>різниця</b><i id="dd10">—</i></div>
+        <div class="cellv"><b>купи перетинаються</b><i id="ov10">—</i></div>
+      </div>
+      <div class="verdict" id="v10"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> купи по пʼятьох зернах перекриваються майже цілком: 128.53…134.78 з кодуванням проти 128.34…137.08 без нього. Різниця середніх <b>1.22</b> пункту менша за розкид від зерна, тож на цьому корпусі користі від позиційного кодування ми <b>не побачили</b>.</figcaption>
+</figure>
+
+<p>Числа кажуть просте: <b>131.39</b> проти <b>132.61</b>, різниця <b>1.22</b> пункту при розкиді від зерна ±2.19 і ±2.99. Купи перекриваються майже цілком, тож за нашим власним правилом різниці <b>не показано</b>.</p><p>І тепер, після розділу 8, зрозуміло <b>чому</b>. Наша модель має два причинні шари, а такий стос уже несе інформацію про порядок сам по собі. Позиційному кодуванню просто немає чого додати — принаймні на реченнях із медіаною 6 слів, де вкладених мішків усього шість і всі вони короткі.</p><p>Це видно й на навчених моделях. Ми взяли обидві, подали по 300 справжніх речень із перевірної вибірки, переставили в кожному префікс (останнє слово лишили на місці) і подивились, чи змінилося найкраще передбачене слово. З кодуванням воно змінилось у <b>2.33 %</b> випадків, <b>без</b> кодування — у <b>1.67 %</b>. Не нуль. Модель без позиційного кодування <b>таки бачить порядок</b>, просто дізнається про нього не з кодування, а з причинної маски.</p>
+
+<div class="note warn"><b>Чого цей замір <u>не</u> доводить.</b><br>
+Він не доводить, що позиційне кодування зайве. Він міряє <b>дві</b> моделі, один
+корпус, одну епоху й речення з медіаною <b>6</b> слів. Варто дописати
+довший текст або глибший стос — і картина може стати іншою. Що <b>не</b> зміниться:
+доказ із розділу 7. Один шар без кодування порядку не розрізняє, і це властивість
+формули, а не нашого корпусу. Наш замір каже інше: на цій задачі те, що модель
+дістає з причинної маски, вже покриває потребу — і кодуванню немає чого додати.</div>
+
+<p>Це, до речі, добра нагода згадати, чого варта загальна фраза без числа. «Трансформер
+без позиційного кодування не працює» — твердження, яке легко переказати й важко
+перевірити. Наш замір показує, що воно вірне <b>за побудовою</b> і водночас майже
+непомітне <b>за наслідками</b> на короткому технічному тексті. Обидві половини правдиві,
+і саме разом вони чогось варті.</p>
+
+<h2 id="s12"><span class="num">Розділ 12</span>Причинна маска: модель бачить відповідь</h2>
+
+<p>Третя дірка — найбільша, і водночас найлегша для розуміння. Вона не про якість
+моделі, а про <b>зіпсовану постановку задачі</b>.</p>
+
+<p>Нагадаю, як влаштована мовна модель із теми <a href="../16-language-model/lecture.html"><code>16-language-model</code></a>. Їй дають
+речення й просять на кожній позиції вгадати <b>наступне</b> слово. Технічно це роблять
+зсувом: на вхід ідуть слова з першого по передостаннє, а правильними відповідями
+вважають слова з другого по останнє. Тобто відповідь для позиції
+<span class="raw">t</span> — це слово, яке лежить на вході в позиції
+<span class="raw">t</span> + 1.</p>
+
+<div class="eq left">вхід:      &lt;eos&gt;   не    вдалося  зберегти  файл
+відповідь:   не   вдалося зберегти   файл   &lt;eos&gt;</div>
+
+<p>Тепер згадай формулу з розділу 1: рядок <span class="raw">i</span> квадрата збігів
+має стовпці для <b>всіх</b> позицій, зокрема для <span class="raw">i</span> + 1. Отже,
+без жодних заборон позиція «вдалося» бачить своїм ключем позицію «зберегти» — а
+«зберегти» і є правильна відповідь для неї. Мережа не мусить нічого вчити про мову:
+достатньо навчити один канал уваги дивитись на одне слово праворуч і копіювати його.
+Це не хитрість моделі, це наша помилка в постановці.</p>
+
+<p>Заборона зветься <b>причинною маскою</b> (causal mask) — «причинна» тому, що
+майбутнє не може бути причиною теперішнього. Технічно це квадрат
+<span class="raw">T</span>×<span class="raw">T</span> із заборонами вище головної
+діагоналі. Забороненим клітинкам перед softmax додають мінус нескінченність.</p>
+
+<div class="eq">s<span class="sub">ij</span> ← s<span class="sub">ij</span> + (−∞), якщо j &gt; i</div>
+
+<p>Чому саме мінус нескінченність, а не «просто викинути стовпець». Softmax підносить
+<span class="raw">e</span> до степеня кожного збігу; <span class="raw">e</span> у
+степені мінус нескінченність дорівнює рівно нулю. Тобто заборонена клітинка отримує
+вагу <b>точно 0</b> і не потрапляє в суму — і при цьому квадрат лишається квадратом,
+його не треба різати під кожну позицію окремо. Одна пачка, одна матриця, одна
+операція.</p>
+
+<div class="note warn"><b>Пастка, у яку легко вступити.</b><br>
+Якщо в рядку <b>всі</b> клітинки заборонені, softmax ділить нуль на нуль і повертає
+<code>NaN</code>. Далі <code>NaN</code> розповзається по всій мережі, і втрата стає
+<code>nan</code> без жодного повідомлення про помилку. Ситуація виникає, коли причинну
+маску складають із маскою доповнення й у пачку потрапляє рядок, у якому все —
+доповнення. Лікування просте: не подавати порожніх рядків або лишати першу позицію
+завжди дозволеною.</div>
+
+<figure>
+  <div class="fig-head">Фігура 12 · Що кому дозволено бачити</div>
+  <p class="fig-sub">Квадрат — це збіги «хто дивиться» × «на кого дивиться». Зелена
+    клітинка дозволена, порожня заборонена. Повзунок обирає рядок; підпис під
+    квадратом каже, чи бачить цей рядок свою відповідь.</p>
+  <div class="panel">
+    <canvas id="c11" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">яка маска стоїть</span>
+        <div class="seg wrap" id="seg11">
+          <button data-i="0" aria-pressed="true">жодної</button>
+          <button data-i="1" aria-pressed="false">причинна</button>
+          <button data-i="2" aria-pressed="false">доповнення</button>
+          <button data-i="3" aria-pressed="false">обидві</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="row11">рядок <span class="raw">i</span><output id="row11o">3</output></label>
+        <input type="range" id="row11" min="0" max="7" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>дозволено рядку</b><i id="allow11">—</i></div>
+        <div class="cellv"><b>дозволено всього</b><i id="tot11">—</i></div>
+      </div>
+      <div class="verdict" id="v11"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> без причинної маски кожен рядок бачить клітинку
+    праворуч від діагоналі — а там лежить його власна відповідь. Причинна маска
+    зрізає квадрат по діагоналі й лишає рівно минуле.</figcaption>
+</figure>
+
+<div class="note"><b>І це доведено, а не заміряно.</b><br>
+Вага забороненої клітинки після softmax дорівнює <b>рівно нулю</b>, а не «дуже малому
+числу»: <span class="raw">e</span> у степені мінус нескінченність — це нуль без
+жодного округлення. Тож із причинною маскою майбутнє слово не впливає на вихід
+<b>жодним бітом</b>. Поміняй слово праворуч — вихід ліворуч не зрушить. Це властивість
+формули, і перевіряти її навчанням не треба.</div>
+
+<p>А от що буде, якщо маску прибрати, — треба міряти. Модель та сама, дані ті самі,
+пʼять зерен; змінилась одна булева величина в коді.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>що стоїть</th><th>перплексія на перевірній</th><th>купа по зернах</th></tr>
+<tr><td>причинна маска є</td><td>131.39</td><td>128.53…134.78</td></tr>
+<tr class="hot"><td>причинної маски немає</td><td>49.52</td><td>37.25…56.77</td></tr>
+</table></div>
+
+<p>Нагадаю, що таке перплексія, бо без цього число нічого не важить. Перплексія — це
+«між скількома рівноймовірними варіантами модель вагається на кожному кроці». Якщо
+вона дорівнює 130, модель поводиться так, ніби щоразу обирає з півтори сотні
+однаково правдоподібних слів. Одиниця означала б, що вагань немає взагалі.</p>
+
+<p>Наша модель без причинної маски дала <b>49.52</b> — у 2.7 раза «краще» за чесні <b>131.39</b>. Але до одиниці, тобто до стану «жодних сумнівів», вона не дійшла, і це варте окремої розмови, бо показує щось про сам механізм.</p><p>Щоб скористатися витоком, моделі мало <b>мати</b> доступ до сусіда праворуч — їй треба ще й <b>навчитись</b> туди дивитись і вміти перекласти знайдений вектор назад у номер слова. Із синусоїдним кодуванням «на одне слово праворуч» — це поворот, який матриці запиту й ключа мусять вивести самі; за один прохід по корпусу вони встигають лише частково. Ми перевірили це двома способами.</p><p><b>Спосіб перший: полегшити моделі пошук.</b> Замінюємо синусоїду на <b>навчувану таблицю позицій</b>, де «праворуч» задається одним вектором, який можна просто вивчити. Усе інше без змін, три зерна.</p><div class="scroll-x"><table class="nums"><tr><th>яке кодування позицій</th><th>з причинною маскою</th><th>без причинної маски</th><th>у скільки разів</th></tr><tr><td>синусоїдне</td><td>131.39</td><td>49.52</td><td>2.7</td></tr><tr class="hot"><td>навчувана таблиця</td><td>130.48</td><td>22.52</td><td>5.8</td></tr></table></div><p>Із навчуваними позиціями провал <b>удвічі глибший</b>: 22.52 замість 49.52. Чесні моделі при цьому дали майже те саме (131.39 і 130.48) — тобто змінилась не якість моделі, а <b>легкість, із якою вона знаходить дірку</b>.</p><p><b>Спосіб другий: дати більше часу.</b> Беремо чверть корпусу й проганяємо по ній чотири рази, міряючи після кожного проходу.</p><div class="scroll-x"><table class="nums"><tr><th>проходів по корпусу</th><th>з причинною маскою</th><th>без причинної маски</th></tr><tr><td>1</td><td>232.19</td><td>126.55</td></tr>
+<tr><td>2</td><td>198.75</td><td>87.00</td></tr>
+<tr><td>3</td><td>190.41</td><td>69.18</td></tr>
+<tr><td>4</td><td>203.72</td><td>70.44</td></tr></table></div><p>Чесна модель за чотири проходи зрушила з 232.19 до 190.41 — на 18 %. Модель без маски за ті самі чотири проходи впала з 126.55 до 69.18, тобто на 45 %, і продовжувала б падати. Вона не вчить мову краще — вона щокроку впевненіше списує.</p><div class="note warn"><b>Мораль тут не «маска трохи допомагає».</b><br>Мораль у тому, що <b>витік не залежить від того, наскільки швидко модель його знайде</b>. Задача зіпсована в ту мить, коли ми дали моделі побачити відповідь; далі це лише питання часу й зручності. Перплексія без маски не міряє нічого, крім спритності копіювання, — і порівнювати її з чесною не можна взагалі, у жодну сторону.</div><p></p>
+
+<figure>
+  <div class="fig-head">Фігура 13 · Перплексія, яка означає «модель списала»</div>
+  <p class="fig-sub">Пʼять зерен на кожен стовпчик, точка — окреме зерно. Ліворуч —
+    наша модель, праворуч — вона ж без причинної маски. Шкала логарифмічна, інакше
+    правий стовпчик просто не видно.</p>
+  <div class="panel">
+    <canvas id="c12" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показати</span>
+        <div class="seg" id="seg12">
+          <button data-i="0" aria-pressed="true">перплексія</button>
+          <button data-i="1" aria-pressed="false">скільки це слів</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>з маскою</b><i id="m12">—</i></div>
+        <div class="cellv"><b>без маски</b><i id="n12">—</i></div>
+        <div class="cellv"><b>відношення</b><i id="rat12">—</i></div>
+      </div>
+      <div class="verdict" id="v12"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> перплексія 49.52 проти 131.39 — це
+    не «краща модель». Це зламаний дослід. Число, яке виглядає перемогою, найчастіше
+    означає витік відповіді у вхід — і перевіряти його треба першим.</figcaption>
+</figure>
+
+<div class="note"><b>Це знайома пастка, тільки в новій одежі.</b><br>
+Курс «Машинне навчання» звав її витоком цільової змінної: ознака, яку порахували з
+відповіді, дає бездоганну якість на перевірці й нуль користі в житті. Тут те саме,
+тільки витік улаштований не в даних, а в <b>архітектурі</b>. Тому правило просте:
+<b>підозріло добре число перевіряй першим</b>.</div>
+
+<h2 id="s13"><span class="num">Розділ 13</span>Що причинна маска дає задарма</h2>
+
+<p>Маска виглядає як обмеження — і воно є. Але з нього випливають дві переваги, і
+обидві варті окремої згадки.</p>
+
+<h3>Перша: усе речення вчиться за один прохід</h3>
+
+<p>Рекурентна мережа з блоку 4 вчилася по кроку за раз: щоб дізнатись стан на
+десятому слові, треба спершу порахувати девʼять попередніх. Трансформер із причинною
+маскою рахує <b>всі</b> <span class="raw">T</span> передбачень одним множенням
+матриць — і кожне з них при цьому бачить рівно своє минуле. Заборона зроблена не
+чергою обчислень, а нулями у ваговому квадраті, тож черги немає.</p>
+
+<p>Тобто причинна маска — це те, що перетворює «модель не має підглядати» з
+<b>послідовного</b> обмеження на <b>паралельне</b>. Саме звідси береться
+розпаралелення, заради якого блок 5 і затівався.</p>
+
+<h3>Друга: кеш ключів і значень</h3>
+
+<p>Ця перевага працює не під час навчання, а під час <b>породження</b> тексту, коли
+модель пише слово за словом. Придивись до маски ще раз: позиція
+<span class="raw">t</span> не бачить нічого правіше за себе. Отже, її ключ і значення
+<b>ніколи більше не зміняться</b>, скільки б слів ми не дописали праворуч — вони
+залежать тільки від неї самої й від того, що ліворуч.</p>
+
+<p>Звідси прийом, який зветься <b>кеш ключів і значень</b> (KV cache): порахувавши
+<code>k</code> і <code>v</code> для позиції, їх зберігають і більше не рахують. На
+кожному новому кроці модель обчислює <code>q</code>, <code>k</code>, <code>v</code>
+лише для <b>одного</b> нового слова, а решту бере з памʼяті. Без кешу породження
+<span class="raw">n</span> слів коштувало б суми 1 + 2 + … + <span
+class="raw">n</span> обчислень, тобто квадрата; з кешем — рівно
+<span class="raw">n</span>.</p>
+
+<div class="note"><b>Ціна кешу — памʼять.</b><br>
+Зберігати доводиться два вектори на позицію, на кожен шар і на кожну голову. Для нашої
+моделі це 2 × 128 × 2 шари = 512 чисел на одне слово. Для великих моделей із довгим
+контекстом кеш стає головним споживачем памʼяті під час породження — і саме він
+обмежує, скільки розмов сервер тримає одночасно. Тема <a href="../20-rnn-limits/lecture.html"><code>20-rnn-limits</code></a>
+рахувала цю величину для довгого контексту; ми тут лише називаємо механізм, який її
+породжує.</div>
+
+<div class="note warn"><b>Кеш можливий тільки завдяки масці.</b><br>
+У двонаправленої моделі (BERT) причинної маски немає, кожна позиція бачить усе речення
+— і дописування слова праворуч міняє ключі й значення <b>всіх</b> позицій. Кешувати
+нічого. Це одна з причин, чому породжують текст саме моделі з причинною маскою.</div>
+
+<h2 id="s14"><span class="num">Розділ 14</span>Маска доповнення: не рахувати порожнечу</h2>
+
+<p>Друга маска — прозаїчніша, і виникає вона не з мови, а з заліза. Матричні
+обчислення люблять прямокутники: пачка з 64 речень мусить бути таблицею
+64 × ширина. А речення різної довжини. Тому короткі <b>доповнюють</b> (padding)
+спеціальним токеном <code>&lt;pad&gt;</code> до довжини найдовшого в пачці.</p>
+
+<p>Доповнення нічого не означає. Але шар уваги про це не знає: він чемно рахує ключі
+для порожніх місць, чемно роздає їм частку softmax і чемно домішує їхні значення в
+контекст справжніх слів. <b>Маска доповнення</b> (padding mask) забороняє це так само,
+як причинна: мінус нескінченність у стовпці порожніх позицій.</p>
+
+<p>Зверни увагу на асиметрію. Заборона стосується <b>стовпців</b> — порожні місця не
+можна <b>читати</b>. Рядки порожніх місць лишаються: вони щось порахують, але
+результат ніхто не візьме, бо втрата на цих позиціях не рахується (за це відповідає
+окремий механізм — <code>ignore_index</code> у функції втрати).</p>
+
+<p>Скільки взагалі буває цієї порожнечі — залежить не від даних, а від того,
+<b>як ти складаєш пачки</b>. Ми поміряли частку порожніх клітинок у нашому корпусі
+двома способами складання.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>як складаємо пачку по 64</th><th>клітинок</th><th>справжніх</th><th>порожніх</th></tr>
+<tr><td>випадкові речення</td><td>1 881 360</td><td>633 584</td><td>66.32 %</td></tr>
+<tr class="hot"><td>речення схожої довжини</td><td>634 263</td><td>633 584</td><td>0.11 %</td></tr>
+</table></div>
+
+<p>Різниця разюча. Якщо збирати пачку з випадкових речень, <b>66.32 %</b>
+клітинок — порожнеча: медіана довжини в нашому корпусі шість слів, а найдовше
+речення в пачці майже завжди довге, і всі короткі доростають до нього нулями. Якщо ж
+спершу відсортувати речення за довжиною й різати пачки з сусідів, порожнеча падає до
+<b>0.11 %</b> — тобто зникає.</p>
+
+<figure>
+  <div class="fig-head">Фігура 14 · Скільки в пачці порожнечі</div>
+  <p class="fig-sub">Кожен рядок — одне речення пачки, темні клітинки — справжні
+    слова, світлі — доповнення. Перемикач міняє спосіб складання, повзунок — розмір
+    пачки.</p>
+  <div class="panel">
+    <canvas id="c13" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">як складаємо пачку</span>
+        <div class="seg" id="seg13">
+          <button data-i="0" aria-pressed="true">випадково</button>
+          <button data-i="1" aria-pressed="false">за довжиною</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="bs13">розмір пачки<output id="bs13o">64</output></label>
+        <input type="range" id="bs13" min="0" max="4" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>порожніх клітинок</b><i id="ps13">—</i></div>
+        <div class="cellv"><b>зайвої роботи</b><i id="ex13">—</i></div>
+      </div>
+      <div class="verdict" id="v13"></div>
+    </div>
+  </div>
+  <figcaption><b>Одна думка:</b> порожнеча в пачці — це не властивість даних, а
+    наслідок способу складання. Сортування за довжиною прибирає її майже цілком.</figcaption>
+</figure>
+
+<h3>А тепер несподіванка</h3>
+
+<p>Ми поставили пряму абляцію: та сама модель, ті самі дані, вимкнена маска
+доповнення. Обидва способи складання пачок, по три зерна. І результат виявився
+не таким, якого ми чекали.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>складання · маска доповнення</th><th>перплексія</th><th>купа по зернах</th></tr>
+<tr><td>за довжиною · є</td><td>234.43</td><td>231.92…238.71</td></tr>
+<tr><td>за довжиною · немає</td><td>234.43</td><td>231.92…238.71</td></tr>
+<tr><td>випадково · є</td><td>222.59</td><td>220.45…226.31</td></tr>
+<tr class="hot"><td>випадково · немає</td><td>222.59</td><td>220.45…226.31</td></tr>
+</table></div>
+
+<p>Числа збіглися <b>до останнього знака</b> — і не в одному рядку, а в кожному з трьох зерен обох способів складання. Це не «різниця менша за розкид»: це буквально ті самі числа. Маска доповнення в нашій моделі не міняє <b>нічого</b>.</p>
+
+<div class="note warn"><b>Чому так, і це не випадковість.</b><br>
+Доповнення завжди дописують <b>праворуч</b>: спершу слова речення, потім порожні
+місця. А причинна маска забороняє дивитись праворуч від себе. Отже, справжнє слово на
+позиції <span class="raw">t</span> фізично не може побачити жодного доповнення — усі
+вони мають номери, більші за довжину речення, тобто більші за
+<span class="raw">t</span>. <b>Причинна маска вже накрила маску доповнення цілком.</b>
+Лишаються тільки рядки самих порожніх місць, а їхній вихід і так ніхто не читає.</div>
+
+<p>Це можна перевірити не перплексією, а прямо: узяти навчену модель і подивитись,
+<b>яка частка уваги справжнього слова падає на порожні позиції</b>. Ми поміряли це в
+першому шарі, на випадкових пачках, у чотирьох режимах.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>режим шару</th><th>маска доповнення</th><th>частка уваги на порожнечу</th></tr>
+<tr><td>причинний</td><td>є</td><td>0 (рівно)</td></tr>
+<tr><td>причинний</td><td>немає</td><td>0 (рівно)</td></tr>
+<tr><td>двонаправлений</td><td>є</td><td>0 (рівно)</td></tr>
+<tr class="hot"><td>двонаправлений</td><td>немає</td><td>31.71 %</td></tr>
+</table></div>
+
+<p>Читати треба останній рядок. Поки стоїть причинна маска, справжнє слово віддає порожнім позиціям рівно <b>нуль</b> уваги — з маскою доповнення й без неї однаково. А от у двонаправленому шарі, де причинної маски немає, без маски доповнення на порожнечу йде <b>31.71 %</b> усієї уваги справжніх слів. Ось де маска доповнення справді працює.</p>
+
+<div class="note"><b>Коли маска доповнення справді потрібна.</b><br>
+Скрізь, де немає причинної маски або де доповнення стоїть не праворуч:
+<b>двонаправлені</b> моделі на кшталт BERT, де кожна позиція бачить усе речення;
+<b>енкодер</b> у перекладачі й перехресна увага декодера до нього; і будь-яке
+<b>доповнення ліворуч</b>, яким користуються при породженні тексту пачками. У всіх
+цих випадках порожнеча відкрита, і маска — єдине, що її закриває.</div>
+
+<div class="note warn"><b>Практичне правило.</b><br>
+Маску доповнення ставлять <b>завжди</b> — вона нічого не коштує й не має жодного
+недоліку. Наш замір не привід її знімати: він показує, що <b>в цій конкретній
+конфігурації</b> вона надлишкова, і що надлишковою її робить причинна маска. Досить
+прибрати причинну маску — і маска доповнення миттєво стане тим, що тримає модель.</div>
+
+<h2 id="s15"><span class="num">Розділ 15</span>Дві маски в одній матриці</h2>
+
+<p>Обидві маски живуть в одному й тому самому місці — у квадраті збігів перед softmax
+— тож складаються вони найпростішим способом: <b>клітинка заборонена, якщо її
+забороняє хоча б одна маска</b>. Ніякого узгодження не потрібно, бо жодна з них нічого
+не дозволяє, вони лише забороняють.</p>
+
+<p>Форми в них різні, і це варто тримати в голові. Причинна маска — квадрат
+<span class="raw">T</span>×<span class="raw">T</span>, <b>однаковий для всіх речень
+пачки</b>: вона залежить тільки від довжини. Маска доповнення — рядок довжини
+<span class="raw">T</span> <b>для кожного речення окремо</b>: вона залежить від того,
+де в цьому конкретному реченні скінчились слова. У бібліотеці це два різні аргументи
+з різними формами саме тому.</p>
+
+<div class="eq left">причинна:    (T, T)        — одна на всю пачку
+доповнення:  (B, T)        — своя для кожного з B речень
+разом:       заборона = причинна АБО доповнення</div>
+
+<p>І остання деталь, яка кусається на практиці. Маску завжди накладають
+<b>до</b> softmax, ніколи після. Якщо занулити ваги після softmax, сума ваг перестане
+дорівнювати одиниці — вихід стане не середнім значень, а середнім, помноженим на
+випадкову частку. Модель від цього не впаде й нічого не повідомить, вона просто буде
+трохи гіршою; це рівно той різновид помилки, який знаходять тижнями.</p>
+
+<h2 id="s16"><span class="num">Розділ 16</span>Шар цілком</h2>
+
+<p>Зберімо все, що ми додали до голого self-attention, в одне місце. Ось повний шлях
+одного речення крізь один блок трансформера-декодера — і тепер у ньому немає жодного
+місця, яке ми не пояснили.</p>
+
+<div class="eq left">1. ембединги слів  +  позиційне кодування     ← розділи 9-10
+2. нормалізація шару                          ← розділ 3
+3. збіги Q·Kᵀ / √d_head, окремо в кожній голові  ← розділ 2
+4. + причинна маска  + маска доповнення       ← розділи 12-15
+5. softmax по рядку, множення на V
+6. склеїти голови, помножити на W_O           ← розділ 2
+7. додати вхід (залишкове зʼєднання)          ← розділ 3
+8. нормалізація шару, повнозвʼязний шар, ще один залишок</div>
+
+<p>І підсумок трьох поправок — таблицею, у якій кожен рядок ми заміряли самі.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>поправка</th><th>що буває без неї</th><th>наш замір</th></tr>
+<tr><td>багатоголовість</td><td>слово має один розподіл уваги замість чотирьох</td><td>142.12 проти 131.39, купи не перетинаються</td></tr>
+<tr><td>позиційне кодування</td><td>один шар бачить префікс як мішок слів; два причинні шари порядок уже відновлюють</td><td>зсув 2.4·10⁻⁷ на одному шарі проти 7.2·10⁻⁴ на двох; на корпусі — 132.61 проти 131.39, купи перетинаються</td></tr>
+<tr><td>причинна маска</td><td>модель читає відповідь із входу</td><td>49.52 проти 131.39</td></tr>
+<tr><td>маска доповнення</td><td>справжні слова читають порожні місця — але лише там, де немає причинної маски</td><td>31.71 % уваги в двонаправленому шарі, рівно 0 у причинному</td></tr>
+</table></div>
+
+<p>Три поправки — три різні за характером речі, і це головне, що варто винести.</p>
+
+<p><b>Маскування</b> виправляє <b>постановку задачі</b>: без причинної маски дослід
+просто зламаний, і ніякі числа з нього не мають сенсу — ні кращі, ні гірші.
+<b>Позиційне кодування</b> додає <b>інформацію</b>, якої немає в <b>одному</b> шарі за
+побудовою — але яку глибокий причинний стос уміє дістати й сам, тож її вага залежить
+від задачі, а не від принципу. <b>Багатоголовість</b> не додає ні інформації, ні
+параметрів, а лише <b>перерозподіляє</b> ті самі — і тому саме про неї найважче сказати
+щось наперед без заміру.</p>
+
+<p>І окрема мораль, яка більша за цю тему. Двічі за одну лекцію красиве загальне
+твердження виявилось правдивим лише наполовину: «трансформер без позиційного кодування
+не бачить порядку» справджується для одного шару й ламається на двох, а «маска
+доповнення потрібна» справджується скрізь, крім причинної мовної моделі з доповненням
+праворуч. Обидва рази рятував не здоровий глузд, а замір — і в обох випадках чесна
+відповідь виявилась цікавішою за переказану.</p>
+
+<p>Тепер шар зібрано повністю, і лишилось питання, з якого починається наступна тема:
+<b>скільки все це коштує</b>. Квадрат збігів має <span class="raw">T</span><span
+class="sup">2</span> клітинок, і в нашому корпусі з реченнями по шість слів це дрібниця
+— а в тексті на дві тисячі токенів уже ні. Тема
+<code>24-transformer-training</code> міряє цю ціну й показує, звідки в трансформері
+береться квадратичність і що з нею роблять.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../22-self-attention/lecture.html"><span class="dir">попередня</span><span class="ttl">22. Self-attention покроково</span></a>
+    <a class="next" href="../24-transformer-training/lecture.html"><span class="dir">наступна</span><span class="ttl">24. Навчання трансформера</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+var HEAD = {
+  prof: [[[0.2021, 0.3742, 0.1882, 0.2003, 0.0352], [0.122, 0.339, 0.2246, 0.2695, 0.0449], [0.0563, 0.4164, 0.2331, 0.2547, 0.0396], [0.2593, 0.3094, 0.176, 0.2188, 0.0364]], [[0.004, 0.1692, 0.1654, 0.4607, 0.2007], [0.2342, 0.2488, 0.1873, 0.2814, 0.0483], [0.0214, 0.1725, 0.1681, 0.4463, 0.1917], [0.2854, 0.3524, 0.1841, 0.1593, 0.0188]]],
+  first: [[0.1149, 0.2005, 0.2676, 0.0878], [0.9826, 0.0919, 0.9253, 0.1728]],
+  ent: [[0.3876, 0.6307, 0.6372, 0.2208], [0.0237, 0.0669, 0.0321, 0.0508]],
+  pairs: ["1-2", "1-3", "1-4", "2-3", "2-4", "3-4"],
+  js: [[0.3393, 0.3313, 0.3783, 0.2965, 0.3795, 0.3927], [0.6142, 0.0566, 0.5646, 0.5895, 0.5378, 0.5682]],
+  jsrand: [0.0425, 0.0427]
+};
+var KNOCK = {base: 128.53, ppl: [[129.9637, 131.6128, 131.4892, 129.4481], [129.0729, 133.5196, 128.8142, 130.8166]]};
+var SEEDS = {"full": [128.53, 132.32, 131.74, 129.58, 134.78], "nopos": [128.34, 132.72, 134.26, 130.67, 137.08], "onehead": [139.09, 141.82, 141.83, 139.91, 147.94], "nocausal": [56.77, 37.25, 52.15, 51.76, 49.66]};
+var PAD_TABLE = {"length_16": {"cells": 633783, "real": 633584, "share": 0.00031398759512324403, "meanw": 7.687716063609127}, "length_32": {"cells": 633975, "real": 633584, "share": 0.0006167435624433448, "meanw": 7.690045001880132}, "length_64": {"cells": 634263, "real": 633584, "share": 0.0010705338321800317, "meanw": 7.693538409286641}, "length_128": {"cells": 635031, "real": 633584, "share": 0.00227862891732844, "meanw": 7.702854162370665}, "length_256": {"cells": 637463, "real": 633584, "share": 0.006085059054407815, "meanw": 7.73235404713674}, "random_16": {"cells": 1371328, "real": 633584, "share": 0.5379777850375694, "meanw": 16.634053444281363}, "random_32": {"cells": 1626032, "real": 633584, "share": 0.6103496118157576, "meanw": 19.723584138959982}, "random_64": {"cells": 1881360, "real": 633584, "share": 0.6632308542756304, "meanw": 22.82068388301937}, "random_128": {"cells": 2105104, "real": 633584, "share": 0.6990248462783786, "meanw": 25.534673281498282}, "random_256": {"cells": 2296720, "real": 633584, "share": 0.7241352885854611, "meanw": 27.858953675962205}};
+var LEN_HIST = [0.0, 0.02261, 0.07745, 0.15976, 0.18579, 0.15838, 0.11884, 0.08331, 0.05426, 0.03724, 0.02476, 0.01715, 0.01257, 0.009, 0.00685, 0.00496, 0.00449, 0.00381, 0.0028, 0.00237, 0.002, 0.0021, 0.00171, 0.00147, 0.00116, 0.00119, 0.00126, 0.00113, 0.00078, 0.00081];
+var DEPTH = [{"layers": 1, "nopos": 2.384185791015625e-07, "scale": 0.5768715143203735, "pos": 0.00048285722732543945}, {"layers": 2, "nopos": 0.0007193088531494141, "scale": 0.58204585313797, "pos": 0.0010569393634796143}, {"layers": 3, "nopos": 0.0017278194427490234, "scale": 0.5745519399642944, "pos": 0.0024276375770568848}];
+var LEARNED = {"False": [22.5291, 19.01, 26.007], "True": [127.3511, 130.676, 133.4239]};
+var EPOCHS = {"False": [[1, 126.5491], [2, 87.002], [3, 69.1828], [4, 70.4361]], "True": [[1, 232.1909], [2, 198.7515], [3, 190.4111], [4, 203.7209]]};
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thou(n){
+  var s=String(Math.round(n)), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function sci(v){
+  if(v===0) return '0';
+  var e=Math.floor(Math.log(Math.abs(v))/Math.LN10), m=v/Math.pow(10,e);
+  var S='⁰¹²³⁴⁵⁶⁷⁸⁹', s=String(Math.abs(e)), out='', i;
+  for(i=0;i<s.length;i++) out+=S.charAt(+s.charAt(i));
+  return f1(m)+'·10'+(e<0?'⁻':'')+out;
+}
+/* детермінований генератор на лічильнику з перемішуванням (грабля №23) */
+function LCG(seed){
+  var s=(seed>>>0)||1, n=0;
+  return function(){
+    n=(n+1)>>>0;
+    var x=(s^(n*0x9E3779B1))>>>0;
+    x^=x>>>16; x=Math.imul(x,0x85EBCA6B)>>>0;
+    x^=x>>>13; x=Math.imul(x,0xC2B2AE35)>>>0;
+    x=(x^(x>>>16))>>>0;          /* без >>>0 XOR дає знакове число і псує генератор */
+    return x/4294967296;
+  };
+}
+function mkNorm(rnd){
+  return function(){
+    var u=0,v=0;
+    while(!u) u=rnd();
+    while(!v) v=rnd();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  };
+}
+function softmax(a){
+  var mx=-Infinity, i, s=0, out=new Array(a.length);
+  for(i=0;i<a.length;i++) if(a[i]>mx) mx=a[i];
+  for(i=0;i<a.length;i++){ out[i]=Math.exp(a[i]-mx); s+=out[i]; }
+  for(i=0;i<a.length;i++) out[i]/=s;
+  return out;
+}
+function plural(n,one,few,many){
+  var t=n%10, h=n%100;
+  if(h>=11 && h<=14) return many;
+  if(t===1) return one;
+  if(t>=2 && t<=4) return few;
+  return many;
+}
+function nHeads(n){return n+' '+plural(n,'голова','голови','голів');}
+function nCoord(n){return n+' '+plural(n,'координата','координати','координат');}
+function nCoordG(n){return n+' '+plural(n,'координату','координати','координат');}
+function nDistr(n){return n+' '+plural(n,'розподіл','розподіли','розподілів');}
+function nNums(n){return thou(n)+' '+plural(n,'число','числа','чисел');}
+function roundRect(g,x,y,w,h,r){
+  g.beginPath();
+  g.moveTo(x+r,y); g.lineTo(x+w-r,y); g.quadraticCurveTo(x+w,y,x+w,y+r);
+  g.lineTo(x+w,y+h-r); g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  g.lineTo(x+r,y+h); g.quadraticCurveTo(x,y+h,x,y+h-r);
+  g.lineTo(x,y+r); g.quadraticCurveTo(x,y,x+r,y); g.closePath();
+}
+
+/* ═══════════ фігура 1 · розкрій вектора на голови ═══════════ */
+var HEADS1=[1,2,4,8,16], D1=128, T1=8;
+
+function draw1(){
+  var cv=I('c1'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var h=HEADS1[+I('heads1').value], dh=D1/h, i;
+
+  capt(g,'запит слова після проєкції: '+D1+' координат',40,30,ink,13,true);
+
+  var x0=40, x1=W-40, top=54, bh=64;
+  var gap=6, seg=(x1-x0-gap*(h-1))/h;
+  for(i=0;i<h;i++){
+    var bx=x0+i*(seg+gap);
+    g.fillStyle=(i%2===0)?rose:teal;
+    g.globalAlpha=0.20+0.12*(i%2);
+    g.fillRect(bx,top,seg,bh);
+    g.globalAlpha=1;
+    g.strokeStyle=(i%2===0)?rose:teal; g.lineWidth=1.2;
+    g.strokeRect(bx+0.5,top+0.5,seg-1,bh-1);
+    if(seg>52) capt(g,String(dh),bx+seg/2,top+bh/2+5,ink,12,true,'center');
+    if(seg>92) capt(g,'голова '+(i+1),bx+seg/2,top+bh+16,soft,10.5,false,'center');
+  }
+  if(seg<=92) capt(g,nHeads(h)+' по '+nCoord(dh),x0,top+bh+16,soft,10.5);
+
+  /* нижче: три ролі, і сума однакова */
+  var ty=top+bh+52;
+  capt(g,'скільки чисел у самих проєкціях Q, K, V',x0,ty,ink,12.5,true);
+  var rows=[['Q',rose],['K',teal],['V',amber]], r;
+  for(r=0;r<3;r++){
+    var ry=ty+22+r*30;
+    capt(g,rows[r][0],x0,ry+13,rows[r][1],13,true);
+    var rx=x0+24, rw=x1-rx;
+    g.fillStyle=hair; g.fillRect(rx,ry,rw,18);
+    for(i=0;i<h;i++){
+      var sx=rx+i*(rw/h);
+      g.fillStyle=rows[r][1]; g.globalAlpha=0.30;
+      g.fillRect(sx+1,ry+1,rw/h-2,16); g.globalAlpha=1;
+    }
+    capt(g,h+' × ('+D1+' × '+dh+') = '+nNums(D1*dh*h),rx+rw,ry+13,soft,11,false,'right');
+  }
+  var sy=ty+22+3*30+26;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,sy-14.5); g.lineTo(x1,sy-14.5); g.stroke();
+  capt(g,'разом у проєкціях: '+nNums(3*D1*D1)+' — при будь-якому h',x0,sy+2,ink,12.5,true);
+
+  I('heads1o').textContent=h;
+  I('dh1').textContent=dh;
+  I('nd1').textContent=h;
+  I('pw1').textContent=thou(3*D1*D1);
+  I('mm1').textContent=thou(T1*T1*D1);
+
+  if(h===1)
+    verd('v1','t-mid','ОДИН ПОГЛЯД',
+      'Одна голова тримає всі '+D1+' координат, але має рівно <b>один</b> розподіл '+
+      'уваги на слово. Проєкції коштують ті самі '+nNums(3*D1*D1)+'.');
+  else if(dh>=16)
+    verd('v1','t-ok','РІВНОЦІННИЙ РОЗКРІЙ',
+      nHeads(h)+' по '+nCoord(dh)+': <b>'+nDistr(h)+'</b> уваги замість одного, '+
+      'і жодного зайвого параметра — усе ті самі '+nNums(3*D1*D1)+'.');
+  else
+    verd('v1','t-mid','ЩІЛИНА ВУЗЬКА',
+      nHeads(h)+' дають '+nDistr(h)+', але на голову лишається всього <b>'+
+      nCoordG(dh)+'</b>. Розподілів багато, а передати кожен може мало.');
+}
+
+/* ═══════════ фігура 2 · один розподіл не тримає два звʼязки ═══════════ */
+var WORDS2=['не','вдалося','зберегти','файл','на','диск'];
+var QI2=2, AI2=3, BI2=1, mode2=0;
+
+function draw2(){
+  var cv=I('c2'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var a=+I('alpha2').value/100, i;
+
+  var wA, wB, pa, pb;
+  if(mode2===0){ wA=[a]; wB=[1-a]; pa=a; pb=1-a; }
+  else { wA=[a,1-a]; wB=[1-a,a]; pa=Math.max(a,1-a); pb=Math.max(1-a,a); }
+  var worst=Math.min(pa,pb), best=(mode2===0)?0.5:1;
+
+  var x0=40, x1=W-40, gx=x0+74, cw=(x1-gx)/WORDS2.length;
+  var rows=(mode2===0)?1:2;
+  var baseY=54+rows*54;
+
+  capt(g,'слово «'+WORDS2[QI2]+'» роздає свою увагу',x0,28,ink,13,true);
+
+  /* смуги уваги */
+  var r;
+  for(r=0;r<rows;r++){
+    var ry=54+r*54, col=(r===0)?rose:teal;
+    capt(g,(mode2===0?'голова':'голова '+(r+1)),x0,ry+26,col,11,true);
+    for(i=0;i<WORDS2.length;i++){
+      var w=0;
+      if(i===AI2) w=wA[r]; else if(i===BI2) w=wB[r];
+      var bx=gx+i*cw+6, bw=cw-12, bhh=Math.max(2,34*w);
+      g.fillStyle=hair; g.fillRect(bx,ry+4,bw,34);
+      if(w>0){
+        g.fillStyle=col; g.globalAlpha=0.75; g.fillRect(bx,ry+4+34-bhh,bw,bhh); g.globalAlpha=1;
+        capt(g,f2(w),bx+bw/2,ry+2,ink,11,true,'center');
+      }
+    }
+  }
+  /* слова */
+  for(i=0;i<WORDS2.length;i++){
+    var tx=gx+i*cw+cw/2;
+    var isq=(i===QI2), ist=(i===AI2||i===BI2);
+    capt(g,WORDS2[i],tx,baseY,isq?ink:(ist?amber:soft),ist||isq?13:12,isq||ist,'center');
+    if(isq){
+      g.strokeStyle=ink; g.lineWidth=1;
+      g.beginPath(); g.moveTo(tx-24,baseY+7); g.lineTo(tx+24,baseY+7); g.stroke();
+    }
+  }
+
+  /* повнота */
+  var my=baseY+34;
+  capt(g,'скільки кожного звʼязку дійшло цілим',x0,my,ink,12.5,true);
+  var meters=[['«'+WORDS2[AI2]+'»',pa,rose],['«'+WORDS2[BI2]+'»',pb,teal]];
+  for(i=0;i<2;i++){
+    var yy=my+16+i*34, mw=x1-x0-150;
+    capt(g,meters[i][0],x0,yy+15,soft,12);
+    g.fillStyle=hair; roundRect(g,x0+110,yy,mw,18,4); g.fill();
+    g.fillStyle=meters[i][2]; g.globalAlpha=0.8;
+    roundRect(g,x0+110,yy,Math.max(3,mw*meters[i][1]),18,4); g.fill(); g.globalAlpha=1;
+    capt(g,f2(meters[i][1]),x1,yy+14,ink,13,true,'right');
+  }
+
+  I('alpha2o').textContent=f2(a);
+  I('pa2').textContent=f2(pa);
+  I('pb2').textContent=f2(pb);
+  I('pm2').textContent=f2(worst);
+  I('pbest2').textContent=f2(best);
+
+  if(mode2===0){
+    if(worst<0.25)
+      verd('v2','t-no','ДРУГИЙ ЗВʼЯЗОК ЗАГУБЛЕНО',
+        'Уся увага пішла на один бік: другий звʼязок дійшов лише на <b>'+f2(worst)+'</b>. '+
+        'Одна голова має один запас ваги, і роздати його двічі не може.');
+    else
+      verd('v2','t-mid','ОБИДВА НЕПОВНІ',
+        'Гірший із двох звʼязків дійшов на <b>'+f2(worst)+'</b>. Стеля однієї голови — '+
+        '<b>0.50</b> кожному: ваги в сумі рівно одиниця, більше взяти нізвідки.');
+  } else {
+    if(worst>=0.8)
+      verd('v2','t-ok','ОБИДВА ЦІЛІ',
+        'Кожна голова взяла своє: гірший звʼязок дійшов на <b>'+f2(worst)+'</b>. '+
+        'Дві відповіді лягли в різні координати, тож змішувати їх не довелося.');
+    else if(worst>0.6)
+      verd('v2','t-mid','ГОЛОВИ ЧАСТКОВО ЗБІГАЮТЬСЯ',
+        'Голови дивляться майже в один бік, і виграш тане: <b>'+f2(worst)+'</b> замість 1.00.');
+    else
+      verd('v2','t-no','ДВІ ГОЛОВИ РОБЛЯТЬ ОДНЕ',
+        'При <b>'+f2(a)+'</b> обидві голови дають той самий розподіл — це та сама одна '+
+        'голова, тільки двічі. Виграш від другої голови нульовий.');
+  }
+}
+
+/* ═══════════ фігура 7 · перестановка переставляє вихід ═══════════ */
+var W7=['не','вдалося','зберегти','файл','диск'], D7=8, pe7=0;
+var PERMS7=[[0,1,2,3,4],[1,0,2,3,4],[0,1,3,2,4],[4,3,2,1,0],[2,3,4,0,1],[3,1,4,0,2]];
+var EMB7=null, WQ7=null, WK7=null, WV7=null;
+
+function build7(){
+  var rnd=LCG(1707), nrm=mkNorm(rnd), i, j;
+  EMB7=[]; for(i=0;i<W7.length;i++){ var v=[]; for(j=0;j<D7;j++) v.push(nrm()*0.8); EMB7.push(v); }
+  function mat(){ var m=[], a, b; for(a=0;a<D7;a++){ var row=[]; for(b=0;b<D7;b++) row.push(nrm()*0.5); m.push(row);} return m; }
+  WQ7=mat(); WK7=mat(); WV7=mat();
+}
+function mul7(v,m){
+  var out=new Array(D7), a, b;
+  for(b=0;b<D7;b++){ var s=0; for(a=0;a<D7;a++) s+=v[a]*m[a][b]; out[b]=s; }
+  return out;
+}
+function pe7v(pos){
+  var v=new Array(D7), i;
+  for(i=0;i<D7/2;i++){
+    var w=Math.pow(10000,-2*i/D7);
+    v[2*i]=Math.sin(pos*w); v[2*i+1]=Math.cos(pos*w);
+  }
+  return v;
+}
+function attn7(order, usePE){
+  var n=order.length, X=[], i, j, b;
+  for(i=0;i<n;i++){
+    var e=EMB7[order[i]].slice();
+    if(usePE){ var p=pe7v(i); for(b=0;b<D7;b++) e[b]+=p[b]; }
+    X.push(e);
+  }
+  var Q=[],K=[],V=[];
+  for(i=0;i<n;i++){ Q.push(mul7(X[i],WQ7)); K.push(mul7(X[i],WK7)); V.push(mul7(X[i],WV7)); }
+  var Y=[];
+  for(i=0;i<n;i++){
+    var sc=[];
+    for(j=0;j<n;j++){ var s=0; for(b=0;b<D7;b++) s+=Q[i][b]*K[j][b]; sc.push(s/Math.sqrt(D7)); }
+    var w=softmax(sc), y=new Array(D7);
+    for(b=0;b<D7;b++){ var t=0; for(j=0;j<n;j++) t+=w[j]*V[j][b]; y[b]=t; }
+    Y.push(y);
+  }
+  return Y;
+}
+
+function draw7(){
+  var cv=I('c7'); if(!cv) return;
+  if(!EMB7) build7();
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var pi=+I('perm7').value, perm=PERMS7[pi], n=W7.length, i, b;
+  var idn=[0,1,2,3,4];
+  var Y0=attn7(idn, pe7===1), Y1=attn7(perm, pe7===1);
+
+  /* Y1[k] має дорівнювати Y0[perm[k]], якщо шар еквіваріантний */
+  var gap=0, spread=0;
+  for(i=0;i<n;i++) for(b=0;b<D7;b++){
+    var d=Math.abs(Y1[i][b]-Y0[perm[i]][b]);
+    if(d>gap) gap=d;
+    if(Math.abs(Y0[i][b])>spread) spread=Math.abs(Y0[i][b]);
+  }
+
+  capt(g,'вихідний вектор кожного слова (8 координат)',40,26,ink,12.5,true);
+  var colw=(W-80)/2, x0=40, x1=40+colw+16;
+  capt(g,'початковий порядок',x0,48,soft,11.5,true);
+  capt(g,'переставлений',x1,48,soft,11.5,true);
+
+  function drawCol(x, order, Y){
+    var i2, b2;
+    for(i2=0;i2<n;i2++){
+      var yy=62+i2*54;
+      capt(g,W7[order[i2]],x,yy+16,ink,12.5,true);
+      var cx=x+74, cs=Math.min(20,(colw-90)/D7);
+      for(b2=0;b2<D7;b2++){
+        var v=Y[i2][b2], a=Math.min(1,Math.abs(v)/(spread||1));
+        g.fillStyle=(v>=0)?teal:rose; g.globalAlpha=0.15+0.75*a;
+        g.fillRect(cx+b2*(cs+2),yy+2,cs,20); g.globalAlpha=1;
+      }
+    }
+  }
+  drawCol(x0, idn, Y0);
+  drawCol(x1, perm, Y1);
+
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x1-8,58); g.lineTo(x1-8,62+n*54-6); g.stroke();
+
+  var msg = (gap<1e-12)
+    ? 'ті самі числа, лише переїхали разом зі словами'
+    : 'числа інші: вихід залежить не тільки від вмісту';
+  capt(g,msg,40,H-16,gap<1e-12?teal:rose,12,true);
+
+  I('perm7o').textContent=(pi===0?'жодної':String(pi));
+  I('gap7').textContent=(gap===0)?'0':sci(gap);
+  I('rel7').textContent=(spread>0)?((gap===0)?'0':sci(gap/spread)):'—';
+
+  if(pi===0)
+    verd('v7','t-mid','ЦЕ ТА САМА РОЗСАДКА',
+      'Перестановки немає, тож різниця нульова за визначенням. Посунь повзунок, '+
+      'щоб побачити щось цікаве.');
+  else if(gap<1e-12)
+    verd('v7','t-ok','ВИХІД ПРОСТО ПЕРЕЇХАВ',
+      'Найбільша різниця <b>'+sci(gap)+'</b> — це шум округлення float64, а не зміна. '+
+      'Шар не помітив, що слова стоять інакше: він еквіваріантний щодо перестановки.');
+  else
+    verd('v7','t-no','ВИХІД ЗМІНИВСЯ',
+      'Найбільша різниця <b>'+sci(gap)+'</b>, тобто '+f2(100*gap/spread)+' % від розмаху '+
+      'самих чисел. Позиційне кодування зробило вектори різними ще до входу в шар.');
+}
+
+/* ═══════════ фігура 8 · відбиток позиції ═══════════ */
+var DMS8=[16,32,64,128];
+
+function draw8(){
+  var cv=I('c8'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var d=DMS8[+I('dm8').value], P=+I('np8').value, i, p;
+
+  function pev(pos){
+    var v=new Array(d), k;
+    for(k=0;k<d/2;k++){
+      var w=Math.pow(10000,-2*k/d);
+      v[2*k]=Math.sin(pos*w); v[2*k+1]=Math.cos(pos*w);
+    }
+    return v;
+  }
+  var rowsv=[]; for(p=0;p<P;p++) rowsv.push(pev(p));
+
+  var x0=54, x1=W-40, top=52, bot=H-40;
+  var cw=(x1-x0)/d, ch=(bot-top)/P;
+  capt(g,'координати вектора →',x0,32,ink,12.5,true);
+  capt(g,'швидкі стрілки',x0,44,soft,10);
+  capt(g,'повільні стрілки',x1,44,soft,10,false,'right');
+
+  for(p=0;p<P;p++){
+    for(i=0;i<d;i++){
+      var v=rowsv[p][i];
+      g.fillStyle=(v>=0)?teal:rose;
+      g.globalAlpha=0.10+0.80*Math.abs(v);
+      g.fillRect(x0+i*cw, top+p*ch, Math.max(1,cw-0.4), Math.max(1,ch-0.4));
+    }
+    if(P<=16 || p%4===0) capt(g,String(p),x0-7,top+p*ch+ch/2+3.5,soft,10,false,'right');
+  }
+  g.globalAlpha=1;
+  capt(g,'позиція',x0-7,top-8,soft,10,false,'right');
+
+  /* найближча пара рядків */
+  var best=Infinity, bi=0, bj=0, a, bq;
+  for(a=0;a<P;a++) for(bq=a+1;bq<P;bq++){
+    var s=0;
+    for(i=0;i<d;i++){ var t=rowsv[a][i]-rowsv[bq][i]; s+=t*t; }
+    s=Math.sqrt(s);
+    if(s<best){ best=s; bi=a; bj=bq; }
+  }
+  var slow=2*Math.PI*Math.pow(10000,(d-2)/d);
+  I('dm8o').textContent=d;
+  I('np8o').textContent=P;
+  I('arr8').textContent=d/2;
+  I('fast8').textContent=f2(2*Math.PI);
+  I('slow8').textContent=thou(slow);
+  I('norm8').textContent=f4(Math.sqrt(d/2));
+
+  capt(g,'найближчі рядки: '+bi+' і '+bj+' на відстані '+f3(best),x0,H-14,ink,11.5,true);
+
+  var rel8=best/Math.sqrt(d/2);
+  I('rel8').textContent=f3(rel8);
+  if(rel8>0.3)
+    verd('v8','t-ok','ПОЗИЦІЇ ДОБРЕ РОЗВЕДЕНІ',
+      'Найсхожіші два рядки (<b>'+bi+'</b> і <b>'+bj+'</b>) стоять на відстані <b>'+
+      f3(best)+'</b> при довжині вектора '+f4(Math.sqrt(d/2))+' — це <b>'+f3(rel8)+
+      '</b> його довжини. Двох однакових позицій тут немає.');
+  else
+    verd('v8','t-mid','РОЗВЕДЕНІ, АЛЕ ВІДНОСНО ТІСНО',
+      'Найсхожіші рядки <b>'+bi+'</b> і <b>'+bj+'</b> розійшлись на <b>'+f3(best)+
+      '</b> при довжині вектора '+f4(Math.sqrt(d/2))+' — лише <b>'+f3(rel8)+
+      '</b> його довжини. Довші вектори додають повільних стрілок, а вони сусідні '+
+      'позиції майже не розводять.');
+}
+
+/* ═══════════ фігура 9 · добуток кодувань і відстань ═══════════ */
+function draw9(){
+  var cv=I('c9'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var d=DMS8[+I('dm9').value], K=+I('k9').value, KM=30, i, k;
+
+  function dotk(kk){
+    var s=0, j;
+    for(j=0;j<d/2;j++) s+=Math.cos(kk*Math.pow(10000,-2*j/d));
+    return s;
+  }
+  var vals=[]; for(k=0;k<=KM;k++) vals.push(dotk(k));
+
+  /* розкид того самого добутку по різних позиціях — має бути нулем */
+  function pev(pos){
+    var v=new Array(d), j;
+    for(j=0;j<d/2;j++){
+      var w=Math.pow(10000,-2*j/d);
+      v[2*j]=Math.sin(pos*w); v[2*j+1]=Math.cos(pos*w);
+    }
+    return v;
+  }
+  var lo=Infinity, hi=-Infinity, p;
+  for(p=0;p<40;p++){
+    var A=pev(p), B=pev(p+K), s=0;
+    for(i=0;i<d;i++) s+=A[i]*B[i];
+    if(s<lo) lo=s; if(s>hi) hi=s;
+  }
+
+  var x0=62, x1=W-40, top=48, bot=H-46;
+  var mx=vals[0], mn=0;
+  function px(kk){ return x0+(x1-x0)*kk/KM; }
+  function py(v){ return bot-(bot-top)*(v-mn)/(mx-mn); }
+
+  capt(g,'скалярний добуток PE(pos) · PE(pos+k)',x0,28,ink,12.5,true);
+  for(i=0;i<=4;i++){
+    var v=mn+(mx-mn)*i/4, y=py(v);
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,f1(v),x0-7,y+4,soft,10.5,false,'right');
+  }
+  for(k=0;k<=KM;k+=5){
+    capt(g,String(k),px(k),bot+16,soft,10.5,false,'center');
+  }
+  capt(g,'відстань k',x1,bot+30,soft,10.5,false,'right');
+
+  g.strokeStyle=teal; g.lineWidth=2; g.beginPath();
+  for(k=0;k<=KM;k++){ var X=px(k), Y=py(vals[k]); if(k===0) g.moveTo(X,Y); else g.lineTo(X,Y); }
+  g.stroke();
+  for(k=0;k<=KM;k++){
+    g.fillStyle=teal; g.globalAlpha=0.5;
+    g.beginPath(); g.arc(px(k),py(vals[k]),2.2,0,6.284); g.fill(); g.globalAlpha=1;
+  }
+  g.fillStyle=rose;
+  g.beginPath(); g.arc(px(K),py(vals[K]),5,0,6.284); g.fill();
+  capt(g,'k = '+K+' → '+f4(vals[K]),px(K),py(vals[K])-12,rose,12,true,
+       K>KM*0.7?'right':'left');
+
+  I('dm9o').textContent=d;
+  I('k9o').textContent=K;
+  I('dot9').textContent=f4(vals[K]);
+  I('rat9').textContent=f4(vals[K]/vals[0]);
+  I('var9').textContent=(hi-lo===0)?'0':sci(hi-lo);
+
+  var nxt=(K<KM)?Math.abs(vals[K]-vals[K+1]):Math.abs(vals[K]-vals[K-1]);
+  var relN=nxt/vals[0], other=(K<KM)?(K+1):(K-1);
+  I('nxt9').textContent=f4(nxt);
+  if(K===0)
+    verd('v9','t-mid','ВІДСТАНЬ НУЛЬОВА',
+      'Позиція сама із собою: добуток дорівнює <b>'+f4(vals[0])+'</b> = d/2, і це '+
+      'максимум. Посунь повзунок, щоб побачити, як він спадає.');
+  else if(relN>0.02)
+    verd('v9','t-ok','СУСІДНІ ВІДСТАНІ РОЗРІЗНЯЮТЬСЯ',
+      'Між k='+K+' і k='+other+' добуток міняється на <b>'+f4(nxt)+'</b> — це '+
+      f2(100*relN)+' % від максимуму, тож ці дві відстані код розрізняє. Розкид того '+
+      'самого добутку по 40 різних місцях речення — <b>'+((hi-lo===0)?'0':sci(hi-lo))+
+      '</b>: він справді залежить лише від k.');
+  else if(relN>0.005)
+    verd('v9','t-mid','РІЗНИЦЯ ДРІБНА',
+      'Між k='+K+' і k='+other+' добуток міняється лише на <b>'+f4(nxt)+'</b> — '+
+      f2(100*relN)+' % від максимуму. Розрізнити ці відстані ще можна, але ледве.');
+  else
+    verd('v9','t-no','ВІДСТАНІ ЗЛИЛИСЬ',
+      'Між k='+K+' і k='+other+' добуток міняється на <b>'+f4(nxt)+'</b> — усього '+
+      f2(100*relN)+' % від максимуму. Тут крива йде майже пласко, і сусідні великі '+
+      'відстані код між собою не розрізняє.');
+}
+
+/* ═══════════ фігура 11 · що кому дозволено бачити ═══════════ */
+var T11=8, REAL11=6, mask11=0;
+var WORD11=['&lt;eos&gt;','не','вдалося','зберегти','файл','диск','⋯','⋯'];
+
+function allowed11(i,j){
+  if(mask11===1 || mask11===3){ if(j>i) return false; }
+  if(mask11===2 || mask11===3){ if(j>=REAL11) return false; }
+  return true;
+}
+
+function draw11(){
+  var cv=I('c11'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var row=+I('row11').value, i, j;
+
+  var cell=30, x0=140, top=64;
+  capt(g,'на кого дивиться →',x0,26,ink,12,true);
+  capt(g,'хто дивиться',x0-12,top-24,ink,12,true,'right');
+
+  for(j=0;j<T11;j++){
+    var lbl=(j<REAL11)?String(j):'pad';
+    capt(g,lbl,x0+j*cell+cell/2,top-8,(j<REAL11)?soft:amber,10.5,false,'center');
+  }
+  for(i=0;i<T11;i++){
+    var live=(i<REAL11);
+    capt(g,(live?String(i)+' ':'pad '),x0-10,top+i*cell+cell/2+4,
+         (i===row)?rose:(live?soft:amber),11,(i===row),'right');
+    for(j=0;j<T11;j++){
+      var ok=allowed11(i,j), x=x0+j*cell, y=top+i*cell;
+      if(ok){
+        g.fillStyle=(i===row)?rose:teal; g.globalAlpha=(i===row)?0.55:0.22;
+        g.fillRect(x+1,y+1,cell-2,cell-2); g.globalAlpha=1;
+      } else {
+        g.strokeStyle=hair; g.lineWidth=1;
+        g.strokeRect(x+1.5,y+1.5,cell-3,cell-3);
+      }
+      if(i===row && j===i+1 && j<T11){
+        g.strokeStyle=amber; g.lineWidth=2.2;
+        g.strokeRect(x+1,y+1,cell-2,cell-2);
+      }
+    }
+  }
+  /* діагональ */
+  g.strokeStyle=ink; g.globalAlpha=0.3; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,top); g.lineTo(x0+T11*cell,top+T11*cell); g.stroke();
+  g.globalAlpha=1;
+
+  var ay=top+T11*cell+22;
+  var seesAnswer=(row+1<REAL11) && allowed11(row,row+1);
+  capt(g,'жовта рамка — клітинка, у якій лежить відповідь для цього рядка',x0,ay,soft,11);
+
+  var cnt=0, tot=0;
+  for(j=0;j<T11;j++) if(allowed11(row,j)) cnt++;
+  for(i=0;i<T11;i++) for(j=0;j<T11;j++) if(allowed11(i,j)) tot++;
+
+  I('row11o').textContent=(row<REAL11)?String(row):'pad';
+  I('allow11').textContent=cnt+' з '+T11;
+  I('tot11').textContent=tot+' з '+(T11*T11);
+
+  var seesPad=false;
+  for(j=REAL11;j<T11;j++) if(allowed11(row,j)) seesPad=true;
+
+  if(row>=REAL11)
+    verd('v11','t-mid','ЦЕ РЯДОК ДОПОВНЕННЯ',
+      'Позиція '+row+' — порожнє місце, доданe заради прямокутної пачки. Її вихід '+
+      'ніхто не читає, і у втрату він не потрапляє. Дозволено їй <b>'+cnt+
+      '</b> клітинок із '+T11+', і це нічого не міняє.');
+  else if(seesAnswer)
+    verd('v11','t-no','РЯДОК БАЧИТЬ ВІДПОВІДЬ',
+      'Рядку '+row+' дозволено дивитись на позицію '+(row+1)+' — а саме там лежить '+
+      'слово, яке він мусить угадати. Задача перетворилась на копіювання.'+
+      (seesPad?' Ще й порожні місця відкриті.':''));
+  else if(seesPad)
+    verd('v11','t-mid','ВІДПОВІДЬ ЗАКРИТА, ПОРОЖНЕЧА НІ',
+      'Своєї відповіді рядок '+row+' уже не бачить, зате бачить доповнення: увага '+
+      'витікає в порожні місця, які нічого не означають. Дозволено <b>'+cnt+
+      '</b> клітинок із '+T11+'.');
+  else
+    verd('v11','t-ok','ВИДНО ЛИШЕ МИНУЛЕ',
+      'Рядку '+row+' дозволено <b>'+cnt+'</b> '+plural(cnt,'клітинка','клітинки','клітинок')+
+      ' із '+T11+' — рівно він сам і те, що було раніше. Ні відповіді, ні порожнечі.');
+}
+
+/* ═══════════ фігура 13 · скільки в пачці порожнечі ═══════════ */
+var BS13=[16,32,64,128,256], bmode13=0, SHOWROWS=12;
+
+function draw13(){
+  var cv=I('c13'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var bs=BS13[+I('bs13').value];
+  var key=(bmode13===0?'random':'length')+'_'+bs;
+  var rec=PAD_TABLE[key];
+  var i, j;
+
+  /* довжини для картинки: беремо з тієї самої гістограми корпусу */
+  var rnd=LCG(4200+bs+bmode13*7), lens=[];
+  function sample(){
+    var u=rnd(), acc=0, k;
+    for(k=0;k<LEN_HIST.length;k++){ acc+=LEN_HIST[k]; if(u<=acc) return k+1; }
+    return LEN_HIST.length;
+  }
+  var pool=[]; for(i=0;i<SHOWROWS*4;i++) pool.push(sample());
+  if(bmode13===1){
+    pool.sort(function(a,b){return a-b;});
+    var st=Math.floor(rnd()*(pool.length-SHOWROWS));
+    lens=pool.slice(st,st+SHOWROWS);
+  } else {
+    lens=pool.slice(0,SHOWROWS);
+  }
+  var width=Math.max(2,Math.round(rec.meanw));
+  for(i=0;i<SHOWROWS;i++) if(lens[i]>width) lens[i]=width;
+
+  capt(g,'пачка на '+bs+' речень · показано '+SHOWROWS+' рядків',40,26,ink,12.5,true);
+  capt(g,'ширина пачки '+width+' клітинок',W-40,26,soft,11.5,false,'right');
+
+  var x0=40, x1=W-40, top=46, rh=Math.min(20,(H-top-52)/SHOWROWS);
+  var cw=(x1-x0)/width;
+  for(i=0;i<SHOWROWS;i++){
+    for(j=0;j<width;j++){
+      var real=(j<lens[i]);
+      g.fillStyle=real?teal:amber;
+      g.globalAlpha=real?0.55:0.16;
+      g.fillRect(x0+j*cw, top+i*rh, Math.max(1,cw-1.2), Math.max(1,rh-1.6));
+    }
+  }
+  g.globalAlpha=1;
+
+  var ly=top+SHOWROWS*rh+22;
+  g.fillStyle=teal; g.globalAlpha=0.55; g.fillRect(x0,ly-9,12,12); g.globalAlpha=1;
+  capt(g,'справжнє слово',x0+18,ly+1,soft,11);
+  g.fillStyle=amber; g.globalAlpha=0.16; g.fillRect(x0+140,ly-9,12,12); g.globalAlpha=1;
+  g.strokeStyle=amber; g.lineWidth=1; g.strokeRect(x0+140.5,ly-8.5,11,11);
+  capt(g,'доповнення',x0+158,ly+1,soft,11);
+
+  capt(g,'на всьому корпусі: порожніх '+f2(100*rec.share)+' % · клітинок '+
+       thou(rec.cells)+' проти '+thou(rec.real)+' справжніх',x0,H-14,ink,11.5,true);
+
+  I('bs13o').textContent=bs;
+  I('ps13').textContent=f2(100*rec.share)+' %';
+  I('ex13').textContent='×'+f2(rec.cells/rec.real);
+
+  if(rec.share<0.02)
+    verd('v13','t-ok','ПОРОЖНЕЧІ ПРАКТИЧНО НЕМАЄ',
+      'Речення схожої довжини стоять поруч, і доповнення лишається <b>'+
+      f2(100*rec.share)+' %</b>. Модель рахує <b>×'+f2(rec.cells/rec.real)+
+      '</b> від корисної роботи — тобто майже рівно її.');
+  else if(rec.share<0.5)
+    verd('v13','t-mid','ПОРОЖНЕЧІ ПОМІТНО',
+      'Доповнення займає <b>'+f2(100*rec.share)+' %</b> клітинок. Роботи виходить '+
+      '<b>×'+f2(rec.cells/rec.real)+'</b> від корисної — і вся вона марна.');
+  else
+    verd('v13','t-no','БІЛЬШІСТЬ КЛІТИНОК ПОРОЖНІ',
+      'Доповнення займає <b>'+f2(100*rec.share)+' %</b> — модель рахує <b>×'+
+      f2(rec.cells/rec.real)+'</b> від корисної роботи. Це вже втрачений час, ще до '+
+      'будь-яких масок.');
+}
+
+/* ═══════════ фігура 3 · профіль голови ═══════════ */
+var lay3=0;
+var BUCKETS3=['сама позиція','сусід зліва','через одне','на 3-5 назад','далі за 6'];
+
+function draw3(){
+  var cv=I('c3'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var prof=HEAD.prof[lay3], hsel=+I('head3').value, i, b;
+  var COLS=[soft,rose,teal,amber,ink];
+
+  capt(g,'куди йде вага уваги, шар '+(lay3+1),40,26,ink,12.5,true);
+
+  var x0=40, x1=W-210, top=48, bot=H-52;
+  var n=prof.length, bw=(x1-x0)/n*0.6, gap=(x1-x0)/n;
+  for(i=0;i<n;i++){
+    var bx=x0+i*gap+(gap-bw)/2, acc=0;
+    for(b=0;b<prof[i].length;b++){
+      var hgt=(bot-top)*prof[i][b];
+      g.fillStyle=COLS[b];
+      g.globalAlpha=(i===hsel)?0.85:0.30;
+      g.fillRect(bx,bot-acc-hgt,bw,hgt);
+      g.globalAlpha=1;
+      if(hgt>15) capt(g,f2(prof[i][b]),bx+bw/2,bot-acc-hgt/2+4,
+                      (i===hsel)?css('--paper'):soft,11,i===hsel,'center');
+      acc+=hgt;
+    }
+    g.strokeStyle=(i===hsel)?ink:hair; g.lineWidth=(i===hsel)?1.6:1;
+    g.strokeRect(bx+0.5,bot-acc+0.5,bw-1,acc-1);
+    capt(g,'голова '+(i+1),bx+bw/2,bot+18,(i===hsel)?rose:soft,12,i===hsel,'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+
+  /* легенда */
+  for(b=0;b<BUCKETS3.length;b++){
+    var ly=top+10+b*24;
+    g.fillStyle=COLS[b]; g.globalAlpha=0.8;
+    g.fillRect(x1+24,ly-9,12,12); g.globalAlpha=1;
+    capt(g,BUCKETS3[b],x1+42,ly+1,soft,11);
+  }
+
+  /* найбільший розрив між головами — по всіх частках, а не лише по сусідові */
+  var spread=0, sbucket=0, slo=0, shi=0;
+  for(b=0;b<prof[0].length;b++){
+    var lo=1, hi=0;
+    for(i=0;i<n;i++){ if(prof[i][b]<lo) lo=prof[i][b]; if(prof[i][b]>hi) hi=prof[i][b]; }
+    if(hi-lo>spread){ spread=hi-lo; sbucket=b; slo=lo; shi=hi; }
+  }
+  var elo=Math.min.apply(null,HEAD.ent[lay3]), ehi=Math.max.apply(null,HEAD.ent[lay3]);
+
+  I('head3o').textContent=(hsel+1);
+  I('p13').textContent=f4(prof[hsel][1]);
+  I('p03').textContent=f4(HEAD.first[lay3][hsel]);
+  I('e3').textContent=f4(HEAD.ent[lay3][hsel]);
+  I('sp3').textContent=f4(spread);
+
+  if(spread>0.15)
+    verd('v3','t-ok','ГОЛОВИ РІЗНІ',
+      'Найсильніше голови розходяться по частці «'+BUCKETS3[sbucket]+'»: від <b>'+
+      f4(slo)+'</b> до <b>'+f4(shi)+'</b>, розрив <b>'+f4(spread)+'</b>. Ентропія теж '+
+      'різна — від '+f4(elo)+' до '+f4(ehi)+': одні голови дивляться гостро, інші '+
+      'розмазують увагу.');
+  else if(spread>0.05)
+    verd('v3','t-mid','РІЗНИЦЯ Є, АЛЕ ПОМІРНА',
+      'Найбільший розрив між головами — по частці «'+BUCKETS3[sbucket]+'»: <b>'+
+      f4(spread)+'</b>. Профілі схожі, хоча й не однакові; ентропія від '+f4(elo)+
+      ' до '+f4(ehi)+'.');
+  else
+    verd('v3','t-no','ПРОФІЛІ ЗБІГАЮТЬСЯ',
+      'Найбільший розрив між головами всього <b>'+f4(spread)+'</b> — за цією міркою '+
+      'голови цього шару роблять одне й те саме.');
+}
+
+/* ═══════════ фігура 4 · розходження розподілів ═══════════ */
+var lay4=0;
+
+function draw4(){
+  var cv=I('c4'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var pairs=HEAD.pairs, vals=HEAD.js[lay4], base=HEAD.jsrand[lay4], i;
+
+  var mx=Math.max(0.693, Math.max.apply(null, vals)*1.15);
+  var x0=54, x1=W-40, top=52, bot=H-56;
+  capt(g,'розходження Єнсена — Шеннона між парами голів, шар '+(lay4+1),x0,26,ink,12.5,true);
+
+  for(i=0;i<=4;i++){
+    var v=mx*i/4, y=bot-(bot-top)*i/4;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,f2(v),x0-7,y+4,soft,10.5,false,'right');
+  }
+  var gap=(x1-x0)/pairs.length, bw=gap*0.56;
+  var mean=0, lo=Infinity, hi=-Infinity, loi=0, hii=0;
+  for(i=0;i<vals.length;i++){
+    mean+=vals[i]/vals.length;
+    if(vals[i]<lo){ lo=vals[i]; loi=i; }
+    if(vals[i]>hi){ hi=vals[i]; hii=i; }
+  }
+  for(i=0;i<pairs.length;i++){
+    var bx=x0+i*gap+(gap-bw)/2, hgt=(bot-top)*vals[i]/mx;
+    g.fillStyle=(vals[i]>base*2)?teal:rose; g.globalAlpha=0.72;
+    g.fillRect(bx,bot-hgt,bw,hgt); g.globalAlpha=1;
+    capt(g,f3(vals[i]),bx+bw/2,bot-hgt-8,ink,11.5,true,'center');
+    capt(g,pairs[i],bx+bw/2,bot+18,soft,11,false,'center');
+  }
+  /* лінія ненавченої моделі */
+  var yb=bot-(bot-top)*base/mx;
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=soft; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x0,yb+0.5); g.lineTo(x1,yb+0.5); g.stroke(); g.restore();
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=soft; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x1-186,top+27.5); g.lineTo(x1-160,top+27.5); g.stroke(); g.restore();
+  capt(g,'ненавчена модель: '+f3(base),x1-154,top+31,soft,11,true);
+  /* межа 0.693 */
+  var ym=bot-(bot-top)*0.693/mx;
+  if(ym>top-2){
+    g.save(); g.setLineDash([2,3]); g.strokeStyle=rose; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,ym+0.5); g.lineTo(x1,ym+0.5); g.stroke(); g.restore();
+    capt(g,'0.693 — розподіли без жодного спільного місця',x0+4,ym-6,rose,10.5);
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+  capt(g,'пара голів',x0,H-14,soft,10.5);
+
+  I('mj4').textContent=f4(mean);
+  I('rj4').textContent=f4(base);
+  I('lo4').textContent=pairs[loi]+' · '+f3(lo);
+  I('hi4').textContent=pairs[hii]+' · '+f3(hi);
+
+  var ratio=mean/base;
+  if(ratio>3)
+    verd('v4','t-ok','РОЗІЙШЛИСЬ ПО-СПРАВЖНЬОМУ',
+      'Середнє розходження <b>'+f4(mean)+'</b> проти <b>'+f4(base)+
+      '</b> у ненавченої моделі — у <b>'+f1(ratio)+'</b> раза більше. Це не випадковість '+
+      'старту, це результат навчання.');
+  else if(ratio>1.5)
+    verd('v4','t-mid','РОЗІЙШЛИСЬ ПОМІРНО',
+      'Середнє <b>'+f4(mean)+'</b> проти <b>'+f4(base)+'</b> у ненавченої — у <b>'+
+      f1(ratio)+'</b> раза. Різниця є, але вона не разюча.');
+  else
+    verd('v4','t-no','РОЗХОДЖЕННЯ НЕ ЗДОБУТЕ',
+      'Середнє <b>'+f4(mean)+'</b> майже дорівнює <b>'+f4(base)+
+      '</b> у ненавченої моделі. Голови розходяться не більше, ніж розійшлись '+
+      'випадкові ваги на старті.');
+}
+
+/* ═══════════ фігура 5 · гасимо голову ═══════════ */
+var lay5=0;
+
+function draw5(){
+  var cv=I('c5'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var vals=KNOCK.ppl[lay5], base=KNOCK.base, i;
+
+  var mx=Math.max.apply(null, vals)*1.12, mn=base*0.94;
+  var x0=62, x1=W-40, top=54, bot=H-58;
+  capt(g,'перплексія з вимкненою головою, шар '+(lay5+1),x0,26,ink,12.5,true);
+
+  for(i=0;i<=4;i++){
+    var v=mn+(mx-mn)*i/4, y=bot-(bot-top)*i/4;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,f1(v),x0-7,y+4,soft,10.5,false,'right');
+  }
+  var yb=bot-(bot-top)*(base-mn)/(mx-mn);
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=teal; g.lineWidth=1.6;
+  g.beginPath(); g.moveTo(x0,yb+0.5); g.lineTo(x1,yb+0.5); g.stroke(); g.restore();
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=teal; g.lineWidth=1.6;
+  g.beginPath(); g.moveTo(x1-150,top+9.5); g.lineTo(x1-124,top+9.5); g.stroke(); g.restore();
+  capt(g,'ціла модель: '+f2(base),x1-118,top+13,teal,11.5,true);
+
+  var gap=(x1-x0)/vals.length, bw=gap*0.5;
+  var lo=Infinity, hi=-Infinity, loi=0, hii=0;
+  for(i=0;i<vals.length;i++){
+    if(vals[i]<lo){ lo=vals[i]; loi=i; }
+    if(vals[i]>hi){ hi=vals[i]; hii=i; }
+  }
+  for(i=0;i<vals.length;i++){
+    var bx=x0+i*gap+(gap-bw)/2;
+    var hgt=(bot-top)*(vals[i]-mn)/(mx-mn);
+    g.fillStyle=(i===hii)?rose:teal; g.globalAlpha=(i===hii)?0.8:0.45;
+    g.fillRect(bx,bot-hgt,bw,hgt); g.globalAlpha=1;
+    capt(g,f1(vals[i]),bx+bw/2,bot-hgt-8,ink,12,true,'center');
+    capt(g,'+'+f1(vals[i]-base),bx+bw/2,bot-hgt-22,soft,10.5,false,'center');
+    capt(g,'голова '+(i+1),bx+bw/2,bot+18,soft,11.5,false,'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+
+  I('b5').textContent=f2(base);
+  I('mx5').textContent='голова '+(hii+1)+' · '+f1(hi);
+  I('mn5').textContent='голова '+(loi+1)+' · '+f1(lo);
+  I('gp5').textContent=f2(hi-lo);
+
+  var rel=(hi-lo)/(lo-base||1e-9);
+  if(hi-lo > 0.4*(lo-base) && lo>base)
+    verd('v5','t-ok','ГОЛОВИ НЕРІВНОЦІННІ',
+      'Найдорожча голова коштує <b>+'+f2(hi-base)+'</b> пункту перплексії, найдешевша — '+
+      '<b>+'+f2(lo-base)+'</b>. Розрив між ними <b>'+f2(hi-lo)+'</b>: голови роблять '+
+      'різне, і замінити одну одною не вийде.');
+  else if(hi-base > 1)
+    verd('v5','t-mid','ГОЛОВИ ПОТРІБНІ, АЛЕ РІВНОЦІННІ',
+      'Гасіння будь-якої коштує від <b>+'+f2(lo-base)+'</b> до <b>+'+f2(hi-base)+
+      '</b> — розкид усього <b>'+f2(hi-lo)+'</b>. Кожна щось несе, але незамінної '+
+      'серед них немає.');
+  else
+    verd('v5','t-no','ГОЛОВУ МОЖНА ВИКИНУТИ',
+      'Найдорожче гасіння коштує лише <b>+'+f2(hi-base)+'</b> пункту. Модель майже '+
+      'не помічає, що голови не стало.');
+}
+
+/* ═══════════ спільне малювання «дві купи зерен» ═══════════ */
+function twoBars(cvid, A, B, labA, labB, mode, unit){
+  var cv=I(cvid); if(!cv) return null;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var i, all=A.concat(B);
+  var mean=function(a){ var s=0,k; for(k=0;k<a.length;k++) s+=a[k]; return s/a.length; };
+  var mA=mean(A), mB=mean(B);
+  var lo=Math.min.apply(null, all), hi=Math.max.apply(null, all);
+  var pad=(hi-lo)*0.35+0.5;
+  var vmin=(mode===1)?lo-pad:0, vmax=hi+pad;
+
+  var x0=68, x1=W-40, top=52, bot=H-56;
+  function py(v){ return bot-(bot-top)*(v-vmin)/(vmax-vmin); }
+  for(i=0;i<=4;i++){
+    var v=vmin+(vmax-vmin)*i/4, y=py(v);
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,f1(v),x0-7,y+4,soft,10.5,false,'right');
+  }
+  capt(g,unit,x0-30,top-16,soft,10.5);
+
+  var sets=[[A,mA,labA,teal],[B,mB,labB,rose]];
+  var gap=(x1-x0)/2, bw=gap*0.42;
+  for(i=0;i<2;i++){
+    var bx=x0+i*gap+(gap-bw)/2, m=sets[i][1], arr=sets[i][0], k;
+    if(mode===0){
+      g.fillStyle=sets[i][3]; g.globalAlpha=0.55;
+      g.fillRect(bx,py(m),bw,bot-py(m)); g.globalAlpha=1;
+    }
+    var alo=Math.min.apply(null,arr), ahi=Math.max.apply(null,arr);
+    g.strokeStyle=sets[i][3]; g.lineWidth=1.6;
+    g.beginPath(); g.moveTo(bx+bw/2,py(alo)); g.lineTo(bx+bw/2,py(ahi)); g.stroke();
+    g.beginPath(); g.moveTo(bx+bw/2-9,py(alo)); g.lineTo(bx+bw/2+9,py(alo)); g.stroke();
+    g.beginPath(); g.moveTo(bx+bw/2-9,py(ahi)); g.lineTo(bx+bw/2+9,py(ahi)); g.stroke();
+    for(k=0;k<arr.length;k++){
+      g.fillStyle=sets[i][3];
+      g.beginPath(); g.arc(bx+bw/2+(k-(arr.length-1)/2)*7, py(arr[k]), 3.2, 0, 6.284); g.fill();
+    }
+    capt(g,f2(m),bx+bw/2,py(m)-14,ink,13,true,'center');
+    capt(g,sets[i][2],bx+bw/2,bot+18,sets[i][3],12,true,'center');
+    if(mode===1) capt(g,f2(alo)+'…'+f2(ahi),bx+bw/2,bot+34,soft,10.5,false,'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+
+  var loA=Math.min.apply(null,A), hiA=Math.max.apply(null,A);
+  var loB=Math.min.apply(null,B), hiB=Math.max.apply(null,B);
+  var overlap=!(hiA<loB || hiB<loA);
+  return {mA:mA,mB:mB,loA:loA,hiA:hiA,loB:loB,hiB:hiB,overlap:overlap};
+}
+
+/* ═══════════ фігура 6 · чотири голови проти однієї ═══════════ */
+var mode6=0;
+function draw6(){
+  var r=twoBars('c6', SEEDS.full, SEEDS.onehead, '4 голови', '1 голова', mode6, 'перплексія');
+  if(!r) return;
+  I('h4v').textContent=f2(r.mA);
+  I('h1v').textContent=f2(r.mB);
+  I('dh6').textContent=f2(r.mB-r.mA);
+  I('ov6').textContent=r.overlap?'так':'ні';
+  if(!r.overlap && r.mB>r.mA)
+    verd('v6','t-ok','ЧОТИРИ ГОЛОВИ ВИГРАЮТЬ',
+      'Розрив <b>'+f2(r.mB-r.mA)+'</b> пункту, купи по зернах не перетинаються ('+
+      f2(r.loA)+'…'+f2(r.hiA)+' проти '+f2(r.loB)+'…'+f2(r.hiB)+
+      '). Той самий бюджет параметрів, порізаний на чотири голови, працює краще.');
+  else if(!r.overlap)
+    verd('v6','t-no','ОДНА ГОЛОВА ВИГРАЄ',
+      'Одна голова дала <b>'+f2(r.mB)+'</b> проти <b>'+f2(r.mA)+
+      '</b> у чотирьох, і купи не перетинаються.');
+  else
+    verd('v6','t-mid','РІЗНИЦІ НЕМАЄ',
+      'Купи по зернах перетинаються ('+f2(r.loA)+'…'+f2(r.hiA)+' проти '+
+      f2(r.loB)+'…'+f2(r.hiB)+'), тож різниця в <b>'+f2(Math.abs(r.mB-r.mA))+
+      '</b> пункту не відрізняється від шуму.');
+}
+
+/* ═══════════ фігура 10 · з кодуванням і без ═══════════ */
+var mode10=0;
+function draw10(){
+  var r=twoBars('c10', SEEDS.full, SEEDS.nopos, 'з кодуванням', 'без кодування', mode10, 'перплексія');
+  if(!r) return;
+  I('pp10').textContent=f2(r.mA);
+  I('np10').textContent=f2(r.mB);
+  I('dd10').textContent=f2(r.mB-r.mA);
+  I('ov10').textContent=r.overlap?'так':'ні';
+  if(r.overlap)
+    verd('v10','t-mid','НА ЦЬОМУ КОРПУСІ РІЗНИЦІ НЕМАЄ',
+      'Купи по зернах перетинаються ('+f2(r.loA)+'…'+f2(r.hiA)+' проти '+
+      f2(r.loB)+'…'+f2(r.hiB)+'). Різниця в <b>'+f2(Math.abs(r.mB-r.mA))+
+      '</b> пункту менша за розкид, тож як різницю її читати не можна.');
+  else if(r.mB>r.mA)
+    verd('v10','t-ok','КОДУВАННЯ ДОПОМАГАЄ',
+      'Без нього перплексія гірша на <b>'+f2(r.mB-r.mA)+'</b> пункту, і купи не '+
+      'перетинаються ('+f2(r.loA)+'…'+f2(r.hiA)+' проти '+f2(r.loB)+'…'+f2(r.hiB)+').');
+  else
+    verd('v10','t-no','БЕЗ КОДУВАННЯ ВИЙШЛО КРАЩЕ',
+      'Модель без позиційного кодування дала <b>'+f2(r.mB)+'</b> проти <b>'+f2(r.mA)+
+      '</b>, і купи не перетинаються. На цьому корпусі позиція не окупається.');
+}
+
+/* ═══════════ фігура 12 · перплексія без причинної маски ═══════════ */
+var mode12=0;
+function draw12(){
+  var cv=I('c12'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var A=SEEDS.full, B=SEEDS.nocausal, i, k;
+  var mean=function(a){ var s=0,j; for(j=0;j<a.length;j++) s+=a[j]; return s/a.length; };
+  var mA=mean(A), mB=mean(B);
+
+  var x0=74, x1=W-40, top=54, bot=H-58;
+  function py(v){ return bot-(bot-top)*(Math.log(v)-Math.log(0.9))/(Math.log(mA*2.2)-Math.log(0.9)); }
+  var ticks=[1,3,10,30,100,300];
+  for(i=0;i<ticks.length;i++){
+    if(ticks[i]>mA*2.2) continue;
+    var y=py(ticks[i]);
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,String(ticks[i]),x0-7,y+4,soft,10.5,false,'right');
+  }
+  capt(g,'перплексія (логарифмічна шкала)',x0-40,top-18,soft,10.5);
+
+  var sets=[[A,mA,'причинна маска є',teal],[B,mB,'маски немає',rose]];
+  var gap=(x1-x0)/2, bw=gap*0.42;
+  for(i=0;i<2;i++){
+    var bx=x0+i*gap+(gap-bw)/2, arr=sets[i][0], m=sets[i][1];
+    g.fillStyle=sets[i][3]; g.globalAlpha=0.5;
+    g.fillRect(bx,py(m),bw,bot-py(m)); g.globalAlpha=1;
+    for(k=0;k<arr.length;k++){
+      g.fillStyle=sets[i][3];
+      g.beginPath(); g.arc(bx+bw/2+(k-(arr.length-1)/2)*7, py(arr[k]), 3.2, 0, 6.284); g.fill();
+    }
+    var txt=(mode12===0)? f2(m)
+          : ('≈ '+((m<1.5)?'один варіант':(Math.round(m)+' варіантів')));
+    capt(g,txt,bx+bw/2,py(m)-14,ink,13,true,'center');
+    capt(g,sets[i][2],bx+bw/2,bot+18,sets[i][3],12,true,'center');
+    capt(g,f2(Math.min.apply(null,arr))+'…'+f2(Math.max.apply(null,arr)),
+         bx+bw/2,bot+34,soft,10.5,false,'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+
+  if(mode12===1)
+    capt(g,'перплексія читається як «між скількома словами модель вагається»',
+         x0,H-14,soft,11);
+
+  I('rat12').textContent='у '+f1(mA/mB)+' раза';
+  if(I('m12')) I('m12').textContent=f2(mA);
+  if(I('n12')) I('n12').textContent=f2(mB);
+
+  verd('v12','t-no','ЦЕ НЕ ПЕРЕМОГА, А ВИТІК',
+    'Без маски перплексія падає з <b>'+f2(mA)+'</b> до <b>'+f2(mB)+
+    '</b> — у '+f1(mA/mB)+' раза. Модель не стала краще знати мову: вона знайшла '+
+    'відповідь у себе на вході й почала її списувати. Це число з чесним не '+
+    'порівнюване в жодну сторону.');
+}
+
+/* ═══════════ фігура 8 · глибина повертає порядок ═══════════ */
+function draw14(){
+  var cv=I('c14'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var L=+I('lay14').value, rec=null, base=null, i;
+  for(i=0;i<DEPTH.length;i++){
+    if(DEPTH[i].layers===L) rec=DEPTH[i];
+    if(DEPTH[i].layers===1) base=DEPTH[i];
+  }
+  if(!rec) return;
+
+  var NOISE=1e-6;                       /* рівень округлення float32 на цій шкалі */
+  var lo=Math.log(3e-8), hi=Math.log(1e-2);
+  var x0=78, x1=W-40, top=54, bot=H-58;
+  function py(v){ return bot-(bot-top)*(Math.log(Math.max(v,3e-8))-lo)/(hi-lo); }
+
+  capt(g,'зсув оцінок після перестановки префікса, шарів: '+L,x0,26,ink,12.5,true);
+  var ticks=[1e-7,1e-6,1e-5,1e-4,1e-3,1e-2];
+  for(i=0;i<ticks.length;i++){
+    var y=py(ticks[i]);
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,sci(ticks[i]),x0-7,y+4,soft,10.5,false,'right');
+  }
+  /* межа округлення */
+  var yn=py(NOISE);
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=soft; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x0,yn+0.5); g.lineTo(x1,yn+0.5); g.stroke(); g.restore();
+
+  var sets=[[rec.nopos,'без кодування',teal],[rec.pos,'з кодуванням',rose]];
+  var gap=(x1-x0)/2, bw=gap*0.42;
+  for(i=0;i<2;i++){
+    var bx=x0+i*gap+(gap-bw)/2, v=sets[i][0];
+    g.fillStyle=sets[i][2]; g.globalAlpha=0.6;
+    g.fillRect(bx,py(v),bw,bot-py(v)); g.globalAlpha=1;
+    capt(g,sci(v),bx+bw/2,py(v)-12,ink,12.5,true,'center');
+    capt(g,sets[i][1],bx+bw/2,bot+18,sets[i][2],12,true,'center');
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+  capt(g,'розмах самих оцінок '+f4(rec.scale)+' · пунктир — рівень округлення float32',
+       x0,H-14,soft,11);
+
+  var ratio=rec.nopos/base.nopos;
+  I('lay14o').textContent=L;
+  I('np14').textContent=sci(rec.nopos);
+  I('pp14').textContent=sci(rec.pos);
+  I('sc14').textContent=f4(rec.scale);
+  I('rt14').textContent=(L===1)?'—':('у '+thou(Math.round(ratio))+' разів');
+
+  if(rec.nopos<NOISE)
+    verd('v14','t-ok','ПОРЯДОК НЕВИДИМИЙ',
+      'Один причинний шар без кодування зсунувся на <b>'+sci(rec.nopos)+
+      '</b> при розмаху оцінок '+f4(rec.scale)+' — це нуль у межах float32. '+
+      'Перестановку префікса він не помітив зовсім.');
+  else
+    verd('v14','t-no','ПОРЯДОК ПРОСТУПИВ',
+      'Уже без жодного кодування зсув становить <b>'+sci(rec.nopos)+
+      '</b> — у '+thou(Math.round(ratio))+' разів більше, ніж на одному шарі. '+
+      'Причинна маска сама дала моделі канал для порядку, і глибина його розширює.');
+}
+
+/* ═══════════ звʼязування керувань ═══════════ */
+function drawAll(){
+  draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7();
+  draw8(); draw9(); draw10(); draw11(); draw12(); draw13(); draw14();
+}
+
+on('heads1','input',draw1);
+
+segment('seg2', function(i){ mode2=i; draw2(); });
+on('alpha2','input',draw2);
+
+segment('seg3', function(i){ lay3=i; draw3(); });
+on('head3','input',draw3);
+
+segment('seg4', function(i){ lay4=i; draw4(); });
+segment('seg5', function(i){ lay5=i; draw5(); });
+segment('seg6', function(i){ mode6=i; draw6(); });
+
+segment('seg7', function(i){ pe7=i; draw7(); });
+on('perm7','input',draw7);
+
+on('lay14','input',draw14);
+
+on('dm8','input',draw8);
+on('np8','input',draw8);
+on('dm9','input',draw9);
+on('k9','input',draw9);
+
+segment('seg10', function(i){ mode10=i; draw10(); });
+
+segment('seg11', function(i){ mask11=i; draw11(); });
+on('row11','input',draw11);
+
+segment('seg12', function(i){ mode12=i; draw12(); });
+
+segment('seg13', function(i){ bmode13=i; draw13(); });
+on('bs13','input',draw13);
+
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+  else if(mq.addListener) mq.addListener(drawAll);
+}
+var rt=null;
+window.addEventListener('resize', function(){
+  clearTimeout(rt); rt=setTimeout(drawAll, 120);
+});
+
+drawAll();
+
+})();
+
+</script>
+</body>
+</html>

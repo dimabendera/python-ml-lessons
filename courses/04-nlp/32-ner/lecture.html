@@ -1,0 +1,2457 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NER</title>
+<meta name="description" content="Розпізнавання іменованих сутностей — задача, у якій найзвичніша метрика бреше найгучніше. На описах 1733 пакетів, де 0.9786 токенів перевірної частини стоять поза сутностями, модель дає точність по токенах 0.9911 — тобто виграє в рубежу «усе O» 1.25 пункту й закриває трохи більше за половину доступного простору. F1 по сутностях за пʼятьма зернами — 0.7486, і всередині нього бачені в навчанні форми дають 0.8845, а небачені 0.3783. Словник, зібраний із самої навчальної частини й не навчений нічого, дає 0.8000 — більше за модель на всіх пʼятьох зернах. Тема пояснює BIO, чому мітка кожного токена залежить від сусідів, чому часткове влучання в межу — це дві помилки, а не пів, і що таке срібна розмітка, у якої одна адреса fonts.google.com породила 266 хибних міток, а виправлення прибрало 691 мітку з 2470 і не прибрало решти 0.0714. Окремий розділ — українська: точний газетир знаходить 158 уживань назв країн, лематизація піднімає до 476, з яких 309 — звичайні слова «того», «малі», «перу».">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code,
+td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 7 · Тема 32</p>
+    <h1>NER</h1>
+    <p class="stand">Розпізнавання іменованих сутностей виглядає як найпростіша
+      задача блоку: знайти в тексті імена, назви й місця. Насправді це задача,
+      у якій найзвичніша метрика бреше найгучніше — і робить це не помилково,
+      а <b>за побудовою</b>. Точність по токенах тут показує 99 %, і ці 99 %
+      нічого не означають. Тема про те, як улаштована розмітка, чому мітка
+      кожного слова залежить від сусідніх, і як міряти так, щоб число
+      відповідало тому, що ти насправді хочеш знати.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Іменована сутність — і чому це не пошук за словником</a></li>
+        <li><a href="#s2">BIO: навіщо «початок» окремо від «продовження»</a></li>
+        <li><a href="#s3">Мітка залежить від сусідів: заборонені переходи й CRF</a></li>
+        <li><a href="#s4">Точність по токенах під лупою</a></li>
+        <li><a href="#s5">F1 по сутностях: зсунута межа — це дві помилки</a></li>
+        <li><a href="#s6">Стенд: описи пакетів і срібна розмітка</a></li>
+        <li><a href="#s7">Що показав замір: 1.25 пункту</a></li>
+        <li><a href="#s8">Бачені форми проти небачених</a></li>
+        <li><a href="#s9">Рубіж «памʼять»: словник виграє в моделі</a></li>
+        <li><a href="#s10">Тип сутності важить більше за модель</a></li>
+        <li><a href="#s11">Стеля срібної розмітки</a></li>
+        <li><a href="#s12">Українська: відмінювання ламає газетир</a></li>
+        <li><a href="#s13">Українська: велика літера перестає бути ознакою</a></li>
+        <li><a href="#s14">Як це роблять насправді</a></li>
+        <li><a href="#s15">Межі нашого заміру</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../31-text-generation/lecture.html">← 31. Як модель породжує текст</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../33-question-answering/lecture.html">33. Question answering →</a></nav>
+  </div>
+</header>
+<main class="col">
+
+<p class="lead">Попередня тема показала, як модель <b>породжує</b> текст — і що
+правдоподібність продовження не є його якістю. Тут ми повертаємось до задачі,
+де правильна відповідь одна й записана в тексті: треба знайти в реченні власні
+назви й сказати, що з них чим є. Задача виглядає механічною, майже словниковою.
+І саме тому вона — найкращий приклад того, як звична метрика може показувати
+99 % і не означати нічого.</p>
+
+<p>Ця тема відкриває другу половину блоку про прикладні задачі. Далі йде
+тема <b>33 · Question answering</b>, де відповідь теж треба знайти в тексті,
+тільки не за типом, а за питанням. Усе, що ми тут скажемо про межі проміжків
+і про чесні метрики, там знадобиться знову.</p>
+
+<h2 id="s1"><span class="num">Розділ 1</span>Іменована сутність — і чому це не пошук за словником</h2>
+
+<p><b>Іменована сутність</b> (named entity) — це шматок тексту, який називає
+конкретну річ у світі: людину, організацію, місце, дату, продукт. Не «місто», а
+«Львів». Не «компанія», а «Укрзалізниця». Ключове слово тут — <b>конкретну</b>:
+слово «місто» описує клас, слово «Львів» показує пальцем на один об'єкт.</p>
+
+<p><b>Розпізнавання іменованих сутностей</b> (named entity recognition, NER) —
+задача знайти в тексті всі такі шматки й приписати кожному тип. На вході
+речення, на виході — список: де починається сутність, де закінчується, і якого
+вона типу.</p>
+
+<div class="eq left">Текст:   Компанія Adobe купила Figma за 20 мільярдів доларів.
+Вихід:   Adobe → ORG (позиції 9–14)
+         Figma → ORG (позиції 22–27)
+         20 мільярдів доларів → MONEY (позиції 31–52)</div>
+
+<p>Перша думка кожного, хто чує постановку: «то візьмімо список назв і пошукаймо
+його в тексті». Такий список зветься <b>газетир</b> (gazetteer) — слово прийшло
+з географії, де так називали покажчик назв на мапі. І газетир справді працює —
+рівно доти, доки не зустріне текст.</p>
+
+<p>Ламається він трьома різними способами, і кожен важливий.</p>
+
+<p><b>Перше: той самий рядок означає різне.</b> «Apple» — компанія в новині про
+акції й фрукт у рецепті. «Вашингтон» — людина, місто й штат. Словник цього не
+розрізняє в принципі: він бачить рядок, а не речення.</p>
+
+<p><b>Друге: сутність у списку відсутня.</b> Щодня зʼявляються нові компанії,
+нові товари, нові люди. Газетир завжди застарілий, і найцікавіші назви — саме
+ті, яких у ньому ще немає.</p>
+
+<p><b>Третє: у тексті слово стоїть не в тій формі, що в списку.</b> Для
+англійської це дрібниця, для української — головна проблема теми, і їй далі
+присвячено окремі два розділи.</p>
+
+<p>Тому NER — це не пошук за словником, а <b>класифікація в контексті</b>:
+рішення про кожне слово ухвалюється з огляду на сусідні слова. Фігура нижче
+показує ту саму думку на справжніх реченнях, узятих із описів програмних
+пакетів — саме на цьому тексті побудовано весь замір цієї теми.</p>
+
+<figure>
+  <p class="fig-head">Словник бачить рядок, людина бачить речення</p>
+  <p class="fig-sub">Чотири справжні речення з описів пакетів. Список назв
+    ухвалює рішення однаково в усіх чотирьох — і має рацію лише подекуди.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="270" data-lw="700" data-lh="270"></canvas>
+    <div>
+      <span class="cap">Речення</span>
+      <div class="seg wrap" id="seg1">
+        <button data-i="0" aria-pressed="true"><span class="raw">code</span></button>
+        <button data-i="1" aria-pressed="false"><span class="raw">Python</span></button>
+        <button data-i="2" aria-pressed="false"><span class="raw">fonts</span></button>
+        <button data-i="3" aria-pressed="false"><span class="raw">bash</span></button>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>Вердикт списку</b><i class="sm" id="o1a">—</i></div>
+        <div class="cellv"><b>Правильно</b><i class="sm" id="o1b">—</i></div>
+      </div>
+      <div class="verdict" id="v1"></div>
+    </div>
+  </div>
+  <figcaption>Список назв, зібраний із метаданих пакетів, підсвічує однакові
+    рядки скрізь однаково. У трьох реченнях із чотирьох він помиляється, і
+    помиляється <b>не через бідність списку, а через його природу</b>: у нього
+    немає доступу до речення.</figcaption>
+</figure>
+
+<div class="note"><b>Термін.</b> Далі в темі «сутність» завжди означає
+<b>іменовану</b> сутність — окремий шматок тексту з типом, а не абстрактне
+поняття. «Проміжок» (span) — пара чисел «звідки, докуди» в тексті.</div>
+
+<h2 id="s2"><span class="num">Розділ 2</span>BIO: навіщо «початок» окремо від «продовження»</h2>
+
+<p>Класифікатор уміє відповідати на питання про <b>один</b> об'єкт: цей лист —
+спам чи ні, це слово — іменник чи дієслово. А NER просить видати <b>список
+проміжків</b> змінної довжини. Ці дві форми не збігаються, і треба міст.</p>
+
+<p>Міст називається <b>BIO-розмітка</b> (BIO tagging) і придуманий він
+до нейромереж, у середині девʼяностих. Ідея одного речення: <b>замість шукати
+проміжки, ставимо мітку кожному токену</b>. Три букви:</p>
+
+<ul>
+  <li><code>B-ТИП</code> — beginning, <b>перший</b> токен сутності цього типу;</li>
+  <li><code>I-ТИП</code> — inside, <b>наступний</b> токен тієї самої сутності;</li>
+  <li><code>O</code> — outside, токен поза будь-якою сутністю.</li>
+</ul>
+
+<p>Тепер задача стала звичайною класифікацією: кожен токен дістає одну мітку з
+невеликого набору. Якщо типів три, набір має 3 × 2 + 1 = 7 міток.</p>
+
+<div class="eq left">Ерік    Йонсон  працює  в   Nokia  з   2019  року
+B-PER   I-PER   O       O   B-ORG  O   B-DATE O</div>
+
+<p>Зворотний перехід теж простий: біжимо по мітках зліва направо, кожен
+<code>B-</code> відкриває нову сутність, кожен <code>I-</code> того самого типу
+продовжує поточну, <code>O</code> закриває. Список проміжків відновлюється
+однозначно.</p>
+
+<h3>А навіщо взагалі <code>B-</code>, якщо є <code>I-</code>?</h3>
+
+<p>Це найчастіше питання до BIO, і відповідь на нього — єдина причина, чому
+схема виглядає саме так. Уяви, що ми лишили дві мітки: <code>I-ТИП</code>
+всередині сутності й <code>O</code> поза нею. Розмітимо речення, де дві
+однотипні сутності стоять <b>упритул</b>:</p>
+
+<div class="eq left">Ерік  Йонсон  Анна  Коваль
+I-PER I-PER   I-PER I-PER      ← два імені чи одне довге?</div>
+
+<p>Відновити список проміжків із такого рядка неможливо. Чотири підряд
+<code>I-PER</code> означають і «Ерік Йонсон» плюс «Анна Коваль», і одну
+чотирислівну сутність — розрізнити нічим. З <code>B-</code> двозначності
+немає:</p>
+
+<div class="eq left">Ерік  Йонсон  Анна  Коваль
+B-PER I-PER   B-PER I-PER      ← дві сутності, обидві по два слова</div>
+
+<p>Тобто <code>B-</code> існує рівно заради <b>однієї</b> ситуації: дві сусідні
+сутності одного типу. Ситуація рідкісна — і саме тому спокуса викинути
+<code>B-</code> така сильна, і саме тому її не можна викидати. Метрика впаде
+не на всіх прикладах, а на кількох, і саме на найважчих.</p>
+
+<figure>
+  <p class="fig-head">Що ламається без мітки «початок»</p>
+  <p class="fig-sub">Повзунок ділить чотири слова на сутності. Схема з
+    <span class="raw">B-</span> завжди відновлює той поділ, що був; схема без
+    <span class="raw">B-</span> — лише в одному положенні з чотирьох.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="260" data-lw="700" data-lh="260"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Токенів у першому імені <output id="k2o">2</output></label>
+        <input type="range" id="k2" min="1" max="4" step="1" value="2">
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>Схема BIO</b><i class="sm" id="o2a">—</i></div>
+        <div class="cellv"><b>Схема без <span class="raw">B-</span></b><i class="sm" id="o2b">—</i></div>
+      </div>
+      <div class="verdict" id="v2"></div>
+    </div>
+  </div>
+  <figcaption>Чотири токени й повзунок, що ділить їх на сутності. Схема BIO
+    читає поділ із мітки <span class="raw">B-</span> і відновлює його
+    правильно в усіх чотирьох положеннях. Схема без
+    <span class="raw">B-</span> бачить чотири однакові
+    <span class="raw">I-PER</span> завжди й тому завжди читає «одна сутність із
+    чотирьох слів» — тобто <b>має рацію лише в одному положенні з
+    чотирьох</b>.</figcaption>
+</figure>
+
+<h3>IOBES: те саме, тільки з чотирма буквами</h3>
+
+<p>Є розширення BIO, яке зветься <b>IOBES</b> (або BILOU — те саме іншими
+літерами). Воно додає дві мітки: <code>E-ТИП</code> для <b>останнього</b> токена
+сутності й <code>S-ТИП</code> для сутності <b>з одного</b> токена.</p>
+
+<div class="eq left">BIO:    B-PER I-PER I-PER   B-ORG
+IOBES:  B-PER I-PER E-PER   S-ORG</div>
+
+<p>Навіщо: у BIO модель, дійшовши до останнього слова сутності, ніяк не
+позначає, що воно останнє — кінець виводиться лише з того, що <b>наступний</b>
+токен уже не <code>I-</code>. IOBES робить кінець явним, і класифікатор дістає
+пряму мітку замість непрямої підказки.</p>
+
+<p>Коли це вигідно: коли сутності <b>довгі</b> й <b>багатослівні</b> — там
+права межа справді важка й окрема мітка для неї допомагає. Коли невигідно:
+коли сутності здебільшого однослівні. Тоді майже всі мітки стають
+<code>S-</code>, дві додаткові букви нічого не додають, а кількість класів
+зростає майже вдвічі — і кожен клас дістає менше прикладів. Наш корпус саме
+такий, тому далі скрізь звичайне BIO.</p>
+
+<h2 id="s3"><span class="num">Розділ 3</span>Мітка залежить від сусідів: заборонені переходи й CRF</h2>
+
+<p>Ми звели NER до класифікації кожного токена окремо — і тут же наштовхнулись
+на те, що <b>окремо</b> вона не класифікується. Мітки в BIO не незалежні: одні
+пари сусідніх міток можливі, інші не мають сенсу взагалі.</p>
+
+<p>Правило коротке: <b><code>I-ТИП</code> має право стояти лише після
+<code>B-ТИП</code> або <code>I-ТИП</code> того самого типу.</b> Усе інше —
+поламана послідовність:</p>
+
+<div class="eq left">O      I-PER    ← «продовження» без початку: чого воно продовження?
+B-ORG  I-PER    ← сутність почалась як організація, продовжилась як людина
+O      B-PER    ✓ нормально
+B-PER  I-PER    ✓ нормально
+I-PER  O        ✓ нормально: сутність закінчилась</div>
+
+<p>Класифікатор, який дивиться на кожен токен нарізно, цих правил не знає. Він
+може видати <code>O I-PER O</code> — і це не буде помилкою з його точки зору,
+бо кожне рішення ухвалювалось окремо й кожне окремо виглядало розумно.</p>
+
+<figure>
+  <p class="fig-head">Які переходи між мітками взагалі можливі</p>
+  <p class="fig-sub">Рядок — попередня мітка, стовпчик — наступна.
+    Два типи сутностей дають пʼять міток і 25 пар.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="250" data-lw="700" data-lh="250"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Пар усього</b><i id="o3a">—</i></div>
+        <div class="cellv"><b>Неможливих</b><i id="o3b">—</i></div>
+      </div>
+      <div class="verdict" id="v3"></div>
+    </div>
+  </div>
+  <figcaption>Правило одне: у клітинку <span class="raw">I-X</span> можна
+    прийти лише з <span class="raw">B-X</span> або <span class="raw">I-X</span>.
+    З одним типом неможлива 1 пара з 9, із двома — <b>6 із 25</b>, із чотирма —
+    24 з 81. Що більше типів, то більша частка простору міток, куди потрапляти
+    <b>не можна</b>, і то більше користі від моделі, яка про це знає.</figcaption>
+</figure>
+
+<h3>Структурне передбачення</h3>
+
+<p>Задача, у якій треба видати не одну мітку, а <b>узгоджену послідовність</b>
+міток, зветься <b>структурним передбаченням</b> (structured prediction).
+Різниця з поточковою класифікацією одна, але принципова: ми оцінюємо
+правдоподібність <b>усього рядка міток разом</b>, а не кожної мітки окремо.</p>
+
+<p>Найпоширеніший інструмент для цього — <b>CRF</b> (conditional random field,
+умовне випадкове поле). Пояснити його ідею можна без жодної нової математики,
+якщо взяти вже знайоме.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Крок 1 · що дає звичайний класифікатор</span>
+    <p>Для кожного токена <span class="raw">t</span> і кожної можливої мітки
+    <span class="raw">y</span> він видає число — наскільки ця мітка пасує цьому
+    токену. Назвімо його <b>оцінкою випромінювання</b>
+    (emission score) і запишімо як <span class="raw">E(t, y)</span>. Що більше
+    число, то краще мітка пасує.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 2 · додаємо оцінку переходу</span>
+    <p>CRF додає другу табличку: для кожної <b>пари</b> сусідніх міток
+    <span class="raw">(y′, y)</span> — число <span class="raw">T(y′, y)</span>,
+    наскільки природно, щоб після <span class="raw">y′</span> стояло
+    <span class="raw">y</span>. Ця табличка не залежить від тексту: вона
+    описує саму схему розмітки.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 3 · оцінка всього рядка</span>
+    <div class="eq">оцінка(рядок) = Σ E(t<span class="sub">i</span>, y<span class="sub">i</span>) + Σ T(y<span class="sub">i−1</span>, y<span class="sub">i</span>)</div>
+    <p>Знак <b>Σ</b> — «сума»: складаємо по всіх токенах речення. Перша сума —
+    наскільки кожна мітка пасує своєму слову. Друга — наскільки кожна пара
+    сусідніх міток пасує одна одній.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 4 · що з цього виходить</span>
+    <p>Якщо покласти <span class="raw">T(O, I-PER)</span> дуже великим
+    відʼємним числом, жоден рядок із таким переходом ніколи не набере
+    найбільшої оцінки. Заборонені переходи стають неможливими <b>механічно</b>,
+    а не завдяки тому, що модель здогадалась.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 5 · як знайти найкращий рядок</span>
+    <p>Перебирати всі рядки не можна: при 7 мітках і реченні на 30 токенів їх
+    7<span class="sup">30</span> — число з 25 нулів. Але оцінка розкладається
+    на доданки, кожен з яких дивиться <b>щонайбільше на дві сусідні</b> мітки,
+    і тоді працює динамічне програмування: йдемо зліва направо й для кожної
+    позиції та кожної мітки памʼятаємо лише найкращий шлях, який у неї
+    приводить. Це <b>алгоритм Вітербі</b>, і коштує він
+    <span class="raw">довжина × кількість_міток<span class="sup">2</span></span>
+    дій. Для 30 токенів і 7 міток — близько півтори тисячі операцій замість
+    числа з 25 нулів.</p>
+  </div>
+</div>
+
+<div class="note"><b>Де ти це вже бачив.</b> Той самий прийом — «замість
+перебору всіх послідовностей рахуємо найкращий шлях через ґратку» — стоїть за
+<code>beam search</code> у породженні тексту (тема <b>31 · Як модель породжує
+текст</b>). Різниця в тому, що Вітербі за такої структури дає <b>точну</b>
+відповідь, а <code>beam search</code> — наближену, бо там кожен наступний
+токен залежить від усіх попередніх, а не лише від сусіда.</div>
+
+<p>Практична вага CRF залежить від того, наскільки довгі сутності. Якщо майже
+всі вони однослівні, зв'язок між сусідніми мітками майже нічого не додає — ми
+це побачимо на числах у розділі 7. Якщо сутності багатослівні, CRF дає помітний
+виграш, і саме тому класична архітектура NER середини 2010-х зветься
+<b>BiLSTM-CRF</b>: рекурентна мережа дає оцінки випромінювання, CRF зшиває їх у
+несуперечливий рядок.</p>
+
+<h2 id="s4"><span class="num">Розділ 4</span>Точність по токенах під лупою</h2>
+
+<p>Ми звели NER до класифікації токенів. Значить, і міряти можна як
+класифікацію: скільки токенів дістали правильну мітку. Це <b>точність по
+токенах</b> (token accuracy), і вона — найприродніша метрика на світі.</p>
+
+<p>Вона ж і найбрехливіша, і причина одна: <b>переважна більшість токенів має
+мітку <code>O</code></b>. У звичайному тексті сутності — рідкість. Порахуймо
+руками на одному реченні.</p>
+
+<div class="eq left">Ерік  Йонсон  працює  в  Nokia  з  2019  року  в  Гельсінкі  .
+B-PER I-PER   O       O  B-ORG  O  B-DAT O     O  B-LOC     O</div>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Крок 1 · рахуємо мітки</span>
+    <p>Усього 11 токенів. Мітку <code>O</code> мають шість: «працює», «в», «з»,
+    «року», «в», крапка. Не-<code>O</code> — пʼять.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 2 · що дасть модель, яка нічого не вміє</b></span>
+    <p>Візьмімо модель, яка на все відповідає <code>O</code>. Вона вгадає шість
+    токенів із одинадцяти:</p>
+    <div class="eq">точність = 6 / 11 = 0.5455</div>
+    <p>На <b>цьому</b> реченні 0.5455 — так собі. Але речення підібране: сутності
+    в ньому займають майже половину слів. У справжньому тексті так не буває.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 3 · справжня частка</span>
+    <p>У нашому корпусі — описах 1733 програмних пакетів, 125 072 токени —
+    мітку <code>O</code> мають <b>0.9811</b> усіх токенів. Отже, модель, яка
+    відповідає <code>O</code> на все й не вміє взагалі нічого, дістає точність
+    по токенах близько <b>0.9811</b>. На тих конкретних перевірних вибірках,
+    де ми міряємо все інше, це число трохи нижче — <b>0.9786</b>, бо сутності
+    в них розподілені трохи густіше. Далі порівнюємо саме з ним: рубіж і
+    модель мусять міряти <b>ті самі документи</b>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 4 · скільки лишилось на здобуття</span>
+    <p>Максимум — 1.0000. Рубіж — 0.9786. Значить, <b>уся задача</b> вміщується
+    в проміжок завширшки</p>
+    <div class="eq">1.0000 − 0.9786 = 0.0214</div>
+    <p>Тобто дві сотих. Модель, яка покаже 0.99, «виграє» в нічого-не-вміючої
+    <b>трохи більше за пункт</b> — і по цьому числу неможливо зрозуміти, чи
+    вона розвʼязала задачу, чи ні.</p>
+  </div>
+</div>
+
+<p>Це не особливість нашого корпусу. Це властивість NER як задачі: сутності —
+рідкісна подія, а точність рахує <b>всі</b> події однаково. Метрика вимірює
+переважно те, наскільки добре модель ставить <code>O</code> там, де й так усе
+<code>O</code>.</p>
+
+<figure>
+  <p class="fig-head">Та сама пара чисел на двох шкалах</p>
+  <p class="fig-sub">Ліворуч шкала від 0 до 1 — так число показують у звіті.
+    Праворуч видно те, що насправді відбувається.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="250" data-lw="700" data-lh="250"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Нижня межа шкали <output id="k4o">0.00</output></label>
+        <input type="range" id="k4" min="0" max="100" step="1" value="0">
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>Рубіж «усе <span class="raw">O</span>»</b><i id="o4a">0.9786</i></div>
+        <div class="cellv"><b>Видима різниця</b><i id="o4b">—</i></div>
+      </div>
+      <div class="verdict" id="v4"></div>
+    </div>
+  </div>
+  <figcaption>Обидва стовпчики показують одні й ті самі числа: <b>0.9786</b> у
+    моделі, яка нічого не вміє, і <b>0.9911</b> у навченої. Змінюється лише
+    нижня межа осі. На повній шкалі стовпчики нерозрізненні — і саме в такому
+    вигляді точність по токенах потрапляє в звіти.</figcaption>
+</figure>
+
+<div class="note warn"><b>Загальне правило, а не про NER.</b> Точність чесна
+тільки тоді, коли класи приблизно рівні. Щойно один клас займає 90 % і більше,
+питання «яка точність?» треба замінити питанням «<b>яка точність порівняно з
+тим, що дає найдурніша відповідь?</b>». Різниця між цими двома числами і є
+результатом. Той самий підводний камінь чекає в
+<a href="../35-sentiment-in-production/lecture.html">аналізі тональності</a>,
+де класи в дикому корпусі бувають у співвідношенні десять до одного.</div>
+
+<h2 id="s5"><span class="num">Розділ 5</span>F1 по сутностях: зсунута межа — це дві помилки</h2>
+
+<p>Якщо точність по токенах не міряє того, що треба, — треба міряти те, що
+справді потрібне користувачеві. А користувачеві потрібен <b>список
+сутностей</b>. Отже, і міряти будемо списки.</p>
+
+<p><b>F1 по сутностях</b> (entity-level F1) рахується так: сутність вважається
+знайденою правильно, тільки якщо збіглися <b>і початок, і кінець, і тип</b>.
+Збіг «майже» не зараховується взагалі.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Крок 1 · три числа</span>
+    <p><b>TP</b> (true positive) — скільки передбачених сутностей точно збіглися
+    з еталонними. <b>FP</b> (false positive) — скільки передбачених не збіглися
+    ні з чим. <b>FN</b> (false negative) — скільки еталонних лишились
+    незнайденими.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 2 · precision і recall</span>
+    <div class="eq">precision = TP / (TP + FP) &nbsp;&nbsp;·&nbsp;&nbsp; recall = TP / (TP + FN)</div>
+    <p><b>Precision</b> відповідає на питання «зі всього, що модель назвала
+    сутністю, скільки нею справді є». <b>Recall</b> (повнота) — «зі всіх
+    справжніх сутностей скільки модель знайшла».</p>
+  </div>
+  <div class="step">
+    <span class="lbl">Крок 3 · F1 — це їхнє середнє</span>
+    <div class="eq">F1 = 2 · precision · recall / (precision + recall)</div>
+    <p>Не звичайне середнє, а <b>гармонійне</b>: воно тягнеться до меншого з
+    двох чисел. Якщо precision = 1.0, а recall = 0.1, звичайне середнє дало б
+    0.55, а F1 дає 2 · 1.0 · 0.1 / 1.1 = <b>0.1818</b>. Тобто система, яка
+    видає одну ідеально правильну сутність і мовчить про решту, високої оцінки
+    не дістане.</p>
+  </div>
+</div>
+
+<h3>Головна відмінність від точності</h3>
+
+<p>Тепер найважливіше в цьому розділі. Модель знайшла «Йонсон» там, де в
+еталоні «Ерік Йонсон». Скільки це помилок?</p>
+
+<p>Інтуїція каже: пів помилки, адже половину сутності модель узяла правильно.
+<b>Інтуїція неправильна.</b> Це <b>дві</b> помилки:</p>
+
+<ul>
+  <li>еталонна сутність «Ерік Йонсон» не знайдена — це <b>FN</b>;</li>
+  <li>вигадана сутність «Йонсон», якої в еталоні немає, — це <b>FP</b>.</li>
+</ul>
+
+<p>Одне зміщення межі псує обидва числа одразу: і precision, і recall. І це не
+жорстокість метрики, а точний опис того, що станеться далі за конвеєром. Якщо
+система витягує імена, щоб звірити їх із базою клієнтів, «Йонсон» без «Ерік»
+базу не знайде — так само, як не знайде її «Гельсінкі». Пів імені не є пів
+відповіді, воно є неправильна відповідь плюс втрачена правильна.</p>
+
+<figure>
+  <p class="fig-head">Зсунь межу — і побачиш, як платять обидві метрики</p>
+  <p class="fig-sub">Тип модель угадала. Помилилась лише в тому, де сутність
+    починається.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="290" data-lw="700" data-lh="290"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Початок імені в моделі <output id="k5o">Учора</output></label>
+        <input type="range" id="k5" min="0" max="2" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>Точність, токени</b><i id="o5a">—</i></div>
+        <div class="cellv"><b>F1, сутності</b><i id="o5b">—</i></div>
+      </div>
+      <div class="verdict" id="v5"></div>
+    </div>
+  </div>
+  <figcaption>Три еталонні сутності, десять токенів. У крайніх положеннях
+    повзунка тип вгадано правильно, зсунуто лише ліву межу — і <b>та сама
+    єдина</b> хиба дає одночасно вигадану сутність і пропущену. Точність по
+    токенах при цьому падає лише на два токени з десяти.</figcaption>
+</figure>
+
+<div class="note"><b>Строга схема й нестрога.</b> Бібліотека <code>seqeval</code>,
+якою міряють NER, уміє рахувати двома способами. <b>Нестрогий</b> (типовий)
+відновлює сутність навіть із поламаної послідовності: побачивши
+<code>O I-PER I-PER</code>, він усе одно вважає, що сутність почалась. <b>Строгий</b>
+(<code>mode='strict'</code>, схема <code>IOB2</code>) такий рядок вважає
+невалідним і сутності там не бачить. Числа виходять різні, і в звіті обовʼязково
+треба казати, який спосіб узято, — інакше два правильні заміри однієї системи
+розійдуться, і ніхто не зрозуміє чому.</div>
+
+<h2 id="s6"><span class="num">Розділ 6</span>Стенд: описи пакетів і срібна розмітка</h2>
+
+<p>Далі — числа. Щоб їх можна було читати, спершу треба чесно сказати, звідки
+взялась розмітка, бо в NER це головне питання, а не деталь.</p>
+
+<p>Розмічений корпус для української офлайн узяти нізвідки. Тому замір зроблено
+на тексті, який лежить на кожній машині з Linux: <b>описи встановлених
+програмних пакетів</b>. Це англійська технічна проза, писана людьми — не
+згенерована. Пакетів з описом на 20 і більше слів — <b>1733</b>, у них
+<b>125 072</b> токени.</p>
+
+<h3>Звідки взялись мітки</h3>
+
+<p>Ніхто цей текст спеціально не розмічав. Мітки <b>спроєктовані</b> з інших
+полів тієї самої бази пакетів — полів, які людина заповнювала окремо й
+для іншої мети:</p>
+
+<div class="scroll-x"><table class="plain">
+<thead><tr><th>Поле бази</th><th>Тип сутності</th><th>Що це насправді</th></tr></thead>
+<tbody>
+<tr><td>NAME</td><td><code>PROD</code></td><td>назва програмного продукту</td></tr>
+<tr><td>LICENSE</td><td><code>LIC</code></td><td>ідентифікатор ліцензії, здебільшого SPDX</td></tr>
+<tr><td>URL</td><td><code>ORG</code></td><td>реєстрована частина домену сайту проєкту</td></tr>
+</tbody></table></div>
+
+<p>Тобто з усіх 1733 записів зібрано три списки назв, а потім кожен опис
+просканували цими списками й позначили всі знайдені рядки. Такий спосіб
+розмічати зветься <b>срібна розмітка</b> (silver labels) — на противагу
+<b>еталонній розмітці</b> (ground truth), яку робить людина, читаючи саме цей
+текст.</p>
+
+<div class="note warn"><b>Це не еталон, і це сказано не для скромності.</b>
+Срібна розмітка робиться автоматично, тому вона <b>систематично</b> помиляється
+там, де помиляється автоматика — і жодне число, пораховане на ній, не може
+бути кращим за неї саму. Скільки саме вона коштує, ми порахуємо в розділі 11,
+і результат буде неприємний.</div>
+
+<figure>
+  <p class="fig-head">Як зроблено срібну розмітку</p>
+  <p class="fig-sub">Мітки не вигадані — їх написала людина, просто в іншому
+    полі й для іншої мети.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Записів у базі</b><i>1733</i></div>
+        <div class="cellv"><b>Рядків у газетирі</b><i>2116</i></div>
+        <div class="cellv"><b>Знайдено сутностей</b><i>1779</i></div>
+      </div>
+      <div class="verdict" id="v6"></div>
+    </div>
+  </div>
+  <figcaption>Три списки: <b>1643</b> назви продуктів, <b>277</b> доменів,
+    <b>196</b> ідентифікаторів ліцензій. Сканування описів цими списками
+    дає <b>1779</b> сутностей: <b>PROD</b> 1108, <b>ORG</b> 312,
+    <b>LIC</b> 359. Найдовший збіг виграє в коротшого; коли той самий
+    проміжок знайшли два списки, виграє <code>PROD</code>, потім
+    <code>ORG</code>, потім <code>LIC</code> — і це <b>рішення</b>, а не
+    істина, див. розділ 11.</figcaption>
+</figure>
+
+<h3>Що корпус собою являє</h3>
+
+<p>Два числа задають усе, що буде далі.</p>
+
+<p><b>Перше: 0.9811 усіх токенів мають мітку <code>O</code>.</b> Сутності
+займають <b>2369</b> токенів зі 125 072 — менш ніж дві сотих тексту. Сутність
+є взагалі не в кожному описі: щонайменше одну має <b>922</b> описи з 1733.</p>
+
+<p><b>Друге: 86.68 % сутностей — однослівні.</b> Довжина в токенах:
+1542 сутності з одного токена, 39 із двох, 130 з трьох, решта довші. Причому
+розподіл дуже різний за типами: серед ліцензій однослівних 99.16 %, серед
+доменів 98.72 %, а серед назв продуктів — <b>79.24 %</b>, і саме там
+трапляються довгі, аж до тринадцяти токенів.</p>
+
+<p>Із цих двох чисел одразу випливають два наслідки, які варто памʼятати,
+читаючи все подальше:</p>
+
+<ul>
+  <li>точність по токенах буде близька до одиниці <b>що б ми не робили</b>;</li>
+  <li>задача про <b>межі</b> тут майже відсутня: там, де сутність з одного
+    слова, ліва й права межі збігаються, і CRF нема що зшивати. Виграш від
+    структурного передбачення на такому корпусі буде малий, і це властивість
+    корпусу, а не CRF.</li>
+</ul>
+
+<p>І ще одне число, важливе для розділу 8: різних <b>поверхневих форм</b>
+сутностей у корпусі всього <b>487</b> на 1779 уживань. Тобто в середньому одна
+форма трапляється майже чотири рази. Корпус не такий різноманітний, як
+здається за кількістю сутностей.</p>
+
+<h3>Як міряли</h3>
+
+<p>Розбиття <b>за пакетом</b>: усі речення одного опису потрапляють цілком або в
+навчальну частину, або в перевірну. Інакше та сама назва траплялась би по
+обидва боки й перевірна вибірка міряла б памʼять, а не вміння. Частка
+80 / 20, пʼять зерен, звітуємо <b>купу значень</b> по зернах, а не одне
+середнє: різниця, менша за розкид, не є різницею.</p>
+
+<p>Модель навмисно проста — логістична регресія на віконних ознаках: саме
+слово, його форма (велика/мала літера, цифри), префікс і суфікс на три літери,
+довжина, і те саме про двох сусідів ліворуч і двох праворуч. Просту модель
+взято не з ліні: на ній видно, звідки береться кожне число, а головний сюжет
+теми — про метрику, а не про архітектуру.</p>
+
+<h2 id="s7"><span class="num">Розділ 7</span>Що показав замір: 1.25 пункту</h2>
+
+<p>Пʼять зерен, розбиття за пакетом, ті самі дані для всіх рядків таблиці.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>що міряємо</th><th>купа по 5 зернах</th><th>середнє</th></tr></thead>
+<tbody>
+<tr><td>рубіж «усе <span class="raw">O</span>» на перевірній частині</td><td>0.9764..0.9817</td><td>0.9786</td></tr>
+<tr class="hot"><td>точність по токенах</td><td>0.9900..0.9925</td><td>0.9911</td></tr>
+<tr class="hot"><td>F1 по сутностях, нестрого</td><td>0.7250..0.7683</td><td>0.7486</td></tr>
+<tr><td>F1 по сутностях, строго (IOB2)</td><td>0.7504..0.7911</td><td>0.7722</td></tr>
+<tr><td>— precision</td><td>0.7649..0.8489</td><td>0.8028</td></tr>
+<tr><td>— recall</td><td>0.6757..0.7310</td><td>0.7019</td></tr>
+<tr><td>послідовностей зі зламаним BIO</td><td>0.0431..0.0585</td><td>0.0492</td></tr>
+</tbody></table></div>
+
+<p>Дивимось на два підсвічені рядки. Одна модель, той самий прогін, ті самі
+виходи — і два числа, які розповідають різні історії:</p>
+
+<div class="eq">точність по токенах 0.9911 &nbsp;&nbsp;·&nbsp;&nbsp; F1 по сутностях 0.7486</div>
+
+<p>Перше число каже «майже ідеально». Друге каже «кожна четверта сутність
+зіпсована». Обидва правильні. Різниця в тому, <b>що вони рахують</b>.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">Скільки насправді здобуто</span>
+    <p>Рубіж — 0.9786. Стеля — 1.0000. Уся задача вміщується в
+    1.0000 − 0.9786 = <b>0.0214</b>. Модель узяла
+    0.9911 − 0.9786 = <b>0.0125</b> із цих 0.0214, тобто
+    0.0125 / 0.0214 = <b>0.5841</b> доступного простору.</p>
+    <p>Тобто чесне формулювання таке: «модель закрила трохи більше за половину
+    того, що взагалі можна було закрити». А в звіті це виглядало б як
+    «99.11 % точності» — і жоден читач не здогадався б, що йдеться про
+    половину.</p>
+  </div>
+</div>
+
+<div class="note warn"><b>Обережно з рубежем.</b> Частка токенів
+<code>O</code> у <b>всьому</b> корпусі — 0.9811, а на перевірних частинах вона
+0.9764..0.9817, у середньому 0.9786: перевірна вибірка щоразу інша, і густота
+сутностей у ній інша. Порівнювати точність, заміряну на перевірній частині, з
+рубежем, порахованим по всьому корпусу, — дрібне, але справжнє шахрайство:
+воно завищує здобуток моделі. Правильна пара — <b>0.9911 проти 0.9786</b>, і
+рахувати їх треба на <b>одних і тих самих</b> документах.</div>
+
+<h3>Строго чи нестрого</h3>
+
+<p>Два рядки з F1 у таблиці — та сама модель, той самий вихід, різниця лише в
+тому, як бібліотека читає поламані послідовності. Нестрогий режим дає
+<b>0.7486</b>, строгий — <b>0.7722</b>.</p>
+
+<p>Це не помилка й не парадокс. Зламаний BIO в передбаченні трапляється у
+<b>0.0492</b> послідовностей — приблизно кожен двадцятий опис містить перехід
+на кшталт <code>O I-PROD</code>. Строгий режим такі сутності просто не бачить —
+ані як правильні, ані як хибні. Здебільшого вони хибні, тому викидання їх
+<b>піднімає</b> число. Нестрогий режим намагається їх урятувати й тим псує
+собі precision.</p>
+
+<p>Практичний висновок один: <b>називай режим поруч із числом</b>. Різниця в
+два пункти — це більше, ніж різниця між багатьма моделями.</p>
+
+<h3>Куди йдуть помилки</h3>
+
+<p>Розкладімо всі 1742 еталонні сутності, які трапились у перевірних частинах
+пʼятьох зерен, за тим, що з ними сталось:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>що сталося з еталонною сутністю</th><th>скільки</th><th>частка</th></tr></thead>
+<tbody>
+<tr class="hot"><td>знайдена точно: межі й тип збіглися</td><td>1223</td><td>0.7021</td></tr>
+<tr class="hot"><td>пропущена: на її місці нічого не передбачено</td><td>396</td><td>0.2273</td></tr>
+<tr><td>межа хибна (тип угадано)</td><td>111</td><td>0.0637</td></tr>
+<tr><td>межа правильна, тип хибний</td><td>12</td><td>0.0069</td></tr>
+<tr><td>додатково: вигадано сутність, якої немає</td><td>149</td><td>0.0855</td></tr>
+</tbody></table></div>
+
+<p>Ця таблиця відповідає на питання, яке ми відклали в розділі 3: <b>чи потрібен
+тут CRF</b>. Помилок межі — 0.0637, помилок типу — 0.0069. Разом сім сотих.
+А пропусків — 0.2273, вигадок — 0.0855. Тобто модель майже не плутається в
+<b>структурі</b> відповіді; вона просто не знає, що перед нею сутність.</p>
+
+<p>CRF лікує саме структуру. На цьому корпусі йому мало що лікувати: 87 %
+сутностей однослівні, а отже й переходів між <code>B-</code> та
+<code>I-</code> майже немає. Це <b>не</b> аргумент проти CRF взагалі — це
+приклад того, як розподіл довжин сутностей у корпусі вирішує, який інструмент
+має сенс.</p>
+
+<figure>
+  <p class="fig-head">Куди діваються еталонні сутності</p>
+  <p class="fig-sub">1742 сутності з перевірних частин пʼятьох зерен.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="230" data-lw="700" data-lh="230"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Помилки структури</b><i id="o7a">0.0706</i></div>
+        <div class="cellv"><b>Помилки впізнавання</b><i id="o7b">0.3128</i></div>
+      </div>
+      <div class="verdict" id="v7"></div>
+    </div>
+  </div>
+  <figcaption>Помилки поділяються на два класи. <b>Структурні</b> — межа й
+    тип — разом дають 0.0706. <b>Впізнавання</b> — пропуски й вигадки — дають
+    0.3128. Модель, яка добудовує структуру відповіді, тут виправить у чотири
+    з половиною рази менше, ніж модель, яка краще впізнає сутності.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">Розділ 8</span>Бачені форми проти небачених</h2>
+
+<p>Тепер головне питання будь-якої системи NER: <b>вона впізнає назви чи
+згадує їх?</b></p>
+
+<p>Перевірка проста. Візьмімо всі сутності перевірної частини й розділімо їх
+надвоє за одним критерієм: чи траплялась така сама <b>поверхнева форма</b> —
+той самий рядок символів — як сутність у навчальній частині. Якщо
+траплялась, назвімо сутність <b>баченою</b>, якщо ні — <b>небаченою</b>. І
+порахуймо F1 окремо на кожній половині.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>сутності перевірної частини</th><th>купа по 5 зернах</th><th>середнє</th></tr></thead>
+<tbody>
+<tr class="hot"><td>F1, форми бачені в навчанні</td><td>0.8752..0.8947</td><td>0.8845</td></tr>
+<tr class="hot"><td>F1, форми небачені</td><td>0.3349..0.4509</td><td>0.3783</td></tr>
+<tr><td>повнота, бачені</td><td>0.8085..0.8840</td><td>0.8386</td></tr>
+<tr><td>повнота, небачені</td><td>0.2927..0.4333</td><td>0.3472</td></tr>
+</tbody></table></div>
+
+<p>Розрив — у <b>2.34 раза</b>, і купи не перетинаються навіть близько:
+найгірше зерно на бачених формах (0.8752) майже вдвічі краще за найкраще зерно
+на небачених (0.4509).</p>
+
+<p>Читати це треба буквально. Коли назва вже траплялась моделі — вона її
+впізнає майже завжди. Коли назва нова — модель має спиратись на саме те, заради
+чого ми відмовились від словника: на контекст, на форму слова, на сусідів. І
+спирається — 0.3783 це помітно більше за нуль, тобто щось із контексту вона
+таки вичавила. Але це більш ніж удвічі гірше за впізнавання знайомого
+рядка.</p>
+
+<figure>
+  <p class="fig-head">Знайома назва проти нової</p>
+  <p class="fig-sub">Пʼять зерен, кожне — окрема пара стовпчиків.</p>
+  <div class="panel">
+    <canvas id="c8" width="700" height="250" data-lw="700" data-lh="250"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Бачені, середнє</b><i>0.8845</i></div>
+        <div class="cellv"><b>Небачені, середнє</b><i>0.3783</i></div>
+      </div>
+      <div class="verdict" id="v8"></div>
+    </div>
+  </div>
+  <figcaption>Купи не перетинаються на жодному зерні: найгірший результат на
+    бачених формах — 0.8752, найкращий на небачених — 0.4509. Розкид усередині
+    «небачених» більший (0.3349..0.4509), бо самих таких сутностей мало й
+    кожна важить багато.</figcaption>
+</figure>
+
+<p>Це <b>та сама межа</b>, через яку ми відкинули газетир у розділі 1, тільки
+тепер видно її ціну числом. Модель, навчена на розмічених даних, теж будує собі
+внутрішній словник — просто не список рядків, а ваги при ознаці «саме це
+слово». І цей словник так само не містить того, чого в навчальних даних не
+було.</p>
+
+<div class="note"><b>Звідки береться така частка знайомого.</b> У нашій
+перевірній частині <b>0.7249</b> сутностей мають форму, вже бачену в навчанні.
+Тому загальне F1 (0.7486) стоїть значно ближче до «бачених» (0.8845), ніж до
+«небачених» (0.3783): у середньому зважується майже три знайомі сутності на
+одну нову. Змінити частку — і загальне число посунеться, хоч модель та сама. Отже,
+<b>саме по собі F1 системи NER не порівнянне між корпусами</b>, поки не
+названо, скільки в них нових назв.</div>
+
+<h2 id="s9"><span class="num">Розділ 9</span>Рубіж «памʼять»: словник виграє в моделі</h2>
+
+<p>Розділ 8 показав, що модель значно краще працює зі знайомими рядками. Тоді
+напрошується неприємне питання: <b>а якщо викинути модель і лишити самі
+знайомі рядки?</b></p>
+
+<p>Побудуймо рубіж, який не вміє нічого, крім памʼяті. Беремо навчальну
+частину, виписуємо звідти всі поверхневі форми сутностей разом із типами — і
+все. Ніякого навчання, ніяких ознак, ніякого контексту. На перевірній частині
+йдемо зліва направо й позначаємо кожен збіг із цим списком, довший збіг
+виграє в коротшого.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>зерно</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>середнє</th></tr></thead>
+<tbody>
+<tr><td>модель (логістична регресія)</td><td>0.7250</td><td>0.7586</td><td>0.7610</td><td>0.7299</td><td>0.7683</td><td>0.7486</td></tr>
+<tr class="hot"><td>словник із навчальної частини</td><td>0.7599</td><td>0.8080</td><td>0.8283</td><td>0.7873</td><td>0.8166</td><td>0.8000</td></tr>
+<tr><td>різниця на користь словника</td><td>+0.0349</td><td>+0.0494</td><td>+0.0673</td><td>+0.0574</td><td>+0.0483</td><td>+0.0514</td></tr>
+</tbody></table></div>
+
+<p><b>Словник виграє на всіх пʼятьох зернах.</b> Не в середньому — на кожному
+окремо, на тих самих поділах, з відривом від 0.0349 до 0.0673. Уся машинерія
+з мільйоном хешованих ознак, сусідами, префіксами й формою слова програє
+списку рядків.</p>
+
+<figure>
+  <p class="fig-head">Модель проти списку рядків</p>
+  <p class="fig-sub">Ті самі пʼять поділів. Пари, а не купи: кожне зерно
+    порівнюється саме з собою.</p>
+  <div class="panel">
+    <canvas id="c9" width="700" height="250" data-lw="700" data-lh="250"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Зерен, де виграв словник</b><i>5 / 5</i></div>
+        <div class="cellv"><b>Середній відрив</b><i>+0.0514</i></div>
+      </div>
+      <div class="verdict" id="v9"></div>
+    </div>
+  </div>
+  <figcaption>Словник має precision <b>0.8932</b> і повноту <b>0.7249</b>:
+    він майже не вигадує зайвого, зате не знає нічого нового. Модель, навпаки,
+    має нижчу precision (0.8028) — вона пробує вгадувати й помиляється.</figcaption>
+</figure>
+
+<h3>Перевірка власного числа</h3>
+
+<p>Висновок «словник виграє в моделі» надто гучний, щоб лишити його без
+перевірки. Він цілком може виявитись твердженням не про NER, а про <b>наш
+стенд</b>. Три контролі.</p>
+
+<p><b>Контроль перший: чи це не мій спосіб зіставляти?</b> Словник шукає
+найдовший збіг — може, саме це дає йому перевагу. Замінімо на найпримітивніше
+можливе: позначати тільки <b>однослівні</b> збіги, багатослівних не шукати
+взагалі. Виходить <b>0.7807</b> — усе одно вище за модель (0.7486). Справа не
+в зіставленні.</p>
+
+<p><b>Контроль другий: чи це не ця конкретна розмітка?</b> У цього корпусу є
+друга версія розмітки — та, що була до виправлення списку організацій (про
+неї весь наступний розділ). Сутностей у ній 2470 замість 1779, і майже
+третина з них — сміття, тобто корпус помітно інший. На ньому модель дає
+<b>0.8060</b>, а словник — <b>0.8501</b>. Відрив нікуди не подівся: різна
+розмітка, той самий висновок.</p>
+
+<p><b>А чи чесне саме порівняння?</b> Словник ручок налаштування не має
+взагалі, а модель має — і ми взяли її з першої спроби. Порівняння, у якому
+одна сторона налаштована, а друга ні, нічого не варте. Тому доберемо
+регуляризацію моделі як належить: на <b>відкладеній</b> частині навчальних
+даних (не на перевірній — це було б підглядання у відповідь) і логарифмічною
+сіткою, доки максимум не опиниться <b>всередині</b> діапазону:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>C</th><th>0.125</th><th>0.5</th><th>2</th><th>8</th><th>32</th><th>128</th><th>512</th></tr></thead>
+<tbody>
+<tr><td>F1 на відкладеній</td><td>0.5389</td><td>0.6157</td><td>0.6458</td><td>0.6516</td><td>0.6565</td><td>0.6431</td><td>0.6531</td></tr>
+</tbody></table></div>
+
+<p>Максимум — на <code>C = 32</code>, і він усередині сітки, а не на її краю,
+тобто це справді оптимум. Перевіряємо це <code>C</code> на тих самих пʼятьох
+зернах: <b>0.7379..0.7792</b>, середнє <b>0.7576</b> проти <b>0.7486</b> без
+добору. Виграш 0.0090 губиться всередині розкиду — тобто модель і не була
+недоглянута. Словник (0.8000) виграє й у налаштованої, з відривом 0.0424.</p>
+
+<p><b>Контроль третій — і він пояснює перші два.</b> Спитаймо просто: чи
+залежить мітка від контексту <b>в самій розмітці</b>? Для кожної однослівної
+форми, яка десь позначена сутністю, порахуймо, у якій частці своїх уживань у
+корпусі вона позначена сутністю, а в якій — ні:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>що рахуємо</th><th>значення</th></tr></thead>
+<tbody>
+<tr><td>однослівних форм, що бувають сутностями</td><td>325</td></tr>
+<tr><td>усіх їхніх уживань у корпусі</td><td>1682</td></tr>
+<tr class="hot"><td>із них позначено сутністю</td><td>1542 = 0.9168</td></tr>
+<tr class="hot"><td>форм, що дістають <b>різний тип</b> у різних місцях</td><td>0</td></tr>
+<tr><td>повнота словника</td><td>0.7249</td></tr>
+<tr><td>частка перевірних сутностей із баченою формою</td><td>0.7249</td></tr>
+</tbody></table></div>
+
+<p>Два останні рядки збігаються <b>до останнього знака</b>, і це не збіг
+обставин, а підпис. Словник ніколи не проґавлює форму, яку знає, — бо мітки
+зроблені тим самим зіставленням, яким він шукає. А перші два рядки кажуть, що
+мітка на 91.68 % визначається самим рядком символів, і <b>жодна форма не
+дістає двох різних типів</b> у різних реченнях.</p>
+
+<div class="note warn"><b>Що з цього чесно випливає.</b> На розмітці, зробленій
+проєкцією словника, <b>словник оптимальний за побудовою</b>. Будь-яка модель
+може щонайбільше зрівнятись із ним і не може його перевершити систематично.
+Тому наш стенд <b>не здатний</b> відповісти на питання «чи вміє модель читати
+контекст» — у мітках контексту майже немає, і вчитись йому нема на чому.
+Відповісти на це питання може лише корпус, розмічений людиною, яка читала саме
+цей текст.</div>
+
+<p>А ось на що стенд відповісти <b>здатний</b> — і відповідь від розмітки не
+залежить: точність по токенах на такій задачі майже насичена ще до того, як
+зʼявилась модель. Це властивість <b>метрики</b> й розподілу міток, а не того,
+хто ці мітки поставив. Це видно на двох версіях розмітки цього самого
+корпусу: у старій рубіж 0.9726 і точність 0.9906, у виправленій — 0.9786 і
+0.9911. Обидва числа піднялись, запас між ними впав із 0.0180 до 0.0125, а
+F1 по сутностях — із 0.8060 до 0.7486. Розрив між двома метриками не лише
+лишився, а й побільшав.</p>
+
+<div class="note"><b>І окремо — чому це не вирок NER.</b> Розділ 8 виміряв
+розрив «бачені проти небачених» <b>усередині</b> цього стенда, і там він
+чесний: модель справді знаходить нові назви більш ніж удвічі гірше за
+знайомі. Але число 0.3783 не можна переносити на справжній NER — воно
+заміряне на мітках, які самі зроблені словником. Правильний висновок звучить
+скромніше: <b>NER, навчений на автоматичній розмітці, успадковує від неї
+рівно те, що в ній є, — і не більше</b>.</div>
+
+<h2 id="s10"><span class="num">Розділ 10</span>Тип сутності важить більше за модель</h2>
+
+<p>Загальне F1 — 0.7486. Але воно складається з трьох дуже різних чисел, і
+розкид між ними більший за будь-яку різницю, яку ми могли б здобути зміною
+моделі.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>тип</th><th>що це</th><th>купа по 5 зернах</th><th>середнє</th></tr></thead>
+<tbody>
+<tr class="hot"><td>LIC</td><td>ідентифікатор ліцензії</td><td>0.9495..0.9863</td><td>0.9662</td></tr>
+<tr><td>ORG</td><td>домен проєкту</td><td>0.8414..0.9254</td><td>0.8879</td></tr>
+<tr class="hot"><td>PROD</td><td>назва програми</td><td>0.6066..0.6921</td><td>0.6446</td></tr>
+</tbody></table></div>
+
+<p>Різниця між <code>LIC</code> і <code>PROD</code> — <b>0.3216</b>. Для
+порівняння: перехід від нашої логістичної регресії до чогось радикально
+іншого зсунув би загальне число на одиниці сотих. Тип сутності важить на
+порядок більше.</p>
+
+<p>Причина не в моделі й не в кількості прикладів (<code>LIC</code> має 359
+сутностей, <code>PROD</code> — 1108, тобто втричі більше). Причина в тому,
+<b>наскільки закритий список</b>, з якого беруться назви цього типу.</p>
+
+<ul>
+  <li><b><code>LIC</code> — закритий список.</b> Ідентифікатори ліцензій
+    беруться зі стандартного переліку SPDX. Їх кілька сотень, вони мають
+    впізнавану форму (<code>GPL-2.0-or-later</code>, <code>BSD-3-Clause</code>,
+    <code>Apache-2.0</code>), нові зʼявляються рідко. Побачивши в навчанні сто
+    таких рядків, модель вивчає не сто рядків, а <b>візерунок</b>.</li>
+  <li><b><code>PROD</code> — відкритий список.</b> Назви програм вигадують
+    люди, щодня, без жодних правил. <code>ffmpeg</code>,
+    <code>ImageMagick</code>, <code>dracut</code>, <code>gvfs</code> — нічого
+    спільного, крім того, що це назви. Вивчити тут можна лише самі рядки.</li>
+</ul>
+
+<p>Тому й розділ 8 читається інакше залежно від типу: у <code>LIC</code> нова
+назва майже завжди схожа на бачені, у <code>PROD</code> — майже ніколи.</p>
+
+<div class="note warn"><b>Одна засторога до числа <code>LIC</code>, і вона
+з розділу 11.</b> Дві форми — <code>Python</code> і <code>Unicode</code> —
+дають 281 мітку <code>LIC</code> із 359, тобто <b>0.7827</b> усього типу, і
+обидві насправді є назвами продуктів: вони потрапили в список ліцензій із
+поля <code>LICENSE</code>. Тобто <b>0.9662</b> означає почасти не «модель
+упізнає ліцензії», а «модель вивчила два дуже частих рядки». Висновок про
+закритий і відкритий список від цього не падає — він тримається на
+порівнянні з <code>PROD</code>, — але саме число завищене, і цитувати його як
+оцінку розпізнавання ліцензій не можна.</div>
+
+<figure>
+  <p class="fig-head">Закритий список проти відкритого</p>
+  <p class="fig-sub">Один прогін, одна модель, три типи сутностей.</p>
+  <div class="panel">
+    <canvas id="c10" width="700" height="240" data-lw="700" data-lh="240"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Розрив LIC → PROD</b><i>0.3216</i></div>
+      </div>
+      <div class="verdict" id="v10"></div>
+    </div>
+  </div>
+  <figcaption>Тонка риска на кожному стовпчику — купа по пʼятьох зернах.
+    Купи <code>LIC</code> і <code>PROD</code> розділені величезним проміжком:
+    найгірше зерно <code>LIC</code> (0.9495) на 0.2574 вище за найкраще зерно
+    <code>PROD</code> (0.6921).</figcaption>
+</figure>
+
+<div class="note"><b>Практичний висновок, який переживе цю тему.</b> Плануючи
+систему NER, спитай про <b>кожен</b> тип окремо: цей список закритий чи
+відкритий? Для закритих (валюти, коди країн, ліцензії, одиниці виміру) часто
+достатньо словника й правил, і модель там нічого не додасть. Для відкритих
+(назви компаній, продуктів, людей) словник приречений, і саме туди варто
+витрачати і розмітку, і модель. Одне середнє число по всіх типах ховає обидва
+висновки.</div>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Стеля срібної розмітки</h2>
+
+<p>Ми обіцяли порахувати, скільки коштує автоматична розмітка. Рахуємо — і
+рахувати будемо на реальній історії, яка сталася з цим самим корпусом, поки
+писалася ця тема.</p>
+
+<h3>Як воно було спочатку</h3>
+
+<p>Список організацій збирали з поля <code>URL</code>: беремо адресу сайту
+проєкту, відкидаємо <code>www.</code> і беремо <b>першу</b> частину імені
+хоста. Для <code>gnu.org</code> це дає <code>gnu</code>, для
+<code>github.com</code> — <code>github</code>. Правило виглядає розумним і в
+більшості випадків працює.</p>
+
+<p>А тепер дивимось, що воно робило з рештою:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>адреса в полі URL</th><th>потрапляло в список</th><th>записів із такою адресою</th><th>міток у корпусі</th></tr></thead>
+<tbody>
+<tr class="hot"><td>fonts.google.com</td><td>fonts</td><td>1</td><td>266</td></tr>
+<tr class="hot"><td>scripts.sil.org</td><td>scripts</td><td>1</td><td>168</td></tr>
+<tr><td>packages.qa.debian.org</td><td>packages</td><td>1</td><td>134</td></tr>
+<tr><td>users.teilar.gr</td><td>users</td><td>1</td><td>59</td></tr>
+<tr><td>plugin.org.uk</td><td>plugin</td><td>1</td><td>41</td></tr>
+</tbody></table></div>
+
+<p>Один пакет, чия сторінка живе на <code>fonts.google.com</code>, поклав у
+список організацій звичайне англійське слово <b>fonts</b>. Після цього кожне
+його вживання в <b>будь-якому</b> описі ставало міткою <code>B-ORG</code> —
+усі 266 разів. Пʼять таких рядків давали разом <b>668</b> міток, тобто
+<b>0.2704</b> усієї розмітки корпусу.</p>
+
+<figure>
+  <p class="fig-head">Одна адреса, 266 хибних міток</p>
+  <p class="fig-sub">Ланцюжок, у якому кожна ланка окремо виглядає розумно.</p>
+  <div class="panel">
+    <canvas id="c11" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Пакетів-джерел</b><i>1</i></div>
+        <div class="cellv"><b>Породжених міток</b><i>266</i></div>
+        <div class="cellv"><b>Множник</b><i>266×</i></div>
+      </div>
+      <div class="verdict" id="v11"></div>
+    </div>
+  </div>
+  <figcaption>Помилки в срібній розмітці <b>не випадкові й не рідкісні</b>.
+    Кожен хибний рядок у списку розмножується стільки разів, скільки він
+    трапляється в текстах, — а найшкідливіші рядки саме ті, що збігаються зі
+    звичайними словами, тобто трапляються найчастіше.</figcaption>
+</figure>
+
+<h3>Як полагодили</h3>
+
+<p>Виправлення в один рядок: брати з імені хоста не першу частину, а
+<b>реєстровану</b> — ту, що стоїть перед доменом верхнього рівня.
+<code>fonts.google.com</code> дає <code>google</code>,
+<code>scripts.sil.org</code> — <code>sil</code>,
+<code>packages.qa.debian.org</code> — <code>debian</code>. Для адрес на кшталт
+<code>plugin.org.uk</code> треба ще й знати, що <code>org</code> у
+<code>.org.uk</code> — не імʼя організації, а частина зони.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th></th><th>перша частина хоста</th><th>реєстрована частина</th></tr></thead>
+<tbody>
+<tr><td>рядків у списку <code>ORG</code></td><td>360</td><td>277</td></tr>
+<tr><td>сутностей <code>PROD</code></td><td>1108</td><td>1108</td></tr>
+<tr class="hot"><td>сутностей <code>ORG</code></td><td>1003</td><td>312</td></tr>
+<tr><td>сутностей <code>LIC</code></td><td>359</td><td>359</td></tr>
+<tr class="hot"><td>усіх сутностей</td><td>2470</td><td>1779</td></tr>
+<tr><td>токенів усередині сутностей</td><td>3067</td><td>2369</td></tr>
+<tr><td>частка токенів <span class="raw">O</span></td><td>0.9755</td><td>0.9811</td></tr>
+<tr><td>описів, у яких є сутність</td><td>1060</td><td>922</td></tr>
+</tbody></table></div>
+
+<p>Зникла <b>691</b> сутність — <b>0.2798</b> усієї розмітки. Причому зникла
+вона <b>цілком із одного типу</b>: <code>PROD</code> і <code>LIC</code> не
+змінились ані на одиницю, бо їхні списки збирають з інших полів. Майже третина
+всіх міток корпусу була сміттям, і породила її одна необережна лінія в коді,
+яка стосувалась пʼятьох записів із 1733.</p>
+
+<figure>
+  <p class="fig-head">Скільки міток було сміттям</p>
+  <p class="fig-sub">Ті самі 1733 описи, той самий код проєкції — змінився
+    один рядок у правилі, яким збирали список організацій.</p>
+  <div class="panel">
+    <canvas id="c14" width="700" height="250" data-lw="700" data-lh="250"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Зникло сутностей</b><i>691</i></div>
+        <div class="cellv"><b>Частка розмітки</b><i>0.2798</i></div>
+      </div>
+      <div class="verdict" id="v14"></div>
+    </div>
+  </div>
+  <figcaption>Типи <code>PROD</code> і <code>LIC</code> не змінились зовсім —
+    їхні списки збирають із полів <code>NAME</code> і <code>LICENSE</code>, а
+    правило міняли лише для <code>URL</code>. Увесь збиток припав на
+    <code>ORG</code>: <b>691</b> сутність із 1003, тобто більш ніж дві
+    третини типу.</figcaption>
+</figure>
+
+<h3>І це не кінець: та сама вада лишилась, тільки рідша</h3>
+
+<p>Найважливіше в цій історії — не те, що ваду знайшли, а те, що після
+виправлення вона <b>не зникла</b>. Той самий пошук по виправленій розмітці
+знаходить те саме, тільки менше:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>адреса</th><th>у списку</th><th>записів</th><th>міток</th></tr></thead>
+<tbody>
+<tr><td>plugin.org.uk</td><td>plugin</td><td>1</td><td>41</td></tr>
+<tr><td>christophe.varoqui.free.fr</td><td>free</td><td>1</td><td>39</td></tr>
+<tr><td>web.archive.org</td><td>archive</td><td>1</td><td>25</td></tr>
+<tr><td>tiswww.case.edu</td><td>case</td><td>1</td><td>22</td></tr>
+</tbody></table></div>
+
+<p>Разом <b>127</b> міток, тобто <b>0.0714</b> нової розмітки: приблизно кожна
+чотирнадцята мітка й далі стоїть на звичайному англійському слові, яке
+потрапило в список через адресу одного-єдиного пакета. Було 0.2704, стало
+0.0714 — <b>у 3.8 раза менше й не нуль</b>.</p>
+
+<p>Останній рядок таблиці особливо повчальний. <code>tiswww.case.edu</code> —
+сайт Університету Кейс Вестерн Резерв, і виправлене правило витягло звідти
+<code>case</code> <b>абсолютно правильно</b>: це справді реєстрована частина
+домену й справді назва організації. Хибних міток однаково 22, бо «case» —
+звичайне англійське слово. Тобто друга половина цих помилок узагалі не є
+помилками правила: вона є наслідком того, що <b>назви організацій бувають
+звичайними словами</b>, а газетир не бачить речення. Це та сама думка, з якої
+починався розділ 1, — тільки тепер із ціною в мітках.</p>
+
+<div class="note warn"><b>Правило, ширше за цю тему.</b> Газетир, зібраний
+автоматично, не можна полагодити — його можна лише зробити менш хибним. Кожне
+виправлення прибирає той різновид помилки, який ти помітив, і лишає ті, яких
+не помітив. Тому питання до срібної розмітки не «чи вона правильна», а
+«<b>скільки в ній хибних міток і які саме</b>» — і відповідь на нього дає не
+скрипт, а читання очима.</div>
+
+<h3>А частина неоднозначності — справжня, і її не виправити взагалі</h3>
+
+<p>Другий різновид помилок виправити не можна в принципі, бо це не помилка, а
+властивість даних. Той самий рядок законно належить двом типам.</p>
+
+<p>Список ліцензій збирали, розбиваючи поле <code>LICENSE</code> по словах
+«and», «or» і «with». Для запису <code>python3-idna</code> там стоїть
+<code>BSD and Python and Unicode</code> — і в список ліцензій потрапили окремі
+рядки <b>Python</b> і <b>Unicode</b>. Далі в описі пакета <code>libdb</code>
+стоїть речення:</p>
+
+<div class="eq left">It is used by many applications, including Python and Perl.
+                                          B-LIC       O</div>
+
+<p>Тут <b>Python</b> — очевидно назва продукту, а не ліцензії. Природний хід —
+викинути з газетира рядки, що є водночас іменами пакетів. Але тоді разом із
+хибними полетять і правильні: <code>curl</code>, <code>ImageMagick</code>,
+<code>libtiff</code> справді є <b>і</b> програмами, <b>і</b> назвами
+ліцензій, під якими вони випущені.</p>
+
+<p>Тому ухвалено інше рішення: коли той самий проміжок знайшли два списки,
+виграє <code>PROD</code>, потім <code>ORG</code>, потім <code>LIC</code>. Це
+<b>рішення, а не істина</b> — і воно допомагає лише там, де рядок стоїть у
+двох списках одразу. У випадку <b>Python</b> не допомагає взагалі: імені
+пакета <code>Python</code> у базі немає (є <code>python3</code>,
+<code>python3-idna</code>), тож змагатись нема з чим, і всі 143 вживання й далі
+позначені як <code>LIC</code>. Разом із 138 вживаннями <b>Unicode</b> це
+<b>281</b> мітка з 359, тобто <b>0.7827</b> усього типу <code>LIC</code>.</p>
+
+<div class="note warn"><b>Це треба памʼятати, читаючи розділ 10.</b> Високе
+число <code>LIC</code> частково означає не «модель добре впізнає ліцензії», а
+«модель добре вивчила, що рядок <code>Python</code> у цьому корпусі має мітку
+<code>LIC</code>». Мітка стабільна, тому модель її вивчає, а оцінка схвалює.
+Висновок розділу 10 — <b>закритий список легший за відкритий</b> — від цього
+не падає: він тримається на порівнянні з <code>PROD</code>, де такої
+неоднозначності немає. Але саме число <code>LIC</code> завищене.</div>
+
+<p>І все ж срібна розмітка — не помилка, а компроміс. Для більшості мов світу,
+української зокрема, великих розмічених людиною корпусів NER просто немає, а
+розмітити сто тисяч токенів вручну — це місяці роботи фахівця. Автоматична
+проєкція дає щось замість нічого. Умова одна, і вона нежорстка тільки на
+перший погляд: <b>сказати вголос, що розмітка срібна, назвати відомі хиби
+числом і не робити висновків, які ці хиби не витримають</b>.</p>
+
+<h2 id="s12"><span class="num">Розділ 12</span>Українська: відмінювання ламає газетир</h2>
+
+<p>Усе попереднє міряно на англійському тексті — не тому, що українська менш
+важлива, а тому, що розміченого українського корпусу NER офлайн узяти
+нізвідки. Але одну річ показати можна й треба, бо вона змінює задачу
+принципово.</p>
+
+<p>В англійській назва в тексті виглядає так само, як у довіднику. «Google»
+у списку, «Google» у реченні. Тому газетир, попри всі свої вади з розділу 1,
+хоч <b>знаходить</b> те, що знає.</p>
+
+<p>В українській — ні. Назва в тексті майже завжди стоїть у непрямому
+відмінку:</p>
+
+<div class="eq left">довідник:  Київ
+у тексті:  у Києві · до Києва · над Києвом · Києву · Києвом</div>
+
+<p>Слово «Київ» у своєму ж місті не трапляється жодного разу в тій формі, яка
+записана в довіднику, — крім заголовків і підписів. Точний пошук по рядку
+знайде нуль.</p>
+
+<h3>Скільки саме форм</h3>
+
+<p>Довідник, на якому це можна порахувати, лежить на кожній машині: українські
+переклади міжнародних кодів <code>iso-codes</code> — назви країн, мов, валют,
+систем письма. Разом <b>1420</b> назв: 425 країн, 488 мов, 179 валют, 182
+системи письма, 115 мовних сімей, 31 колишня країна.</p>
+
+<p>Візьмімо однослівні назви країн — їх 172 із 425 — і розгорнімо кожну в усі
+відмінкові форми:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>назва</th><th>форм</th><th>спільний початок усіх форм</th><th>форми</th></tr></thead>
+<tbody>
+<tr><td>Німеччина</td><td>6</td><td>німеччин</td><td>німеччина, німеччини, німеччині, німеччину, німеччино, німеччиною</td></tr>
+<tr><td>Франція</td><td>5</td><td>франці</td><td>франція, франції, францію, франціє, францією</td></tr>
+<tr><td>Польща</td><td>5</td><td>польщ</td><td>польща, польщі, польщу, польще, польщею</td></tr>
+<tr class="hot"><td>Київ</td><td>8</td><td>ки</td><td>київ, києва, києву, києві, києве, києвом, київа, київі</td></tr>
+</tbody></table></div>
+
+<p>Медіана — <b>5</b> форм на назву, середнє 5.15, максимум 12. Тобто точний
+пошук у середньому бачить <b>одну форму з пʼятьох</b>.</p>
+
+<p>Напрошується очевидне лікування: шукати не за цілим словом, а за
+<b>початком</b> — «німеччин», «франці», «польщ». І для 97.67 % назв це
+працює: усі їхні форми справді мають спільний початок хоча б на чотири літери.</p>
+
+<p>А для решти — ні, і рядок «Київ» у таблиці показує чому. При відмінюванні
+<b>і</b> в закритому складі переходить у <b>е</b>: «Київ», але «Києва». Тому
+спільний початок усіх восьми форм — жалюгідні дві літери «ки», під які
+підпадають «кит», «кишеня», «кислота» й пів словника. Це загальне українське
+чергування (Львів — Львова, Харків — Харкова, ніч — ночі), і воно вражає саме
+власні назви, тобто саме те, що нам потрібно.</p>
+
+<h3>Другий очевидний хід — і чому він гірший</h3>
+
+<p>Раз є морфологічний аналізатор, зведімо кожне слово тексту до початкової
+форми (леми) і шукаймо вже її. Перевіримо це на справжньому тексті: корпус
+українських перекладів програмних повідомлень, <b>93 392</b> рядки. Шукаємо в
+ньому 187 однослівних назв країн двома способами.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>спосіб пошуку</th><th>знайдено вживань</th><th>різних назв</th><th>із них справжніх</th><th>точність</th></tr></thead>
+<tbody>
+<tr><td>точний збіг рядка</td><td>158</td><td>38</td><td>155</td><td>0.9810</td></tr>
+<tr class="hot"><td>збіг за лемою</td><td>476</td><td>43</td><td>167</td><td>0.3508</td></tr>
+</tbody></table></div>
+
+<p>Лематизація підняла кількість знахідок утричі. Справжніх серед них додалось
+<b>дванадцять</b>. Решта — <b>306</b> хибних спрацювань, і от найчастіші:</p>
+
+<div class="eq left">того   → «Того» (країна)      186 разів      насправді: займенник «того»
+малі   → «Малі» (країна)      104 рази       насправді: прикметник «малий»
+перу   → «Перу» (країна)       18 разів      насправді: «пера», «пером»</div>
+
+<p>Українські назви країн — омоніми звичайних слів, і <b>відмінювання цю
+омонімію створює</b>. У називному відмінку «Того» ще відрізняється від «того»
+великою літерою. Щойно ми звели все до леми, велика літера зникла разом із
+відмінком, і разом із нею — остання підказка.</p>
+
+<p>Разом виходить обмін, який завжди варто рахувати перед тим, як робити:
+точність упала з <b>0.9810</b> до <b>0.3508</b>, тобто на 0.6302, — і заплачено
+це за <b>дванадцять</b> додаткових справжніх знахідок. Чотири назви країн
+зіпсували дві третини всього результату.</p>
+
+<figure>
+  <p class="fig-head">Два способи шукати назву в українському тексті</p>
+  <p class="fig-sub">93 392 рядки повідомлень, 187 однослівних назв країн.</p>
+  <div class="panel">
+    <canvas id="c12" width="700" height="260" data-lw="700" data-lh="260"></canvas>
+    <div>
+      <span class="cap">Спосіб</span>
+      <div class="seg" id="seg12">
+        <button data-i="0" aria-pressed="true">точно</button>
+        <button data-i="1" aria-pressed="false">за лемою</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>Знайдено</b><i id="o12a">158</i></div>
+        <div class="cellv"><b>Справжніх</b><i id="o12b">155</i></div>
+      </div>
+      <div class="verdict" id="v12"></div>
+    </div>
+  </div>
+  <figcaption>Зелена частина стовпчика — справжні згадки країн, рожева —
+    звичайні слова, помилково прийняті за назви. Лематизація додає
+    <b>12</b> справжніх знахідок і <b>306</b> хибних.</figcaption>
+</figure>
+
+<h3>І третя біда: межі</h3>
+
+<p>Багатослівна назва українською відмінюється <b>цілком</b>, усіма словами
+одразу:</p>
+
+<div class="eq left">називний: Сполучені   Штати    Америки
+родовий:  Сполучених  Штатів   Америки</div>
+
+<p>Багатослівних серед назв країн — <b>235</b> із 425, тобто
+<b>0.5529</b>. Для англійської «United States of America» будь-де в тексті
+виглядає однаково; для української кожне слово змінюється, і газетир мусить
+зберігати не назву, а всі її форми в усіх комбінаціях. Саме тому в українському
+NER межі сутностей — окрема справжня проблема, а не той дрібний залишок на
+0.0441, який ми бачили в розділі 7 на англійському тексті.</p>
+
+<h2 id="s13"><span class="num">Розділ 13</span>Українська: велика літера перестає бути ознакою</h2>
+
+<p>Є ще одна різниця, тихіша за відмінювання й тому небезпечніша. У NER для
+англійської найсильніша окрема ознака — <b>велика літера</b>. Власні назви
+пишуться з великої, звичайні слова — ні, крапка. Половина роботи зроблена ще
+до того, як модель щось вивчила.</p>
+
+<p>Українська правопис у цьому місці інший, і не «трохи», а системно. Порахуймо
+на тому самому довіднику <code>iso-codes</code>, де кожна назва є парою
+«англійська — українська», тобто той самий зміст двома мовами:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>категорія назв</th><th>скільки</th><th>з великої, англ.</th><th>з великої, укр.</th></tr></thead>
+<tbody>
+<tr><td>країни</td><td>425</td><td>0.9953</td><td>0.9929</td></tr>
+<tr class="hot"><td>мови</td><td>488</td><td>1.0000</td><td>0.1209</td></tr>
+<tr class="hot"><td>системи письма</td><td>182</td><td>1.0000</td><td>0.0055</td></tr>
+<tr><td>валюти</td><td>179</td><td>1.0000</td><td>0.9944</td></tr>
+</tbody></table></div>
+
+<p>Дивимось на два підсвічені рядки. <b>Мови</b>: англійською «Ukrainian»,
+«Polish», «Japanese» — усі з великої, усі 488. Українською «українська»,
+«польська», «японська» — з великої лише 0.1209, і це переважно назви на
+кшталт «Кечуа», де слово саме є власною назвою. <b>Системи письма</b>:
+«Cyrillic» проти «кирилиця» — з великої 0.0055, тобто одна назва зі 182.</p>
+
+<div class="note warn"><b>Чесна засторога до цієї таблиці.</b> Рядки «країни» і
+«валюти» довіряти можна не повністю: у довіднику кожна назва стоїть як
+<b>окремий запис списку</b>, а записи списку прийнято починати з великої
+літери незалежно від правопису. «Алжирський динар» у реченні пишеться з малої.
+Тому 0.9944 для валют — це властивість <b>формату довідника</b>, а не мови.
+А от нулі й одиниці в рядках «мови» й «системи письма» саме мовні: там
+українська пише з <b>малої</b> навіть у форматі, який штовхає до великої.</div>
+
+<p>Наслідок для моделі прямий. Ознака «слово починається з великої літери» в
+англійському NER відсіює величезну частину кандидатів безкоштовно. В
+українському вона:</p>
+
+<ul>
+  <li><b>не спрацьовує</b> на цілих класах назв — мови, національності, назви
+    місяців і днів тижня, більшість прикметників від власних назв
+    («київський», «львівський»);</li>
+  <li><b>дає хибні спрацювання</b> на першому слові кожного речення — а речень
+    у тексті багато, і в українському реченні початкове слово частіше є
+    звичайним словом, ніж назвою.</li>
+</ul>
+
+<figure>
+  <p class="fig-head">Та сама назва, дві мови, різний правопис</p>
+  <p class="fig-sub">Частка назв, що починаються з великої літери.</p>
+  <div class="panel">
+    <canvas id="c13" width="700" height="250" data-lw="700" data-lh="250"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>Розрив на мовах</b><i>0.8791</i></div>
+        <div class="cellv"><b>Розрив на письмі</b><i>0.9945</i></div>
+      </div>
+      <div class="verdict" id="v13"></div>
+    </div>
+  </div>
+  <figcaption>Для країн і валют велика літера працює однаково в обох мовах. Для
+    назв мов і систем письма англійська дає ознаку задарма, а українська не
+    дає її зовсім: 1.0000 проти 0.1209 і 1.0000 проти 0.0055.</figcaption>
+</figure>
+
+<p>Разом три українські особливості складаються в одну вимогу: <b>для
+української NER не можна брати систему, налаштовану на англійську, і чекати,
+що вона працюватиме гірше на кілька пунктів</b>. Вона працюватиме інакше —
+губитиме назви через відмінки, вигадуватиме їх на початку речень і не
+відрізнятиме «Того» від «того». Що з цим роблять: беруть субслівні
+токенізатори, які самі виділяють спільний початок слова; додають морфологічний
+розбір як <b>ознаку</b>, а не як заміну тексту; і розмічають хоч трохи
+власних даних, бо перенесений із англійської словник тут не працює навіть як
+рубіж.</p>
+
+<h2 id="s14"><span class="num">Розділ 14</span>Як це роблять насправді</h2>
+
+<p>Наша логістична регресія — навчальний макет. Ось як виглядає шлях від неї до
+того, що стоїть у справжніх системах, і що саме кожен крок додає.</p>
+
+<h3>Правила й газетир</h3>
+
+<p>Нікуди не поділись і не мусять. Для <b>закритих</b> типів — коди валют,
+поштові індекси, ідентифікатори ліцензій, номери рейсів, ISBN — регулярний вираз
+або словник дають майже ідеальну якість за нуль розмітки. Розділ 10 показав це
+числом: <code>LIC</code> і без моделі впізнається за формою рядка. Помилка тут
+одна — <b>тягнути словник туди, де список відкритий</b>.</p>
+
+<h3>CRF на ознаках</h3>
+
+<p>Класика 2000-х: ті самі ознаки, що в нас, плюс шар переходів із розділу 3.
+Головний виграш — узгодженість послідовності: зникають <code>O I-PER</code> і
+сутності, що починаються з <code>I-</code>. У нас таких послідовностей
+0.0492, і на однослівних сутностях це майже вся користь; на корпусах із
+довгими багатослівними назвами користі більше.</p>
+
+<h3>Посимвольне подання й BiLSTM-CRF</h3>
+
+<p>Тут вирішується головна біда розділу 8 — небачені форми. Ідея: не давати
+моделі слово як неподільний ідентифікатор, а прочитати його <b>по літерах</b>
+окремою маленькою мережею й дістати вектор, який залежить від написання. Тоді
+небачена назва <code>libfoobar</code> усе одно потрапляє близько до бачених
+<code>libpng</code> і <code>libxml</code> — не тому, що модель її знає, а тому,
+що вона так <b>виглядає</b>. Наші префікс і суфікс на три літери — примітивна
+версія тієї самої думки.</p>
+
+<p>Архітектура складається з трьох частин: посимвольне подання + вектор слова →
+двонапрямлена рекурентна мережа (кожен токен бачить усе речення в обидва боки)
+→ CRF, що зшиває мітки. Це і є <b>BiLSTM-CRF</b>, стандарт середини 2010-х.</p>
+
+<h3>Трансформер із головою класифікації токенів</h3>
+
+<p>Сучасний спосіб: узяти передтреновану модель-енкодер
+(<a href="../26-bert/lecture.html">BERT</a> і родичі), яка вже видає для кожного
+токена вектор із урахуванням усього речення, і поставити зверху лінійний шар,
+що переводить цей вектор у мітку BIO. Далі
+<a href="../27-bert-in-practice/lecture.html">донавчання</a> на розміченому
+корпусі. Виграш іде звідти ж, звідки й у решті задач: модель уже бачила
+мільярди слів і знає, які слова стоять у назвах.</p>
+
+<p>Тут є одна технічна пастка, про яку варто знати заздалегідь.
+Трансформер працює <b>субсловами</b>, а мітки в нас на <b>словах</b>. Слово
+<code>ImageMagick</code> може розпастись на три шматки, а мітка в еталоні
+одна. Домовленість майже скрізь однакова: мітку ставлять <b>першому</b>
+субслову, решті дають спеціальне значення «ігнорувати» й не рахують у втраті.
+При розборі відповіді мітку слова беруть із його першого субслова. Порушивши
+цю домовленість (наприклад, розмноживши мітку на всі шматки), дістанеш
+працездатну модель із несумісними числами — довші слова важитимуть більше за
+короткі.</p>
+
+<h3>Чого BIO не вміє взагалі</h3>
+
+<p>Одна мітка на токен означає, що токен належить <b>щонайбільше одній</b>
+сутності. А в житті сутності бувають <b>вкладені</b>:</p>
+
+<div class="eq left">[ Київський [ національний університет ]ORG імені [ Тараса Шевченка ]PER ]ORG</div>
+
+<p>Тут «Тараса Шевченка» — людина всередині назви організації, і зовнішня
+сутність накриває внутрішню. BIO такого записати не може: токенам «Тараса
+Шевченка» довелось би мати дві мітки одночасно. Для вкладених сутностей
+використовують інші постановки — наприклад, класифікацію <b>всіх можливих
+проміжків</b> речення (для кожної пари «початок, кінець» окремо питаємо, чи це
+сутність і якого типу). Коштує це квадратично від довжини речення, зате
+вкладеність виражається природно.</p>
+
+<h3>Що звітувати, щоб звіт не брехав</h3>
+
+<p>Підсумок усього, що ми виміряли, у вигляді переліку. Звіт про систему NER
+чесний, якщо в ньому є <b>всі пʼять</b> рядків:</p>
+
+<ol class="steps">
+  <li><b>F1 по сутностях</b>, а не точність по токенах — і сказано, строгий
+    режим чи нестрогий;</li>
+  <li><b>тривіальний рубіж</b> поруч: скільки дасть «усе <code>O</code>» і
+    скільки дасть словник, зібраний із навчальної частини;</li>
+  <li><b>по типах окремо</b>, бо середнє між закритим і відкритим списком не
+    означає нічого;</li>
+  <li><b>бачені форми окремо від небачених</b>, і названо їхню частку в
+    перевірній вибірці;</li>
+  <li><b>звідки взялась розмітка</b> — людина чи проєкція; якщо проєкція, то
+    з чого.</li>
+</ol>
+
+<h2 id="s15"><span class="num">Розділ 15</span>Межі нашого заміру</h2>
+
+<p>Кожне число цієї теми заміряне, і кожне має межу, за якою його цитувати не
+можна. Перелічую всі, які знаю.</p>
+
+<p><b>Розмітка срібна, і вона кругова.</b> Це найважча межа, і розділ 9 показав
+її механізм: мітки зроблені зіставленням зі словником, тому словник на них
+оптимальний за побудовою. Числа розділів 8 і 9 описують <b>наш стенд</b>, а не
+NER узагалі. Числа розділів 4, 5 і 7 про співвідношення метрик — від розмітки
+не залежать: рубіж «усе <code>O</code>» високий, бо сутності рідкісні, і це
+правда на будь-якій розмітці.</p>
+
+<p><b>Розмітка ще й неповна, і ми знаємо, наскільки.</b> Розділ 11 показав, що
+після виправлення в ній лишається <b>0.0714</b> міток, які стоять на звичайних
+англійських словах, і <b>0.7827</b> типу <code>LIC</code> тримається на двох
+рядках, які насправді є продуктами. Це <b>відомі</b> хиби — а є ще невідомі,
+про які ми не здогадались. Тому жодне число цієї теми не можна цитувати з
+точністю, більшою за десяті.</p>
+
+<p><b>Корпус у читача інший.</b> Описи пакетів беруться з бази встановлених
+програм, а вона в кожного своя. Отже, 1733 документи, 125 072 токени й 1779
+сутностей у читача не відтворяться. Відтвориться <b>форма</b>: частка
+токенів <code>O</code> буде близько 0.98, однослівних сутностей — близько
+девʼяти з десяти, розрив між точністю по токенах і F1 по сутностях —
+величезний. З корпусу, якого не контролюєш, можна цитувати
+<b>співвідношення</b>, а не підрахунки.</p>
+
+<p><b>Одна модель, одна сімʼя ознак.</b> Ми не порівнювали архітектури й не
+маємо права казати, що якась із них краща. Усе, що виміряно, — поведінка
+<b>метрик</b> на одній фіксованій системі.</p>
+
+<p><b>Текст англійський, домен вузький.</b> Описи програмних пакетів — це
+технічна проза з великою густотою назв продуктів і майже без імен людей, дат
+і місць. Класичні типи NER (<code>PER</code>, <code>LOC</code>,
+<code>DATE</code>) ми не міряли взагалі, і на них числа були б іншими.</p>
+
+<p><b>Українська частина — демонстрація, а не другий замір.</b> У корпусі
+повідомлень назви країн трапляються 158 разів на 93 392 рядки. Цього
+достатньо, щоб показати, як ламається газетир, і <b>недостатньо</b>, щоб щось
+навчити чи заміряти якість української NER. Жодного числа з розділів 12-13 не
+можна подавати як оцінку системи — це властивості довідника й корпусу.</p>
+
+<p><b>Розкид рахований по пʼятьох зернах.</b> Пʼять — це мінімум для головного
+твердження, а не багато. Купа з пʼятьох зерен — усе ще нижня оцінка розкиду;
+на шести зернах вона могла б поповзти. Там, де висновок тримався на купах
+(розділи 8, 9, 10), він тримається з великим запасом: розриви становлять
+десяті, а розкид — соті.</p>
+
+<div class="note"><b>Куди далі.</b> Наступна тема — <b>33 · Question
+answering</b>. Задача зовні інша, а форма та сама: знайти в тексті проміжок і назвати його
+межі. І контроль, який там доведеться поставити, — рідний брат нашого рубежу
+«усе <code>O</code>»: перш ніж вірити, що система <b>читає</b>, треба
+перевірити, скільки вона набере, не читаючи. Цю звичку — питати «а скільки
+дасть найдурніша відповідь?» — варто винести з цієї теми у всі решта.</div>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../31-text-generation/lecture.html"><span class="dir">попередня</span><span class="ttl">31. Як модель породжує текст</span></a>
+    <a class="next" href="../33-question-answering/lecture.html"><span class="dir">наступна</span><span class="ttl">33. Question answering</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  var e=I(id); if(e) e.innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id,fn){
+  var boxEl=I(id); if(!boxEl) return;
+  boxEl.addEventListener('click',function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=boxEl.querySelectorAll('button'),k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function bar(g,x,y,w,h,fill,alpha){
+  g.globalAlpha=(alpha===undefined?1:alpha); g.fillStyle=fill;
+  g.fillRect(x,y,w,h); g.globalAlpha=1;
+}
+function dash(g,x0,y,x1,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke(); g.restore();
+}
+function boxr(g,x,y,w,h,fill,stroke){
+  if(fill){g.fillStyle=fill; g.fillRect(x,y,w,h);}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=1.5; g.strokeRect(x+0.5,y+0.5,w-1,h-1);}
+}
+function arrow(g,x0,y0,x1,y1,color,width){
+  g.strokeStyle=color; g.lineWidth=width||1.5;
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke();
+  var a=Math.atan2(y1-y0,x1-x0);
+  g.fillStyle=color; g.beginPath();
+  g.moveTo(x1,y1);
+  g.lineTo(x1-6*Math.cos(a-0.4),y1-6*Math.sin(a-0.4));
+  g.lineTo(x1-6*Math.cos(a+0.4),y1-6*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+/* розкладка ряду токенів із переносом; повертає масив прямокутників */
+function layout(g,toks,x0,y0,maxw,px,lineh){
+  g.font=mono(px,false);
+  var out=[],x=x0,y=y0,i,w;
+  for(i=0;i<toks.length;i++){
+    w=g.measureText(toks[i]).width+12;
+    if(x+w>x0+maxw && x>x0){x=x0; y+=lineh;}
+    out.push({t:toks[i],x:x,y:y,w:w});
+    x+=w+3;
+  }
+  return out;
+}
+
+/* ═══════ числа теми ═══════
+   Усі числа нижче заміряні на описах 1733 пакетів rpm (125 072 токени,
+   2470 сутностей срібної розмітки), розбиття за пакетом 80/20, пʼять зерен.
+   Українська частина — на 93 392 рядках перекладів програмних повідомлень
+   і на довіднику iso-codes. Дублювати їх у канві доводиться руками:
+   JS не відтворює обчислень Python (грабля №13). */
+
+var ALLO = 0.9786, TOKACC = 0.9911;
+var SEEN   = [0.8947, 0.8752, 0.8898, 0.8810, 0.8820];
+var UNSEEN = [0.3349, 0.4114, 0.3544, 0.3399, 0.4509];
+var MODEL  = [0.7250, 0.7586, 0.7610, 0.7299, 0.7683];
+var MEMORY = [0.7599, 0.8080, 0.8283, 0.7873, 0.8166];
+var TYPES  = [['LIC', 0.9662, 0.9495, 0.9863],
+              ['ORG', 0.8879, 0.8414, 0.9254],
+              ['PROD',0.6446, 0.6066, 0.6921]];
+var TAX = [['знайдена точно', 1223, 0.7021, 'ok'],
+           ['пропущена',       396, 0.2273, 'no'],
+           ['вигадана',        149, 0.0855, 'no'],
+           ['межа хибна',      111, 0.0637, 'mid'],
+           ['тип хибний',       12, 0.0069, 'mid']];
+var UA_SEARCH = [['точний збіг', 158, 155], ['збіг за лемою', 476, 167]];
+/* сутності за типами до й після виправлення правила збирання списку ORG */
+var SILVER = [['PROD', 1108, 1108], ['ORG', 1003, 312], ['LIC', 359, 359]];
+var UA_CAP = [['країни', 0.9953, 0.9929], ['мови', 1.0000, 0.1209],
+              ['системи письма', 1.0000, 0.0055], ['валюти', 1.0000, 0.9944]];
+
+/* ═══════════ фігура 1 · словник бачить рядок ═══════════ */
+var S1 = [
+  {toks:['…which','use','ImageMagick','code','or','APIs…'], hit:3,
+   dict:'PROD', truth:'звичайне слово',
+   why:'Пакет із назвою «code» справді існує — це редактор Visual Studio Code. Але в цьому реченні «code» означає просто «програмний код».'},
+  {toks:['It','is','used','by','many','applications',',','including','Python','and','Perl','.'], hit:8,
+   dict:'LIC', truth:'PROD',
+   why:'Рядок «Python» потрапив у список ліцензій із поля LICENSE, де стояло «BSD and Python and Unicode». Тут це очевидно назва продукту, а не ліцензії.'},
+  {toks:['The','fonts','were','originally','designed','by','Dave','Crossland','.'], hit:1,
+   dict:'ORG', truth:'звичайне слово',
+   why:'Слово «fonts» потрапило в список організацій з адреси fonts.google.com одного-єдиного пакета. Тут це звичайний іменник «шрифти».'},
+  {toks:['Most','sh','scripts','can','be','run','by','bash','without','modification','.'], hit:7,
+   dict:'PROD', truth:'PROD',
+   why:'А тут список має рацію: bash справді назва програми, і саме програми, а не дії.'}
+];
+var s1i = 0;
+function draw1(){
+  var cv=I('c1'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), d=S1[s1i];
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), paper=css('--paper');
+  var ok = (d.dict === d.truth);
+  capt(g,'РЕЧЕННЯ З ОПИСУ ПАКЕТА',24,30,soft,10.5,true);
+  var R=layout(g,d.toks,24,62,W-48,13,30),k;
+  for(k=0;k<R.length;k++){
+    var isHit=(k===d.hit);
+    boxr(g,R[k].x,R[k].y-16,R[k].w,25, isHit?css('--rose-w'):paper, isHit?rose:hair);
+    capt(g,R[k].t,R[k].x+R[k].w/2,R[k].y+2, isHit?rose:ink,13,isHit,'center');
+  }
+  var yb=R[R.length-1].y+44;
+  /* два вердикти */
+  var bw=(W-48-20)/2;
+  boxr(g,24,yb,bw,54,paper,hair);
+  capt(g,'СПИСОК НАЗВ КАЖЕ',34,yb+18,soft,10,true);
+  capt(g,d.dict,34,yb+40,rose,15,true);
+  boxr(g,24+bw+20,yb,bw,54,paper,hair);
+  capt(g,'НАСПРАВДІ',34+bw+20,yb+18,soft,10,true);
+  capt(g,d.truth,34+bw+20,yb+40, ok?teal:rose,15,true);
+  arrow(g,24+bw+4,yb+27,24+bw+16,yb+27, ok?teal:rose,1.6);
+  I('o1a').textContent=d.dict;
+  I('o1b').textContent=d.truth;
+  if(ok) verd('v1','t-ok','збіглося',
+    'Список і зміст речення тут погоджуються. Так буває — і саме тому газетир виглядає робочим інструментом, поки не порахуєш решту випадків. '+d.why);
+  else verd('v1','t-no','розійшлося',
+    'Список каже «'+d.dict+'», а насправді «'+d.truth+'». '+d.why);
+}
+segment('seg1',function(i){s1i=i; draw1();});
+
+/* ═══════════ фігура 2 · навіщо мітка B- ═══════════ */
+function draw2(){
+  var cv=I('c2'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), paper=css('--paper');
+  var T=['Ерік','Йонсон','Анна','Коваль'];
+  var k=+I('k2').value; I('k2o').textContent=k;
+  /* еталонні сутності */
+  var gold = (k>=4) ? [[0,4]] : [[0,k],[k,4]];
+  var bio=[], nob=[], i, e;
+  for(i=0;i<4;i++){ bio.push('I-PER'); nob.push('I-PER'); }
+  for(i=0;i<gold.length;i++) bio[gold[i][0]]='B-PER';
+  var bw=132, gap=14, x0=(W-(bw*4+gap*3))/2;
+  capt(g,'ТОКЕНИ',x0,26,soft,10.5,true);
+  for(i=0;i<4;i++){
+    boxr(g,x0+i*(bw+gap),36,bw,28,paper,hair);
+    capt(g,T[i],x0+i*(bw+gap)+bw/2,55,ink,13,true,'center');
+  }
+  /* рядок BIO */
+  capt(g,'СХЕМА BIO',x0,96,soft,10.5,true);
+  for(i=0;i<4;i++){
+    var isB=(bio[i]==='B-PER');
+    boxr(g,x0+i*(bw+gap),106,bw,26, isB?css('--rose-w'):paper, isB?rose:hair);
+    capt(g,bio[i],x0+i*(bw+gap)+bw/2,124, isB?rose:soft,12,isB,'center');
+  }
+  /* дужки відновлення для BIO */
+  for(i=0;i<gold.length;i++){
+    e=gold[i];
+    var a=x0+e[0]*(bw+gap), b=x0+(e[1]-1)*(bw+gap)+bw;
+    g.strokeStyle=teal; g.lineWidth=2;
+    g.beginPath(); g.moveTo(a+2,146); g.lineTo(a+2,140); g.lineTo(b-2,140); g.lineTo(b-2,146); g.stroke();
+  }
+  capt(g,'відновлено: '+gold.length+(gold.length===1?' сутність':' сутності'),x0,162,teal,11,true);
+  /* рядок без B- */
+  capt(g,'СХЕМА БЕЗ ПОЧАТКОВОЇ МІТКИ',x0,194,soft,10.5,true);
+  for(i=0;i<4;i++){
+    boxr(g,x0+i*(bw+gap),204,bw,26,paper,hair);
+    capt(g,nob[i],x0+i*(bw+gap)+bw/2,222,soft,12,false,'center');
+  }
+  var A=x0, B=x0+3*(bw+gap)+bw;
+  g.strokeStyle=rose; g.lineWidth=2;
+  g.beginPath(); g.moveTo(A+2,244); g.lineTo(A+2,238); g.lineTo(B-2,238); g.lineTo(B-2,244); g.stroke();
+  capt(g,'відновлено: завжди 1 сутність',x0,258,rose,11,true);
+  var ok=(gold.length===1);
+  I('o2a').textContent='правильно';
+  I('o2b').textContent= ok ? 'правильно' : 'помилка';
+  if(ok) verd('v2','t-mid','єдине положення, де сходиться',
+    'Коли всі чотири слова справді є однією сутністю, обидві схеми дають те саме. Схема без <span class="raw">B-</span> вгадала — але не тому, що прочитала мітки, а тому, що вона завжди відповідає одне й те саме.');
+  else verd('v2','t-no','схема без B- помиляється',
+    'Еталон має '+gold.length+' сутності: перша з '+k+', друга з '+(4-k)+' слів. BIO читає це з міток. Схема без <span class="raw">B-</span> бачить чотири однакові <span class="raw">I-PER</span> і читає їх як одну сутність із чотирьох слів — тобто губить обидві справжні.');
+}
+on('k2','input',draw2);
+
+/* ═══════════ фігура 3 · заборонені переходи ═══════════ */
+function draw3(){
+  var cv=I('c3'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), paper=css('--paper');
+  var L=['O','B-PER','I-PER','B-ORG','I-ORG'];
+  function allowed(prev,next){
+    if(next.charAt(0)!=='I') return true;
+    var t=next.slice(2);
+    return prev==='B-'+t || prev==='I-'+t;
+  }
+  var cw=74, ch=30, x0=140, y0=64, i, j, bad=0;
+  capt(g,'НАСТУПНА МІТКА',x0,26,soft,10.5,true);
+  for(j=0;j<5;j++) capt(g,L[j],x0+j*cw+cw/2,48,soft,11,false,'center');
+  capt(g,'ПОПЕРЕДНЯ',24,y0-16,soft,10.5,true);
+  for(i=0;i<5;i++){
+    capt(g,L[i],130,y0+i*ch+20,soft,11,false,'right');
+    for(j=0;j<5;j++){
+      var ok=allowed(L[i],L[j]); if(!ok) bad++;
+      boxr(g,x0+j*cw,y0+i*ch,cw-3,ch-3, ok?css('--teal-w'):css('--rose-w'), ok?hair:rose);
+      capt(g, ok?'можна':'нізащо', x0+j*cw+(cw-3)/2, y0+i*ch+18, ok?teal:rose, 10.5, !ok, 'center');
+    }
+  }
+  I('o3a').textContent='25';
+  I('o3b').textContent=String(bad);
+  verd('v3','t-mid','правило одне',
+    'Неможливих переходів '+bad+' із 25, і всі вони одного роду: у мітку <span class="raw">I-X</span> не можна прийти нізвідки, крім <span class="raw">B-X</span> або <span class="raw">I-X</span>. Класифікатор, що дивиться на кожен токен нарізно, цього правила не має і легко видає рядок, який неможливо прочитати.');
+}
+
+/* ═══════════ фігура 4 · та сама пара чисел на двох шкалах ═══════════ */
+function draw4(){
+  var cv=I('c4'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair');
+  var k=+I('k4').value, lo=(k/100)*0.97;
+  I('k4o').textContent=f2(lo);
+  var top=44, bot=H-42, hgt=bot-top;
+  function ypos(v){ return bot - (v-lo)/(1-lo)*hgt; }
+  var bw=118, x1=W/2-bw-40, x2=W/2+40;
+  /* осі */
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(60,bot+0.5); g.lineTo(W-30,bot+0.5); g.stroke();
+  capt(g,f2(lo),54,bot+4,soft,10.5,false,'right');
+  capt(g,'1.00',54,top+4,soft,10.5,false,'right');
+  /* стовпчики */
+  var yA=ypos(ALLO), yB=ypos(TOKACC);
+  bar(g,x1,yA,bw,bot-yA,soft,0.55);
+  bar(g,x2,yB,bw,bot-yB,rose,0.9);
+  capt(g,'усе O',x1+bw/2,bot+16,soft,11,false,'center');
+  capt(g,'модель',x2+bw/2,bot+16,rose,11,true,'center');
+  capt(g,f4(ALLO),x1+bw/2,yA-8,soft,12,true,'center');
+  capt(g,f4(TOKACC),x2+bw/2,yB-8,rose,12,true,'center');
+  capt(g,'ТОЧНІСТЬ ПО ТОКЕНАХ',60,26,soft,10.5,true);
+  /* видима різниця */
+  var vis=(TOKACC-ALLO)/(1-lo);
+  dash(g,60,yA,W-30,teal);
+  I('o4b').textContent=Math.round(vis*100)+'% висоти';
+  if(vis<0.10) verd('v4','t-no','різниці не видно',
+    'На цій шкалі стовпчики відрізняються на '+Math.round(vis*100)+' % висоти. Обидва числа читаються як «майже сто відсотків», хоча одне з них — це модель, яка не вміє нічого.');
+  else if(vis<0.35) verd('v4','t-mid','різниця вгадується',
+    'Різниця зайняла '+Math.round(vis*100)+' % висоти. Уже видно, що стовпчики різні, але масштаб іще ховає, наскільки мало здобуто.');
+  else verd('v4','t-ok','видно, як воно є',
+    'Тепер різниця займає '+Math.round(vis*100)+' % висоти, і видно справжню картину: рубіж «усе <span class="raw">O</span>» стоїть майже там само, де модель. Уся задача — це вузька смужка нагорі, і саме її ділять між собою всі системи NER на цьому корпусі.');
+}
+on('k4','input',draw4);
+
+/* ═══════════ фігура 5 · зсунута межа коштує двічі ═══════════ */
+var T5=['Учора','Ерік','Йонсон','підписав','угоду','з','Nokia','у','Гельсінкі','.'];
+var GOLD5=[[1,3,'PER'],[6,7,'ORG'],[8,9,'LOC']];
+function tags5(ents){
+  var out=[],i,j;
+  for(i=0;i<T5.length;i++) out.push('O');
+  for(i=0;i<ents.length;i++)
+    for(j=ents[i][0];j<ents[i][1];j++) out[j]=(j===ents[i][0]?'B-':'I-')+ents[i][2];
+  return out;
+}
+function draw5(){
+  var cv=I('c5'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), paper=css('--paper'), amber=css('--amber');
+  var k=+I('k5').value;
+  I('k5o').textContent=T5[k];
+  var pred=[[k,3,'PER'],[6,7,'ORG'],[8,9,'LOC']];
+  var gt=tags5(GOLD5), pt=tags5(pred), i;
+  /* токенна точність */
+  var same=0;
+  for(i=0;i<T5.length;i++) if(gt[i]===pt[i]) same++;
+  var acc=same/T5.length;
+  /* сутнісні tp/fp/fn */
+  function key(e){return e[0]+':'+e[1]+':'+e[2];}
+  var gk={},pk={},tp=0,fp=0,fn=0;
+  for(i=0;i<GOLD5.length;i++) gk[key(GOLD5[i])]=1;
+  for(i=0;i<pred.length;i++) pk[key(pred[i])]=1;
+  for(i=0;i<pred.length;i++){ if(gk[key(pred[i])]) tp++; else fp++; }
+  for(i=0;i<GOLD5.length;i++){ if(!pk[key(GOLD5[i])]) fn++; }
+  var P=tp/(tp+fp), R=tp/(tp+fn), F=(P+R)?2*P*R/(P+R):0;
+  /* малюємо */
+  var R1=layout(g,T5,24,54,W-48,12.5,30);
+  capt(g,'РЕЧЕННЯ',24,26,soft,10.5,true);
+  for(i=0;i<R1.length;i++){
+    var inG=(gt[i]!=='O'), inP=(pt[i]!=='O');
+    boxr(g,R1[i].x,R1[i].y-16,R1[i].w,25, inG?css('--teal-w'):paper, hair);
+    capt(g,T5[i],R1[i].x+R1[i].w/2,R1[i].y+2,ink,12.5,inG,'center');
+  }
+  var yG=R1[R1.length-1].y+40, yP=yG+52;
+  capt(g,'ЕТАЛОН',24,yG-16,soft,10.5,true);
+  capt(g,'МОДЕЛЬ',24,yP-16,soft,10.5,true);
+  for(i=0;i<R1.length;i++){
+    boxr(g,R1[i].x,yG-14,R1[i].w,22, gt[i]==='O'?paper:css('--teal-w'), hair);
+    capt(g,gt[i],R1[i].x+R1[i].w/2,yG+1, gt[i]==='O'?soft:teal,10,gt[i]!=='O','center');
+    var bad=(gt[i]!==pt[i]);
+    boxr(g,R1[i].x,yP-14,R1[i].w,22, bad?css('--rose-w'):(pt[i]==='O'?paper:css('--teal-w')), bad?rose:hair);
+    capt(g,pt[i],R1[i].x+R1[i].w/2,yP+1, bad?rose:(pt[i]==='O'?soft:teal),10,bad,'center');
+  }
+  /* лічильники */
+  var yc=yP+40;
+  capt(g,'TP = '+tp+'   ·   FP = '+fp+'   ·   FN = '+fn,24,yc,ink,12,true);
+  capt(g,'precision '+f4(P)+'   ·   recall '+f4(R),24,yc+20,soft,11.5,false);
+  I('o5a').textContent=f4(acc);
+  I('o5b').textContent=f4(F);
+  if(fp===0&&fn===0) verd('v5','t-ok','межа правильна',
+    'Усі три сутності знайдено точно. Точність по токенах 1.0000, F1 по сутностях 1.0000 — обидві метрики погоджуються, поки помилок немає.');
+  else verd('v5','t-no','одна хиба, дві помилки',
+    'Модель зсунула ліву межу імені на одне слово. Це дало <b>одну</b> вигадану сутність (FP) і <b>одну</b> пропущену (FN) — не пів помилки, а дві. Точність по токенах при цьому впала лише на '+f4(1-acc)+', бо постраждали два токени з десяти, — а F1 по сутностях упав до '+f4(F)+'.');
+}
+on('k5','input',draw5);
+
+/* ═══════════ фігура 6 · як зроблено срібну розмітку ═══════════ */
+function draw6(){
+  var cv=I('c6'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), paper=css('--paper');
+  var src=[['NAME','PROD','1643 назви'],['LICENSE','LIC','196 рядків'],['URL','ORG','360 доменів']];
+  var bw=150, bh=42, x0=26, i;
+  capt(g,'ПОЛЯ ЗАПИСУ ПРО ПАКЕТ',x0,24,soft,10.5,true);
+  for(i=0;i<3;i++){
+    var y=36+i*52;
+    boxr(g,x0,y,bw,bh,paper,hair);
+    capt(g,'%{'+src[i][0]+'}',x0+11,y+19,ink,12,true);
+    capt(g,src[i][2],x0+11,y+34,soft,10,false);
+    arrow(g,x0+bw+5,y+bh/2,x0+bw+34,y+bh/2,rose,1.4);
+    boxr(g,x0+bw+40,y+6,64,30,css('--rose-w'),rose);
+    capt(g,src[i][1],x0+bw+72,y+26,rose,12.5,true,'center');
+  }
+  var gx=x0+bw+124;
+  arrow(g,gx-14,110,gx-2,110,teal,1.5);
+  boxr(g,gx,50,132,124,css('--teal-w'),teal);
+  capt(g,'ГАЗЕТИР',gx+66,74,teal,11,true,'center');
+  capt(g,'2199',gx+66,108,teal,23,true,'center');
+  capt(g,'рядків',gx+66,126,soft,10.5,false,'center');
+  capt(g,'найдовший збіг',gx+66,150,soft,10,false,'center');
+  capt(g,'виграє в коротшого',gx+66,164,soft,10,false,'center');
+  var rx=gx+150;
+  capt(g,'РЕЗУЛЬТАТ ПРОЄКЦІЇ',rx,60,soft,10.5,true);
+  capt(g,'2470',rx,96,rose,26,true);
+  capt(g,'сутностей',rx+82,96,soft,12,false);
+  capt(g,'на 125 072 токени',rx,118,soft,11,false);
+  capt(g,'PROD 1108',rx,142,ink,11.5,false);
+  capt(g,'ORG 996  ·  LIC 366',rx,160,ink,11.5,false);
+  /* нижній рядок: приклад проєкції на всю ширину */
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,196); g.lineTo(W-26,196); g.stroke();
+  capt(g,'ЩО ЦЕ ДАЄ В ТЕКСТІ',x0,220,soft,10.5,true);
+  var toks=['Convert','images','with','ImageMagick','under','Apache-2.0','.'];
+  var labs=['O','O','O','B-PROD','O','B-LIC','O'];
+  var Rl=layout(g,toks,x0,258,W-52,12.5,30);
+  for(i=0;i<Rl.length;i++){
+    var e=labs[i]!=='O';
+    boxr(g,Rl[i].x,Rl[i].y-16,Rl[i].w,24, e?css('--rose-w'):paper, e?rose:hair);
+    capt(g,toks[i],Rl[i].x+Rl[i].w/2,Rl[i].y+1, e?rose:ink,12.5,e,'center');
+    capt(g,labs[i],Rl[i].x+Rl[i].w/2,Rl[i].y+21, e?rose:soft,10,e,'center');
+  }
+  verd('v6','t-mid','мітки справжні, розмітка — ні',
+    'Кожен рядок газетира написала людина: супровідник пакета вписав назву, ліцензію й адресу. Але <b>жодна людина не читала опису</b> й не казала, що саме в ньому є сутністю. Тому це срібна розмітка: джерело чесне, застосування автоматичне.');
+}
+
+/* ═══════════ фігура 7 · куди діваються сутності ═══════════ */
+function draw7(){
+  var cv=I('c7'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), amber=css('--amber');
+  var x0=176, wid=W-x0-70, i;
+  capt(g,'1742 ЕТАЛОННІ СУТНОСТІ, ПʼЯТЬ ЗЕРЕН',24,26,soft,10.5,true);
+  for(i=0;i<TAX.length;i++){
+    var y=48+i*34, col = TAX[i][3]==='ok'?teal:(TAX[i][3]==='mid'?amber:rose);
+    capt(g,TAX[i][0],x0-12,y+16,ink,12,false,'right');
+    bar(g,x0,y,Math.max(2,TAX[i][2]*wid),22,col,0.85);
+    capt(g,f4(TAX[i][2])+'  ('+TAX[i][1]+')',x0+Math.max(2,TAX[i][2]*wid)+8,y+16,soft,11,false);
+  }
+  var yb=48+TAX.length*34+14;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,yb); g.lineTo(x0+wid,yb); g.stroke();
+  capt(g,'0',x0,yb+14,soft,10,false,'center');
+  capt(g,'0.80',x0+0.80*wid,yb+14,soft,10,false,'center');
+  I('o7a').textContent='0.0706';
+  I('o7b').textContent='0.3128';
+  verd('v7','t-mid','структура ціла, впізнавання кульгає',
+    'Помилки межі (0.0637) і типу (0.0069) разом дають 0.0706. Пропуски (0.2273) і вигадки (0.0855) — 0.3128, тобто вчетверо з половиною більше. CRF лікує перший клас помилок, і на цьому корпусі йому мало що лікувати: 87 % сутностей — з одного слова.');
+}
+
+/* ═══════════ фігура 8 · бачені проти небачених ═══════════ */
+function pairFig(cvid, A, B, nameA, nameB, colA, colB, title){
+  var cv=I(cvid); if(!cv) return null;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), hair=css('--hair');
+  var top=48, bot=H-40, hgt=bot-top, i;
+  capt(g,title,24,26,soft,10.5,true);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(60,bot+0.5); g.lineTo(W-24,bot+0.5); g.stroke();
+  for(i=0;i<=4;i++){
+    var v=i/4, y=bot-v*hgt;
+    if(i>0) dash(g,60,y,W-24,hair);
+    capt(g,v.toFixed(2),54,y+4,soft,10,false,'right');
+  }
+  var grp=(W-24-60)/A.length, bw=Math.min(34,(grp-18)/2);
+  for(i=0;i<A.length;i++){
+    var cx=60+grp*i+grp/2;
+    var ya=bot-A[i]*hgt, yb=bot-B[i]*hgt;
+    bar(g,cx-bw-3,ya,bw,bot-ya,colA,0.9);
+    bar(g,cx+3,yb,bw,bot-yb,colB,0.9);
+    capt(g,f4(A[i]),cx-bw/2-3,ya-6,colA,9.5,true,'center');
+    capt(g,f4(B[i]),cx+bw/2+3,yb-6,colB,9.5,true,'center');
+    capt(g,'зерно '+i,cx,bot+16,soft,10,false,'center');
+  }
+  capt(g,nameA,W-24,26,colA,11,true,'right');
+  capt(g,nameB,W-24,40,colB,11,true,'right');
+  return g;
+}
+function draw8(){
+  pairFig('c8',SEEN,UNSEEN,'форма бачена','форма нова',css('--teal'),css('--rose'),
+          'F1 ПО СУТНОСТЯХ, ОКРЕМО ПО ДВОХ ПОЛОВИНАХ');
+  verd('v8','t-no','розрив у 2.34 раза',
+    'Найгірше зерно на бачених формах — 0.8752, найкраще на нових — 0.4509. Купи не перетинаються навіть краями. Модель добре відтворює те, що вже бачила, і знаходить нові назви більш ніж удвічі гірше.');
+}
+
+/* ═══════════ фігура 9 · модель проти словника ═══════════ */
+function draw9(){
+  pairFig('c9',MEMORY,MODEL,'словник із навчання','модель',css('--amber'),css('--rose'),
+          'F1 ПО СУТНОСТЯХ НА ТИХ САМИХ ПʼЯТЬОХ ПОДІЛАХ');
+  verd('v9','t-no','словник виграє на всіх пʼятьох',
+    'Порівняння парне: кожне зерно — той самий поділ для обох. Словник, який не вміє нічого, крім памʼяті, обганяє навчену модель на 0.0349..0.0673. Це не властивість NER, а наслідок того, як зроблено розмітку: мітки поставлено тим самим зіставленням зі словником.');
+}
+
+/* ═══════════ фігура 10 · тип важить більше за модель ═══════════ */
+function draw10(){
+  var cv=I('c10'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), amber=css('--amber');
+  var top=46, bot=H-40, hgt=bot-top, i;
+  var cols=[teal,amber,rose];
+  capt(g,'F1 ПО СУТНОСТЯХ, ОКРЕМО ПО ТИПАХ',24,26,soft,10.5,true);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(64,bot+0.5); g.lineTo(W-24,bot+0.5); g.stroke();
+  for(i=0;i<=4;i++){
+    var v=i/4, y=bot-v*hgt;
+    if(i>0) dash(g,64,y,W-24,hair);
+    capt(g,v.toFixed(2),58,y+4,soft,10,false,'right');
+  }
+  var grp=(W-24-64)/TYPES.length, bw=Math.min(96,grp-40);
+  for(i=0;i<TYPES.length;i++){
+    var cx=64+grp*i+grp/2, m=TYPES[i][1], lo=TYPES[i][2], hi=TYPES[i][3];
+    var ym=bot-m*hgt;
+    bar(g,cx-bw/2,ym,bw,bot-ym,cols[i],0.85);
+    /* купа */
+    g.strokeStyle=ink; g.lineWidth=1.5;
+    g.beginPath();
+    g.moveTo(cx,bot-lo*hgt); g.lineTo(cx,bot-hi*hgt);
+    g.moveTo(cx-9,bot-lo*hgt); g.lineTo(cx+9,bot-lo*hgt);
+    g.moveTo(cx-9,bot-hi*hgt); g.lineTo(cx+9,bot-hi*hgt);
+    g.stroke();
+    capt(g,f4(m),cx,bot-hi*hgt-10,cols[i],12,true,'center');
+    capt(g,TYPES[i][0],cx,bot+16,cols[i],12,true,'center');
+    capt(g,['закритий список','домени','відкритий список'][i],cx,bot+30,soft,10,false,'center');
+  }
+  verd('v10','t-mid','тип важить на порядок більше',
+    'LIC 0.9662 проти PROD 0.6446 — розрив 0.3216 на одній і тій самій моделі. Ідентифікатори ліцензій беруться зі стандартного переліку й мають упізнавану форму; назви програм вигадують люди без правил, і вивчити там можна лише самі рядки.');
+}
+
+/* ═══════════ фігура 11 · одна адреса, 266 хибних міток ═══════════ */
+function draw11(){
+  var cv=I('c11'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair'), paper=css('--paper'), amber=css('--amber');
+  var y=44, bh=46;
+  capt(g,'ЛАНЦЮЖОК, У ЯКОМУ КОЖНА ЛАНКА ВИГЛЯДАЄ РОЗУМНО',24,26,soft,10.5,true);
+  var steps=[
+    ['1 пакет', 'поле URL: fonts.google.com', paper, hair],
+    ['правило', 'беремо першу частину хоста', paper, hair],
+    ['газетир', 'у список ORG додано рядок «fonts»', css('--amber-w'), amber],
+    ['сканування', 'кожне «fonts» у будь-якому описі', css('--rose-w'), rose],
+    ['розмітка', '266 міток B-ORG на звичайному слові', css('--rose-w'), rose]
+  ];
+  var x0=24, wid=W-48, i;
+  for(i=0;i<steps.length;i++){
+    var yy=y+i*(bh+6);
+    boxr(g,x0,yy,wid,bh,steps[i][2],steps[i][3]);
+    capt(g,steps[i][0].toUpperCase(),x0+14,yy+19,soft,10,true);
+    capt(g,steps[i][1],x0+14,yy+37,ink,12.5,false);
+    if(i<steps.length-1) arrow(g,x0+wid/2,yy+bh,x0+wid/2,yy+bh+6,soft,1.2);
+  }
+  capt(g,'×266',W-46,y+3*(bh+6)+32,rose,17,true,'right');
+  verd('v11','t-no','множник розмітки',
+    'Один запис із 1733 поклав у список організацій звичайне англійське слово. Далі кожне його вживання в корпусі стало сутністю — 266 разів. Помилка в срібній розмітці не лишається однією помилкою: вона множиться на частоту рядка, а найчастіші рядки — саме звичайні слова.');
+}
+
+/* ═══════════ фігура 14 · скільки міток було сміттям ═══════════ */
+function draw14(){
+  var cv=I('c14'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair');
+  var top=52, bot=H-46, hgt=bot-top, i, maxv=1200;
+  bar(g,24,20,14,10,soft,0.55);
+  capt(g,'перша частина хоста',44,30,soft,11,true);
+  bar(g,224,20,14,10,teal,0.9);
+  capt(g,'реєстрована частина',244,30,teal,11,true);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(66,bot+0.5); g.lineTo(W-24,bot+0.5); g.stroke();
+  for(i=0;i<=4;i++){
+    var v=i*300, y=bot-v/maxv*hgt;
+    if(i>0) dash(g,66,y,W-24,hair);
+    capt(g,String(v),60,y+4,soft,10,false,'right');
+  }
+  var grp=(W-24-66)/SILVER.length, bw=Math.min(52,(grp-40)/2);
+  for(i=0;i<SILVER.length;i++){
+    var cx=66+grp*i+grp/2, was=SILVER[i][1], now=SILVER[i][2];
+    var yw=bot-was/maxv*hgt, yn=bot-now/maxv*hgt;
+    bar(g,cx-bw-4,yw,bw,bot-yw,soft,0.55);
+    bar(g,cx+4,yn,bw,bot-yn,teal,0.9);
+    capt(g,String(was),cx-bw/2-4,yw-7,soft,11,true,'center');
+    capt(g,String(now),cx+bw/2+4,yn-7,teal,11,true,'center');
+    capt(g,SILVER[i][0],cx,bot+17,ink,12,true,'center');
+    var d=was-now;
+    capt(g, d? ('\u2212'+d) : 'без змін', cx, bot+32, d?rose:soft, 10.5, !!d, 'center');
+  }
+  verd('v14','t-no','691 мітка з 2470 була сміттям',
+    'Міняли рівно один рядок коду — той, яким з адреси сайту дістають імʼя організації. Типи <code>PROD</code> і <code>LIC</code> при цьому не зрушили ані на одиницю. Увесь збиток припав на <code>ORG</code>: 691 сутність із 1003, більш ніж дві третини типу. Це і є ціна одного рядка в правилі, яким збирали список.');
+}
+
+/* ═══════════ фігура 12 · два способи шукати назву українською ═══════════ */
+var s12i=0;
+function draw12(){
+  var cv=I('c12'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair');
+  var top=48, bot=H-62, hgt=bot-top, i;
+  var maxv=500;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(76,bot+0.5); g.lineTo(W-24,bot+0.5); g.stroke();
+  for(i=0;i<=5;i++){
+    var v=i*100, yy=bot-v/maxv*hgt;
+    if(i>0) dash(g,76,yy,W-24,hair);
+    capt(g,String(v),70,yy+4,soft,10,false,'right');
+  }
+  var grp=(W-24-76)/2, bw=Math.min(120,grp-110);
+  for(i=0;i<2;i++){
+    var cx=76+grp*i+grp*0.42, tot=UA_SEARCH[i][1], cln=UA_SEARCH[i][2];
+    var yTot=bot-tot/maxv*hgt, yCln=bot-cln/maxv*hgt;
+    var act=(i===s12i);
+    if(act){
+      bar(g,cx-bw/2,yTot,bw,bot-yTot,rose,0.85);
+      bar(g,cx-bw/2,yCln,bw,bot-yCln,teal,0.95);
+      capt(g,String(tot)+' знайдено',cx,yTot-9,rose,12,true,'center');
+      capt(g,String(cln)+' справжніх',cx+bw/2+10,yCln+4,teal,12,true,'left');
+      g.strokeStyle=teal; g.lineWidth=1;
+      g.beginPath(); g.moveTo(cx+bw/2,yCln+0.5); g.lineTo(cx+bw/2+7,yCln+0.5); g.stroke();
+      capt(g,UA_SEARCH[i][0],cx,bot+19,ink,12.5,true,'center');
+      capt(g,'точність '+f4(cln/tot),cx,bot+36,rose,11.5,true,'center');
+    }else{
+      boxr(g,cx-bw/2,yTot,bw,bot-yTot,null,hair);
+      capt(g,UA_SEARCH[i][0],cx,bot+19,soft,12,false,'center');
+    }
+  }
+  capt(g,'справжні згадки країн',76,24,teal,11,true);
+  capt(g,'усе, що знайшов спосіб',76,40,rose,11,true);
+  I('o12a').textContent=String(UA_SEARCH[s12i][1]);
+  I('o12b').textContent=String(UA_SEARCH[s12i][2]);
+  if(s12i===0) verd('v12','t-mid','точно — значить мало',
+    'Точний збіг рядка дає 158 знахідок, із них 155 справжні: точність 0.9810. Але він бачить лише називний відмінок і не знаходить «Японії», «Ірландії», «Колумбії» — тобто саме те, як назви й стоять у живому тексті.');
+  else verd('v12','t-no','за лемою — значить хибно',
+    'Лематизація підняла знахідки до 476, але справжніх серед них лише 167. Точність упала з 0.9810 до 0.3508. Причина: «того», «малі», «перу» зводяться до назв країн Того, Малі й Перу — і саме ці три дають 308 хибних спрацювань із 309.');
+}
+segment('seg12',function(i){s12i=i; draw12();});
+
+/* ═══════════ фігура 13 · велика літера у двох мовах ═══════════ */
+function draw13(){
+  var cv=I('c13'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var rose=css('--rose'), teal=css('--teal'), soft=css('--soft'), ink=css('--ink');
+  var hair=css('--hair');
+  var top=48, bot=H-46, hgt=bot-top, i;
+  bar(g,24,18,14,10,soft,0.55);
+  capt(g,'англійська',44,28,soft,11,true);
+  bar(g,140,18,14,10,rose,0.9);
+  capt(g,'українська',160,28,rose,11,true);
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(60,bot+0.5); g.lineTo(W-24,bot+0.5); g.stroke();
+  for(i=0;i<=4;i++){
+    var v=i/4, y=bot-v*hgt;
+    if(i>0) dash(g,60,y,W-24,hair);
+    capt(g,v.toFixed(2),54,y+4,soft,10,false,'right');
+  }
+  var grp=(W-24-60)/UA_CAP.length, bw=Math.min(40,(grp-24)/2);
+  for(i=0;i<UA_CAP.length;i++){
+    var cx=60+grp*i+grp/2, en=UA_CAP[i][1], uk=UA_CAP[i][2];
+    var ye=bot-en*hgt, yu=bot-Math.max(uk,0.002)*hgt;
+    bar(g,cx-bw-3,ye,bw,bot-ye,soft,0.55);
+    bar(g,cx+3,yu,bw,Math.max(2,bot-yu),rose,0.9);
+    capt(g,f4(en),cx-bw/2-3,ye-7,soft,9.5,true,'center');
+    capt(g,f4(uk),cx+bw/2+3,yu-7,rose,9.5,true,'center');
+    capt(g,UA_CAP[i][0],cx,bot+17,ink,11,false,'center');
+  }
+  verd('v13','t-no','ознака працює лише подекуди',
+    'Для країн і валют велика літера є в обох мовах. Для назв мов англійська дає її завжди (1.0000), українська майже ніколи (0.1209); для систем письма — 1.0000 проти 0.0055. Отже, найсильніша окрема ознака англійського NER для української не переноситься, і покладатись на неї не можна.');
+}
+
+/* ═══════════ запуск ═══════════ */
+function drawAll(){
+  draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7();
+  draw8(); draw9(); draw10(); draw11(); draw12(); draw13(); draw14();
+}
+drawAll();
+window.addEventListener('resize',drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change',drawAll);
+}
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1979 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GloVe і FastText</title>
+<meta name="description" content="Модель ембедингів при min_count = 10 не знає 21 004 словоформи — 77.6 % словника, хоча це лише 7.91 % слововживань. Субслова обіцяють це полагодити, і за звичною міркою «понад половина n-грам відома» вони «впізнають» 18 847 з них — 89.7 %, середня частка відомих субслів 0.7938. Але коли питаєш чесно, чи є серед відомих слів форма тієї самої леми, лишається 6 780 — 32.3 %. Різниця майже втричі, і причина в тому, що спільними виявляються закінчення, а не корені: субслова початку слова розводять дві купи на 0.2066, субслова кінця — лише на 0.0122. Заміряно на 93 392 українських перекладах інтерфейсів, три зерна, усі моделі беруть той самий бік розкладу. Просте перекриття n-грам без жодного навчання знаходить родича в 76.0 % випадків проти 18.7 % у навченого FastText, а чистий внесок реконструкції з субслів на задачі — лише +0.0392. Ціна субслів — у 5.32 раза більше параметрів, і розрив між чесною й випадковою схожістю падає з 0.0430 до 0.0073.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* блок із виводом моделі: моноширинний, зі своїм горизонтальним скролом,
+   щоб довгий рядок не розпирав сторінку на телефоні (грабля №10) */
+.code{
+  font-family:"JetBrains Mono",monospace; font-size:13.5px; line-height:1.7;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:14px 16px; margin:22px 0; overflow-x:auto; white-space:nowrap;
+  box-shadow:var(--shadow); color:var(--ink);
+}
+
+/* таблиці з числами на телефон не влазять — даємо кожній власний скрол */
+.scroll-x{overflow-x:auto; margin:24px 0}
+.scroll-x table{margin:0}
+
+/* три рівні документів у фігурі 7 */
+.seg.three button{flex:1 1 30%}
+</style>
+
+
+
+</head>
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 3 · Тема 13</p>
+    <h1>GloVe і FastText</h1>
+    <p class="stand">Модель, яку ми навчили в попередній темі, не знає
+      <b>77.6&nbsp;%</b> словоформ нашого корпусу. Субслова обіцяють це полагодити — і
+      за звичною міркою «впізнають» <b>89.7&nbsp;%</b> невідомих слів. Але коли питаєш
+      чесно, чи справді модель знає це слово, лишається <b>32.3&nbsp;%</b>. Ця тема про
+      те, звідки береться різниця майже втричі й що з нею робити.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Слово, якого модель не бачила</a></li>
+        <li><a href="#s2">Пари або таблиця</a></li>
+        <li><a href="#s3">Чого GloVe вимагає від векторів</a></li>
+        <li><a href="#s4">Вагова функція і навіщо їй стеля</a></li>
+        <li><a href="#s5">Як це насправді навчається</a></li>
+        <li><a href="#s6">Замір: GloVe проти Word2Vec</a></li>
+        <li><a href="#s7">Що вага робить усередині</a></li>
+        <li><a href="#s8">Слово як мішок своїх шматків</a></li>
+        <li><a href="#s9">FastText — це той самий skip-gram</a></li>
+        <li><a href="#s10">Пастка: 89.7&nbsp;% проти 32.3&nbsp;%</a></li>
+        <li><a href="#s11">Спільне виявляється закінченням</a></li>
+        <li><a href="#s12">Чесний замір — на задачі</a></li>
+        <li><a href="#s13">Де субслова шкодять і скільки коштують</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../12-word2vec/lecture.html">← 12. Word2Vec</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../14-vector-arithmetic/lecture.html">14. Арифметика векторів →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У попередній темі ми навчили модель, яка дає кожному слову вектор, і
+переконались, що ці вектори осмислені. Але в неї є двері, і на них висить замок:
+у моделі є <b>словник</b>, і слова поза цим словником для неї просто не існує.
+Для англійської це дрібна незручність. Для української це діра, у яку провалюється
+більшість слів корпусу — і саме тому тема про субслова в цьому курсі не додаток,
+а необхідність.</p>
+
+<h2 id="s1"><span class="num">01 / Межа</span>Слово, якого модель не бачила</h2>
+
+<p>Будь-яка модель ембедингів починає з того, що рахує слова й відкидає рідкісні.
+Параметр, який це робить, зветься <code>min_count</code>: слово, що трапилось у
+корпусі рідше за <code>min_count</code> разів, до словника не потрапляє. Причина
+чесна й нікуди не дінеться: вектор — це кілька десятків чисел, які треба вивести
+з прикладів уживання, і на трьох прикладах з них вийде шум, а не значення.</p>
+
+<p>Наш корпус той самий, що й у попередніх темах: <b>93 392</b> українські
+переклади інтерфейсів із <b>266</b> програм, <b>674 948</b> слововживань і
+<b>27 078</b> різних словоформ. Ставимо звичне <code>min_count = 10</code> і
+дивимось, що лишилось.</p>
+
+<p>Лишилось <b>6 074</b> слова. Тобто модель ніколи не побачить <b>21 004</b>
+словоформи — це <b>77.6&nbsp;%</b> усього словника. Три слова з чотирьох.</p>
+
+<p>Число виглядає катастрофою, і тут потрібне друге число, без якого перше
+бреше. Ті самі 21 004 словоформи разом дають лише <b>7.91&nbsp;%</b> слововживань.
+Тобто відрізано три чверті <b>списку слів</b>, але лише одну тринадцяту
+<b>тексту</b>. Це два різні способи рахувати те саме, і плутати їх не можна:
+перший міряє, скільки різних слів, другий — скільки разів вони трапляються.</p>
+
+<div class="note">
+  <p><b>Словоформа й слововживання — не одне й те саме.</b> У рядку «файл не
+  знайдено, файл пошкоджено» <b>пʼять</b> слововживань і <b>чотири</b>
+  словоформи, бо «файл» трапився двічі. Коли кажуть «77.6&nbsp;% словника», мають на
+  увазі перелік різних слів. Коли кажуть «7.91&nbsp;% тексту» — скільки разів ці слова
+  реально трапляються. Одне й те саме відрізання виглядає катастрофою в першій
+  мірці й дрібницею в другій.</p>
+</div>
+
+<p>Це той самий довгий хвіст, що й у
+<a href="../01-text-is-hard/lecture.html">темі 01</a>, — тільки тепер він не
+спостереження, а перешкода. Серед цих 21 004 слів немає жодного вигаданого:
+«конфігурацією», «неправильною», «необхідного», «кореневому», «перемикатися» —
+звичайні українські форми, які просто не набрали десяти вживань.</p>
+
+<p>Покрути поріг і подивись, як розходяться дві мірки.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 1 · Поріг словника ріже дві різні речі</div>
+  <p class="fig-sub">Повзунок міняє <code>min_count</code>. Верхня смуга — словник
+    (скільки різних словоформ модель бачить, а скільки ні), нижня — сам текст
+    (яка частка слововживань покрита). Обидві рахуються тут-таки з частотного
+    спектра нашого корпусу.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="mc1"><code>min_count</code> <output id="mc1o">10</output></label>
+        <input id="mc1" type="range" min="1" max="21" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>словник</b><i id="v1a">—</i></div>
+        <div class="cellv"><b>покриття</b><i id="v1b">—</i></div>
+        <div class="cellv"><b>форм за бортом</b><i id="v1c">—</i></div>
+        <div class="cellv"><b>вживань за бортом</b><i id="v1d">—</i></div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>При <b>min_count = 10</b> за бортом лишається <b>77.6&nbsp;%</b> словника
+    і <b>7.91&nbsp;%</b> тексту — розрив майже вдесятеро. Саме через цей розрив поріг
+    здається нешкідливим, поки дивишся на покриття, і жахливим, щойно подивишся
+    на список слів.</figcaption>
+</figure>
+
+<p>Далі тема розпадається на дві половини. Перша — про <b>GloVe</b>: інший
+спосіб дістати ті самі вектори. Друга — про <b>субслова</b> й <b>FastText</b>:
+спробу пробити цю стіну, розрізавши слово на шматки. Друга половина головніша,
+але почнемо з першої, бо вона дає інструмент для порівняння.</p>
+
+<h2 id="s2"><span class="num">02 / Дві дороги</span>Пари або таблиця</h2>
+
+<p>Skip-gram із <a href="../12-word2vec/lecture.html">теми 12</a> працює так: бере
+слово, бере його сусіда, підправляє два вектори, іде далі. Кожна пара «слово —
+сусід» — окремий крок навчання. Якщо та сама пара трапиться в корпусі тисячу
+разів, буде тисяча однакових кроків.</p>
+
+<p>GloVe починає з іншого кінця. Спершу він проходить корпус <b>один раз</b> і
+складає таблицю: скільки разів слово <i>i</i> стояло поруч зі словом <i>j</i>.
+Далі корпус більше не потрібен — уся подальша робота йде з таблицею. Звідси й
+назва: <b>Global Vectors</b>, глобальні вектори, бо на відміну від skip-gram,
+який бачить одне вікно за раз, GloVe із самого початку має перед очима весь
+корпус одразу.</p>
+
+<p>Порахуємо обидві величини на нашому корпусі при вікні пʼять слів ліворуч і
+пʼять праворуч.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>що рахуємо</th><th>скільки</th></tr>
+  <tr class="hot"><td>пар «слово — сусід»</td><td>3 588 918</td></tr>
+  <tr class="hot"><td>непорожніх клітинок таблиці</td><td>1 064 218</td></tr>
+  <tr><td>усього клітинок (6 074 × 6 074)</td><td>36 893 476</td></tr>
+  <tr><td>заповнено</td><td>2.88&nbsp;%</td></tr>
+</table>
+</div>
+
+<p>Пар у <b>3.37</b> раза більше, ніж клітинок. Ось і вся економія GloVe: він
+складає однакові пари в одне число й далі працює тільки з ним. Skip-gram
+натомість чесно проходить кожну з трьох з половиною мільйонів пар — і, до речі,
+саме тому він краще вчиться на рідкісних словах: рідкісна пара дістає свій крок,
+а не розчиняється в клітинці.</p>
+
+<p>Одна деталь, яка виглядає дрібницею, а насправді важлива. У клітинку додається
+не одиниця, а <b>1/d</b>, де <i>d</i> — відстань у словах. Сусід
+через один додає 1, сусід через пʼять — одну пʼяту. Це рецепт самого GloVe, і
+причина проста: слово поруч і слово за пʼять позицій — не однаково сильний
+доказ звʼязку. Через це в таблиці зʼявляються дробові числа, і найбільша
+клітинка нашої таблиці — пара «не + вдалося» — важить <b>9583.4</b>, а не
+рівно стільки разів, скільки трапилась.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 2 · Пари або клітинки, на восьми рядках</div>
+  <p class="fig-sub">Іграшковий корпус із восьми рядків, щоб механізм було видно
+    цілком. Повзунок міняє ширину вікна, підсвітка в першому рядку показує саме
+    вікно, стовпчики — скільки виходить пар і скільки клітинок. Усе рахується
+    просто тут, у канві.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="400" data-lw="700" data-lh="400"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="w2">вікно <span class="raw">±W</span> <output id="w2o">2</output></label>
+        <input id="w2" type="range" min="1" max="5" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <span class="cap">у клітинці</span>
+        <div class="seg" id="seg2">
+          <button data-i="0" aria-pressed="true">вага <span class="raw">1/d</span></button>
+          <button data-i="1" aria-pressed="false">просто лічильник</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пар</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>клітинок</b><i id="v2b">—</i></div>
+        <div class="cellv"><b>пар на клітинку</b><i id="v2c">—</i></div>
+        <div class="cellv"><b>X(файл · читання)</b><i id="v2d">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>Що ширше вікно, то більше пар припадає на одну клітинку — саме на
+    цьому GloVe і заощаджує. На справжньому корпусі при вікні ±5 виходить
+    <b>3 588 918</b> пар на <b>1 064 218</b> клітинок, тобто <b>3.37</b> пари на
+    клітинку.</figcaption>
+</figure>
+<h2 id="s3"><span class="num">03 / Формула</span>Чого GloVe вимагає від векторів</h2>
+
+<p>Тепер найголовніше. Skip-gram навчався передбачати сусіда: він ставив питання
+«чи справді ці двоє стояли поруч» і виправляв вектори за відповіддю. GloVe
+ставить вимогу іншого роду — і формулює її одним рядком:</p>
+
+<div class="eq">w<span class="sub">i</span> · w̃<span class="sub">j</span> +
+  b<span class="sub">i</span> + b̃<span class="sub">j</span> ≈ log
+  X<span class="sub">ij</span></div>
+
+<p>Розберімо кожен знак окремо, бо без цього рядок нічого не означає.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">X<span class="sub">ij</span></span>
+    Число в клітинці таблиці: скільки разів слово <i>i</i> стояло поруч зі словом
+    <i>j</i> (з поправкою на відстань). Для пари «не + вдалося» це 9583.4.</div>
+  <div class="step"><span class="lbl">log</span>
+    Натуральний логарифм — функція, яка перетворює «у сто разів більше» на
+    «більше на 4.6». Вона потрібна, бо частоти слів різняться в тисячі разів, і
+    без логарифма модель бачила б лише кілька найчастіших пар. Логарифм тисячі —
+    6.9, логарифм десяти — 2.3, логарифм одиниці — 0.</div>
+  <div class="step"><span class="lbl">w<span class="sub">i</span></span>
+    Вектор слова <i>i</i> — той самий набір із 64 чисел, який ми й хочемо
+    дістати.</div>
+  <div class="step"><span class="lbl">w̃<span class="sub">j</span></span>
+    Другий вектор того самого слова — «контекстний». Хвилька зверху читається як
+    «тильда» і тут означає рівно одне: це <b>інший</b> набір чисел для <b>того
+    самого</b> слова. Навіщо два — за хвилину.</div>
+  <div class="step"><span class="lbl">·</span>
+    Скалярний добуток: перемножити відповідні числа двох векторів і скласти
+    результати. Для (1, 2, 3) і (4, 5, 6) це 1·4 + 2·5 + 3·6 = 32. Одне число,
+    яке тим більше, чим більше два вектори дивляться в один бік.</div>
+  <div class="step"><span class="lbl">b<span class="sub">i</span>, b̃<span class="sub">j</span></span>
+    Два зсуви — по одному числу на слово. Вони вбирають те, що залежить лише від
+    самого слова, а не від пари: частота. Без них вектор частого слова мусив би
+    бути просто довгим, і всі часті слова опинилися б поруч.</div>
+</div>
+
+<p>Прочитаймо тепер увесь рядок словами: <b>скалярний добуток двох векторів має
+дорівнювати логарифму того, скільки разів слова стояли поруч</b>. Не
+ймовірності, не передбаченню — просто числу з таблиці, узятому під логарифмом.</p>
+
+<p>Чому логарифм, а не саме число? Бо ми хочемо, щоб вектори відповідали за
+<b>відношення</b>, а не за різниці. Пари з 1000 і 100 входжень різняться на 900,
+а змістовно — «у десять разів», і саме це каже різниця логарифмів:
+6.91 − 4.61 = 2.30. Для пари 100 проти 10 вона буде та сама.</p>
+
+<p>Тепер про два вектори на слово. Слово «файл» має вектор як центральне слово
+(<span class="raw">w</span>) і вектор як сусід (<span class="raw">w̃</span>).
+Це не примха: у формулі вони стоять на різних місцях, і симетричний варіант
+(один вектор на слово) навчається гірше. Питання «а який же з двох вважати
+вектором слова наприкінці» виявиться не технічним, а вирішальним — ми
+повернемось до нього в <a href="#s5">розділі 05</a> і заміряємо.</p>
+
+<p>Порахуємо руками. Візьмімо справжню клітинку нашої таблиці: пара
+«встановленні + при» має X = <b>30.0000</b>, і логарифм цього числа —
+<b>3.4012</b>. Якщо в моделі скалярний добуток вийшов 3.1, а зсуви дали 0.2 і
+0.1, то ліва частина дорівнює 3.4, помилка — 3.4 − 3.4012 = −0.0012, а квадрат
+помилки — приблизно одна мільйонна. Саме ці квадрати GloVe і зменшує, і саме на
+такій клітинці він уже майже нічого не виправлятиме.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 3 · Одна клітинка таблиці</div>
+  <p class="fig-sub">Обери клітинку зі справжньої таблиці нашого корпусу й веди
+    повзунок скалярного добутку. Мішень — <code>log X</code>. Зсуви для
+    наочності лишаємо нулями, тож уся ліва частина формули — це скалярний
+    добуток.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">клітинка</span>
+        <div class="seg wrap" id="seg3">
+          <button data-i="0" aria-pressed="true">час · під</button>
+          <button data-i="1" aria-pressed="false">типу · для</button>
+          <button data-i="2" aria-pressed="false">встановленні · при</button>
+          <button data-i="3" aria-pressed="false">по · сам</button>
+          <button data-i="4" aria-pressed="false">ні · продовжити</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="d3">скалярний добуток <output id="d3o">4.0</output></label>
+        <input id="d3" type="range" min="-2" max="10" step="0.1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ціль log X</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>помилка</b><i id="v3b">—</i></div>
+        <div class="cellv"><b>квадрат помилки</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>вага f(X)</b><i id="v3d">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Ці пʼять клітинок різняться в <b>4 606</b> разів (від 0.5 до
+    2302.8), а їхні логарифми — лише від <b>−0.69</b> до <b>7.74</b>. Логарифм і
+    є тим, що робить задачу посильною: без нього одна клітинка «не + вдалося»
+    з її <b>9583.4</b> переважила б усі інші разом.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Вага</span>Вагова функція і навіщо їй стеля</h2>
+
+<p>Якби GloVe просто складав квадрати помилок по всіх клітинках, він би не
+працював. Причина в тому, як розподілені числа в таблиці.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>значення X</th><th>частка клітинок</th></tr>
+  <tr class="hot"><td>менше за 1</td><td>58.5&nbsp;%</td></tr>
+  <tr><td>від 1 до 10</td><td>39.2&nbsp;%</td></tr>
+  <tr class="hot"><td>10 і більше</td><td>2.37&nbsp;%</td></tr>
+</table>
+</div>
+
+<p>Понад половина клітинок має значення <b>менше за одиницю</b>: слова стояли
+поруч рівно раз і то через дві-три позиції. Це майже завжди випадковість, і
+таких клітинок мільйон. А верхній <b>один відсоток</b> клітинок тримає
+<b>31.3&nbsp;%</b> усієї ваги таблиці.</p>
+
+<p>Тому GloVe множить квадрат помилки кожної клітинки на вагу:</p>
+
+<div class="eq">f(x) = min( 1, (x / x<span class="sub">max</span>)<span class="sup">α</span> ),
+  де x<span class="sub">max</span> = 10, α = 0.75</div>
+
+<p>Словами: вага росте разом із значенням клітинки, але не лінійно, а сповільнено
+(степінь 0.75 — те саме число, що вже траплялось у негативному семплюванні
+Word2Vec), і <b>перестає рости зовсім</b>, щойно клітинка дійшла до
+<span class="raw">x<sub>max</sub></span>. Символ α — грецька «альфа», і тут це
+просто показник степеня. Знак <code>min</code> означає «взяти менше з двох»: він
+і робить стелю.</p>
+
+<p>Порахуємо, що дає стеля. Для нашої найбільшої клітинки 9583.4 без стелі вага
+була б <b>172.2425</b>, тоді як пара з X&nbsp;=&nbsp;10 дістала б рівно
+<b>1</b>. Тобто одна пара службових слів важила б стільки, скільки <b>172</b>
+нормальні пари. Зі стелею обидві важать по одиниці.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>X</th><th>f(X) зі стелею</th><th>f(X) без стелі</th></tr>
+  <tr><td>0.2</td><td>0.0532</td><td>0.0532</td></tr>
+  <tr><td>1.0</td><td>0.1778</td><td>0.1778</td></tr>
+  <tr><td>5.0</td><td>0.5946</td><td>0.5946</td></tr>
+  <tr class="hot"><td>10.0</td><td>1.0000</td><td>1.0000</td></tr>
+  <tr><td>100.0</td><td>1.0000</td><td>5.6234</td></tr>
+  <tr class="hot"><td>9583.4</td><td>1.0000</td><td>172.2425</td></tr>
+</table>
+</div>
+
+<p>Зверни увагу на нижній край: клітинка з X = 0.2 не викидається, вона просто
+важить <b>0.0532</b> — у девʼятнадцять разів менше за клітинку з X&nbsp;=&nbsp;10. Це
+третя робота вагової функції, і про неї часто забувають: вона не лише прибирає
+стелю згори, а й приглушує мільйон випадковостей знизу, не відкидаючи їх.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 4 · Куди вага вкладає зусилля моделі</div>
+  <p class="fig-sub">Крива — вагова функція <code>f(x)</code>, стовпчики позаду —
+    справжній розподіл значень у нашій таблиці. Числа праворуч показують, яка
+    частка всієї суми ваг припадає на три купи клітинок: майже порожні, середні
+    й великі. Усі числа пораховані в зошиті для кожного положення повзунків.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="xm4"><span class="raw">x<sub>max</sub></span> <output id="xm4o">10</output></label>
+        <input id="xm4" type="range" min="0" max="5" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <label for="al4"><span class="raw">α</span> <output id="al4o">0.75</output></label>
+        <input id="al4" type="range" min="0" max="3" step="1" value="2">
+      </div>
+      <div class="ctl">
+        <span class="cap">стеля</span>
+        <div class="seg" id="seg4">
+          <button data-i="0" aria-pressed="true">зі стелею</button>
+          <button data-i="1" aria-pressed="false">без стелі</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зусиль на X &lt; 1</b><i id="v4a">—</i></div>
+        <div class="cellv"><b>зусиль на X <span class="raw">≥</span> 10</b><i id="v4b">—</i></div>
+        <div class="cellv"><b>f(0.2)</b><i id="v4c">—</i></div>
+        <div class="cellv"><b>f(9583)</b><i id="v4d">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Канонічні налаштування (<span class="raw">x<sub>max</sub></span> = 10,
+    <span class="raw">α</span> = 0.75, зі стелею) віддають <b>26.73&nbsp;%</b> зусиль
+    мільйону майже порожніх клітинок і <b>12.30&nbsp;%</b> — тим 2.37&nbsp;%, де звʼязок
+    справжній. Прибери стелю за тих самих налаштувань — і друге число стрибає до
+    <b>23.03&nbsp;%</b>, а найбільша клітинка починає важити <b>172.2425</b> замість
+    одиниці. Постав <span class="raw">α</span> = 0.25 — і вага майже зникає:
+    <b>47.99&nbsp;%</b> зусиль іде на випадкові збіги.</figcaption>
+</figure>
+<h2 id="s5"><span class="num">05 / Навчання</span>Як це насправді навчається</h2>
+
+<p>Ціль записана, вага придумана — лишається зменшувати суму зважених квадратів
+помилок. Робимо це градієнтним спуском, як усюди в курсі, але з однією
+поправкою, без якої GloVe не збігається.</p>
+
+<p>Поправка зветься <b>AdaGrad</b> і робить просту річ: у кожної координати
+кожного вектора є <b>власна</b> швидкість навчання, і вона тим менша, чим більше
+ця координата вже рухалась. Механізм буквальний — для координати
+накопичується сума квадратів її минулих градієнтів, і крок ділиться на корінь із
+цієї суми.</p>
+
+<p>Навіщо це тут. Слово «не» трапляється десятки тисяч разів, «кореневий» —
+одинадцять. За спільної швидкості навчання вектор «не» почав би коливатися
+навколо мішені ще до того, як «кореневий» зрушив би з місця. AdaGrad вирівнює це
+сам: часте слово швидко набирає великий знаменник і йде дрібними кроками.</p>
+
+<div class="note">
+  <p><b>Перевір похідну числом, а не очима.</b> У практиці ми беремо одну
+  клітинку, рахуємо градієнт формулою, а потім — чисельно: зсуваємо одну
+  координату на мільйонну частку й дивимось, як змінилась помилка. Обидва числа
+  збігаються до шостого знака. Це нудна перевірка на пʼять рядків, і вона єдина
+  ловить помилку в знаку чи в множнику — таку, від якої модель не падає, а просто
+  вчиться гірше.</p>
+</div>
+
+<p>І останнє про будову — питання, яке виглядає технічним, а насправді
+вирішальне. Наприкінці навчання ми маємо <b>дві</b> матриці на той самий
+словник: <b>центральну</b> (вектор слова, коли воно посередині) і
+<b>контекстну</b> (вектор того самого слова, коли воно сусід). Skip-gram має
+таку саму пару. Яку з них вважати «вектором слова»?</p>
+
+<div class="note">
+  <p><b>Одне поняття — два імені.</b> У коді й у статтях цю пару звуть
+  <b>вхідною</b> та <b>вихідною</b> матрицею (input / output embeddings), і
+  змінні там так і називаються. У курсі ми кажемо «центральна» й «контекстна»,
+  бо ці слова описують, <i>чим слово було</i>, а не з якого боку мережі лежить
+  його рядок.</p>
+</div>
+
+<p>Автори GloVe радять <b>суму</b>. Бібліотеки Word2Vec за замовчуванням віддають
+<b>центральну</b>. Ми перевірили всі варіанти на своїй задачі — моделі вже
+навчені, тож це коштує лише перерахунку:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>що беремо за вектор слова</th><th>MRR</th><th>розкид</th></tr>
+  <tr class="hot"><td>GloVe · центральна матриця</td><td>0.4242</td><td>0.0135</td></tr>
+  <tr><td>GloVe · контекстна матриця</td><td>0.4215</td><td>0.0077</td></tr>
+  <tr><td>GloVe · сума двох</td><td>0.4245</td><td>0.0057</td></tr>
+  <tr class="hot"><td>Word2Vec · центральна матриця</td><td>0.4422</td><td>0.0072</td></tr>
+  <tr><td>Word2Vec · контекстна матриця</td><td>0.4366</td><td>0.0091</td></tr>
+  <tr><td>Word2Vec · сума двох</td><td>0.4338</td><td>0.0028</td></tr>
+</table>
+</div>
+
+<p>Розкид між <b>боками</b> — <b>0.0207</b>. Забігаючи вперед: різниця між самими
+<b>методами</b> вийде <b>0.0180</b>. Вибір, який зазвичай навіть не обговорюють,
+важить більше за вибір алгоритму.</p>
+
+<div class="note warn">
+  <p><b>Тому в усій темі всі три моделі беруть один і той самий бік —
+  центральну матрицю.</b> Не тому, що вона найкраща, а тому, що інакше замір
+  порівнюватиме не методи, а деталі реалізації. І є друга, жорсткіша причина:
+  FastText уміє зібрати з субслів лише <b>центральну</b> матрицю — у слова,
+  якого модель ніколи не бачила, контекстного рядка просто не існує. Взявши
+  суму в двох моделях і центральну частину в третій, ми б заміряли різницю в
+  конвенції та назвали її користю субслів.</p>
+</div>
+
+<h2 id="s6"><span class="num">06 / Замір</span>GloVe проти Word2Vec</h2>
+
+<p>Тепер треба порівняти два методи, а порівнювати списками сусідів не можна:
+обидва виглядають розумно, і вибір «який кращий» стає справою смаку. Потрібна
+задача з числом.</p>
+
+<p>Задача та сама, що в <a href="../05-tfidf/lecture.html">темі 05</a> і
+<a href="../11-distributional-semantics/lecture.html">темі 11</a>. Корпус
+паралельний, і той самий англійський рядок різні перекладачі переклали
+по-різному. Так виникають пари документів, про які <b>точно</b> відомо, що вони
+означають одне й те саме, — а спільних слів у них майже немає:</p>
+
+<div class="code">A: Не вдалося зареєструватися у потрібній мережі<br>
+B: Не вдалось зареєструватись з мережею<br><br>
+A: Вважати всі попередження помилками<br>
+B: Зробити всі попередження критичними</div>
+
+<p>Таких пар <b>209</b>. Беремо перший документ пари, підмішуємо другий до
+<b>500</b> випадкових документів і дивимось, на якому місці модель поставить
+правильну відповідь. Метрика — <b>MRR</b>: одиниця, поділена на місце
+правильної відповіді, усереднена по всіх парах. Завжди перший — MRR дорівнює
+одиниці; завжди десятий — одній десятій.</p>
+
+<p>Три зерна на кожен метод, і ось що виходить.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>метод</th><th>MRR</th><th>розкид</th><th>перший з першого разу</th></tr>
+  <tr><td>GloVe</td><td>0.4242</td><td>0.0135</td><td>32.1-36.4&nbsp;%</td></tr>
+  <tr class="hot"><td>Word2Vec (skip-gram)</td><td>0.4422</td><td>0.0072</td><td>34.9-36.4&nbsp;%</td></tr>
+</table>
+</div>
+
+<p>Різниця — <b>0.0180</b> на користь Word2Vec. А тепер подивись на розкид:
+<b>0.0135</b>. Купи по зернах перекриваються — GloVe дав 0.4136 · 0.4158 ·
+<b>0.4432</b>, Word2Vec 0.4344 · 0.4404 · 0.4518, і найкраще зерно GloVe стоїть
+між двома зернами Word2Vec.</p>
+
+<p>Тобто чесна відповідь така: <b>на цих даних методи нерозрізненні</b>. Різниця
+менша за подвоєний розкид, а отже, її могло й не бути. Якби ми взяли одне зерно
+й побачили 0.4136 проти 0.4518, спокуса написати «Word2Vec виразно кращий» була
+б великою — і це була б неправда, здобута з одного прогону.</p>
+
+<div class="note warn">
+  <p><b>Не роби з цього висновку про методи взагалі.</b> Ми вчили обидві моделі
+  на <b>674 948</b> слововживаннях і 64 вимірах; оригінальні порівняння робились
+  на корпусах у тисячі разів більших. Чесне формулювання нашого заміру таке:
+  <b>на корпусі такого розміру різниця між методами тоне в розкиді</b>, і
+  вибирати треба не за нею, а за тим, що зручніше рахувати.</p>
+</div>
+
+<p>Практичну різницю добре видно в списках сусідів. Обидві моделі осмислені, але
+осмислені по-різному:</p>
+
+<div class="code">GloVe    помилка -> час · внутрішня · спроби · під · сталася<br>
+Word2Vec помилка -> читанні · сталася · встановленні · спроби · створенні</div>
+
+<p>GloVe тягне до слова те, що стоїть із ним поруч найчастіше, — разом зі
+службовими «час» і «під» зі звороту «під час»; Word2Vec — обставини, у яких
+помилка стається. Обидва списки осмислені, і жоден не «кращий»: вони
+відповідають на трохи різні питання.</p>
+
+<h2 id="s7"><span class="num">07 / Вага</span>Що вага робить усередині</h2>
+
+<p>Тепер повернімося до вагової функції, бо з нею повʼязана найкорисніша річ у
+цій половині теми. Прожени GloVe тричі: канонічно, без стелі й без ваги взагалі.
+Ті самі три зерна, та сама кількість проходів. Ось MRR:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>варіант ваги</th><th>MRR</th><th>розкид</th></tr>
+  <tr class="hot"><td>f(x) зі стелею</td><td>0.4242</td><td>0.0135</td></tr>
+  <tr><td>f(x) без стелі</td><td>0.4300</td><td>0.0060</td></tr>
+  <tr><td>без ваги (f = 1)</td><td>0.4170</td><td>0.0055</td></tr>
+</table>
+</div>
+
+<p>Найкращий тут — варіант <b>без стелі</b>, і різниця з канонічним становить
+<b>0.0058</b> при розкиді <b>0.0135</b>. Це не різниця. Навіть найгірший варіант
+відстає від канонічного всього на <b>0.0072</b>. Спокуса зробити висновок «вага не потрібна» тут
+велика, і вона хибна — просто наш замір дивиться не туди.</p>
+
+<p>Подивімось, що модель <b>відтворює</b>. Візьмімо кожну навчену модель і
+порахуймо, наскільки точно вона вгадує <code>log X</code> — окремо для трьох куп
+клітинок. Число в таблиці — корінь із середньої квадратичної помилки, тобто
+«на скільки в середньому промахується», і чим воно менше, тим краще.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>варіант</th><th>X &lt; 1 (58.5&nbsp;% клітинок)</th><th>1-10 (39.2&nbsp;%)</th><th>X <span class="raw">≥</span> 10 (2.37&nbsp;%)</th></tr>
+  <tr class="hot"><td>f(x) зі стелею</td><td>0.9522</td><td>0.4543</td><td>0.4147</td></tr>
+  <tr><td>f(x) без стелі</td><td>0.9932</td><td>0.4891</td><td>0.3435</td></tr>
+  <tr><td>без ваги (f = 1)</td><td>0.4557</td><td>0.5292</td><td>0.9172</td></tr>
+</table>
+</div>
+
+<p>Ось тепер видно все. Без ваги модель майже ідеально відтворює <b>купу
+випадковостей</b> (0.4557 на клітинках, де слова стояли поруч раз) і найгірше з
+усіх — справжні звʼязки (0.9172 там, де слова стояли поруч десятки разів). Це
+буквально означає «вивчила шум і не вивчила сигнал». Вага перевертає картину:
+похибка на великих клітинках падає більш ніж удвічі, на дрібних — росте вдвічі,
+і саме цього ми й хотіли.</p>
+
+<p>Без стелі модель ще краще відтворює найбільші клітинки (0.3435) — але це
+поліпшення куплене за рахунок середньої купи, у якій сидить 39.2&nbsp;% клітинок і
+майже весь корисний зміст. Стеля — не про якість відтворення, а про те, кому
+дістається увага.</p>
+
+<div class="note">
+  <p><b>Урок ширший за GloVe.</b> Замір на задачі показав «різниці немає», замір
+  усередині показав, що моделі роблять зовсім різні речі. Це не суперечність:
+  наша задача — пошук за схожістю документів — просто не чутлива до того, чи
+  вгадала модель точне значення рідкісної клітинки. Коли зовнішній замір мовчить,
+  це ще не означає, що всередині нічого не відбувається — і навпаки, гарна
+  внутрішня цифра нічого не варта, поки не показала себе на задачі.</p>
+</div>
+
+<h2 id="s8"><span class="num">08 / Субслова</span>Слово як мішок своїх шматків</h2>
+
+<p>Друга половина теми, і саме вона про українську.</p>
+
+<p>Обидві моделі вище мають ту саму сліпу пляму: слово поза словником для них не
+існує. Ані GloVe, ані Word2Vec не мають, звідки взяти вектор для
+«кореневому», якщо вони бачили лише «кореневий» і «кореневого». Для них це три
+різні рядки символів, і два з них їм ніхто не показав.</p>
+
+<p>FastText лікує це так. Слово обгортають кутовими дужками й ріжуть на всі
+підрядки довжиною від трьох до пʼяти літер. Вектор слова — <b>середнє</b>
+векторів усіх його шматків <b>і</b> його власного вектора, якщо такий є.</p>
+
+<div class="code">кореневому -> &lt;кореневому&gt;<br>
+n=3: &lt;ко · кор · оре · рен · ене · нев · ево · вом · ому · му&gt;<br>
+n=4: &lt;кор · коре · орен · рене · енев · нево · евом · вому · ому&gt;<br>
+n=5: &lt;коре · корен · орене · ренев · енево · невом · евому · вому&gt;</div>
+
+<p>Разом виходить <b>27</b> шматків. Кутові дужки — не прикраса: без них шматок
+«ому» посеред слова й «ому&gt;» на кінці були б одним і тим самим, а це різні
+речі. Перший — просто склад, другий — закінчення давального відмінка.</p>
+
+<p>На нашому словнику з 6 074 слів набирається <b>26 238</b> різних субслів,
+у середньому <b>22.7</b> на слово. Таблиця векторів росте з 6 074 рядків до
+<b>32 312</b> — у <b>5.32</b> раза.</p>
+
+<p>А тепер найважливіше: <b>вектор тепер можна зібрати для будь-якого слова</b>,
+навіть для того, якого модель ніколи не бачила. Досить порізати його на шматки й
+усереднити ті, що знайшлися. Саме це й обіцяє полагодити нашу стіну з
+першого розділу.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 5 · З чого складається невідоме слово</div>
+  <p class="fig-sub">Пʼять справжніх слів із тих 21 004, яких модель не бачила.
+    Плитка бірюзова, якщо таке субслово вже траплялось у відомих словах, і
+    рожева, якщо ні. Повзунок міняє довжину шматка. Модель бере довжини 3-5;
+    шістка тут для того, щоб побачити, що змінюється далі.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">слово поза словником</span>
+        <div class="seg wrap" id="seg5">
+          <button data-i="0" aria-pressed="true">конфігурацією</button>
+          <button data-i="1" aria-pressed="false">неправильною</button>
+          <button data-i="2" aria-pressed="false">кореневому</button>
+          <button data-i="3" aria-pressed="false">перемикатися</button>
+          <button data-i="4" aria-pressed="false">необхідного</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="n5">довжина субслова <output id="n5o">3</output></label>
+        <input id="n5" type="range" min="3" max="6" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>субслів</b><i id="v5a">—</i></div>
+        <div class="cellv"><b>відомих</b><i id="v5b">—</i></div>
+        <div class="cellv"><b>невідомих</b><i id="v5c">—</i></div>
+        <div class="cellv"><b>частка відомих</b><i id="v5d">—</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>На довжинах 3-4 майже все відоме майже завжди — і саме тому
+    така мірка нічого не розрізняє. Різниця зʼявляється на шістці: у слова
+    «кореневому» відомі лише <b>4</b> шматки з <b>7</b>, бо довгі шматки несуть
+    корінь, а короткі — тільки те, що слово українське.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">09 / FastText</span>Це той самий skip-gram</h2>
+
+<p>Тут варто сказати прямо, бо навколо FastText багато туману: <b>окремого
+алгоритму навчання в ньому немає</b>. Це той самий skip-gram із негативним
+семплюванням із теми 12. Змінився рівно один рядок: там, де раніше з таблиці
+брали рядок слова, тепер беруть <b>середнє</b> рядків слова та його субслів.
+Усе інше — пари, негативні приклади, спадна швидкість навчання — те саме. У
+практиці це буквально одна гілка <code>if</code>, і це найкращий доказ того, що
+субслова — не нова модель, а новий <b>вхід</b> у стару.</p>
+
+<p>Що дає ця заміна на списках сусідів, видно одразу:</p>
+
+<div class="code">Word2Vec  файл -> вхідний · каталог · вихідний · локальний · виконуваний<br>
+FastText  файл -> файлу · файлом · файли · файловий · файла<br><br>
+Word2Vec  мережі -> містка · переспрямовування · мережевого · трансляції<br>
+FastText  мережі -> мереж · мережу · мережею · мережа · мережевої</div>
+
+<p>FastText зібрав <b>парадигму</b> — усі форми того самого слова. Це саме те, у
+чому його хвалять для флективних мов, і це справді працює: жодної лематизації,
+жодного словника закінчень, просто спільні шматки.</p>
+
+<p>Але подивись на це другим оком. Список Word2Vec містить <b>інші</b> слова —
+«каталог», «вихідний», «виконуваний». Список FastText — <b>те саме слово</b> в
+пʼятьох формах, тобто не додає нічого, чого не дало б звичайне зведення до
+леми.</p>
+
+<p>І замір це підтверджує. На тій самій задачі пошуку з тими самими трьома
+зернами:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>модель</th><th>MRR</th><th>розкид</th></tr>
+  <tr class="hot"><td>Word2Vec</td><td>0.4422</td><td>0.0072</td></tr>
+  <tr><td>FastText</td><td>0.2518</td><td>0.0017</td></tr>
+</table>
+</div>
+
+<p>FastText програє <b>0.1904</b> — це в двадцять шість разів більше за розкид.
+Не «трохи гірше», а майже вдвічі гірше. Причина видна зі списків: усереднивши слово з
+двома десятками його шматків, ми стерли те, чим воно відрізняється від інших
+слів, і лишили те, чим воно на них схоже.</p>
+<h2 id="s10"><span class="num">10 / Пастка</span>89.7&nbsp;% проти 32.3&nbsp;%</h2>
+
+<p>Тепер головне питання теми, заради якого все й затівалось. Модель не знає
+21 004 словоформи. Скільки з них рятують субслова?</p>
+
+<p>Найпростіший спосіб відповісти: порізати невідоме слово на субслова й
+подивитись, скільки з них уже траплялось у відомих словах. Якщо більшість
+шматків знайома — вважаємо, що модель слово «впізнала». Так міряють у більшості
+статей. Робимо це: з 21 004 невідомих словоформ у <b>18 847</b> понад половина
+субслів уже відома — це <b>89.7&nbsp;%</b>, а середня частка відомих субслів —
+<b>0.7938</b>.</p>
+
+<p>Виглядає як перемога. Девʼять слів із десяти врятовано, стіни немає.</p>
+
+<p>А тепер поставмо питання чесно. «Впізнала» має означати «модель має до чого
+причепити це слово» — тобто серед відомих їй слів є <b>форма тієї самої леми</b>.
+Це можна перевірити прямо: прогнати кожне невідоме слово через морфологічний
+аналізатор (той самий <code>pymorphy3</code>, що в
+<a href="../03-morphology/lecture.html">темі 03</a>), узяти лему й подивитись,
+чи є ця лема серед лем відомих слів.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>спосіб оцінки</th><th>«впізнано»</th><th>частка</th></tr>
+  <tr><td>понад половина субслів відома</td><td>18 847</td><td>89.7&nbsp;%</td></tr>
+  <tr class="hot"><td>лема справді є серед відомих</td><td>6 780</td><td>32.3&nbsp;%</td></tr>
+  <tr><td>проста основа (обрізати −4) є серед відомих</td><td>6 126</td><td>29.2&nbsp;%</td></tr>
+</table>
+</div>
+
+<p><b>89.7&nbsp;% — оптимістична оцінка. 32.3&nbsp;% — чесна.</b> Різниця майже втричі, і
+це не похибка методу, а два різні питання, які надто легко сплутати. Перше
+питання: «чи схоже це слово на щось знайоме?». Друге: «чи знає модель це слово
+насправді?».</p>
+
+<p>Ось приклади тих, кому справді пощастило:</p>
+
+<div class="code">конфігурацією -> лема «конфігурація», відомі: конфігурації · конфігурацію<br>
+неправильною  -> лема «неправильний», відомі: неправильний · неправильна<br>
+кореневому    -> лема «кореневий», відомі: кореневий · кореневого · коренева<br>
+перемикатися  -> лема «перемикатися», відома форма: перемикаємося</div>
+
+<p>Чисто морфологічні варіанти. Саме те, заради чого субслова й вигадали — і
+саме на цій третині вони справді працюють. Питання лише в тому, чому решта дві
+третини теж «впізналися».</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 6 · Що ховається за словом «впізнано»</div>
+  <p class="fig-sub">Стовпчики — усі 21 004 невідомі словоформи, розкладені за
+    часткою відомих субслів. Бірюзова частина стовпчика — слова, у яких лема
+    <b>справді</b> відома. Повзунок посуває поріг, за яким ми оголошуємо слово
+    «впізнаним». Числа беруться з таблиці, яку друкує зошит для кожного з
+    двадцяти одного положення.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="t6">поріг «впізнано» <output id="t6o">0.50</output></label>
+        <input id="t6" type="range" min="0" max="20" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>«впізнано»</b><i id="v6a">—</i></div>
+        <div class="cellv"><b>з них лема відома</b><i id="v6b">—</i></div>
+        <div class="cellv"><b>точність</b><i id="v6c">—</i></div>
+        <div class="cellv"><b>чесна оцінка</b><i id="v6d">6 780</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>Хоч куди посувай поріг, точність не піднімається вище
+    <b>60.7&nbsp;%</b>, і купується вона тим, що «впізнаних» лишається менше за
+    чесні 6 780. Мірка «скільки субслів відомо» просто не міряє того, що ми
+    хочемо знати.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Причина</span>Спільне виявляється закінченням</h2>
+
+<p>Різниця майже втричі мусить мати причину, і вона проста настільки, що її
+можна показати одним замірoм. Розділімо субслова слова на три групи: ті, що
+торкаються <b>початку</b> (містять відкривальну дужку), ті, що торкаються
+<b>кінця</b>, і серединні. Тепер порівняймо дві купи слів — ті, у яких лема
+відома, і ті, у яких ні.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>де стоїть субслово</th><th>лема відома</th><th>лема невідома</th><th>різниця</th></tr>
+  <tr class="hot"><td>початок слова (там корінь)</td><td>0.9871</td><td>0.7805</td><td>0.2066</td></tr>
+  <tr class="hot"><td>кінець слова (там закінчення)</td><td>0.8764</td><td>0.8642</td><td>0.0122</td></tr>
+  <tr><td>середина</td><td>0.9008</td><td>0.7193</td><td>0.1815</td></tr>
+</table>
+</div>
+
+<p>Ось і відповідь. Субслова <b>початку</b> розрізняють дві купи чудово: різниця
+0.2066. А субслова <b>кінця</b> не розрізняють майже нічого: 0.0122, тобто вони
+однаково відомі й тоді, коли модель справді знає слово, і тоді, коли не знає.</p>
+
+<p>Причина в самій мові. Українських закінчень — десятки, і всі вони давно
+трапились у якомусь із шести тисяч відомих слів. Шматок «ою&gt;» відомий не
+тому, що модель бачила слово «неправильною», а тому, що вона бачила «новою»,
+«першою» і ще сотню слів. Корінь — інша справа: він або траплявся, або ні.</p>
+
+<p>Через це загальна частка відомих субслів так погано розрізняє дві купи:
+<b>0.9090</b> для слів із відомою лемою проти <b>0.7388</b> для решти. А за
+мірою «понад половина відома» вони майже зливаються: <b>99.1&nbsp;%</b> проти
+<b>85.3&nbsp;%</b>. Слово «впізнається» переважно за тим, що воно
+<b>українське</b>, а не за тим, що воно те саме.</p>
+
+<div class="note warn">
+  <p><b>Це і є теза теми.</b> Субслова справді рятують морфологію — на тій
+  третині слів, де корінь модель уже бачила. Але <b>міряти їхню користь
+  перекриттям n-грам — значить себе обманювати</b>, бо це перекриття
+  забезпечується закінченнями, а не коренями. Показуй обидва числа поруч:
+  89.7&nbsp;% і 32.3&nbsp;%.</p>
+</div>
+
+<h2 id="s12"><span class="num">12 / Замір</span>Чесний замір — на задачі</h2>
+
+<p>Перекриття n-грам — навіть зважене й перевірене — усе одно лишається
+<b>проміжною величиною</b>. Тому поставмо дві справжні задачі.</p>
+
+<p><b>Задача перша: знайти в словнику родича.</b> Для невідомого слова знайти
+серед відомих таке, що має ту саму лему. Правильну відповідь ми знаємо від
+<code>pymorphy3</code>, тож можна просто порахувати, хто скільки вгадав.
+Порівнюємо три способи: чисте перекриття субслів без жодного навчання, навчений
+FastText (зібрати вектор і взяти найближчий за косинусом) і найпростішу основу
+з <a href="../03-morphology/lecture.html">теми 03</a> — відрізати чотири літери.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>спосіб</th><th>вгадав родича</th><th>розкид</th></tr>
+  <tr class="hot"><td>n-грами без жодного навчання</td><td>76.0&nbsp;%</td><td>0.99&nbsp;%</td></tr>
+  <tr><td>основа −4</td><td>33.5&nbsp;%</td><td>0.40&nbsp;%</td></tr>
+  <tr><td>FastText (навчені субслова)</td><td>18.7&nbsp;%</td><td>0.43&nbsp;%</td></tr>
+  <tr><td>випадкове слово словника</td><td>0.0&nbsp;%</td><td>0.00&nbsp;%</td></tr>
+</table>
+</div>
+
+<p>Це число варте того, щоб перечитати його двічі. <b>Порівняння рядків без
+жодного навчання вгадує родича вчетверо частіше, ніж навчений FastText.</b>
+І це не парадокс: перекриття n-грам — точна міра схожості написання, а
+навчання — це усереднення, і воно схожість написання свідомо розмиває, бо
+намагається вбудувати в неї ще й зміст.</p>
+
+<p><b>Задача друга: та сама задача пошуку, але тільки на парах із невідомими
+словами.</b> З наших 209 пар <b>113</b> містять хоча б одне слово поза
+словником. На них і міряємо, порівнюючи три способи скласти вектор документа.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>спосіб</th><th>MRR</th><th>розкид</th></tr>
+  <tr class="hot"><td>Word2Vec, невідомі просто пропущено</td><td>0.5020</td><td>0.0082</td></tr>
+  <tr><td>FastText, невідомі пропущено</td><td>0.2520</td><td>0.0079</td></tr>
+  <tr><td>FastText, невідомі зібрано з субслів</td><td>0.2912</td><td>0.0113</td></tr>
+</table>
+</div>
+
+<p>Два висновки, і вони тягнуть у різні боки.</p>
+
+<p><b>Перший.</b> Реконструкція справді працює: різниця між другим і третім
+рядком — <b>+0.0392</b>, і вона більша за подвоєний розкид, а по кожному з трьох
+зерен приріст однаковий за знаком. Ці два рядки відрізняються <b>тільки</b>
+збиранням вектора з субслів, більше нічим. Це і є чиста ціна питання.</p>
+
+<p><b>Другий.</b> Word2Vec, який ці слова просто <b>викидає</b>, усе одно
+попереду на <b>0.2108</b>. Тобто на нашому корпусі краще взагалі не мати вектора
+для невідомого слова, ніж мати той, що збирається з субслів.</p>
+
+<p>Чому так, видно з ще одного заміру. Вектор, зібраний із двох десятків шматків,
+лежить <b>ближче до центру</b> всієї хмари векторів, ніж звичайний: косинус із
+центром <b>0.9725</b> проти <b>0.9565</b>. Усереднення багатьох доданків завжди
+тягне до середини — а середина хмари означає «просто якесь українське слово».
+Реконструйований вектор не помилковий, він <b>невиразний</b>.</p>
+
+<p>І остання деталь. Проста основа з обрізанням чотирьох літер знаходить лему в
+<b>29.2&nbsp;%</b> випадків, а справжня лематизація — у <b>32.3&nbsp;%</b>. Різниця
+мізерна: на нашому корпусі складність FastText окупається зовсім не так
+очевидно, як прийнято думати. Побачити це можна було єдиним способом —
+<b>заміряти користь на самій задачі</b>, а не на перекритті.</p>
+
+<h2 id="s13"><span class="num">13 / Ціна</span>Де субслова шкодять і скільки коштують</h2>
+
+<p>У субслів є прямий зворотний бік, і він теж вимірний. Два слова з однаковими
+літерами можуть не мати нічого спільного за змістом — а FastText бачить у них
+спільні шматки й підтягує їхні вектори один до одного.</p>
+
+<p>Порахуємо це на <b>всіх</b> парах слів словника — їх понад вісімнадцять
+мільйонів. Ділимо їх на дві купи: та сама лема (схожість чесна) і різні леми
+(схожість випадкова).</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 7 · Субслова зближують те, що зближувати не треба</div>
+  <p class="fig-sub">Усі 18.4 мільйона пар слів словника. Повзунок відсікає пари
+    за перекриттям субслів. Стовпчики — середній косинус у двох купах: пари
+    тієї самої леми (чесна схожість) і пари різних лем (випадкова). Важлива не
+    висота стовпчиків, а <b>відстань між ними</b>.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="t7">перекриття субслів від <output id="t7o">0.4</output></label>
+        <input id="t7" type="range" min="0" max="6" step="1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>пар, та сама лема</b><i id="v7a">—</i></div>
+        <div class="cellv"><b>пар, різні леми</b><i id="v7b">—</i></div>
+        <div class="cellv"><b>розрив Word2Vec</b><i id="v7c">—</i></div>
+        <div class="cellv"><b>розрив FastText</b><i id="v7d">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>За будь-якого порогу Word2Vec розрізняє дві купи в кілька разів
+    краще. При перекритті понад 0.4 його розрив — <b>0.0430</b>, у FastText —
+    <b>0.0073</b>, тобто вшестеро менший. Субслова бачать написання й майже не
+    бачать, що за ним стоїть.</figcaption>
+</figure>
+
+<p>Ось три пари з тих 16 442, у яких леми різні, а перекриття субслів велике:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>пара</th><th>перекриття</th><th>Word2Vec</th><th>FastText</th></tr>
+  <tr><td>процесора · процес</td><td>0.632</td><td>+0.105</td><td>+0.986</td></tr>
+  <tr><td>змінна · змін</td><td>0.516</td><td>+0.016</td><td>+0.844</td></tr>
+  <tr><td>вдається · вважається</td><td>0.504</td><td>+0.031</td><td>+0.886</td></tr>
+</table>
+</div>
+
+<p>«Вдається» і «вважається» — різні дієслова, у яких збігається половина літер.
+Word2Vec бачить різницю (+0.031, тобто майже нуль), FastText вважає їх майже
+одним словом (+0.886). Це та сама властивість, що склеює «мережу» й «мережею», —
+просто повернута іншим боком.</p>
+
+<p>А тепер підсумуємо ціну.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th></th><th>Word2Vec</th><th>FastText</th></tr>
+  <tr><td>рядків у таблиці векторів</td><td>6 074</td><td>32 312</td></tr>
+  <tr><td>чисел у моделі (64 виміри)</td><td>388 736</td><td>2 067 968</td></tr>
+  <tr class="hot"><td>памʼять, МБ</td><td>1.55</td><td>8.27</td></tr>
+  <tr class="hot"><td>час навчання</td><td>×1</td><td>×1.6-1.9</td></tr>
+  <tr><td>MRR на парах-синонімах</td><td>0.4422</td><td>0.2518</td></tr>
+</table>
+</div>
+
+<p>У <b>5.32</b> раза більше параметрів, у півтора-два рази більше часу (у
+чотирьох наших прогонах відношення гуляло від 1.6 до 1.9 разом із навантаженням
+машини) — і майже вдвічі гірша якість на тій задачі, яку ми міряли. Це не вирок субсловам взагалі: наш корпус маленький, а
+задача одна. Але це вирок звичці <b>вважати користь субслів очевидною</b>.</p>
+
+<div class="note">
+  <p><b>Що з цього забрати з собою.</b> Субслова роблять морфологію видимою без
+  жодного словника — це правда, і сусідами слова стають його ж форми. Але
+  користь субслів <b>не можна</b> міряти перекриттям n-грам: ця мірка завищує
+  втричі, бо спільними виявляються закінчення. Заміряй на своїй задачі. Наш
+  замір сказав «дорого й гірше»; інший корпус може сказати протилежне — і тепер
+  ти знаєш, як це перевірити, а не вгадати.</p>
+</div>
+
+<p>Наступна тема бере готові вектори — байдуже, звідки — і питає, що з ними
+можна <b>робити</b>: чи справді працює знаменита арифметика «король мінус
+чоловік плюс жінка», і що з неї лишається на корпусі нашого розміру. Відповідь
+там теж виявиться не такою, як в підручниках.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../12-word2vec/lecture.html"><span class="dir">попередня</span><span class="ttl">12. Word2Vec</span></a>
+    <a class="next" href="../14-vector-arithmetic/lecture.html"><span class="dir">наступна</span><span class="ttl">14. Арифметика векторів</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thou(n){
+  var s=String(n), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function cut(g,txt,max,px,bold){
+  g.font=mono(px||11,!!bold);
+  if(g.measureText(txt).width<=max) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+
+/* ═══════ числа з зошита ═══════ */
+/* корпус: 93 392 документи, 674 948 слововживань, 27 078 словоформ,
+   словник при min_count=10 — 6074 слова, поза ним 21 004 словоформи */
+var FORMS=27078, TOKENS=674948;
+/* частотний спектр: SPECTRUM[k] — скільки словоформ трапилось рівно k разів */
+var SPECTRUM=[0,9716,4087,2118,1609,1046,842,656,518,412,389,310,281,250,200,204,187,174,149,146,158,109];
+
+/* ─────────────── фігура 1 · поріг словника ─────────────── */
+(function(){
+  var cv=I('c1'); if(!cv) return;
+
+  function state(t){
+    var cutForms=0, cutTokens=0, k;
+    for(k=1;k<t;k++){ cutForms+=SPECTRUM[k]; cutTokens+=k*SPECTRUM[k]; }
+    return {vocab:FORMS-cutForms, oovForms:cutForms, oovTokens:cutTokens,
+            coverage:(TOKENS-cutTokens)/TOKENS};
+  }
+
+  function draw(t){
+    var g=dpr(cv), W=LW(cv), s=state(t);
+    var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+        hair=css('--hair'), paper=css('--paper');
+    var x0=58, w=W-x0-30;
+
+    /* Підписи лишаємо ПІД смугою, а не всередині: коли частка мала, напис
+       усередині свого кольорового шматка не вміщається й лягає на сусідній. */
+    function bar(y, label, keptPart, keptTxt, lostTxt){
+      capt(g,label,x0,y-8,soft,11,true);
+      var kw=w*keptPart;
+      g.fillStyle=teal; g.fillRect(x0,y,kw,38);
+      g.fillStyle=rose; g.fillRect(x0+kw,y,w-kw,38);
+      g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(x0+.5,y+.5,w,38);
+      capt(g,keptTxt,x0,y+56,teal,12,true);
+      capt(g,lostTxt,x0+w,y+56,rose,12,true,'right');
+    }
+
+    bar(38,'СЛОВОФОРМИ · усього '+thou(FORMS),s.vocab/FORMS,
+        'у словнику '+thou(s.vocab)+' ('+f1(100*s.vocab/FORMS)+' %)',
+        'за бортом '+thou(s.oovForms)+' ('+f1(100*s.oovForms/FORMS)+' %)');
+    bar(134,'СЛОВОВЖИВАННЯ · усього '+thou(TOKENS),s.coverage,
+        'покрито '+f2(100*s.coverage)+' %',
+        'за бортом '+f2(100*s.oovTokens/TOKENS)+' %');
+
+    /* крива розміру словника */
+    var ax=x0, ay=236, aw=w, ah=86, k;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(ax,ay+ah); g.lineTo(ax+aw,ay+ah); g.stroke();
+    capt(g,'розмір словника',ax,ay-8,soft,10.5,true);
+    capt(g,'min_count',ax+aw,ay+ah+30,soft,10.5,false,'right');
+    g.strokeStyle=teal; g.lineWidth=2; g.beginPath();
+    for(k=1;k<=21;k++){
+      var px=ax+aw*(k-1)/20, py=ay+ah-ah*state(k).vocab/FORMS;
+      if(k===1) g.moveTo(px,py); else g.lineTo(px,py);
+    }
+    g.stroke();
+    var mx=ax+aw*(t-1)/20, my=ay+ah-ah*s.vocab/FORMS;
+    g.strokeStyle=rose; g.lineWidth=1.5; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(mx,ay); g.lineTo(mx,ay+ah); g.stroke(); g.setLineDash([]);
+    g.fillStyle=rose; g.beginPath(); g.arc(mx,my,4.5,0,6.2832); g.fill();
+    capt(g,thou(s.vocab),Math.min(mx+8,ax+aw-4),Math.max(my-8,ay+12),rose,11,true,
+         mx>ax+aw-70?'right':'left');
+    for(k=1;k<=21;k+=5) capt(g,String(k),ax+aw*(k-1)/20,ay+ah+16,soft,10,false,'center');
+    capt(g,'21',ax+aw,ay+ah+16,soft,10,false,'center');
+  }
+
+  function upd(){
+    var t=+I('mc1').value, s=state(t);
+    I('mc1o').textContent=t;
+    I('v1a').textContent=thou(s.vocab)+' слів';
+    I('v1b').textContent=f2(100*s.coverage)+' %';
+    I('v1c').textContent=thou(s.oovForms)+' · '+f1(100*s.oovForms/FORMS)+' %';
+    I('v1d').textContent=thou(s.oovTokens)+' · '+f2(100*s.oovTokens/TOKENS)+' %';
+    draw(t);
+    if(t===1){
+      verd('v1v','t-ok','ПОРІГ 1','Модель бачить усі '+thou(FORMS)+' словоформ, '
+        +'покриття рівно 100 %. Ціна цього — вектори для слів, що трапились один раз: '
+        +'їх '+thou(SPECTRUM[1])+', і вивчити з них нічого не можна.');
+      return;
+    }
+    var ratio=(100*s.oovForms/FORMS)/(100*s.oovTokens/TOKENS);
+    var txt='Поріг '+t+' відрізає <b>'+f1(100*s.oovForms/FORMS)+' %</b> словника і '
+      +'<b>'+f2(100*s.oovTokens/TOKENS)+' %</b> тексту — розрив у <b>'+f1(ratio)+'</b> раза. ';
+    if(ratio>=8) verd('v1v','t-ok','ХВІСТ ДЕШЕВИЙ',txt+
+      'Список слів рідшає набагато швидше за сам текст: це і є довгий хвіст.');
+    else if(ratio>=4) verd('v1v','t-mid','ПЛАТА РОСТЕ',txt+
+      'Поріг уже відкушує помітну частину самого тексту, а не лише рідкісні слова.');
+    else verd('v1v','t-no','ЗАДОРОГО',txt+
+      'Тепер модель не бачить кожне пʼяте слововживання — це вже не хвіст, а тіло корпусу.');
+  }
+  on('mc1','input',upd); upd();
+})();
+
+/* ─────────────── фігура 2 · пари або клітинки ─────────────── */
+(function(){
+  var cv=I('c2'); if(!cv) return;
+  var TOY=[
+    'не вдалося відкрити файл для читання',
+    'не вдалося відкрити документ для читання',
+    'не вдалося зберегти файл для читання',
+    'не вдалося зберегти документ для читання',
+    'файл не знайдено або не відкрито',
+    'документ не знайдено або не збережено',
+    'відкрити файл для читання не вдалося',
+    'зберегти документ для читання не вдалося'
+  ].map(function(s){return s.split(' ');});
+  var weighted=true;
+
+  function count(W){
+    var pairs=0, cells={}, maxv=0, s, i, j, key, add;
+    for(s=0;s<TOY.length;s++){
+      var t=TOY[s];
+      for(i=0;i<t.length;i++) for(j=Math.max(0,i-W);j<Math.min(t.length,i+W+1);j++){
+        if(j===i) continue;
+        pairs++;
+        key=t[i]+'|'+t[j];
+        add=weighted?1/Math.abs(i-j):1;
+        cells[key]=(cells[key]||0)+add;
+        if(cells[key]>maxv) maxv=cells[key];
+      }
+    }
+    return {pairs:pairs, cells:Object.keys(cells).length, max:maxv,
+            probe:cells['файл|читання']||0};
+  }
+
+  function draw(W){
+    var g=dpr(cv), CW=LW(cv);
+    var ink=css('--ink'), soft=css('--soft'), teal=css('--teal'), rose=css('--rose'),
+        hair=css('--hair'), paper=css('--paper');
+    /* сам корпус */
+    capt(g,'ІГРАШКОВИЙ КОРПУС · 8 рядків',30,22,soft,11,true);
+    var s,i,y=42;
+    for(s=0;s<TOY.length;s++){
+      var t=TOY[s], x=30;
+      for(i=0;i<t.length;i++){
+        var inWin=(s===0 && Math.abs(i-3)<=W && i!==3);
+        var isCenter=(s===0 && i===3);
+        g.font=mono(11.5,isCenter);
+        var wpx=g.measureText(t[i]).width+8;
+        if(isCenter){ g.fillStyle=rose; g.fillRect(x-3,y-11,wpx,17); }
+        else if(inWin){ g.fillStyle=css('--teal-w'); g.fillRect(x-3,y-11,wpx,17); }
+        g.fillStyle=isCenter?paper:(inWin?teal:ink);
+        g.textAlign='left'; g.textBaseline='alphabetic';
+        g.fillText(t[i],x,y);
+        x+=wpx;
+      }
+      y+=19;
+    }
+    capt(g,'у першому рядку підсвічено вікно ±'+W+' навколо слова «файл»',30,y+6,soft,10.5);
+
+    /* стовпчики: пари й клітинки для всіх ширин вікна */
+    var ax=60, ay=232, aw=CW-ax-30, ah=100, k;
+    var vals=[], mx=0;
+    for(k=1;k<=5;k++){ var c=count(k); vals.push(c); if(c.pairs>mx) mx=c.pairs; }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(ax,ay+ah); g.lineTo(ax+aw,ay+ah); g.stroke();
+    capt(g,'скільки виходить',ax,ay-10,soft,10.5,true);
+    var step=aw/5;
+    for(k=1;k<=5;k++){
+      var c=vals[k-1], bx=ax+step*(k-1)+step*0.16, bw=step*0.31;
+      var hp=ah*c.pairs/mx, hc=ah*c.cells/mx;
+      g.globalAlpha=(k===W)?1:0.35;
+      g.fillStyle=rose; g.fillRect(bx,ay+ah-hp,bw,hp);
+      g.fillStyle=teal; g.fillRect(bx+bw+4,ay+ah-hc,bw,hc);
+      g.globalAlpha=1;
+      capt(g,'±'+k,bx+bw+2,ay+ah+16,(k===W)?css('--rose'):soft,11,k===W,'center');
+      if(k===W){
+        capt(g,thou(c.pairs),bx+bw/2,ay+ah-hp-6,rose,10.5,true,'center');
+        capt(g,thou(c.cells),bx+bw+4+bw/2,ay+ah-hc-6,teal,10.5,true,'center');
+      }
+    }
+    g.fillStyle=rose; g.fillRect(ax+aw-150,ay-22,10,10);
+    capt(g,'пари',ax+aw-135,ay-13,soft,10.5);
+    g.fillStyle=teal; g.fillRect(ax+aw-80,ay-22,10,10);
+    capt(g,'клітинки',ax+aw-65,ay-13,soft,10.5);
+  }
+
+  function upd(){
+    var W=+I('w2').value, c=count(W);
+    I('w2o').textContent=W;
+    I('v2a').textContent=thou(c.pairs);
+    I('v2b').textContent=thou(c.cells);
+    I('v2c').textContent=f2(c.pairs/c.cells);
+    I('v2d').textContent=f2(c.probe);
+    draw(W);
+    var r=c.pairs/c.cells;
+    var tail;
+    if(c.probe===0) tail=' Клітинка «файл · читання» ще порожня: при вікні ±'+W
+      +' ці слова жодного разу не потрапляють в одне вікно.';
+    else if(weighted) tail=' Клітинка «файл · читання» важить <b>'+f2(c.probe)
+      +'</b>: слова стоять через одне, тож кожна зустріч додає пів одиниці — звідси '
+      +'дробові числа в таблиці GloVe.';
+    else tail=' Без ваги та сама клітинка «файл · читання» важить <b>'+f2(c.probe)
+      +'</b>: далекий сусід рахується нарівні з найближчим, і саме цього GloVe уникає.';
+    var txt='При вікні ±'+W+' на іграшці виходить <b>'+thou(c.pairs)+'</b> пар і '
+      +'<b>'+thou(c.cells)+'</b> клітинок — <b>'+f2(r)+'</b> пари на клітинку. '
+      +'На справжньому корпусі при ±5 це <b>3 588 918</b> проти <b>1 064 218</b>, '
+      +'тобто <b>3.37</b>.'+tail;
+    if(r>=2.8) verd('v2v','t-ok','МАЙЖЕ ЯК У КОРПУСІ',txt+
+      ' Широке вікно збирає ті самі пари знову й знову, і таблиця стає втричі '
+      +'коротшою за список пар.');
+    else if(r>=2.3) verd('v2v','t-ok','ПОВТОРИ ЗБИРАЮТЬСЯ',txt+
+      ' Однакові пари вже зливаються в одну клітинку — саме на цьому GloVe і '
+      +'заощаджує роботу.');
+    else verd('v2v','t-mid','ВІКНО ВУЗЬКЕ',txt+
+      ' Пари ще майже не повторюються, тож таблиця мало коротша за список.');
+  }
+  on('w2','input',upd);
+  segment('seg2',function(i){ weighted=(i===0); upd(); });
+  upd();
+})();
+
+/* ─────────────── фігура 3 · одна клітинка ─────────────── */
+(function(){
+  var cv=I('c3'); if(!cv) return;
+  /* справжні клітинки таблиці співвіднесень, які друкує зошит */
+  var CELLS=[
+    {n:'час · під',            x:2302.8000, lg:7.7419},
+    {n:'типу · для',           x:297.3667,  lg:5.6950},
+    {n:'встановленні · при',   x:30.0000,   lg:3.4012},
+    {n:'по · сам',             x:3.0000,    lg:1.0986},
+    {n:'ні · продовжити',      x:0.5000,    lg:-0.6931}
+  ];
+  var pick=0;
+  function fw(x){ return Math.min(1, Math.pow(x/10, 0.75)); }
+
+  function draw(d){
+    var g=dpr(cv), W=LW(cv);
+    var soft=css('--soft'), teal=css('--teal'), rose=css('--rose'), hair=css('--hair'),
+        ink=css('--ink'), amber=css('--amber');
+    var c=CELLS[pick], f=fw(c.x);
+    var ax=64, ay=44, aw=W-ax-30, ah=190;
+    /* крива зваженої квадратичної помилки */
+    var lo=-2, hi=10, top=0, k, v;
+    for(k=0;k<=240;k++){ v=f*Math.pow(lo+(hi-lo)*k/240-c.lg,2); if(v>top) top=v; }
+    if(top<=0) top=1;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(ax,ay+ah); g.lineTo(ax+aw,ay+ah); g.stroke();
+    capt(g,'зважена квадратична помилка: f(X) × (добуток − log X) в квадраті',ax,ay-12,soft,10.5,true);
+    g.strokeStyle=teal; g.lineWidth=2; g.beginPath();
+    for(k=0;k<=240;k++){
+      var xv=lo+(hi-lo)*k/240, px=ax+aw*k/240, py=ay+ah-ah*(f*Math.pow(xv-c.lg,2))/top;
+      if(k===0) g.moveTo(px,py); else g.lineTo(px,py);
+    }
+    g.stroke();
+    /* мішень */
+    var tx=ax+aw*(c.lg-lo)/(hi-lo);
+    g.strokeStyle=rose; g.lineWidth=1.5; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(tx,ay); g.lineTo(tx,ay+ah); g.stroke(); g.setLineDash([]);
+    capt(g,'log X = '+f4(c.lg),Math.min(tx+7,ax+aw-6),ay+14,rose,11,true,
+         tx>ax+aw-110?'right':'left');
+    /* поточний скалярний добуток */
+    var cx=ax+aw*(d-lo)/(hi-lo), cy=ay+ah-ah*(f*Math.pow(d-c.lg,2))/top;
+    g.strokeStyle=amber; g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(cx,ay); g.lineTo(cx,ay+ah); g.stroke();
+    g.fillStyle=amber; g.beginPath(); g.arc(cx,cy,5,0,6.2832); g.fill();
+    capt(g,'добуток = '+f1(d),cx>ax+aw-120?cx-7:cx+7,ay+32,amber,11,true,
+         cx>ax+aw-120?'right':'left');
+    for(k=lo;k<=hi;k+=2) capt(g,String(k),ax+aw*(k-lo)/(hi-lo),ay+ah+17,soft,10,false,'center');
+    capt(g,'скалярний добуток',ax+aw,ay+ah+34,soft,10.5,false,'right');
+    /* рядок формули */
+    var by=ay+ah+64;
+    capt(g,'X = '+f4(c.x)+'   ·   log X = '+f4(c.lg)+'   ·   f(X) = '+f4(f),ax,by,ink,12,true);
+    capt(g,'помилка = '+f4(d-c.lg)+'   ·   квадрат = '+f4(Math.pow(d-c.lg,2))
+      +'   ·   зважений = '+f4(f*Math.pow(d-c.lg,2)),ax,by+20,soft,12);
+  }
+
+  function upd(){
+    var d=+I('d3').value, c=CELLS[pick], f=fw(c.x), e=d-c.lg;
+    I('d3o').textContent=f1(d);
+    I('v3a').textContent=f4(c.lg);
+    I('v3b').textContent=(e>=0?'+':'')+f4(e);
+    I('v3c').textContent=f4(e*e);
+    I('v3d').textContent=f4(f);
+    draw(d);
+    var txt='Клітинка «'+c.n+'»: X = <b>'+f4(c.x)+'</b>, ціль <b>'+f4(c.lg)+'</b>. '
+      +'Зараз скалярний добуток <b>'+f1(d)+'</b>, тож внесок цієї клітинки в цільову '
+      +'функцію — <b>'+f4(f*e*e)+'</b>.';
+    if(Math.abs(e)<0.15) verd('v3v','t-ok','ЦІЛЬ ВЗЯТО',txt+
+      ' Модель відтворює цю клітинку майже точно, і виправляти тут майже нічого.');
+    else if(Math.abs(e)<1.2) verd('v3v','t-mid','БЛИЗЬКО',txt+
+      ' Помилка ще є, але квадрат уже малий — крок навчання буде дрібним.');
+    else verd('v3v','t-no','ДАЛЕКО',txt+
+      ' Квадрат помилки великий, і саме такі клітинки тягнуть вектори найсильніше.');
+  }
+  on('d3','input',upd);
+  segment('seg3',function(i){ pick=i; upd(); });
+  upd();
+})();
+
+/* ─────────────── фігура 4 · вагова функція ─────────────── */
+(function(){
+  var cv=I('c4'); if(!cv) return;
+  var XMAXES=[2,5,10,20,50,100], ALPHAS=['0.25','0.50','0.75','1.00'];
+  /* гістограма значень X у нашій таблиці: межа-межа → частка клітинок, % */
+  var HB=[0,0.5,1,2,5,10,50,100,1000,100000];
+  var HS=[34.30,24.17,23.92,11.97,3.26,2.11,0.17,0.09,0.00];
+  /* частка суми ваг, що припадає на купи X<1 / 1..10 / X>=10 — з зошита */
+  var WGRID={"2|0.25|1":[50.04,46.87,3.08],"2|0.25|0":[47.52,47.12,5.36],"2|0.50|1":[41.73,54.40,3.86],"2|0.50|0":[35.52,52.95,11.52],"2|0.75|1":[33.99,61.34,4.68],"2|0.75|0":[23.46,53.51,23.03],"2|1.00|1":[27.12,67.40,5.48],"2|1.00|0":[12.83,45.72,41.46],"5|0.25|1":[48.52,47.72,3.76],"5|0.25|0":[47.52,47.12,5.36],"5|0.50|1":[38.38,56.00,5.62],"5|0.50|0":[35.52,52.95,11.52],"5|0.75|1":[28.89,63.20,7.90],"5|0.75|0":[23.46,53.51,23.03],"5|1.00|1":[20.73,68.78,10.48],"5|1.00|0":[12.83,45.72,41.46],"10|0.25|1":[47.99,47.59,4.42],"10|0.25|0":[47.52,47.12,5.36],"10|0.50|1":[37.07,55.26,7.68],"10|0.50|0":[35.52,52.95,11.52],"10|0.75|1":[26.73,60.98,12.30],"10|0.75|0":[23.46,53.51,23.03],"10|1.00|1":[17.94,63.92,18.14],"10|1.00|0":[12.83,45.72,41.46],"20|0.25|1":[47.73,47.33,4.94],"20|0.25|0":[47.52,47.12,5.36],"20|0.50|1":[36.33,54.16,9.51],"20|0.50|0":[35.52,52.95,11.52],"20|0.75|1":[25.38,57.91,16.70],"20|0.75|0":[23.46,53.51,23.03],"20|1.00|1":[16.12,57.44,26.44],"20|1.00|0":[12.83,45.72,41.46],"50|0.25|1":[47.59,47.19,5.22],"50|0.25|0":[47.52,47.12,5.36],"50|0.50|1":[35.84,53.43,10.73],"50|0.50|0":[35.52,52.95,11.52],"50|0.75|1":[24.37,55.60,20.03],"50|0.75|0":[23.46,53.51,23.03],"50|1.00|1":[14.62,52.10,33.28],"50|1.00|0":[12.83,45.72,41.46],"100|0.25|1":[47.55,47.15,5.31],"100|0.25|0":[47.52,47.12,5.36],"100|0.50|1":[35.68,53.18,11.14],"100|0.50|0":[35.52,52.95,11.52],"100|0.75|1":[23.96,54.66,21.38],"100|0.75|0":[23.46,53.51,23.03],"100|1.00|1":[13.94,49.68,36.37],"100|1.00|0":[12.83,45.72,41.46]};
+  var clipped=true;
+
+  function weight(x,xm,al){ var v=Math.pow(x/xm,al); return clipped?Math.min(1,v):v; }
+  function lx(x){ return Math.log(x)/Math.LN10; }
+
+  function draw(xm,al){
+    var g=dpr(cv), W=LW(cv);
+    var soft=css('--soft'), teal=css('--teal'), rose=css('--rose'), hair=css('--hair'),
+        ink=css('--ink');
+    var ax=64, ay=42, aw=W-ax-30, ah=240;
+    var LO=lx(0.1), HI=lx(20000);
+    function px(x){ return ax+aw*(lx(x)-LO)/(HI-LO); }
+    /* межа згори */
+    var top=0, k, x;
+    for(k=0;k<=200;k++){ x=Math.pow(10,LO+(HI-LO)*k/200); var v=weight(x,xm,al); if(v>top) top=v; }
+    top=Math.max(top,1)*1.08;
+    /* стовпчики розподілу X */
+    var hmax=Math.max.apply(null,HS);
+    for(k=0;k<HS.length;k++){
+      if(HS[k]<=0) continue;
+      var bx=px(Math.max(HB[k],0.1)), bw=px(HB[k+1])-bx;
+      var bh=ah*0.55*HS[k]/hmax;
+      g.fillStyle=css('--amber-w'); g.fillRect(bx,ay+ah-bh,Math.max(bw,2),bh);
+      g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(bx+.5,ay+ah-bh+.5,Math.max(bw,2),bh);
+    }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(ax,ay+ah); g.lineTo(ax+aw,ay+ah); g.stroke();
+    capt(g,'f(x) — суцільна крива;  розподіл значень X — бліді стовпчики',ax,ay-12,soft,10.5,true);
+    /* рівень 1 */
+    var y1=ay+ah-ah*(1/top);
+    g.strokeStyle=hair; g.setLineDash([3,3]); g.lineWidth=1;
+    g.beginPath(); g.moveTo(ax,y1); g.lineTo(ax+aw,y1); g.stroke(); g.setLineDash([]);
+    capt(g,'1',ax-8,y1+4,soft,10,false,'right');
+    /* крива */
+    g.strokeStyle=teal; g.lineWidth=2.2; g.beginPath();
+    for(k=0;k<=200;k++){
+      x=Math.pow(10,LO+(HI-LO)*k/200);
+      var qx=ax+aw*k/200, qy=ay+ah-ah*Math.min(weight(x,xm,al),top)/top;
+      if(k===0) g.moveTo(qx,qy); else g.lineTo(qx,qy);
+    }
+    g.stroke();
+    /* мітка x_max */
+    var mx=px(xm);
+    g.strokeStyle=rose; g.lineWidth=1.5; g.setLineDash([4,3]);
+    g.beginPath(); g.moveTo(mx,ay); g.lineTo(mx,ay+ah); g.stroke(); g.setLineDash([]);
+    capt(g,'x_max = '+xm,Math.min(mx+7,ax+aw-6),ay+14,rose,11,true,
+         mx>ax+aw-100?'right':'left');
+    var ticks=[0.1,1,10,100,1000,10000];
+    for(k=0;k<ticks.length;k++)
+      capt(g,ticks[k]<1?'0.1':thou(ticks[k]),px(ticks[k]),ay+ah+17,soft,10,false,'center');
+    capt(g,'значення клітинки X (шкала логарифмічна)',ax+aw,ay+ah+34,soft,10.5,false,'right');
+    /* три числа */
+    var sh=WGRID[xm+'|'+al+'|'+(clipped?1:0)];
+    capt(g,'зусилля моделі:  X < 1 — '+f2(sh[0])+' %   ·   1..10 — '+f2(sh[1])
+      +' %   ·   X ≥ 10 — '+f2(sh[2])+' %',ax,ay+ah+58,ink,12,true);
+  }
+
+  function upd(){
+    var xm=XMAXES[+I('xm4').value], al=ALPHAS[+I('al4').value];
+    I('xm4o').textContent=xm;
+    I('al4o').textContent=al;
+    var sh=WGRID[xm+'|'+al+'|'+(clipped?1:0)];
+    var a=+al;
+    I('v4a').textContent=f2(sh[0])+' %';
+    I('v4b').textContent=f2(sh[2])+' %';
+    I('v4c').textContent=f4(weight(0.2,xm,a));
+    I('v4d').textContent=f4(weight(9583.4167,xm,a));
+    draw(xm,al);
+    var top=weight(9583.4167,xm,a), ten=weight(10,xm,a);
+    var txt='<b>'+f2(sh[0])+' %</b> зусиль іде на 58.5 % клітинок, де слова стояли '
+      +'поруч раз, і <b>'+f2(sh[2])+' %</b> — на 2.37 % клітинок із X ≥ 10. '
+      +(clipped
+        ? 'Стеля зрівняла найбільшу клітинку з парою, у якої X = 10: обидві важать '
+          +'по <b>'+f4(ten)+'</b>.'
+        : 'Вага найбільшої клітинки — <b>'+f4(top)+'</b> проти <b>'+f4(ten)
+          +'</b> у пари з X = 10.');
+    if(sh[2]>=25) verd('v4v','t-no','КІЛЬКА ПАР ЗАБИРАЮТЬ УСЕ',txt+
+      ' Модель підлаштовується під жменю службових пар, решта таблиці для неї шум.');
+    else if(sh[0]>=45) verd('v4v','t-no','ШУМ ЗАГЛУШУЄ СИГНАЛ',txt+
+      ' Майже половина зусиль іде на випадкові збіги: вага надто пласка.');
+    else if(!clipped && top/ten>=10) verd('v4v','t-mid','СТЕЛІ НЕМАЄ',txt+
+      ' Розподіл по купах ще пристойний, але одна клітинка важить у '+f1(top/ten)
+      +' раза більше за пару з X = 10 — і саме її модель відтворюватиме найстаранніше.');
+    else if(sh[2]>=18 || sh[0]>=38) verd('v4v','t-mid','ПЕРЕКІС',txt+
+      ' Розподіл уже помітно нерівний — одна з куп тягне ковдру на себе.');
+    else verd('v4v','t-ok','РІВНОВАГА',txt+
+      ' Жодна купа не переважає: саме такого розкладу й хотіли автори GloVe.');
+  }
+  on('xm4','input',upd); on('al4','input',upd);
+  segment('seg4',function(i){ clipped=(i===0); upd(); });
+  upd();
+})();
+
+/* ─────────────── фігура 5 · субслова одного слова ─────────────── */
+(function(){
+  var cv=I('c5'); if(!cv) return;
+  /* плитки друкує зошит: 1 — субслово вже трапилось у відомих словах */
+  var W5=[
+    {w:'конфігурацією', t:{3:'1111111111111',4:'111111111111',5:'11111111111',6:'1111111011'}},
+    {w:'неправильною',  t:{3:'111111111111', 4:'11111111111', 5:'1111111111', 6:'111111101'}},
+    {w:'кореневому',    t:{3:'1111111111',   4:'111111111',   5:'11111001',   6:'1111000'}},
+    {w:'перемикатися',  t:{3:'111111111111', 4:'11111111111', 5:'1111111111', 6:'111101011'}},
+    {w:'необхідного',   t:{3:'11111111111',  4:'1111111111',  5:'111111111',  6:'11111111'}}
+  ];
+  var pick=0;
+
+  function draw(n){
+    var g=dpr(cv), CW=LW(cv);
+    var soft=css('--soft'), teal=css('--teal'), rose=css('--rose'), hair=css('--hair'),
+        ink=css('--ink'), paper=css('--paper');
+    var item=W5[pick], marked='<'+item.w+'>', flags=item.t[n];
+    capt(g,'СЛОВО В ДУЖКАХ',30,26,soft,11,true);
+    g.font=mono(24,true); g.fillStyle=ink; g.textAlign='left'; g.textBaseline='alphabetic';
+    g.fillText(marked,30,60);
+    capt(g,'дужки роблять початок і кінець слова видимими для моделі',30,82,soft,10.5);
+
+    var count=flags.length, known=0, k;
+    for(k=0;k<count;k++) if(flags.charAt(k)==='1') known++;
+    var ax=30, aw=CW-60, tw=aw/count, ty=118, th=52;
+    capt(g,'СУБСЛОВА ДОВЖИНИ '+n+' · '+count+' штук',30,108,soft,11,true);
+    for(k=0;k<count;k++){
+      var piece=marked.substr(k,n), ok=flags.charAt(k)==='1';
+      var bx=ax+tw*k;
+      g.fillStyle=ok?teal:rose;
+      g.fillRect(bx+1.5,ty,tw-3,th);
+      g.fillStyle=paper; g.font=mono(Math.min(13,tw*0.30),true);
+      g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(cut(g,piece,tw-8,Math.min(13,tw*0.30),true),bx+tw/2,ty+th/2);
+    }
+    /* легенда */
+    g.fillStyle=teal; g.fillRect(30,ty+th+22,12,12);
+    capt(g,'уже траплялось у відомих словах',48,ty+th+32,soft,11);
+    g.fillStyle=rose; g.fillRect(300,ty+th+22,12,12);
+    capt(g,'модель цього шматка не бачила',318,ty+th+32,soft,11);
+    capt(g,'відомих '+known+' з '+count+'  ·  частка '+f4(known/count),
+         30,ty+th+62,ink,13,true);
+    /* смужка частки */
+    var sx=30, sw=CW-60, sy=ty+th+76;
+    g.fillStyle=rose; g.fillRect(sx,sy,sw,10);
+    g.fillStyle=teal; g.fillRect(sx,sy,sw*known/count,10);
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(sx+.5,sy+.5,sw,10);
+  }
+
+  function upd(){
+    var n=+I('n5').value, item=W5[pick], flags=item.t[n], k, known=0;
+    for(k=0;k<flags.length;k++) if(flags.charAt(k)==='1') known++;
+    I('n5o').textContent=n;
+    I('v5a').textContent=String(flags.length);
+    I('v5b').textContent=String(known);
+    I('v5c').textContent=String(flags.length-known);
+    I('v5d').textContent=f4(known/flags.length);
+    draw(n);
+    var share=known/flags.length;
+    var txt='Слово «'+item.w+'», шматки по '+n+' літер: відомі <b>'+known+'</b> з '
+      +'<b>'+flags.length+'</b>, тобто <b>'+f4(share)+'</b>. ';
+    if(known===flags.length) verd('v5v','t-ok','УСЕ ЗНАЙОМЕ',txt+
+      'Модель не бачила цього слова жодного разу — і все одно кожен його шматок їй '
+      +'знайомий. Саме тому така мірка нічого не розрізняє.');
+    else if(share>=0.5) verd('v5v','t-mid','ПОЛОВИНА Й БІЛЬШЕ',txt+
+      'За звичною міркою слово вже вважається «впізнаним», хоча частина шматків нова.');
+    else verd('v5v','t-no','БІЛЬШІСТЬ НЕВІДОМА',txt+
+      'На довгих шматках видно правду: незнайоме саме те, що несе корінь.');
+  }
+  on('n5','input',upd);
+  segment('seg5',function(i){ pick=i; upd(); });
+  upd();
+})();
+
+/* ─────────────── фігура 6 · що ховається за «впізнано» ─────────────── */
+(function(){
+  var cv=I('c6'); if(!cv) return;
+  /* таблиця з зошита: поріг → скільки «впізнано» і скільки з них із відомою лемою */
+  var T6=[[0.00,20936,6778],[0.05,20932,6778],[0.10,20916,6778],[0.15,20893,6778],
+          [0.20,20787,6778],[0.25,20651,6777],[0.30,20521,6776],[0.35,20144,6768],
+          [0.40,19892,6763],[0.45,19505,6749],[0.50,18847,6720],[0.55,18463,6710],
+          [0.60,17469,6590],[0.65,16765,6556],[0.70,15336,6342],[0.75,13683,6035],
+          [0.80,11972,5628],[0.85,10201,5203],[0.90,7776,4356],[0.95,6066,3683],
+          [1.00,0,0]];
+  /* гістограма: [усього, з них лема відома] по двадцятьох смугах частки */
+  var H6=[[72,2],[16,0],[23,0],[84,0],[102,1],[186,1],[377,8],[171,2],[468,17],[339,9],
+          [703,30],[994,120],[704,34],[1429,214],[1190,174],[1730,378],[2215,587],
+          [2185,764],[1950,756],[6066,3683]];
+
+  function draw(step){
+    var g=dpr(cv), W=LW(cv);
+    var soft=css('--soft'), teal=css('--teal'), rose=css('--rose'), hair=css('--hair'),
+        ink=css('--ink');
+    var ax=64, ay=44, aw=W-ax-30, ah=228, k;
+    var mx=0;
+    for(k=0;k<20;k++) if(H6[k][0]>mx) mx=H6[k][0];
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(ax,ay+ah); g.lineTo(ax+aw,ay+ah); g.stroke();
+    capt(g,'скільки невідомих словоформ має таку частку відомих субслів',ax,ay-12,soft,10.5,true);
+    var bw=aw/20;
+    for(k=0;k<20;k++){
+      var h=ah*H6[k][0]/mx, hk=ah*H6[k][1]/mx, bx=ax+bw*k;
+      var right=(k+1)*0.05>step*0.05;
+      g.globalAlpha=right?1:0.28;
+      g.fillStyle=css('--rose-w'); g.fillRect(bx+1,ay+ah-h,bw-2,h);
+      g.fillStyle=teal; g.fillRect(bx+1,ay+ah-hk,bw-2,hk);
+      g.strokeStyle=rose; g.lineWidth=1; g.strokeRect(bx+1.5,ay+ah-h+.5,bw-3,h);
+      g.globalAlpha=1;
+    }
+    var tx=ax+aw*(step*0.05);
+    g.strokeStyle=css('--amber'); g.lineWidth=2;
+    g.beginPath(); g.moveTo(tx,ay-4); g.lineTo(tx,ay+ah+4); g.stroke();
+    capt(g,'поріг '+f2(step*0.05),Math.min(tx+7,ax+aw-6),ay+12,css('--amber'),11,true,
+         tx>ax+aw-90?'right':'left');
+    for(k=0;k<=5;k++) capt(g,f1(k*0.2),ax+aw*k/5,ay+ah+17,soft,10,false,'center');
+    capt(g,'частка відомих субслів у слові',ax+aw,ay+ah+34,soft,10.5,false,'right');
+    g.fillStyle=teal; g.fillRect(ax,ay+ah+48,12,12);
+    capt(g,'лема справді відома',ax+18,ay+ah+58,soft,11);
+    g.fillStyle=css('--rose-w'); g.fillRect(ax+180,ay+ah+48,12,12);
+    g.strokeStyle=rose; g.strokeRect(ax+180.5,ay+ah+48.5,12,12);
+    capt(g,'лема невідома',ax+198,ay+ah+58,soft,11);
+  }
+
+  function upd(){
+    var step=+I('t6').value, row=T6[step];
+    I('t6o').textContent=f2(row[0]);
+    I('v6a').textContent=thou(row[1]);
+    I('v6b').textContent=thou(row[2]);
+    I('v6c').textContent=row[1]?f1(100*row[2]/row[1])+' %':'—';
+    draw(step);
+    if(row[1]===0){
+      verd('v6v','t-no','ПОРІГ 1.00','Жодне слово не має <b>усіх</b> субслів відомими, '
+        +'тож «впізнаних» рівно нуль. Мірка, яку можна довести до нуля однією ручкою, '
+        +'нічого не гарантує.');
+      return;
+    }
+    var prec=100*row[2]/row[1];
+    var txt='Поріг <b>'+f2(row[0])+'</b>: «впізнано» <b>'+thou(row[1])+'</b> слів, '
+      +'а лема справді відома лише в <b>'+thou(row[2])+'</b> — точність <b>'
+      +f1(prec)+' %</b>. Чесна оцінка теми — <b>6 780</b> слів.';
+    if(prec>=55) verd('v6v','t-mid','ЧИСТІШЕ, АЛЕ МЕНШЕ',txt+
+      ' Точність підросла, зате «впізнаних» уже менше за чесну оцінку: ми просто '
+      +'викинули частину правильних разом із неправильними.');
+    else if(prec>=40) verd('v6v','t-mid','СЕРЕДИНА',txt+
+      ' Половина «впізнаних» — самообман, і жодне положення повзунка цього не лікує.');
+    else verd('v6v','t-no','ОПТИМІЗМ',txt+
+      ' Тобто <b>'+f1(100-prec)+' %</b> «впізнаних» слів модель насправді не знає: '
+      +'спільними виявились закінчення, а не корені.');
+  }
+  on('t6','input',upd); upd();
+})();
+
+/* ─────────────── фігура 7 · де субслова шкодять ─────────────── */
+(function(){
+  var cv=I('c7'); if(!cv) return;
+  /* накопичено за порогом перекриття, з зошита. Розриви беремо готовими, а не
+     віднімаємо тут: зошит рахує їх до округлення, і різниця видно в 4-му знаку.
+     [поріг, пар з тією самою лемою, w2v, ft, пар з різними лемами, w2v, ft,
+      розрив w2v, розрив ft] */
+  var C7=[
+    [0.0, 8802,0.7604,0.9723, 18434899,0.6975,0.9148, 0.0628,0.0575],
+    [0.1, 8655,0.7623,0.9740,   315320,0.7223,0.9550, 0.0400,0.0191],
+    [0.2, 8537,0.7637,0.9746,   104771,0.7216,0.9645, 0.0421,0.0101],
+    [0.3, 8052,0.7653,0.9755,    38638,0.7271,0.9692, 0.0382,0.0063],
+    [0.4, 7663,0.7657,0.9767,    16442,0.7228,0.9694, 0.0430,0.0073],
+    [0.5, 6790,0.7669,0.9783,     7169,0.7227,0.9702, 0.0442,0.0082],
+    [0.6, 5048,0.7676,0.9812,     2944,0.7350,0.9749, 0.0326,0.0062]
+  ];
+
+  function draw(i){
+    var g=dpr(cv), W=LW(cv);
+    var soft=css('--soft'), teal=css('--teal'), rose=css('--rose'), hair=css('--hair'),
+        ink=css('--ink'), amber=css('--amber');
+    var r=C7[i], ax=70, ay=48, aw=W-ax-30, ah=224;
+    var LO=0.6, HI=1.0;
+    function py(v){ return ay+ah-ah*(v-LO)/(HI-LO); }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(ax,ay); g.lineTo(ax,ay+ah); g.lineTo(ax+aw,ay+ah); g.stroke();
+    capt(g,'середній косинус між словами пари',ax,ay-12,soft,10.5,true);
+    var k;
+    for(k=0;k<=4;k++){
+      var v=LO+(HI-LO)*k/4;
+      g.strokeStyle=hair; g.setLineDash([2,3]); g.lineWidth=1;
+      g.beginPath(); g.moveTo(ax,py(v)); g.lineTo(ax+aw,py(v)); g.stroke(); g.setLineDash([]);
+      capt(g,f1(v),ax-8,py(v)+4,soft,10,false,'right');
+    }
+    capt(g,'шкала починається з 0.6',ax+aw,ay-12,soft,10,false,'right');
+    var groups=[{n:'Word2Vec',a:r[2],b:r[5],g:r[7]},{n:'FastText',a:r[3],b:r[6],g:r[8]}];
+    var gw=aw/2, bw=gw*0.22;
+    for(k=0;k<2;k++){
+      var gx=ax+gw*k+gw*0.5, ga=groups[k];
+      var xa=gx-bw-8, xb=gx+8;
+      g.fillStyle=teal; g.fillRect(xa,py(ga.a),bw,ay+ah-py(ga.a));
+      g.fillStyle=rose; g.fillRect(xb,py(ga.b),bw,ay+ah-py(ga.b));
+      capt(g,f4(ga.a),xa+bw/2,py(ga.a)-8,teal,11,true,'center');
+      capt(g,f4(ga.b),xb+bw/2,py(ga.b)-8,rose,11,true,'center');
+      /* дужка розриву між двома стовпчиками групи */
+      var y1=py(ga.a), y2=py(ga.b), bx=gx;
+      g.strokeStyle=amber; g.lineWidth=1.5;
+      g.beginPath(); g.moveTo(bx-8,y1); g.lineTo(bx,y1); g.lineTo(bx,y2); g.lineTo(bx+8,y2);
+      g.stroke();
+      capt(g,ga.n,gx,ay+ah+18,ink,12,true,'center');
+      capt(g,'розрив '+f4(ga.g),gx,ay+ah+36,amber,11.5,true,'center');
+    }
+    g.fillStyle=teal; g.fillRect(ax,ay+ah+52,12,12);
+    capt(g,'та сама лема ('+thou(r[1])+' пар)',ax+18,ay+ah+62,soft,11);
+    g.fillStyle=rose; g.fillRect(ax+250,ay+ah+52,12,12);
+    capt(g,'різні леми ('+thou(r[4])+' пар)',ax+268,ay+ah+62,soft,11);
+  }
+
+  function upd(){
+    var i=+I('t7').value, r=C7[i];
+    var gapW=r[7], gapF=r[8];
+    I('t7o').textContent=f1(r[0]);
+    I('v7a').textContent=thou(r[1]);
+    I('v7b').textContent=thou(r[4]);
+    I('v7c').textContent=f4(gapW);
+    I('v7d').textContent=f4(gapF);
+    draw(i);
+    var times=gapW/gapF;
+    var txt='Пари з перекриттям субслів від <b>'+f1(r[0])+'</b>: Word2Vec розводить '
+      +'дві купи на <b>'+f4(gapW)+'</b>, FastText — на <b>'+f4(gapF)+'</b>, тобто у '
+      +'<b>'+f1(times)+'</b> раза слабше.';
+    if(i===0){
+      verd('v7v','t-mid','ВІДЛІК','Без жодного відсіву розриви майже однакові — '
+        +'<b>'+f4(gapW)+'</b> і <b>'+f4(gapF)+'</b>. Але з <b>'+thou(r[4])+'</b> пар '
+        +'різних лем переважна більшість не має зі своєю парою жодного спільного '
+        +'субслова, тож ця точка про субслова нічого не каже. Зсунь поріг праворуч — '
+        +'і розрив FastText одразу впаде в кілька разів.');
+      return;
+    }
+    if(times>=3) verd('v7v','t-no','СУБСЛОВА НЕ БАЧАТЬ РІЗНИЦІ',txt+
+      ' Для FastText пари різних лем майже такі самі близькі, як пари однієї леми: '
+      +'він міряє написання.');
+    else if(times>=1.5) verd('v7v','t-mid','РІЗНИЦЯ ЩЕ Є',txt+
+      ' Розрив у FastText менший, але ще помітний — тут перекриття субслів часто '
+      +'справді означає спільний корінь.');
+    else verd('v7v','t-ok','ОБИДВІ МОДЕЛІ РОЗРІЗНЯЮТЬ',txt+
+      ' На цьому порозі субслова майже не програють: збіг написання тут здебільшого '
+      +'чесний.');
+  }
+  on('t7','input',upd); upd();
+})();
+
+/* перемальовуємо все, коли читач міняє тему системи */
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  var redraw=function(){
+    var ids=['mc1','w2','d3','xm4','n5','t6','t7'], k;
+    for(k=0;k<ids.length;k++){
+      var e=I(ids[k]); if(e) e.dispatchEvent(new Event('input'));
+    }
+  };
+  if(mq.addEventListener) mq.addEventListener('change',redraw);
+  else if(mq.addListener) mq.addListener(redraw);
+}
+
+})();
+</script>
+</body>
+</html>

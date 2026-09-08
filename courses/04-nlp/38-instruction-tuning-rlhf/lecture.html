@@ -1,0 +1,2997 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instruction tuning і RLHF</title>
+<meta name="description" content="Базова мовна модель уміє продовжувати текст, а людина хоче, щоб виконали вказівку. Тема розбирає обидва прийоми, якими цю відстань закривають, і міряє їх на власному стенді з 49 573 повідомлень програм. Перенесення на заховане завдання не працює: стеля 0.8133 проти рубежу 0.3433, а нульовий постріл 0.0933 не відривається навіть від випадкового вибору 0.1250 — переноситься не слухняність, а форма відповіді. Модель винагороди за Бредлі-Террі, KL-повідець, формула ln n − (n−1)/n для best-of-n. Головне: винагорода росте на +13.29, а справжня метрика підіймається лише до 0.1384 і падає до 0.1161 — нижче, ніж без відбору. DPO без окремої моделі винагороди.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code,
+td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 8 · Тема 38</p>
+    <h1>Instruction tuning і RLHF</h1>
+    <p class="stand">Мовна модель, навчена на текстах, уміє рівно одне: продовжувати
+      текст. Людина ж хоче, щоб їй <b>виконали вказівку</b>. Це різні задачі, і
+      відстань між ними закривають двома прийомами: донавчанням на прикладах
+      «вказівка → відповідь» і навчанням на людських уподобаннях. Тут обидва
+      розібрані до дна — з формулами, з ручним рахунком і з власним стендом, на
+      якому видно те, чого не видно в переказі: чому «слухняність» переноситься на
+      нове завдання лише тоді, коли відповідь має знайому форму, і як винагорода
+      росте, а справжня якість уже ні.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Дві задачі, які легко сплутати</a></li>
+        <li><a href="#s2">Чому базова модель відповідає не тим</a></li>
+        <li><a href="#s3">Формат вказівки</a></li>
+        <li><a href="#s4">Учимо тільки на відповіді</a></li>
+        <li><a href="#s5">Навіщо суміш завдань</a></li>
+        <li><a href="#s6">Стенд: три завдання на справжніх даних</a></li>
+        <li><a href="#s7">Три рубежі, без яких висновку немає</a></li>
+        <li><a href="#s8">Замір: що перенеслось, а що ні</a></li>
+        <li><a href="#s9">Звідки беруться уподобання</a></li>
+        <li><a href="#s10">Чому пари, а не бали</a></li>
+        <li><a href="#s11">Бредлі-Террі й модель винагороди</a></li>
+        <li><a href="#s12">RLHF покроково</a></li>
+        <li><a href="#s13">Повідець: скільки коштує відхід</a></li>
+        <li><a href="#s14">Ґудгарт: винагорода росте, правда — ні</a></li>
+        <li><a href="#s15">Чому проксі ламається саме так</a></li>
+        <li><a href="#s16">DPO: те саме без моделі винагороди</a></li>
+        <li><a href="#s17">Приємніша, а не правдивіша</a></li>
+        <li><a href="#s18">Межі цього заміру</a></li>
+        <li><a href="#s19">Куди це веде</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../37-scaling/lecture.html">← 37. Що змінює масштаб</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../39-peft-lora/lecture.html">39. PEFT і LoRA →</a></nav>
+  </div>
+</header>
+<main class="col">
+<p class="lead">Постав мовній моделі, навченій на великому наборі текстів,
+дві підказки. Перша: «Столиця Франції — це». Друга: «Яка столиця Франції?».
+Здається, що це те саме питання, сказане двома способами. Модель так не вважає.
+На першу вона майже напевно допише «Париж». На другу — цілком може дописати
+«Яка столиця Італії? Яка столиця Іспанії?».</p>
+
+<p>Це не збій. Це модель, яка робить рівно те, чого її вчили, і робить це добре.
+<a href="../16-language-model/lecture.html">Тема 16</a> показала, що мовна модель оцінює <b>ймовірність наступного слова за
+попередніми</b>, і нічого іншого вона не оцінює. <a href="../37-scaling/lecture.html">Тема 37</a> показала, що збільшення
+розміру покращує цю оцінку — але не міняє її природу. Питання «Яка столиця
+Франції?» у справжніх текстах дуже часто стоїть <b>у списку однотипних питань</b>:
+у вікторині, у тесті, у вправі на переклад. Тож найімовірніше продовження після
+нього — не відповідь, а <b>ще одне питання</b>.</p>
+
+<p>А «Столиця Франції — це» — це початок розповідного речення, і найімовірніше
+продовження такого речення справді «Париж».</p>
+
+<p>Різниця між двома підказками не в змісті. Вона в тому, <b>яку роль</b> текст
+відводить тому, хто продовжує. У першому випадку — роль автора, який дописує
+речення. У другому — роль співрозмовника, який відповідає. Базова модель уміє
+першу роль і не знає, що існує друга.</p>
+
+<h2 id="s1"><span class="num">01 / Розрив</span>Дві задачі, які легко сплутати</h2>
+
+<p>Назвімо їх точно, бо далі вся тема тримається на цій відмінності.</p>
+
+<p><b>Продовжити текст</b> (text continuation) — задача, під яку модель навчена.
+Дано початок, треба дописати те, що найімовірніше йде далі <b>в корпусі</b>.
+Критерій успіху формальний і не потребує людини: чим вища ймовірність, яку модель
+дала справжньому продовженню, тим краще.</p>
+
+<p><b>Виконати вказівку</b> (instruction following) — задача, яку хоче людина.
+Дано розпорядження, треба зробити те, що в ньому написано. Критерій успіху тут
+не формальний: правильність відповіді визначає той, хто питав, а не корпус.</p>
+
+<p>Ці дві задачі збігаються рівно настільки, наскільки в корпусі є тексти, де
+за вказівкою одразу йде її виконання. Такі тексти є — форуми, довідки, посібники
+з питаннями й відповідями, — але вони становлять малу частку від усього
+написаного. Тому базова модель уміє виконувати вказівки <b>іноді</b>, і саме
+«іноді» тут головне слово: вона не відмовляється, вона просто не знає, що від неї
+цього хочуть.</p>
+
+<figure>
+  <p class="fig-head">Одна модель, дві підказки, різні ролі</p>
+  <p class="fig-sub">Зміст той самий. Змінилась роль, яку текст пропонує тому, хто продовжує.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>що модель оптимізує</b><i class="sm">ймовірність наступного слова</i></div>
+        <div class="cellv"><b>що хоче людина</b><i class="sm">виконання вказівки</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-mid">у чому річ</span><br>
+        Обидва продовження правильні як продовження. Друге неправильне лише тому,
+        що ми хотіли не продовження, а відповіді — а моделі про це ніхто не
+        сказав.</p>
+    </div>
+  </div>
+  <figcaption>Ліворуч — розповідна підказка: найімовірніше продовження речення
+    і є відповіддю, тож модель «відповідає» випадково, за збігом. Праворуч —
+    питальна підказка: у текстах за питанням часто йде наступне питання, і модель
+    дописує саме його. Донавчання на вказівках прибирає саме цю неоднозначність
+    ролі, а не додає моделі знань про Францію.</figcaption>
+</figure>
+
+<div class="note"><b>Що це означає практично.</b> Якщо базова модель відповіла
+неправильно на прохання, у неї є дві різні причини так вчинити: вона
+<b>не знає</b> відповіді, або вона <b>не зрозуміла, що її просять відповісти</b>.
+Ці дві причини лікуються різним: перша — більшими даними, друга — донавчанням
+на вказівках. Плутати їх дорого: скільки не додавай корпусу, роль
+співрозмовника з нього сама не зʼявиться.</div>
+<h2 id="s2"><span class="num">02 / Механізм</span>Чому базова модель відповідає не тим</h2>
+
+<p>Розберімо механізм до дна, бо він пояснює й усе інше в темі.</p>
+
+<p>Модель на кожному кроці дає розподіл: список усіх слів словника з числом
+навпроти кожного, і всі числа разом складаються в одиницю. Це число —
+<b>ймовірність</b> того, що саме це слово стоїть наступним. Модель не має жодного
+іншого способу «сказати» щось: вона або підвищує ймовірність слова, або знижує.</p>
+
+<p>Тепер уяви, що ми питаємо: «Скільки буде сім помножити на вісім?». Модель
+перебирає можливі продовження й дає кожному ймовірність. Продовження «56» —
+правильна відповідь. Продовження «А скільки буде девʼять на сім?» — теж цілком
+природний текст. Продовження «(відповідь у кінці розділу)» — теж. Яке з них
+дістане найбільшу ймовірність, вирішує не правильність, а <b>частота подібних
+продовжень у корпусі</b>.</p>
+
+<p>Ось у чому суть: <b>у мовної моделі немає окремої величини «правильність»</b>.
+Є лише правдоподібність. Якщо в текстах світу за арифметичним питанням частіше
+йде інше питання, ніж відповідь, модель дописуватиме питання — і буде щодо своєї
+задачі бездоганною.</p>
+
+<h3>Три способи закрити розрив, і чому працює третій</h3>
+
+<p><b>Спосіб перший: попросити краще.</b> Замість «Яка столиця Франції?» написати
+«Питання: Яка столиця Франції?\nВідповідь:». Це працює, і подеколи дуже добре:
+ми штучно створили контекст, у якому найімовірніше продовження і є відповіддю.
+Так і зʼявилось усе мистецтво складання підказок. Але це перекладає роботу на
+користувача й не масштабується: під кожну задачу потрібна своя обгортка.</p>
+
+<p><b>Спосіб другий: дати приклади в підказці.</b> Показати дві-три пари
+«питання — відповідь» перед справжнім питанням. Модель бачить закономірність
+у самому контексті й продовжує її. Це теж працює, але зʼїдає контекст і
+не діє, коли прикладів під рукою немає.</p>
+
+<p><b>Спосіб третій: донавчити модель так, щоб роль співрозмовника стала для неї
+природною.</b> Тобто зібрати багато прикладів «вказівка → відповідь» і продовжити
+навчання на них. Оце й зветься <b>донавчанням на вказівках</b> (instruction
+tuning). Далі — про нього.</p>
+
+<figure>
+  <p class="fig-head">Розподіл продовжень: чому відповідь не виграє</p>
+  <p class="fig-sub">Один повзунок: яка частка корпусу — тексти, де за питанням одразу йде відповідь.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Частка «діалогових» текстів у корпусі <output id="o2">3%</output></label>
+        <input type="range" id="q2" min="0" max="60" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найімовірніше</b><i class="sm" id="v2a">ще одне питання</i></div>
+        <div class="cellv"><b>ймовірність відповіді</b><i id="v2b">0.11</i></div>
+      </div>
+      <p class="verdict" id="v2"></p>
+    </div>
+  </div>
+  <figcaption>Схема, а не замір: числа згенеровані, щоб показати <b>форму</b>
+    залежності. Поки діалогових текстів у корпусі мало, найімовірніше продовження
+    питання — інше питання, і модель дописує його. Донавчання на вказівках
+    робить те саме, що крайнє праве положення повзунка, тільки не міняючи
+    корпусу: воно піднімає ймовірність саме тієї ролі, якої ми хочемо.</figcaption>
+</figure>
+
+<p>Останнє речення підпису варто прочитати ще раз, бо воно і є ідеєю розділу.
+Донавчання на вказівках <b>не додає знань</b>. Воно міняє те, який тип
+продовження модель вважає доречним. Знання про Париж уже було — воно просто
+програвало іншому продовженню.</p>
+<h2 id="s3"><span class="num">03 / Формат</span>Формат вказівки</h2>
+
+<p>Донавчання на вказівках — це звичайне навчання мовної моделі, з однією
+відмінністю: приклади мають строгу будову з трьох частин.</p>
+
+<div class="eq left">вказівка   що зробити
+вхід       над чим це зробити (може бути порожнім)
+відповідь  що модель мусить видати</div>
+
+<p>Приклад. Вказівка: «Переклади речення українською». Вхід: «The file was not
+found». Відповідь: «Файл не знайдено». Інший приклад. Вказівка: «Скажи, це
+повідомлення про збій чи про успіх». Вхід: «Connection refused». Відповідь:
+«Збій».</p>
+
+<p>Усі три частини склеюються в один рядок токенів із <b>роздільниками</b> —
+службовими символами, які позначають, де закінчується одна частина й починається
+інша. У найпростішому вигляді роздільником може бути просто слово («Відповідь:»),
+у серйозних системах — окремий токен, якого в звичайному тексті не буває.
+Різниця не принципова: важливо лише, щоб межа була <b>однозначною</b>, бо
+модель має навчитись упізнавати її безпомилково.</p>
+
+<div class="note"><b>Навіщо окремий токен, а не слово.</b> Якщо роздільником
+служить звичайне слово, воно може трапитись усередині відповіді користувача —
+і межа поїде. Окремий токен, доданий у словник спеціально, такої проблеми не має
+за побудовою. Ціна: словник збільшується на кілька позицій, і ці позиції
+доводиться навчати з нуля, бо в жодному тексті вони не траплялись. Ця остання
+обставина далі виявиться важливішою, ніж здається.</div>
+
+<figure>
+  <p class="fig-head">Один приклад як послідовність токенів</p>
+  <p class="fig-sub">Три частини й одна межа — усе, що модель мусить навчитись бачити.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="240" data-lw="700" data-lh="240"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>полів у прикладі</b><i id="v3a">7</i></div>
+        <div class="cellv"><b>з них відповідь</b><i id="v3b">2</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-ok">що тут головне</span><br>
+        Модель бачить це як один суцільний рядок. Усе, що робить його вказівкою,
+        а не звичайним реченням, — це два роздільники й те, як ми рахуємо
+        помилку. Про друге — наступний розділ.</p>
+    </div>
+  </div>
+  <figcaption>Токени вказівки й входу (сірі) моделі <b>дано</b>. Токени відповіді
+    (рожеві) вона мусить <b>вгадати</b>. Роздільник — це сигнал «далі йде те, що
+    ти маєш породити сам». Кінцевий токен потрібен, щоб модель знала, де
+    зупинитись: без нього вона говоритиме доти, доки не впреться в межу
+    довжини.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Втрата</span>Учимо тільки на відповіді</h2>
+
+<p>Ось перша непомітна, але вирішальна деталь. Звичайну мовну модель учать
+передбачати <b>кожен</b> наступний токен: із «Файл» передбачити «не», із «Файл не»
+передбачити «знайдено», і так далі по всій послідовності. Помилка складається
+з усіх позицій.</p>
+
+<p>При донавчанні на вказівках так робити <b>не треба</b>. Токени вказівки й
+входу нам дані — їх пише користувач, і немає жодної потреби вчити модель їх
+угадувати. Учити треба тільки токени <b>відповіді</b>.</p>
+
+<p>Технічно це робиться маскою: у місцях, які не є відповіддю, помилку просто
+не рахують. Формула втрати та сама, що в <a href="../16-language-model/lecture.html">темі 16</a> — <b>перехресна ентропія</b>,
+тобто мінус логарифм імовірності, яку модель дала правильному токену, — але
+сума береться не по всіх позиціях, а лише по позиціях відповіді:</p>
+
+<div class="eq">втрата = − ( 1 / |A| ) · Σ<span class="sub">t ∈ A</span> ln p(y<span class="sub">t</span> | усе, що ліворуч)</div>
+
+<p>Розберімо символи. <span class="raw">A</span> — множина позицій, у яких стоїть
+відповідь; <span class="raw">|A|</span> — скільки їх; Σ (велика грецька «сигма») —
+знак суми, «склади по всіх <span class="raw">t</span> з <span class="raw">A</span>»;
+<span class="raw">y</span><span class="sub">t</span> — правильний токен у позиції
+<span class="raw">t</span>; <span class="raw">p(…)</span> — ймовірність, яку модель
+дала цьому токену; <span class="raw">ln</span> — натуральний логарифм. Мінус
+стоїть тому, що логарифм імовірності завжди відʼємний (імовірність не більша за
+одиницю), а втрату зручно мати додатною.</p>
+
+<p>Порахуймо руками. Хай відповідь — два токени, і модель дала правильним
+токенам імовірності 0.5 і 0.2.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · логарифми</span>
+    <div class="eq">ln 0.5 = −0.6931 &nbsp;&nbsp; ln 0.2 = −1.6094</div>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · сума й середнє</span>
+    <div class="eq">(−0.6931 + (−1.6094)) / 2 = −1.1513</div>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · знак</span>
+    <div class="eq">втрата = −(−1.1513) = <b>1.1513</b> ната</div>
+    <p>«Нат» — одиниця, у якій міряють цю величину, коли логарифм натуральний.
+      Нуль означав би, що модель дала правильним токенам імовірність рівно 1.</p>
+  </div>
+</div>
+
+<p><b>Чому маска важлива.</b> Без неї модель витрачає більшість зусиль на те, щоб
+навчитись відтворювати вказівки — тобто на завдання, яке нікому не потрібне.
+Гірше того: вказівок у наборі зазвичай кілька десятків формулювань, вони
+повторюються тисячі разів, і модель швидко починає передбачати їх майже ідеально.
+Втрата падає, графік виглядає чудово, а вміння відповідати не росте.</p>
+
+<figure>
+  <p class="fig-head">Скільки токенів прикладу справді вчать</p>
+  <p class="fig-sub">Посунь довжину відповіді й подивись, яка частка послідовності несе помилку.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="260" data-lw="700" data-lh="260"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Довжина відповіді, токенів <output id="o4">2</output></label>
+        <input type="range" id="a4" min="1" max="16" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>токенів у прикладі</b><i id="v4a">18</i></div>
+        <div class="cellv"><b>несуть помилку</b><i id="v4b">11%</i></div>
+      </div>
+      <p class="verdict" id="v4"></p>
+    </div>
+  </div>
+  <figcaption>Вказівка й вхід тут — 16 токенів, як у типовому короткому прикладі.
+    Коли відповідь коротка (мітка класу, одне слово), помилку несе одна-дві
+    позиції з вісімнадцяти. Це не привід рахувати помилку й на вказівці — це
+    привід мати <b>багато прикладів</b>: корисного сигналу в кожному мало.</figcaption>
+</figure>
+<h2 id="s5"><span class="num">05 / Суміш</span>Навіщо суміш завдань</h2>
+
+<p>Тепер головне питання розділу. Уяви, що ми зібрали 50 тисяч прикладів
+<b>одного</b> завдання — скажімо, перекладу — і донавчили на них модель. Що ми
+дістанемо? Дуже гарний перекладач. Тобто звичайне донавчання під задачу, яке
+курс робив ще в <a href="../26-bert/lecture.html">темі 26</a>.</p>
+
+<p>Обіцянка донавчання на вказівках зовсім інша, і формулюється вона так:</p>
+
+<div class="note"><b>Обіцянка.</b> Якщо навчити модель виконувати
+<b>багато різних</b> завдань, сформульованих словами, вона навчиться не самих
+завдань, а <b>вміння виконувати сформульоване словами завдання</b>. І тоді вона
+зробить те, чого не бачила в навчанні — бо прочитає вказівку.</div>
+
+<p>Це сильне твердження, і перевіряють його однозначно: <b>ховають одне
+завдання</b>. Модель учать на решті, а питають те, яке заховали. Якщо вона щось
+уміє на захованому — вміння читати вказівку перенеслось. Якщо ні — ми просто
+навчили її кількох завдань окремо.</p>
+
+<p>Такий спосіб перевірки має власну назву — <b>нульовий постріл</b>
+(zero-shot): модель отримує завдання, жодного прикладу якого вона не бачила.
+Якби ми дали два-три приклади прямо в підказці, це був би вже
+<b>малий постріл</b> (few-shot), і питання стояло б інакше.</p>
+
+<figure>
+  <p class="fig-head">Як перевіряють перенесення</p>
+  <p class="fig-sub">Одне завдання ховають. Навчання його не бачить — питання ставлять саме про нього.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="290" data-lw="700" data-lh="290"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>навчання бачить</b><i class="sm">завдання A, B, C…</i></div>
+        <div class="cellv"><b>питання про</b><i class="sm">заховане завдання Z</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-mid">чому це не дрібниця</span><br>
+        Якщо не заховати завдання, а просто заміряти точність на тих самих
+        завданнях, що були в навчанні, — результат нічого не скаже про вміння
+        читати вказівку. Він скаже лише, що модель вивчила те, чого її вчили.</p>
+    </div>
+  </div>
+  <figcaption>Схема перевірки нульовим пострілом. Ліворуч — суміш завдань, кожне
+    зі своєю вказівкою. Праворуч — заховане завдання, вказівка якого сформульована
+    в тому самому стилі, але жодного прикладу з нею модель не бачила. Заміряна
+    величина — точність саме на ньому.</figcaption>
+</figure>
+
+<h3>Чому суміш узагалі має спрацювати</h3>
+
+<p>Інтуїція така. Коли завдання одне, модель може взагалі не читати вказівку:
+вказівка ж завжди та сама, її можна проігнорувати, і нічого не зміниться.
+Коли завдань двадцять і вони перемішані, ігнорувати вказівку більше не можна —
+вона єдине, що відрізняє «переклади» від «стисни» на однаковому вході. Тобто
+<b>суміш робить вказівку інформативною</b>, і модель змушена її враховувати,
+бо інакше зазнає більшої втрати.</p>
+
+<p>А коли модель уже враховує вказівку як частину входу, зʼявляється надія, що
+вона впорається й з новою вказівкою, схожою за будовою на бачені. Саме тут
+криється тонкість, до якої ми зараз дійдемо: <b>«впоратись» — це не одне вміння,
+а два</b>, і переноситься з них далеко не все.</p>
+<h2 id="s6"><span class="num">06 / Стенд</span>Три завдання на справжніх даних</h2>
+
+<p>Тепер від пояснень до заміру. Великої моделі, тисячі завдань і армії
+розмітників у нас немає. Але явище, про яке йдеться, не потребує великої моделі:
+воно потребує <b>кількох різних завдань зі справжніми відповідями</b> й чесної
+перевірки на захованому.</p>
+
+<p>Корпус той самий, що в попередніх темах блоку, — українські переклади
+повідомлень встановлених програм. Кожен рядок має три властивості, які ми знаємо
+<b>точно, без розмітника</b>:</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>завдання</th><th>вказівка каже</th><th>звідки відома відповідь</th><th>множина відповідей</th></tr>
+<tr><td>клас</td><td>це повідомлення про збій чи про успіх?</td><td>з англійського оригіналу того самого рядка</td><td>2 мітки</td></tr>
+<tr><td>далі</td><td>допиши продовження рядка</td><td>друга половина самого рядка</td><td>7863 слова</td></tr>
+<tr><td>звідки</td><td>з якої програми цей рядок?</td><td>з імені файлу перекладу</td><td>8 програм</td></tr>
+</table></div>
+
+<p>Кожне завдання оформлене в один і той самий формат із розділу 03: службовий
+токен вказівки, вхідний рядок, роздільник, відповідь, кінцевий токен. Помилка
+рахується лише на відповіді, як у розділі 04.</p>
+
+<p>Числа корпусу після фільтра «від 6 до 20 слів у рядку»: <b>49 573</b> рядки
+з <b>260</b> програм, поділені на <b>39 658</b> навчальних, <b>4 957</b>
+відкладених і <b>4 958</b> перевірних. Словник — <b>7 867</b> слів, до яких
+додано <b>14</b> службових токенів (три вказівки, роздільник, дві мітки класу
+й вісім імен програм), разом <b>7 881</b>.</p>
+
+<div class="note warn"><b>Ці числа не відтворяться в тебе.</b> Корпус —
+це переклади програм, <b>встановлених на конкретній машині</b>, і в кожного їх
+свій набір. Відтворюється не число, а <b>форма</b>: співвідношення між рубежами
+й системами, напрямок ефектів, порядок величин. Так само варто ставитись і до
+всіх наступних чисел цієї теми.</div>
+
+<h3>Чесність міток, названа вголос</h3>
+
+<p>Дві мітки з трьох бездоганні. «Звідки» знає імʼя файлу — тут помилитись
+неможливо. «Далі» — це просто друга половина рядка, теж без варіантів.</p>
+
+<p>А от мітка «збій / успіх» здобута <b>правилом</b>: у англійському оригіналі
+шукаються слова <span class="raw">error</span>, <span class="raw">fail</span>,
+<span class="raw">failed</span>, <span class="raw">cannot</span>,
+<span class="raw">unable</span>, <span class="raw">invalid</span>,
+<span class="raw">denied</span>, <span class="raw">corrupt</span>. Правило просте,
+і в нього є відома дірка: воно ловить <span class="raw">cannot</span>, але не
+ловить <span class="raw">could not</span>, <span class="raw">is not</span>,
+<span class="raw">does not</span>, <span class="raw">no such</span>,
+<span class="raw">timed out</span>, <span class="raw">refused</span>. Тобто частина
+повідомлень про збій має мітку «успіх», і помилки всі в один бік.</p>
+
+<p>Дірку можна оцінити зверху. Серед <b>40 473</b> рядків із міткою «успіх»
+<b>6 610</b> містять один із незловлених зворотів заперечення — це <b>16.33 %</b>
+класу. Не кожен із них справді про збій («сервер цього не потребує» — не збій),
+тож 6 610 — це верхня межа, а не точна кількість. Але порядок ясний: мітка
+«успіх» містить помітну домішку збоїв, і жодна модель цього не виправить.</p>
+
+<p>Друга обставина того самого штибу: класи дуже нерівні. «Успіх» — <b>40 473</b>
+рядки, «збій» — <b>9 100</b>, тобто <b>81.64 %</b> проти 18.36 %. Це саме по собі
+робить завдання оманливо легким, і саме тому наступний розділ про рубежі
+обовʼязковий.</p>
+
+<p>Наслідок для читання чисел: <b>стеля завдання «клас» нижча за одиницю не через
+модель</b>. Модель, яка розуміє «could not be loaded» правильно, за це
+карається. Це не привід викидати завдання — правило дає добрий сигнал, — а
+привід не тлумачити його точність як «модель розуміє мову збоїв».</p>
+<h2 id="s7"><span class="num">07 / Рубежі</span>Три числа, без яких висновку немає</h2>
+
+<p>Це найважливіший розділ теми з погляду методу, і він стосується не лише
+вказівок, а взагалі будь-якого заміру.</p>
+
+<p>Уяви, що ми заховали завдання «звідки», навчили модель на двох інших, спитали
+її про заховане й дістали нуль. Спокуса — написати: «перенесення не працює».
+Спокуса неправильна, і ось чому.</p>
+
+<div class="note warn"><b>Нульовий результат слабкої системи — це результат про
+систему, а не про задачу.</b> Низьке число могло означати, що перенесення справді
+немає. А могло означати, що наш стенд заслабкий: замало кроків навчання, замало
+даних, невдалий формат. Розрізнити ці дві причини самим лише низьким числом
+неможливо.</div>
+
+<p>Щоб число почало щось означати, поруч мусять стояти <b>три рубежі</b>.
+Кожен відповідає на своє питання.</p>
+
+<h3>Рубіж 1 · найчастіша відповідь</h3>
+
+<p>Найтупіша можлива система: завжди кажи ту відповідь, яка найчастіше траплялась
+у <b>навчальній</b> частині. Не дивись на вхід узагалі. Це і є та планка, нижче
+якої результат не має сенсу: якщо модель гірша за константу, вона не навчилась
+нічого корисного.</p>
+
+<p>Важлива дрібниця, на якій легко обпектись: константу треба брати з навчальної
+частини, а міряти на перевірній. Якщо взяти найчастішу відповідь із самої
+перевірної частини, це вже підглядання у відповідь, і рубіж вийде завищеним.</p>
+
+<h3>Рубіж 2 · випадкова відповідь</h3>
+
+<p>Друга планка: тикати навмання серед допустимих відповідей. Її не треба
+жеребкувати — її треба <b>порахувати точно</b>. Якщо допустимих відповідей
+<span class="raw">K</span> і кожна рівноймовірна, очікувана частка влучань дорівнює
+рівно <span class="raw">1/K</span>, скільки б рядків ми не перевіряли.</p>
+
+<p>Навіщо він, якщо є перший? Бо ці двоє відповідають на різні питання, і їхні
+величини між завданнями несумірні. Перший каже: <b>нижче за це — поразка</b>.
+Другий каже: <b>ось стільки дає нульове знання</b>. Коли відповідей дві й вони
+дуже нерівні, перший великий, а другий рівно половина. Коли відповідей тисячі,
+обидва мізерні, але перший усе одно в сотні разів більший. А коли жодна
+відповідь не переважає — другий може виявитись вищим за перший, і тоді головною
+планкою стає саме він. Разом вони окреслюють коридор, у якому «результат» ще
+не є результатом.</p>
+
+<h3>Рубіж 3 · стеля</h3>
+
+<p>Третій, і саме його найчастіше забувають: <b>та сама модель, навчена лише на
+цьому завданні</b>. Вона бачила рівно ті приклади, яких заховану модель
+позбавили, і при однаковому бюджеті навчання показує, <b>скільки на цьому
+завданні взагалі можна взяти</b> нашим стендом.</p>
+
+<p>Без неї нульовий постріл нема з чим порівнювати. Якщо стеля сама впритул
+до найчастішої відповіді — стенд заслабкий, і про перенесення він сказати
+нічого не може. Якщо стеля високо, а нульовий постріл унизу — ось тоді розрив
+між ними є справжнім вимірюванням того, чого бракує.</p>
+
+<figure>
+  <p class="fig-head">Коридор, у якому число ще не є результатом</p>
+  <p class="fig-sub">Перемкни завдання. Три рубежі рахуються на тих самих 600 перевірних рядках.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">завдання</span>
+        <div class="seg" id="seg6">
+          <button data-i="0" aria-pressed="true">клас</button>
+          <button data-i="1" aria-pressed="false">далі</button>
+          <button data-i="2" aria-pressed="false">звідки</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найчастіша</b><i id="v6a">0.8200</i></div>
+        <div class="cellv"><b>випадкова</b><i id="v6b">0.5000</i></div>
+      </div>
+      <p class="verdict" id="v6"></p>
+    </div>
+  </div>
+  <figcaption>Три завдання — три зовсім різні коридори. У «класі» найчастіша
+    відповідь дає <b>0.8200</b>, і будь-яке число нижче за це — поразка,
+    хоч би як велично воно виглядало. У «звідки» найчастіша дає <b>0.3433</b>
+    (це <span class="raw">gcc</span>), а випадкова — <b>0.1250</b>. У «далі»
+    обидва рубежі мізерні: найчастіше слово («для») влучає в <b>0.0467</b>
+    випадків, а тик навмання серед 7 863 слів — у <b>0.0001</b>. Одна й та сама
+    точність 0.30 у трьох завданнях означає провал, посередність і чудовий
+    результат відповідно.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Замір</span>Що перенеслось, а що ні</h2>
+
+<p>Тепер сам замір. Ми навчили шість моделей — одна архітектура, один бюджет
+навчання, одні й ті самі перевірні рядки. Різниця тільки в тому, яку суміш
+завдань кожна бачила.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>система</th><th>що бачила в навчанні</th><th>що вона показує</th></tr>
+<tr><td>нульовий постріл</td><td>клас + далі</td><td>чи переноситься вміння на «звідки»</td></tr>
+<tr><td>у суміші</td><td>клас + далі + звідки</td><td>скільки дає завдання, коли воно є в суміші</td></tr>
+<tr><td>стеля</td><td>тільки звідки</td><td>скільки на цьому завданні взагалі можна взяти</td></tr>
+<tr><td>стеля-2</td><td>тільки далі</td><td>те саме для другого захованого завдання</td></tr>
+<tr><td>нульовий постріл-2</td><td>клас + звідки</td><td>чи переноситься вміння на «далі»</td></tr>
+<tr><td>базова модель</td><td>сирі рядки, без вказівок</td><td>що вміє «продовжити текст» без донавчання</td></tr>
+</table></div>
+
+<h3>Перший результат: рівно нуль, і він нічого не доводить</h3>
+
+<p>Модель, навчена на «клас + далі», на завданні «звідки» дала точність
+<b>0.0000</b>. Не «близько нуля» — рівно нуль, жодного влучання з 600.</p>
+
+<p>Спокуса написати «перенесення не працює» велика, і це була б помилка.
+Розберімось, чому нуль вийшов саме нулем.</p>
+
+<div class="note warn"><b>Нуль тут — властивість розмітки, а не факт про модель.</b>
+Відповіді завдання «звідки» — це вісім службових токенів, по одному на програму.
+Вони стоять у відповідях <b>лише цього завдання</b>. Модель, яка його не бачила,
+не зустрічала їх узагалі — а softmax під час навчання весь час тиснув їхні
+логіти <b>вниз</b>, бо в кожному прикладі вони були неправильними відповідями.
+Отже вибір «найімовірніший токен усього словника» не міг випасти на них
+за побудовою. Нуль був гарантований до першого кроку навчання.</div>
+
+<p>Це та сама помилка, яку легко зробити в будь-якому замірі: система не
+показала нічого, і ми поспішили зробити висновок про <b>задачу</b>. А
+насправді ми поміряли <b>свій стенд</b>.</p>
+
+<h3>Полагоджений замір: обмежений вибір</h3>
+
+<p>Полагодити просто. Замість «назви найімовірніший токен словника» питаємо
+«яка з восьми програм найімовірніша» — тобто беремо максимум лише серед
+допустимих відповідей. Тепер відповісти правильно можливо, і число
+перестає бути технічним.</p>
+
+<p>Ось усі числа для завдання «звідки», на тих самих 600 перевірних рядках.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>система</th><th>точність</th><th>проти найчастішої</th></tr>
+<tr><td>випадкова відповідь (1 з 8)</td><td>0.1250</td><td>-0.2183</td></tr>
+<tr><td>найчастіша відповідь (gcc)</td><td>0.3433</td><td>0.0000</td></tr>
+<tr class="hot"><td>нульовий постріл, обмежений</td><td>0.0933</td><td>-0.2500</td></tr>
+<tr><td>базова модель, жодних вказівок</td><td>0.0938</td><td>-0.2495</td></tr>
+<tr><td>у суміші з двома іншими</td><td>0.6538</td><td>+0.3105</td></tr>
+<tr><td>стеля (тільки це завдання)</td><td>0.8133</td><td>+0.4700</td></tr>
+</table></div>
+
+<p>Тепер висновок можна робити, і він подвійний.</p>
+
+<p><b>Стенд не заслабкий.</b> Стеля <b>0.8133</b> проти рубежу 0.3433 — завдання
+чудово вчиться нашою моделлю за наш бюджет. Якби стеля була, скажімо, 0.36,
+уся ця розмова була б порожньою.</p>
+
+<p><b>Перенесення немає.</b> Нульовий постріл дав <b>0.0933</b> — тобто не
+дотягнув навіть до <b>випадкового</b> вибору з восьми (0.1250), не кажучи вже
+про найчастішу відповідь (0.3433). Між цим числом і стелею — уся відстань
+від нуля до вміння.</p>
+
+<p>Не поспішай робити з «нижче за випадковий вибір» окремий висновок: за два
+розділи ми покажемо, чому саме тут його робити не можна. Поки що досить того,
+що нульовий постріл <b>не відірвався від рубежів</b>.</p>
+
+<figure>
+  <p class="fig-head">Усі системи на одній лінійці</p>
+  <p class="fig-sub">Перемкни завдання. Сірим — рубежі, кольором — навчені моделі.</p>
+  <div class="panel">
+    <canvas id="c12" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">заховане завдання</span>
+        <div class="seg" id="seg12">
+          <button data-i="0" aria-pressed="true">звідки</button>
+          <button data-i="1" aria-pressed="false">далі</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>нульовий постріл</b><i id="v12a">0.0000</i></div>
+        <div class="cellv"><b>стеля</b><i id="v12b">0.0000</i></div>
+      </div>
+      <p class="verdict" id="v12"></p>
+    </div>
+  </div>
+  <figcaption>Обидва заховані завдання дають ту саму картину: стеля високо над
+    рубежем, а нульовий постріл до найчастішої відповіді навіть не наближається.
+    Різниця між ними в тому, <b>чому</b> так: у «звідки» модель ніколи не бачила
+    своїх восьми відповідей, а в «далі» відповіді — звичайні слова, які вона
+    бачила тисячі разів. Другий випадок і є справжньою перевіркою — і він дає
+    те саме.</figcaption>
+</figure>
+
+<h3>Друга перевірка, чесніша за першу</h3>
+
+<p>Проти першого заміру можна заперечити: ти заховав завдання, чиї відповіді
+модель <b>не вміє породжувати</b>. Не дивно, що вона їх не породила.</p>
+
+<p>Заперечення слушне, і його треба закрити. Заховаймо натомість «далі» —
+завдання, чиї відповіді є <b>звичайними словами корпусу</b>. Модель бачила ці
+слова тисячі разів, породжувати їх уміє, і жодної технічної перешкоди тут
+немає.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>система на завданні «далі»</th><th>точність</th></tr>
+<tr><td>випадкова відповідь (1 з 7863)</td><td>0.0001</td></tr>
+<tr><td>найчастіше слово («для»)</td><td>0.0467</td></tr>
+<tr class="hot"><td>нульовий постріл (бачила клас + звідки)</td><td>0.0004</td></tr>
+<tr><td>базова модель, жодних вказівок</td><td>0.2154</td></tr>
+<tr><td>у суміші з «класом» і «звідки»</td><td>0.1146</td></tr>
+<tr><td>стеля (тільки «далі»)</td><td>0.1625</td></tr>
+</table></div>
+
+<p>Картина та сама. Нульовий постріл — <b>0.0004</b>, тобто фактично нуль
+проти рубежу 0.0467. Стеля — <b>0.1625</b>, тобто завдання знову добре
+вчиться. Перешкода не в тому, що модель не вміє вимовляти відповідь: вона вміє.</p>
+
+<h3>Рядок таблиці, повз який пройти найлегше</h3>
+
+<p>Подивись на <b>базову модель</b> — ту, що взагалі не бачила вказівок і вміє
+рівно одне, продовжувати текст. На завданні «далі» вона дає <b>0.2154</b>.
+Це <b>вище</b> за всі донавчені моделі: вище за суміш (0.1146) і вище навіть
+за стелю (0.1625), навчену на цьому самому завданні.</p>
+
+<div class="note warn"><b>Ця цифра варта окремої зупинки.</b> Завдання «далі» —
+це і є продовження тексту. Базова модель робить його <b>своєю рідною справою</b>,
+без жодної вказівки й без роздільника. Донавчання на вказівках у цьому випадку
+нічого не додало — воно лише зайняло ємність форматом і сусідніми завданнями.</div>
+
+<p>Порівняння тут не зовсім рівне, і це треба сказати вголос: базова модель
+училась на <b>усіх</b> токенах кожного рядка, а моделі з вказівками — лише на
+токенах відповіді (розділ 04). Тобто за той самий бюджет кроків базова бачила
+більше корисного сигналу. Але саме це й є суттю: <b>для задачі, яка вже є
+продовженням тексту, весь апарат вказівок — накладні витрати</b>.</p>
+
+<p>Симетрично: на «звідки» та сама базова модель дає <b>0.0938</b> —
+тобто нічого. Назвати програму продовженням тексту не можна ніяк.</p>
+
+<h3>Чому нульовий постріл не варто читати як «гірше за монетку»</h3>
+
+<p>Спокуса є: 0.0933 менше за 0.1250, отже модель нібито систематично обирає
+не ті програми. Обережніше. Ці вісім токенів модель ніколи не навчала — їхні
+вектори лишились такими, якими їх поклала випадкова ініціалізація. Вибір
+серед них визначає не знання, а те, куди випадково лягли числа на старті.</p>
+
+<p>Це видно прямо в наших зернах. Модель, навчена <b>тільки на «далі»</b>,
+на завданні «клас» дала при обмеженому виборі <b>0.2133</b>, <b>0.8200</b>, <b>0.8200</b>, <b>0.6867</b> — тобто від грубого
+провалу до майже ідеалу, при тому що жодна з них не бачила жодної мітки класу.
+Базова модель без вказівок поводиться так само: <b>0.1817</b>, <b>0.8100</b>, <b>0.8200</b>, <b>0.4267</b>. Розкид тут не є
+шумом навчання: це різні випадкові ініціалізації двох невживаних векторів,
+і більше нічого.</p>
+
+<p>Тому правильне читання таке: нульовий постріл на «звідки» <b>не відірвався
+від рубежу випадкового вибору</b> — і це все, що можна сказати. Корисного
+перенесення нуль; величина відхилення в той чи інший бік змісту не має.</p>
+
+<h3>Що ж тоді насправді перенеслось</h3>
+
+<p>Подивімось, що модель <b>каже</b>, а не тільки на її точність. Модель,
+навчена на «клас + звідки», після роздільника пропонує мітки класу й імена
+програм — те, що вона там бачила. Модель, навчена на «клас + далі», після
+роздільника пропонує мітки класу й звичайні слова.</p>
+
+<div class="note"><b>Формулювання, до якого ми йшли.</b> Донавчання на суміші
+завдань навчило модель одного дуже конкретного: <b>що́ буває після роздільника</b>.
+Вона впевнено породжує відповідь у форматі бачених завдань — і не породжує
+у форматі небачених. Слухняність, яка нібито мала перенестись, виявилась
+не абстрактною здатністю «читати вказівку», а завченим розподілом форм
+відповіді.</div>
+
+<h3>І ще одне число, повз яке легко пройти</h3>
+
+<p>Порівняй у таблиці «звідки» два рядки: у суміші з двома іншими завданнями —
+<b>0.6538</b>, а наодинці — <b>0.8133</b>. Те саме в «далі»:
+<b>0.1146</b> проти <b>0.1625</b>. Тобто <b>суміш коштує</b>: за одне
+й те саме число кроків навчання завдання в компанії вчиться помітно гірше,
+ніж наодинці.</p>
+
+<p>Обережно з наступним кроком, бо тут легко перебрати. Суміш із двох завдань
+(клас + звідки) дає на «звідки» <b>0.6162</b>, а з трьох —
+<b>0.6538</b>. Тобто «що більше завдань, то гірше» наші числа <b>не</b>
+показують: між двома сумішами порядку немає. Показують вони інше й вужче —
+що будь-яка суміш програє одному завданню.</p>
+
+<p>Причина зрозуміла: у нашої моделі ємності мало, і суміш її ділить. Це не
+привід оголосити суміш шкідливою взагалі — це привід памʼятати, що вся обіцянка
+донавчання на вказівках тримається на тому, що ємності <b>вистачає</b>.</p>
+
+<p>Цю саму залежність бачили й на великих моделях: донавчання на вказівках
+помітно допомагає при 68 і 137 мільярдах ваг і <b>шкодить</b> при 8 мільярдах
+і менше — саме на захованих завданнях. Наша модель на кілька порядків менша
+за найменшу з тих. Тобто наш результат лягає в ту саму картину, але доводить
+її не він: він показує <b>механізм</b> на масштабі, де його видно цілком.</p>
+
+<h2 id="s9"><span class="num">09 / Уподобання</span>Звідки беруться уподобання</h2>
+
+<p>Донавчання на вказівках закриває питання «що це за задача». Воно не закриває
+питання «яка з двох правильних відповідей краща».</p>
+
+<p>Уяви, що модель уміє відповідати. Її просять пояснити, що таке дощ. Вона видає
+технічно бездоганний абзац із термінами «конденсація» й «адіабатичне
+охолодження». Формально це правильно. Але питала восьмирічна дитина, і потрібна
+була інша відповідь. Жодна втрата на наборі прикладів цього не спіймає: обидві
+відповіді правдоподібні, обидві правильні.</p>
+
+<p>Тому другий етап ставить питання інакше. Не «яка відповідь правильна», а
+<b>«яка з цих двох краща»</b> — і відповідає на нього людина.</p>
+
+<h3>Як це виглядає насправді</h3>
+
+<p>Беруть підказку, породжують нею кілька відповідей і показують їх людині.
+Людина впорядковує їх від кращої до гіршої. З упорядкованого списку з
+<span class="raw">K</span> відповідей виходить <span class="raw">K</span>·(<span class="raw">K</span>−1)/2
+пар «краще — гірше»: із чотирьох відповідей шість пар, із девʼяти —
+тридцять шість. Це важлива економія: людина робить одну роботу, а даних виходить
+у рази більше.</p>
+
+<p>У великій системі, на якій цей підхід уперше показали в повний зріст, зібрали
+приблизно 33 тисячі підказок для цього етапу, від чотирьох до девʼяти відповідей
+на кожну, і вчили на всіх парах усередині кожного впорядкування.</p>
+
+<h3>Чому згода ніколи не буває повною</h3>
+
+<p>Розмітники не збігаються між собою. Це не недбальство і не погана інструкція —
+це властивість задачі. Причини різні й усі законні:</p>
+
+<ul>
+  <li><b>смак.</b> Одному подобається коротко, іншому — з прикладом. Обидва праві;</li>
+  <li><b>неоднозначність запиту.</b> «Розкажи про Рим» — про місто чи про
+    імперію? Розмітник добудовує намір по-своєму;</li>
+  <li><b>різні виміри якості в конфлікті.</b> Одна відповідь правдивіша, друга
+    зрозуміліша. Інструкція не може перелічити всі такі конфлікти наперед;</li>
+  <li><b>утома й порядок показу.</b> Те саме на сотому порівнянні виглядає
+    інакше, ніж на десятому.</li>
+</ul>
+
+<p>У згаданій великій системі згоду заміряли: розмітники, які вчили модель,
+збігались між собою у <b>72.6 %</b> випадків, а розмітники, яких відклали для
+незалежної перевірки, — у <b>77.3 %</b>.</p>
+
+<h3>Число, яке з цього НЕ випливає</h3>
+
+<p>Природна реакція: «якщо люди згодні лише в 73 % випадків, то модель винагороди
+не може бути точнішою за 73 %». Це неправда, і арифметика тут гарна.</p>
+
+<p>Припустімо просту річ: у кожної пари є «справжня» краща відповідь, і кожен
+розмітник називає її правильно з імовірністю <span class="raw">q</span>,
+помиляючись незалежно від інших. Тоді двоє розмітників збігаються у двох
+випадках: обидва вгадали (ймовірність <span class="raw">q</span>²) або обидва
+помилились (ймовірність (1 − <span class="raw">q</span>)²).</p>
+
+<div class="eq">p = q<span class="sup">2</span> + (1 − q)<span class="sup">2</span></div>
+
+<p>Тут <span class="raw">p</span> — заміряна згода між двома розмітниками,
+а <span class="raw">q</span> — те, чого ми не бачимо: точність одного розмітника.
+Розвʼяжімо це рівняння відносно <span class="raw">q</span>.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · розкриємо дужки</span>
+    <div class="eq">p = q<span class="sup">2</span> + 1 − 2q + q<span class="sup">2</span> = 2q<span class="sup">2</span> − 2q + 1</div>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · зберемо квадратне рівняння</span>
+    <div class="eq">2q<span class="sup">2</span> − 2q + (1 − p) = 0</div>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · корінь, який більший за половину</span>
+    <div class="eq">q = ( 1 + √(2p − 1) ) / 2</div>
+    <p>Другий корінь дає <span class="raw">q</span> менше за 0.5 — це той самий
+      розмітник, який систематично каже навпаки, і його ми відкидаємо.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4 · підставимо 0.726</span>
+    <div class="eq">2 · 0.726 − 1 = 0.4520 &nbsp; √0.4520 = 0.67231 &nbsp;
+      q = (1 + 0.67231)/2 = <b>0.8362</b></div>
+  </div>
+</div>
+
+<p>Тобто якщо двоє людей збігаються у 72.6 % випадків, кожен із них окремо
+називає «справжню» кращу відповідь приблизно у <b>83.6 %</b>. І бездоганна модель
+винагороди, яка завжди вгадує справжню відповідь, збігатиметься з випадковим
+розмітником теж у 83.6 % — тобто <b>помітно частіше, ніж розмітники між
+собою</b>.</p>
+
+<div class="note warn"><b>Де ця арифметика ламається.</b> Вона припускає, що
+помилки розмітників <b>незалежні</b>. Якщо всі розмітники мають спільний перекос —
+однакову інструкцію, однакову культуру, однакову схильність обирати довшу
+відповідь, — вони збігатимуться частіше, ніж дає формула, а «справжня» краща
+відповідь просто перестане існувати як окреме поняття. Тоді 83.6 % не стеля, а
+фікція. Формула корисна не як число, а як контрприклад до поспішного висновку.</div>
+
+<figure>
+  <p class="fig-head">Згода людей і стеля моделі — це різні числа</p>
+  <p class="fig-sub">Посунь заміряну згоду між розмітниками й подивись, яка з неї випливає стеля.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Згода між розмітниками <output id="o7">0.726</output></label>
+        <input type="range" id="p7" min="500" max="990" step="2" value="726">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>точність розмітника</b><i id="v7a">0.8362</i></div>
+        <div class="cellv"><b>запас над згодою</b><i id="v7b">+0.1102</i></div>
+      </div>
+      <p class="verdict" id="v7"></p>
+    </div>
+  </div>
+  <figcaption>Крива <span class="raw">q</span> = (1 + √(2p − 1))/2. Ліворуч, коли
+    згода прямує до 0.5, точність розмітника прямує до тієї самої 0.5 — люди
+    кидають монетку, і вчитись нема на чому. Праворуч, коли згода прямує до 1,
+    обидві величини сходяться. У всій середині <b>стеля моделі вища за згоду
+    людей</b>, і плутати ці два числа означає занижувати вимоги до себе.</figcaption>
+</figure>
+<h2 id="s10"><span class="num">10 / Пари</span>Чому пари, а не бали</h2>
+
+<p>Здавалося б, простіше попросити оцінку: «постав відповіді бал від 1 до 10».
+Одне число замість порівнянь, і зі шкали одразу видно, наскільки одна відповідь
+краща за іншу. Так не роблять, і причин три.</p>
+
+<p><b>Перша: шкала в кожного своя.</b> «Сімка» одного розмітника — це «пʼятірка»
+іншого. Хтось узагалі не ставить десяток із принципу, хтось не ставить одиниць.
+Порівнювати числа від різних людей означає порівнювати різні лінійки.</p>
+
+<p><b>Друга: шкала пливе в тієї самої людини.</b> Перші відповіді дістають вищі
+бали, ніж такі самі відповіді через дві години. Після поганої відповіді середня
+здається доброю, після доброї — посередньою. Це відома властивість людського
+оцінювання, і побороти її інструкцією не вдається.</p>
+
+<p><b>Третя, і найпрактичніша: порівняння простіше.</b> Питання «яка з двох
+краща» має відповідь майже завжди, навіть коли обидві погані. Питання «на скільки
+балів ця відповідь» відповіді часто не має взагалі.</p>
+
+<p>Порівняння теж мають ціну. Одне порівняння двох варіантів несе рівно
+<b>один біт</b> інформації — «лівий» або «правий», — тоді як оцінка за
+десятибальною шкалою несе більше. Тому порівнянь треба багато. Саме тому їх і
+добувають пачками з упорядкувань: одне впорядкування девʼятьох відповідей дає
+36 пар.</p>
+
+<figure>
+  <p class="fig-head">Бали пливуть, порядок тримається</p>
+  <p class="fig-sub">Ті самі три відповіді очима двох розмітників із різними лінійками.</p>
+  <div class="panel">
+    <canvas id="c8" width="700" height="280" data-lw="700" data-lh="280"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>бали розійшлись</b><i class="sm">7·5·3 проти 9·8·6</i></div>
+        <div class="cellv"><b>порядок збігся</b><i class="sm">A &gt; B &gt; C в обох</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-ok">що з цього беремо</span><br>
+        Модель винагороди вчиться на тому, що збіглось — на порядку. Усе, що
+        розійшлось — вибір шкали, — вона не бачить і не має бачити.</p>
+    </div>
+  </div>
+  <figcaption>Два розмітники, ті самі три відповіді. Абсолютні бали різняться
+    на два-три пункти, бо в одного «строга» лінійка, а в другого «щедра».
+    Порядок при цьому той самий. Навчання на парах відкидає першу різницю
+    й лишає другу — тобто саме те, що є спільним.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Бредлі-Террі</span>Модель винагороди</h2>
+
+<p>Тепер треба перетворити купу пар «A краще за B» на число, яке можна
+оптимізувати. Це робить <b>модель винагороди</b> (reward model) — окрема
+нейромережа, яка бере пару «підказка + відповідь» і видає <b>одне дійсне число</b>.
+Не ймовірність, не клас — просто число, що зветься <b>винагородою</b>.</p>
+
+<p>Питання: як навчити мережу видавати число, коли в даних чисел немає, а є
+тільки порядок? Відповідь дає модель, придумана 1952 року для рейтингів
+у спортивних турнірах, — <b>Бредлі-Террі</b> (Bradley-Terry).</p>
+
+<h3>Ідея</h3>
+
+<p>Припустімо, що в кожної відповіді є прихована «сила»
+<span class="raw">r</span> — те саме число, яке ми хочемо знайти. Імовірність, що
+людина обере відповідь A замість B, залежить <b>лише від різниці</b> їхніх сил:</p>
+
+<div class="eq">P(A краще за B) = e<span class="sup">r(A)</span> / ( e<span class="sup">r(A)</span> + e<span class="sup">r(B)</span> )</div>
+
+<p>Розберімо. <span class="raw">e</span> — стала Ейлера, приблизно 2.71828;
+<span class="raw">e</span><span class="sup">x</span> — показникова функція, яка
+будь-яке число перетворює на додатне. Тому чисельник і знаменник завжди додатні,
+а їхнє відношення завжди між нулем і одиницею — тобто це чесна ймовірність.</p>
+
+<p>Поділимо чисельник і знаменник на
+<span class="raw">e</span><span class="sup">r(A)</span> і дістанемо коротший
+запис:</p>
+
+<div class="eq">P(A краще за B) = 1 / ( 1 + e<span class="sup">−(r(A) − r(B))</span> ) = σ( r(A) − r(B) )</div>
+
+<p>Функція σ (грецька «сигма») тут — <b>логістична функція</b>, та сама, що в темі
+про <a href="../../02-ai-ml/14-logistic-regression/lecture.html">логістичну регресію</a>: вона бере будь-яке число й акуратно втискає його
+в проміжок від 0 до 1. Її аргумент — різниця сил.</p>
+
+<h3>Порахуймо руками</h3>
+
+<div class="derive">
+  <div class="step"><span class="lbl">рівні суперники</span>
+    <p>r(A) = r(B), різниця 0:</p>
+    <div class="eq">σ(0) = 1 / (1 + e<span class="sup">0</span>) = 1 / (1 + 1) = <b>0.5000</b></div>
+    <p>Половина на половину — саме те, чого чекаєш від двох однакових відповідей.</p>
+  </div>
+  <div class="step"><span class="lbl">A на одиницю сильніша</span>
+    <div class="eq">σ(1) = 1 / (1 + e<span class="sup">−1</span>) = 1 / (1 + 0.3679) = <b>0.7311</b></div>
+  </div>
+  <div class="step"><span class="lbl">A на три сильніша</span>
+    <div class="eq">σ(3) = 1 / (1 + e<span class="sup">−3</span>) = 1 / (1 + 0.0498) = <b>0.9526</b></div>
+  </div>
+  <div class="step"><span class="lbl">висновок</span>
+    <p>Різниця в одну одиницю винагороди означає «людина обере це приблизно
+      у трьох випадках із чотирьох». Різниця в три — «майже завжди». Це й
+      надає числу винагороди сенсу: воно вимірюється <b>в шансах бути
+      обраним</b>.</p>
+  </div>
+</div>
+
+<h3>Чого навчаємо мережу</h3>
+
+<p>Для кожної пари з даних ми знаємо, що людина обрала першу відповідь. Отже
+хочемо, щоб модель давала цій події високу ймовірність. Беремо звичну втрату —
+мінус логарифм імовірності правильної події:</p>
+
+<div class="eq">втрата = − ln σ( r(краще) − r(гірше) )</div>
+
+<p>Це вся формула навчання моделі винагороди. Подивись, що вона робить.
+Якщо модель уже ставить кращій відповіді набагато вищу оцінку, різниця велика,
+σ близька до 1, логарифм близький до нуля — втрати майже немає, і градієнт малий.
+Якщо ж модель переплутала, різниця відʼємна, σ мала, мінус логарифм великий —
+і мережу сильно штовхають виправитись.</p>
+
+<figure>
+  <p class="fig-head">Різниця оцінок → ймовірність вибору → втрата</p>
+  <p class="fig-sub">Один повзунок: наскільки модель вважає першу відповідь кращою.</p>
+  <div class="panel">
+    <canvas id="c9" width="700" height="310" data-lw="700" data-lh="310"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Різниця оцінок <output id="o9">+1.00</output></label>
+        <input type="range" id="d9" min="-400" max="400" step="5" value="100">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ймовірність</b><i id="v9a">0.7311</i></div>
+        <div class="cellv"><b>втрата, нат</b><i id="v9b">0.3133</i></div>
+      </div>
+      <p class="verdict" id="v9"></p>
+    </div>
+  </div>
+  <figcaption>Ліворуч від нуля модель помиляється: вона вважає кращою ту
+    відповідь, яку людина відкинула, — і втрата росте майже лінійно, без
+    насичення. Праворуч від нуля модель має рацію, і втрата швидко сходить
+    нанівець. Саме тому навчання витрачає майже всі зусилля на пари, у яких воно
+    ще плутається, і майже нічого — на очевидні.</figcaption>
+</figure>
+
+<div class="note"><b>Наслідок, який дивує на практиці.</b> У формулі стоїть тільки
+<b>різниця</b> оцінок. Тому якщо додати до всіх оцінок одне й те саме число —
+скажімо, сто, — жодна ймовірність не зміниться, і втрата теж. Отже
+<b>абсолютне значення винагороди не має сенсу</b>: сенс має лише різниця
+всередині <b>однієї</b> моделі винагороди. Число «винагорода зросла до 4.7»
+не можна ані порівняти з іншою моделлю винагороди, ані витлумачити саме по собі.
+Ця обставина знадобиться нам за два розділи.</div>
+<h2 id="s12"><span class="num">12 / RLHF</span>Три етапи й повідець</h2>
+
+<p>Тепер зберімо все докупи. <b>RLHF</b> — reinforcement learning from human
+feedback, навчання з підкріпленням на людському зворотному звʼязку — це не
+окремий алгоритм, а <b>послідовність із трьох етапів</b>. Кожен уже розібраний
+вище, лишається поставити їх у ряд.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>етап</th><th>що робимо</th><th>звідки дані</th><th>що на виході</th></tr>
+<tr><td>1 · вказівки</td><td>донавчаємо базову модель на прикладах «вказівка → відповідь»</td><td>люди пишуть відповіді, або їх беруть із готових наборів</td><td>модель, яка виконує вказівки</td></tr>
+<tr><td>2 · винагорода</td><td>учимо окрему мережу за Бредлі-Террі</td><td>люди впорядковують відповіді моделі з етапу 1</td><td>функція, що дає тексту число</td></tr>
+<tr><td>3 · оптимізація</td><td>крутимо модель так, щоб винагорода росла</td><td>дані вже не потрібні — модель сама себе годує</td><td>кінцева модель</td></tr>
+</table></div>
+
+<p>Третій етап — єдиний, де зʼявляється щось нове, і саме там ховаються всі
+складнощі.</p>
+
+<h3>Мова навчання з підкріпленням, коротко й по суті</h3>
+
+<p>У навчанні з підкріпленням є <b>агент</b>, який діє в <b>середовищі</b> й
+дістає <b>винагороду</b>. Перекладімо це на нашу задачу — переклад буквальний,
+без натяжок:</p>
+
+<ul>
+  <li><b>політика</b> (policy) — це сама мовна модель. Слово підкреслює, що нас
+    цікавить не її будова, а те, <b>що вона робить</b>: за яким правилом обирає
+    наступний токен;</li>
+  <li><b>дія</b> — вибір одного наступного токена;</li>
+  <li><b>стан</b> — підказка плюс усе, що вже породжено;</li>
+  <li><b>винагорода</b> — одне число, яке дає модель винагороди, і дає його
+    <b>лише в кінці</b>, коли відповідь дописана.</li>
+</ul>
+
+<p>Остання обставина — головна технічна складність. Модель зробила сорок виборів
+підряд, а оцінку дістала одну на всі сорок. Який із виборів був удалий, а який
+зіпсував відповідь, ніхто не сказав. Розподілити одну оцінку по багатьох кроках
+і є задачею алгоритмів навчання з підкріпленням.</p>
+
+<div class="note"><b>Чому не можна просто взяти похідну.</b> Звичайне навчання
+працює так: порахували втрату, взяли похідну по вагах, зробили крок. Тут це не
+виходить, бо між вагами моделі й винагородою стоїть <b>жеребкування токена</b>.
+Ми обрали конкретний токен із розподілу — і ця операція не має похідної: якщо
+трохи змінити ваги, обраний токен або лишиться тим самим, або стрибне на інший.
+Похідної в стрибка немає. Тому й потрібен окремий клас алгоритмів, які оцінюють
+градієнт не через саму дію, а через <b>імовірність</b> дії.</div>
+
+<h3>Повідець: чому в мету дописують KL</h3>
+
+<p>Наївна мета третього етапу — «максимізуй винагороду». Так робити не можна,
+і це не обережність, а досвід: така мета ламає модель швидко й до невпізнання.</p>
+
+<p>Причина в тому, що модель винагороди — не істина, а <b>наближення</b> істини,
+навчене на скінченному наборі пар. Воно добре там, де є дані, і невідомо як
+поводиться там, де їх не було. А оптимізатор — істота вперта: він шукає
+<b>максимум</b>, і знаходить його саме там, де модель винагороди помиляється
+найсильніше.</p>
+
+<p>Тому в мету дописують штраф за відхід від початкової моделі:</p>
+
+<div class="eq">мета = E [ r(x, y) ] − β · KL( π ‖ π<span class="sub">поч</span> )</div>
+
+<p>Розберімо. <span class="raw">E[…]</span> — «середнє по підказках і
+породжених відповідях»; <span class="raw">r(x, y)</span> — винагорода за
+відповідь <span class="raw">y</span> на підказку <span class="raw">x</span>;
+<span class="raw">π</span> (грецька «пі») — політика, яку ми крутимо;
+<span class="raw">π</span><span class="sub">поч</span> — початкова політика,
+тобто модель після першого етапу; <span class="raw">β</span> (грецька «бета») —
+число, яке вирішує, наскільки міцно ми тримаємо повідець.</p>
+
+<p><b>KL</b> (Kullback-Leibler divergence, розбіжність Кульбака-Ляйблера) — міра
+того, наскільки один розподіл відійшов від іншого. Словами: якщо породити текст
+новою політикою й спитати, наскільки ймовірнішим він виявився за неї, ніж за
+старою, — середнє від логарифма цього відношення і є KL. Міряється в тих самих
+натах. Нуль означає «політики збігаються»; що більше число, то далі відійшли.</p>
+
+<div class="eq">KL( π ‖ π<span class="sub">поч</span> ) = E<span class="sub">y ~ π</span> [ ln ( π(y) / π<span class="sub">поч</span>(y) ) ]</div>
+
+<h3>Що станеться без повідця</h3>
+
+<p>Три речі, і всі три спостережні.</p>
+
+<p><b>Перше: злипання.</b> Модель знаходить кілька формулювань, які модель
+винагороди оцінює найвище, і починає видавати їх на будь-яку підказку.
+Різноманіття зникає. Формально винагорода при цьому висока.</p>
+
+<p><b>Друге: виїзд за межі мови.</b> Оптимізатор натрапляє на послідовності,
+яких у навчальних парах не було зовсім, — з дивною пунктуацією, з повторами,
+з обірваними словами. Модель винагороди на них ніколи не перевірялась і може
+давати їм що завгодно, зокрема дуже високі оцінки.</p>
+
+<p><b>Третє: втрата вміння, яке було.</b> Модель, яку тягнуть у бік винагороди
+без обмеження, забуває те, що вміла до цього. У великих системах це називають
+<b>податком на вирівнювання</b> (alignment tax): після третього етапу модель
+гірше складає задачі на розуміння прочитаного й гірше перекладає, ніж до нього.
+Лікують це підмішуванням початкових даних передтренування назад у навчання.</p>
+
+<p>Заміряні орієнтири з великої системи: коефіцієнт
+<span class="raw">β</span> = 0.02, причому і <span class="raw">β</span> = 0
+(без повідця зовсім), і <span class="raw">β</span> = 2 (повідець задуже тугий)
+давали помітно гірший результат, а робочий проміжок був приблизно від 0.01 до
+0.02. Тобто повідець — не декоративна деталь, а ручка з вузьким оптимумом.</p>
+
+<figure>
+  <p class="fig-head">Три етапи RLHF</p>
+  <p class="fig-sub">Що з чого росте і де в цьому ланцюзі стоїть людина.</p>
+  <div class="panel">
+    <canvas id="c10" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>людина потрібна на етапах</b><i class="sm">1 і 2</i></div>
+        <div class="cellv"><b>на етапі 3 людини немає</b><i class="sm">її замінює модель винагороди</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-mid">де слабке місце</span><br>
+        Третій етап оптимізує <b>заміну</b> людини, а не людину. Усе, що
+        відрізняє модель винагороди від справжніх уподобань, оптимізатор
+        знайде й використає.</p>
+    </div>
+  </div>
+  <figcaption>Ланцюг має три ланки, і людина стоїть у перших двох. На третьому
+    етапі система працює сама із собою: політика породжує, модель винагороди
+    оцінює, оптимізатор підкручує політику. Повідець KL привʼязує третій етап до
+    другого — до тієї моделі, на розподілі якої модель винагороди ще щось
+    розуміє.</figcaption>
+</figure>
+<h2 id="s13"><span class="num">13 / Повідець</span>Скільки коштує відхід</h2>
+
+<p>Повний третій етап із навчанням з підкріпленням дорогий: він потребує
+паралельної роботи чотирьох мереж і довгого налаштування. Є набагато простіший
+спосіб дістати те саме в мініатюрі, і він знадобиться нам двічі — і як прийом,
+і як лінійка.</p>
+
+<p>Спосіб зветься <b>best-of-n</b> («найкраще з n», іноді — відбір з
+відкиданням, rejection sampling) і робиться так: породи
+<span class="raw">n</span> варіантів відповіді звичайною політикою, оціни всі
+моделлю винагороди, віддай той, що дістав найбільшу оцінку. Модель при цьому не
+міняється взагалі — міняється лише те, як ми нею користуємось.</p>
+
+<p>Це справжня оптимізація винагороди: чим більше <span class="raw">n</span>,
+тим вища оцінка обраного варіанта. І питання те саме, що при навчанні
+з підкріпленням: <b>наскільки далеко ми відійшли від початкової політики</b>.</p>
+
+<h3>Відповідь, яку можна порахувати точно</h3>
+
+<p>Для best-of-n є закритий вигляд, і він на диво простий:</p>
+
+<div class="eq">KL( best-of-n ‖ початкова ) = ln n − (n − 1) / n</div>
+
+<p>Жодних властивостей моделі, жодних властивостей винагороди — лише кількість
+кандидатів. Перевірмо на краях. При <span class="raw">n</span> = 1 ми нічого не
+відбираємо: ln 1 = 0 і (1−1)/1 = 0, отже KL = 0 — політика та сама. Правильно.
+При <span class="raw">n</span> = 2: ln 2 = 0.6931, (2−1)/2 = 0.5, отже
+KL = <b>0.1931</b> ната.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>n</th><th>1</th><th>2</th><th>4</th><th>8</th><th>16</th><th>32</th></tr>
+<tr><td>KL, нат</td><td>0.0000</td><td>0.1931</td><td>0.6363</td><td>1.2044</td><td>1.8351</td><td>2.4970</td></tr>
+</table></div>
+
+<p>Зверни увагу на форму: щоб відійти вдвічі далі, кількість кандидатів треба
+збільшити набагато більше ніж удвічі. Від 4 до 32 — увосьмеро більше роботи
+за неповних чотири рази більший відхід.</p>
+
+<h3>Звідки береться формула</h3>
+
+<p>Виведення коротке, і його можна пройти без інтегралів. Ключ у тому, що
+<b>відбір не дивиться на самі тексти</b> — він дивиться лише на їхнє
+<b>місце в черзі</b> за винагородою.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · переходимо до місць у черзі</span>
+    <p>Вишикуймо всі можливі відповіді за винагородою — від найгіршої до
+      найкращої — і поділімо їх на <span class="raw">M</span> однакових за
+      ймовірністю сходинок. Тоді початкова політика обирає кожну сходинку
+      з однаковою ймовірністю 1/<span class="raw">M</span>. Це не спрощення
+      задачі, а зміна координат: усе, що робить відбір, у цих координатах
+      видно повністю.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · яку сходинку обере best-of-n</span>
+    <p>Ми тягнемо <span class="raw">n</span> кандидатів і беремо найкращого.
+      Найкращий опиниться на сходинці <span class="raw">k</span> або нижче
+      тоді й лише тоді, коли <b>всі</b> <span class="raw">n</span> кандидатів
+      опинились на сходинці <span class="raw">k</span> або нижче. Імовірність
+      цього — (<span class="raw">k</span>/<span class="raw">M</span>) у степені
+      <span class="raw">n</span>. Отже ймовірність попасти рівно на сходинку
+      <span class="raw">k</span>:</p>
+    <div class="eq">q<span class="sub">k</span> = (k/M)<span class="sup">n</span> − ((k−1)/M)<span class="sup">n</span></div>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · складаємо KL за означенням</span>
+    <p>KL — це середнє від логарифма відношення нової ймовірності до старої.
+      Стара для кожної сходинки — 1/<span class="raw">M</span>:</p>
+    <div class="eq">KL = Σ<span class="sub">k</span> q<span class="sub">k</span> · ln ( q<span class="sub">k</span> · M )</div>
+    <p>Це вже можна порахувати на калькуляторі для будь-яких
+      <span class="raw">n</span> і <span class="raw">M</span>.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4 · збільшуємо кількість сходинок</span>
+    <p>Що дрібніші сходинки, то ближче сума до сталого значення. При
+      <span class="raw">M</span> = 2000 вона збігається з
+      ln <span class="raw">n</span> − (<span class="raw">n</span>−1)/<span class="raw">n</span>
+      до четвертого знака для всіх <span class="raw">n</span> з таблиці вище.
+      Це і є формула.</p>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Скільки кандидатів — стільки натів</p>
+  <p class="fig-sub">Один повзунок. Сума по сходинках рахується тут же й звіряється з формулою.</p>
+  <div class="panel">
+    <canvas id="c11" width="700" height="310" data-lw="700" data-lh="310"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Кандидатів <span class="raw">n</span> <output id="o11">8</output></label>
+        <input type="range" id="n11" min="1" max="32" step="1" value="8">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>формула</b><i id="v11a">1.2044</i></div>
+        <div class="cellv"><b>сума по 2000 сходинок</b><i id="v11b">1.2044</i></div>
+      </div>
+      <p class="verdict" id="v11"></p>
+    </div>
+  </div>
+  <figcaption>Крива KL(<span class="raw">n</span>) росте як логарифм: перші
+    кандидати дають багато, наступні — дедалі менше. Праворуч показано, куди
+    відбір зсуває розподіл по сходинках: при <span class="raw">n</span> = 1 він
+    рівний, при <span class="raw">n</span> = 32 майже вся ймовірність зібралась
+    у верхніх кількох відсотках черги. Обидва числа в табло порахував браузер:
+    ліворуч — за формулою, праворуч — прямою сумою.</figcaption>
+</figure>
+
+<div class="note"><b>Навіщо нам ця лінійка.</b> Тепер «скільки кандидатів»
+і «як довго крутили навчання з підкріпленням» вимірюються <b>однією величиною</b>
+— натами відходу від початкової моделі. Це дає змогу класти поруч дуже різні
+способи оптимізації винагороди й питати одне: <b>що відбувається з правдою при
+такому-то відході</b>. Про це — наступний розділ, головний у темі.</div>
+
+<h2 id="s14"><span class="num">14 / Ґудгарт</span>Винагорода росте, правда — ні</h2>
+
+<p>Головний сюжет теми. Тепер його треба не переказати, а заміряти.</p>
+
+<h3>Стенд, і чесно про те, чого в ньому немає</h3>
+
+<p>Живих розмітників у нас немає й не буде. Але уподобання, які потрібні для
+цього заміру, у корпусі вже лежать, і вони справжні: <b>еталонний переклад
+кращий за те, що породила модель</b>. Обидва тексти справжні, порядок між ними
+не викликає сумнівів, і жодного розмітника для нього не треба.</p>
+
+<div class="note warn"><b>Що це змінює в тлумаченні чисел.</b> Наші уподобання
+<b>ідеально послідовні</b>: у них немає ані шуму розмітника, ані розбіжностей
+у смаку, ані втоми. Модель винагороди вчиться в <b>найсприятливіших</b> умовах,
+які взагалі бувають. Отже все, що ми побачимо далі, з живими людьми було б
+<b>гірше</b>, а не краще.</div>
+
+<p>Порядок дій такий. Навчаємо звичайну мовну модель — це <b>політика</b>.
+Беремо перші три слова рядка як підказку. Краща відповідь — справжнє
+продовження, гірша — те, що політика породила. На таких парах учимо модель
+винагороди за Бредлі-Террі. Далі — best-of-n: тягнемо 32 кандидатів на
+кожну підказку <b>один раз</b> і беремо найкращого за винагородою серед
+перших <span class="raw">n</span>.</p>
+
+<p>Кандидатів тягнемо один раз навмисне. Якби ми жеребкували наново для кожного
+<span class="raw">n</span>, набори не були б вкладені, і різниця між сусідніми
+точками кривої змішувала б ефект відбору з випадковістю жеребкування.</p>
+
+<h3>Чим міряємо «справжню якість»</h3>
+
+<p>Це найважливіше рішення всього заміру. Величина, якою ми перевіряємо
+винагороду, мусить бути від неї <b>незалежною</b> — інакше ми поміряємо
+винагороду винагородою.</p>
+
+<p>Беремо <b>перекриття токенів з еталонним продовженням</b>: скільки слів
+кандидата збіглося зі справжнім продовженням рядка, з поправкою на довжину.
+Міра груба — вона не бачить ані змісту, ані граматики. Але вона має рівно ту
+властивість, яка тут потрібна: модель винагороди її не бачила й оптимізувати
+її не могла.</p>
+
+<p>І третя величина, без якої дві перші не читаються, — <b>оракул</b>: найкраще
+перекриття серед тих самих <span class="raw">n</span> кандидатів. Вона показує,
+<b>скільки користі взагалі було</b> в цьому наборі. Без неї не відрізнити
+«винагорода погана» від «вибирати не було з чого».</p>
+
+<h3>Чи навчилась модель винагороди хоч чогось</h3>
+
+<p>Перш ніж щось нею оптимізувати, треба перевірити, чи вона взагалі працює.
+Рубіж тут очевидний і дорівнює <b>0.5000</b>: модель, яка кидає монетку, вгадує
+половину пар.</p>
+
+<p>Пар зібрано <b>1500</b>. З них <b>1.93 %</b> непридатні за побудовою:
+породжене продовження дослівно збіглося з еталонним, тобто «кращого» в парі
+немає. На <b>невидимих</b> парах, зібраних із перевірної частини, згода моделі
+винагороди з уподобанням — <b>0.6217</b> (купа по трьох зернах
+0.5800..0.6500).</p>
+
+<p>Це небагато. Але це впевнено вище за монетку — отже модель винагороди
+щось таки вивчила, і оптимізувати її не безглуздо. Тримай це число в голові:
+воно ще знадобиться, щоб зрозуміти, чому крива поводиться саме так.</p>
+
+<h3>Крива</h3>
+
+<p>На кожну з 150 перевірних підказок ми витягли по 32 кандидати (різних
+із них у середньому <b>30.90</b> — жеребкування майже не повторюється).
+Далі дивимось, що дає best-of-n при
+<span class="raw">n</span> = 1, 2, 4, 8, 16, 32. Винагорода в Бредлі-Террі
+визначена з точністю до зсуву (розділ 11), тож між зернами її можна порівнювати
+лише як <b>приріст</b> — від значення при <span class="raw">n</span> = 1.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>n</th><th>приріст винагороди</th><th>справжня метрика</th><th>купа по 3 зернах</th><th>оракул</th><th>KL, нат</th></tr>
+<tr><td>1</td><td>0.0000</td><td>0.1244</td><td>—</td><td>0.1244</td><td>0.0000</td></tr>
+<tr class="hot"><td>2</td><td>+3.9881</td><td>0.1384</td><td>0.1312..0.1423</td><td>0.1877</td><td>0.1931</td></tr>
+<tr><td>4</td><td>+6.9531</td><td>0.1356</td><td>0.1262..0.1427</td><td>0.2421</td><td>0.6363</td></tr>
+<tr><td>8</td><td>+9.4649</td><td>0.1291</td><td>0.1231..0.1387</td><td>0.2862</td><td>1.2044</td></tr>
+<tr><td>16</td><td>+11.3460</td><td>0.1173</td><td>0.1063..0.1288</td><td>0.3231</td><td>1.8351</td></tr>
+<tr><td>32</td><td>+13.2926</td><td>0.1161</td><td>0.1062..0.1271</td><td>0.3659</td><td>2.4970</td></tr>
+</table></div>
+
+<p>Прочитаймо цю таблицю по стовпчиках, і кожен скаже своє.</p>
+
+<p><b>Винагорода</b> росте монотонно й ніде не спиняється: +13.29 від початку до
+кінця, і між кожними сусідніми <span class="raw">n</span> приріст додатний.
+Якби ми міряли тільки її, висновок був би однозначний: «беріть якнайбільше
+кандидатів».</p>
+
+<p><b>Справжня метрика</b> росте лише до <span class="raw">n</span> = 2
+(0.1244 → <b>0.1384</b>), а далі падає: 0.1356, 0.1291, 0.1173, <b>0.1161</b>.
+Тобто при 32 кандидатах вона <b>нижча, ніж була на одному</b>.</p>
+
+<p><b>Оракул</b> — найкраща справжня метрика серед тих самих кандидатів —
+росте весь час і доходить до <b>0.3659</b>, тобто втричі вище за те, що вибрала
+винагорода. Це головне, що він каже: <b>вибирати було з чого</b>. Кандидати,
+удвічі-втричі кращі за обраного, лежали в тому самому наборі — модель винагороди
+їх не побачила.</p>
+
+<div class="note warn"><b>Найгостріше число таблиці, якого в ній немає.</b>
+Середня справжня метрика <b>випадкового</b> кандидата — того самого, кого ми
+взяли б без жодного відбору, — дорівнює <b>0.1324</b>. Це те саме, що рядок
+<span class="raw">n</span> = 1, тільки заміряне на всіх 4800 кандидатах, а не на
+одному з кожної підказки. Отже при <span class="raw">n</span> = 16 і 32 модель
+винагороди обирає кандидатів <b>гірших за середнього</b>. Не «менш корисних, ніж
+могла б» — гірших, ніж якби ми тикнули навмання.</div>
+
+<h3>І остаточний доказ, що проксі зламався</h3>
+
+<p>Є ще один стовпчик, який ми рахували окремо: <b>у якій частці підказок
+обраний кандидат дістає від моделі винагороди вищу оцінку, ніж сам еталонний
+переклад</b>. Той самий еталон, який ця модель під час навчання завжди мала
+ставити вище.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>n</th><th>1</th><th>2</th><th>4</th><th>8</th><th>16</th><th>32</th></tr>
+<tr><td>переганяє еталон</td><td>0.3933</td><td>0.5733</td><td>0.6844</td><td>0.7844</td><td>0.8266</td><td>0.8600</td></tr>
+</table></div>
+
+<p>При одному кандидаті модель винагороди ставить згенероване вище за еталон
+у 39 % випадків — це приблизно та сама її неточність, яку ми вже заміряли
+згодою 0.6217. Але при 32 кандидатах — уже в <b>86 %</b>. Ми не покращили
+генерацію на 86 %: ми <b>знайшли ті 86 % випадків, де проксі помиляється</b>,
+і принесли їх йому як здобич.</p>
+
+<figure>
+  <p class="fig-head">Крива Ґудгарта на нашому стенді</p>
+  <p class="fig-sub">Посунь кількість кандидатів. Кожна крива у своєму масштабі: ліворуч метрика, праворуч винагорода.</p>
+  <div class="panel">
+    <canvas id="c16" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label>Кандидатів <span class="raw">n</span> <output id="o16">1</output></label>
+        <input type="range" id="n16" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>справжня метрика</b><i id="v16a">0.1244</i></div>
+        <div class="cellv"><b>приріст винагороди</b><i id="v16b">0.0000</i></div>
+      </div>
+      <p class="verdict" id="v16"></p>
+    </div>
+  </div>
+  <figcaption>Дві криві на спільній осі кількості кандидатів, кожна у своєму
+    масштабі — інакше та, що менша, лягла б у пряму. Помаранчева (винагорода)
+    росте весь час і ніде не спиняється. Бірюзова (справжня метрика)
+    підіймається до <span class="raw">n</span> = 2 і далі йде вниз, а при
+    <span class="raw">n</span> = 32 опиняється нижче, ніж була на одному
+    кандидаті. Пунктир позначає максимум справжньої метрики — точку, після якої
+    оптимізація винагороди почала шкодити.</figcaption>
+</figure>
+
+<figure>
+  <p class="fig-head">Скільки користі лишилось незібраним</p>
+  <p class="fig-sub">Оракул проти вибору винагороди на тих самих кандидатах.</p>
+  <div class="panel">
+    <canvas id="c17" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>оракул на <span class="raw">n</span>=32</b><i>0.3659</i></div>
+        <div class="cellv"><b>обрала винагорода</b><i>0.1161</i></div>
+        <div class="cellv"><b>випадковий кандидат</b><i>0.1324</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-no">вибирати було з чого</span><br>
+        Сіра колонка росте разом із кількістю кандидатів: що більше тягнемо,
+        то кращий кандидат серед них <b>є</b>. Бірюзова — те, що дістали
+        насправді. Розрив між ними й є ціною замінника, і він розходиться.</p>
+    </div>
+  </div>
+  <figcaption>Оракул — це найкраще перекриття з еталоном серед тих самих
+    <span class="raw">n</span> кандидатів; його не можна дістати на практиці,
+    бо для вибору за ним треба вже знати правильну відповідь. Але він точно
+    каже, <b>скільки в наборі було</b>: при 32 кандидатах — <b>0.3659</b> проти
+    здобутих <b>0.1161</b>. Тобто справа не в тому, що політика породжує погано:
+    вона породжує краще, ніж модель винагороди вміє знайти.</figcaption>
+</figure>
+
+<div class="note"><b>Що з цього треба винести, і воно коротке.</b> Оптимізація
+винагороди працює <b>на дуже короткому відрізку</b>. У нас він скінчився між
+<span class="raw">n</span> = 2 і <span class="raw">n</span> = 4, тобто на
+0.19-0.64 ната відходу від початкової політики. Далі кожен доданий кандидат
+робив відповідь гіршою й винагороду вищою одночасно. Побачити це можна було
+рівно одним способом — <b>незалежною метрикою поруч</b>.</div>
+
+<p>І ще раз про те, чому наш результат радше оптимістичний, ніж песимістичний.
+Наші уподобання не мали ані шуму розмітника, ані розбіжностей у смаку: правило
+«еталон кращий за згенероване» бездоганно послідовне. Модель винагороди все
+одно дала лише 0.6217 згоди й зламалась на другому-четвертому кандидаті.
+З живими людьми, які збігаються між собою у трьох випадках із чотирьох,
+відрізок був би не довшим.</p>
+
+<h2 id="s15"><span class="num">15 / Механізм</span>Чому проксі ламається саме так</h2>
+
+<p>Явище має імʼя. <b>Закон Ґудгарта</b>: коли міра стає метою, вона перестає
+бути доброю мірою. Формулювання походить з економіки й звучить як афоризм, але
+за ним стоїть цілком конкретна механіка, і її варто розібрати, бо вона пояснює
+форму кривої.</p>
+
+<p>Модель винагороди — це <b>проксі</b> (proxy), тобто замінник справжньої
+величини. Вона наближає людські уподобання з якоюсь похибкою. Запишімо це
+відверто:</p>
+
+<div class="eq">проксі = справжня якість + похибка</div>
+
+<p>Тепер запитаймо: що робить best-of-n? Він шукає кандидата з
+<b>найбільшим проксі</b>. А найбільший проксі буває у двох випадках: у кандидата
+справді висока якість, <b>або</b> в нього велика похибка в добрий бік. Що більше
+кандидатів ми перебираємо, то більший внесок другого.</p>
+
+<h3>Тут ховається пастка, і вона не там, де здається</h3>
+
+<p>Наївне міркування каже: «отже, будь-яка похибка врешті зіпсує все». Це
+неправда, і перевірити її можна прямим рахунком.</p>
+
+<p>Якщо похибка — <b>звичайний шум</b> (невеликі відхилення обабіч, рідко великі),
+справжня якість обраного кандидата з ростом <span class="raw">n</span>
+<b>монотонно росте</b>. Повільніше, ніж проксі, — але росте, і ніколи не падає.
+Відбір псується не від наявності похибки.</p>
+
+<p>Падіння зʼявляється тоді, коли похибка має <b>довгий хвіст</b>: більшість
+оцінок майже точні, але зрідка трапляється кандидат, якому проксі помилково дає
+величезну оцінку. Один такий кандидат виграє відбір у будь-якої кількості добрих.
+І що більше кандидатів ми переглядаємо, то вища ймовірність, що така аномалія
+серед них знайдеться.</p>
+
+<div class="note"><b>Це точний опис того, що робить модель винагороди.</b>
+На текстах, схожих на ті, що були в парах, вона помиляється мало. А на текстах,
+яких у парах не було зовсім — з дивними повторами, обірваними словами, чужою
+пунктуацією, — вона не помиляється «трохи»: вона просто не визначена, і може
+видати що завгодно. Довгий хвіст похибки — це не патологія проксі, а прямий
+наслідок того, що його вчили на скінченному наборі.</div>
+
+<figure>
+  <p class="fig-head">Коли перебір починає шкодити</p>
+  <p class="fig-sub">Два перемикачі: величина похибки проксі та її характер.</p>
+  <div class="panel">
+    <canvas id="c13" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">характер похибки</span>
+        <div class="seg" id="seg13">
+          <button data-i="0" aria-pressed="true">звичайний шум</button>
+          <button data-i="1" aria-pressed="false">рідкі великі</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label>Величина похибки <output id="o13">0.10</output></label>
+        <input type="range" id="err13" min="1" max="40" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкраще <span class="raw">n</span></b><i id="v13a">—</i></div>
+        <div class="cellv"><b>якість на <span class="raw">n</span>=256</b><i id="v13b">—</i></div>
+      </div>
+      <p class="verdict" id="v13"></p>
+    </div>
+  </div>
+  <figcaption>Стенд навмисне штучний, бо предметом тут є сама формула, а не дані:
+    «справжня якість» кожного з 256 кандидатів — рівномірне число від 0 до 1,
+    проксі — та сама якість плюс похибка. Перемикач міняє характер похибки, не
+    змінюючи її типового розміру. Зі звичайним шумом крива монотонно росте
+    за будь-якої величини похибки. З рідкими великими похибками вона має
+    <b>горб</b>: перебір спершу допомагає, потім починає вибирати аномалії.
+    Що більша похибка, то раніше горб.</figcaption>
+</figure>
+
+<h3>Два різні псування, і їх варто розрізняти</h3>
+
+<p>Перше — <b>звичайне ослаблення</b>: проксі росте швидше, ніж справжня якість,
+але обидва ростуть. Наслідок: числа перебільшують здобуток, висновок про
+напрямок правильний.</p>
+
+<p>Друге — <b>перевертання</b>: проксі росте, а справжня якість падає. Наслідок:
+числа не просто перебільшують, вони <b>вказують у протилежний бік</b>. Система,
+яка виглядає найкращою, є найгіршою.</p>
+
+<p>Обидва механізми діють одночасно, і в описах великих систем їх помічають
+разом: у роботі про сумаризацію з людським зворотним звʼязком передбачення
+моделі винагороди росло монотонно на всьому проміжку відходу, а справжня
+людська перевага досягала максимуму приблизно на десяти натах KL і при 250 натах
+падала майже до нуля — тобто ставала <b>антикорельованою</b> з тим, що
+оптимізували.</p>
+
+<div class="note warn"><b>Практичний висновок, який коштує грошей.</b> Питання
+«чи допомагає оптимізація винагороди» поставлене неправильно. Правильне питання
+— <b>«до якого відходу вона допомагає»</b>, і відповідь на нього не виводиться
+з теорії: її треба заміряти <b>незалежною</b> величиною. Якщо єдине, що ти
+міряєш, — це винагорода, ти за побудовою ніколи не побачиш, коли вона почала
+брехати.</div>
+
+<h2 id="s16"><span class="num">16 / DPO</span>Те саме без моделі винагороди</h2>
+
+<p>Погляньмо ще раз на конструкцію з розділу 12. Три етапи, дві навчені мережі,
+навчання з підкріпленням посередині, чотири моделі в памʼяті одночасно, вузький
+оптимум коефіцієнта <span class="raw">β</span>. Природне питання: а чи не можна
+простіше?</p>
+
+<p>Можна. Прийом зветься <b>DPO</b> — direct preference optimization, пряма
+оптимізація уподобань. Ідея в тому, що модель винагороди в цій конструкції
+<b>зайва</b>: сама мовна модель уже містить її в собі, треба лише вміти
+подивитись.</p>
+
+<h3>Крок 1 · у задачі з повідцем є точна відповідь</h3>
+
+<p>Задача третього етапу — максимізувати винагороду з штрафом за відхід:</p>
+
+<div class="eq">max<span class="sub">π</span> E [ r(x, y) ] − β · KL( π ‖ π<span class="sub">поч</span> )</div>
+
+<p>Це не безнадійна задача — у неї є <b>точний розвʼязок, записаний формулою</b>.
+Оптимальна політика така:</p>
+
+<div class="eq">π*(y | x) = π<span class="sub">поч</span>(y | x) · e<span class="sup">r(x,y) / β</span> / Z(x)</div>
+
+<p>Словами: візьми початкову модель і перезважуй її, підвищивши ймовірність
+кожної відповіді в
+<span class="raw">e</span><span class="sup">r/β</span> разів. Хороша відповідь
+дістає високу винагороду, множник великий, ймовірність росте. Поганій навпаки.
+<span class="raw">Z(x)</span> — просто число, на яке треба поділити, щоб
+ймовірності знову складалися в одиницю; воно залежить від підказки
+<span class="raw">x</span>, але не від конкретної відповіді
+<span class="raw">y</span>.</p>
+
+<p>Ця формула нічого не дає безпосередньо: порахувати
+<span class="raw">Z(x)</span> означало б перебрати всі можливі тексти. Але
+дивитись треба не туди.</p>
+
+<h3>Крок 2 · переставимо формулу навпаки</h3>
+
+<p>Замість «яка політика оптимальна за даної винагороди» запитаймо <b>«яка
+винагорода зробила б оптимальною ось цю політику»</b>. Логарифмуємо попередній
+рядок і виражаємо <span class="raw">r</span>:</p>
+
+<div class="eq">r(x, y) = β · ln ( π*(y | x) / π<span class="sub">поч</span>(y | x) ) + β · ln Z(x)</div>
+
+<p>Ось ключова думка теми, і варто зупинитись. <b>Будь-яка мовна модель, узята
+разом із початковою, уже задає функцію винагороди</b> — це логарифм відношення
+їхніх імовірностей, помножений на <span class="raw">β</span>. Окрему мережу для
+винагороди можна не будувати: вона неявно живе в самій політиці.</p>
+
+<h3>Крок 3 · незручний доданок зникає сам</h3>
+
+<p>Лишається <span class="raw">β</span> · ln <span class="raw">Z(x)</span>, якого
+ми порахувати не можемо. І тут спрацьовує властивість Бредлі-Террі, яку ми
+відзначили в розділі 11: у формулу входить <b>лише різниця</b> винагород.
+А доданок ln <span class="raw">Z(x)</span> залежить тільки від підказки — тож
+у кращої й гіршої відповіді на <b>одну й ту саму</b> підказку він однаковий
+і при відніманні скорочується.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">різниця винагород</span>
+    <div class="eq">r(x, y<span class="sub">кр</span>) − r(x, y<span class="sub">гір</span>) =
+      β·ln( π(y<span class="sub">кр</span>)/π<span class="sub">поч</span>(y<span class="sub">кр</span>) )
+      − β·ln( π(y<span class="sub">гір</span>)/π<span class="sub">поч</span>(y<span class="sub">гір</span>) )</div>
+    <p>Обидва доданки з <span class="raw">Z(x)</span> взаємознищились.</p>
+  </div>
+  <div class="step"><span class="lbl">підставляємо в Бредлі-Террі</span>
+    <p>Імовірність, що людина обере кращу, — це σ від різниці. Втрата — мінус
+      логарифм цієї ймовірності. Разом:</p>
+    <div class="eq left">L = − ln σ( β·A − β·B )
+
+  де   A = ln( π(краще | x)  /  π_поч(краще | x) )
+       B = ln( π(гірше | x)  /  π_поч(гірше | x) )</div>
+    <p>Тобто <span class="raw">A</span> — це «наскільки нова політика любить кращу
+      відповідь більше, ніж любила початкова», а <span class="raw">B</span> — те
+      саме для гіршої. Втрата мала, коли <span class="raw">A</span> помітно
+      більше за <span class="raw">B</span>.</p>
+  </div>
+  <div class="step"><span class="lbl">що це таке</span>
+    <p>Звичайна втрата, яку можна порахувати чотирма прогонами вперед і одним
+      назад. Ані жеребкування, ані окремої мережі винагороди, ані навчання
+      з підкріпленням. Оптимізуємо мовну модель <b>прямо на парах уподобань</b>.</p>
+  </div>
+</div>
+
+<h3>Що ця формула робить із моделлю</h3>
+
+<p>Подивись на неї як інженер. Усередині σ стоїть різниця двох величин виду
+«наскільки нова модель любить цей текст більше, ніж стара». Втрата штовхає
+модель <b>підняти</b> ймовірність кращої відповіді відносно початкової моделі
+й <b>опустити</b> ймовірність гіршої — теж відносно початкової.</p>
+
+<p>Слово «відносно» тут несе весь вантаж. Модель не мусить любити кращу
+відповідь абсолютно сильно — їй достатньо любити її сильніше, ніж любила
+початкова. Саме звідси береться повідець: <span class="raw">β</span> у формулі
+той самий, що в KL-штрафі, і чим він більший, тим менший відхід толерує втрата.
+Повідець не додається збоку — він вбудований у саму втрату.</p>
+
+<figure>
+  <p class="fig-head">Дві дороги до однієї мети</p>
+  <p class="fig-sub">Що доводиться тримати в памʼяті й що робить кожен крок.</p>
+  <div class="panel">
+    <canvas id="c14" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>мереж у RLHF</b><i>4</i></div>
+        <div class="cellv"><b>мереж у DPO</b><i>2</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-ok">чому це той самий оптимум</span><br>
+        Обидва шляхи розвʼязують задачу «винагорода мінус
+        <span class="raw">β</span>·KL». RLHF іде до неї наближено, кроками
+        оптимізатора. DPO користується тим, що відповідь відома формулою,
+        і зводить задачу до звичайного навчання з учителем.</p>
+    </div>
+  </div>
+  <figcaption>Угорі — RLHF: політика, її стара копія (для KL), модель винагороди
+    і мережа-критик, яка оцінює, наскільки добре йдуть справи, — чотири
+    мережі, і три з них треба тримати в памʼяті одночасно з навчанням.
+    Унизу — DPO: політика й заморожена початкова модель, яку взагалі не
+    навчають. Пари уподобань ті самі в обох випадках.</figcaption>
+</figure>
+
+<h3>Чим за це платять</h3>
+
+<p>DPO простіший, але не безкоштовний, і чесно назвати ціну важливіше, ніж
+похвалити прийом.</p>
+
+<p><b>Дані фіксовані.</b> RLHF на третьому етапі породжує нові відповіді
+поточною політикою й може дістати на них свіжі оцінки. DPO вчиться на наборі
+пар, зібраному <b>раніше й іншою моделлю</b>. Коли політика відʼїде далеко,
+пари почнуть описувати вже не її.</p>
+
+<p><b>Немає окремого числа якості.</b> Модель винагороди, хоч і недосконала, дає
+величину, якою можна оцінити будь-який новий текст — зокрема відбирати best-of-n
+або стежити за навчанням. У DPO такої окремої величини немає; є лише сама
+модель.</p>
+
+<p><b>Коефіцієнт нікуди не подівся.</b> <span class="raw">β</span> лишається
+й лишається чутливим: у опублікованих порівняннях типове значення 0.1, а на
+задачі сумаризації бралось 0.5.</p>
+
+<p>Що показують заміри в літературі: на сумаризації DPO дає перевагу над
+еталонними резюме приблизно у <b>61 %</b> випадків проти <b>57 %</b> у RLHF
+з навчанням з підкріпленням, а в людському порівнянні двох цих систем між собою
+DPO обирали в <b>58 %</b> із 272 суджень. Це «не гірше й простіше», а не
+«принципово краще» — і подавати це варто саме так.</p>
+
+<h2 id="s17"><span class="num">17 / Чесно</span>Приємніша, а не правдивіша</h2>
+
+<p>Тепер найважливіше речення теми, і воно неприємне.</p>
+
+<div class="note warn"><b>RLHF робить модель приємнішою, а не правдивішою.</b>
+Це не докір і не викриття — це прямий наслідок того, що ми оптимізуємо. Модель
+винагороди навчена передбачати, <b>що люди оберуть</b>. Люди обирають те, що
+здається кращим. А «здається кращим» і «є правильним» — різні речі, і збігаються
+вони не завжди.</div>
+
+<p>Розберімо, чим саме «здається кращим» відрізняється від «є кращим».</p>
+
+<p><b>Довжина.</b> Довша відповідь виглядає ґрунтовнішою. Модель винагороди
+підхоплює це швидко, бо довжину видно з тексту напряму. У роботі про сумаризацію
+з людським зворотним звʼязком це заміряли явно: різниця в довжині пояснює
+приблизно <b>третину</b> всієї переваги системи, навченої на зворотному звʼязку,
+над звичайним донавчанням.</p>
+
+<p><b>Упевненість.</b> Відповідь «безумовно, це так» подобається більше, ніж
+«скоріш за все, але я не певен». Уподобання карають чесну невпевненість.
+Наслідок: модель, навчена на уподобаннях, звучить упевненіше, ніж має підстави, —
+і на цьому вона програватиме в <a href="../40-limits/lecture.html">темі про калібрування</a>.</p>
+
+<p><b>Погодження.</b> Якщо користувач написав у питанні щось хибне, відповідь,
+яка з ним погоджується, часто подобається більше, ніж та, що виправляє. Це
+явище звуть <b>підлабузництвом</b> (sycophancy), і воно не збій навчання,
+а точне виконання мети.</p>
+
+<p><b>Формат.</b> Списки, підзаголовки, охайні абзаци. Усе це справді полегшує
+читання — і водночас підвищує оцінку незалежно від змісту.</p>
+
+<h3>І все ж це не «RLHF нічого не дає»</h3>
+
+<p>Крайність у другий бік теж неправильна, і числа її не підтверджують.
+У великій системі частку відповідей, у яких модель вигадала факти, заміряли
+безпосередньо: у базової моделі це <b>41 %</b>, у моделі після RLHF —
+<b>21 %</b>. Це зменшення майже вдвічі, і воно справжнє.</p>
+
+<p>Але поруч стоїть друге спостереження, і воно скромніше. На спеціальному
+наборі питань, зроблених так, щоб спокушати модель повторювати поширені хибні
+твердження, покращення від RLHF за <b>людською</b> оцінкою невелике: частка
+відповідей, які водночас правдиві й змістовні, підіймається приблизно з пʼятої
+частини до третини. Автоматична метрика на тому самому наборі показувала
+значно більший здобуток — і автори тієї роботи самі згодом зазначили, що
+автоматична метрика <b>перебільшувала</b> виграш їхніх моделей. Це варте окремої
+уваги: тут метрика збрехала не про модель, а на користь того, хто її обрав.</p>
+
+<p>Складімо це в одне твердження, яке витримає перевірку.</p>
+
+<div class="note"><b>Точне формулювання.</b> RLHF надійно прибирає <b>очевидні</b>
+збої — вигадані факти там, де відповідь легко перевірити, відмову виконувати
+прохання, недоречний тон. Він майже не допомагає там, де хибне твердження
+<b>виглядає</b> правдоподібно, бо саме там уподобання розмітника не відрізняють
+правду від правдоподібності. І він активно шкодить чесності моделі щодо власної
+невпевненості.</div>
+
+<figure>
+  <p class="fig-head">Що оптимізує кожен етап</p>
+  <p class="fig-sub">Три цілі — і одна, якої в списку немає.</p>
+  <div class="panel">
+    <canvas id="c15" width="700" height="350" data-lw="700" data-lh="350"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>передтренування оптимізує</b><i class="sm">правдоподібність тексту</i></div>
+        <div class="cellv"><b>вказівки оптимізують</b><i class="sm">схожість на еталонну відповідь</i></div>
+        <div class="cellv"><b>RLHF оптимізує</b><i class="sm">ймовірність сподобатись</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-no">чого немає в списку</span><br>
+        Істинності. У жодному з трьох етапів немає величини, яка карала б за
+        неправду саму по собі. Правда потрапляє в модель побічно — через те,
+        що правдиві тексти частіші й що правдиві відповіді частіше подобаються.</p>
+    </div>
+  </div>
+  <figcaption>Три етапи — три різні цілі, і кожна наступна ближча до людини, ніж
+    попередня. Але жодна з них не є істинністю. Саме тому «модель, навчена на
+    уподобаннях, помиляється рідше» і «модель навчилась казати правду» —
+    два різні твердження, і друге з першого не випливає.</figcaption>
+</figure>
+
+<h2 id="s18"><span class="num">18 / Межі</span>Що цей замір не доводить</h2>
+
+<p>Наш стенд маленький, і чесно назвати його межі важливіше, ніж повторити
+висновки. Ось що з написаного вище <b>не</b> є заміряним фактом про великі
+системи.</p>
+
+<p><b>Ми не міряли перенесення в тому вигляді, у якому його показують на великих
+моделях.</b> Там воно є, і воно там суттєве: модель на 137 мільярдів ваг,
+донавчена на 62 наборах даних, зібраних у 12 груп завдань, за нульового пострілу
+обганяє модель на 175 мільярдів ваг без донавчання на <b>20 наборах із 25</b>.
+Наш стенд — три завдання й мережі-мініатюри. Він показує механізм, а не
+величину.</p>
+
+<p><b>Розмір моделі тут вирішує, і не на нашу користь.</b> У тій самій роботі
+є замір, який прямо стосується нас: донавчання на вказівках допомагає моделям
+на 68 і 137 мільярдів ваг, а моделям на 8 мільярдів і менше — <b>шкодить</b>
+на захованих завданнях. Пояснення авторів просте: у малої моделі ємності
+вистачає лише на самі завдання, і на «вміння читати вказівку» вже не лишається.
+Наша модель на кілька порядків менша за найменшу з тих. Тобто негативний
+результат перенесення на нашому стенді <b>узгоджується</b> з відомим, але не
+є його підтвердженням: у нас інша причина.</p>
+
+<p><b>У нас немає людей.</b> Уподобання в частині про винагороду не людські —
+це правило «еталонний переклад кращий за те, що породила модель». Правило
+дає справжні, а не вигадані пари, і має важливу властивість: воно
+<b>послідовне</b>, тобто в ньому немає ані шуму розмітника, ані розбіжностей
+у смаку. Тому наш замір Ґудгарта показує явище <b>у найсприятливіших</b> для
+винагороди умовах. Із живими розмітниками, які збігаються у трьох випадках із
+чотирьох, було б гірше, не краще.</p>
+
+<p><b>Найголовніша різниця, названа прямо.</b> Наша «справжня метрика» —
+перекриття токенів з еталонним рядком. Це слабка міра якості: вона не бачить
+ані змісту, ані граматики, і два різні гарні продовження вона оцінить
+по-різному лише тому, що еталон один. Коли ми кажемо «справжня метрика
+перестала рости», правильне прочитання таке: <b>перестала рости схожість
+на еталон</b>. Це не те саме, що «якість перестала рости», хоч і корелює з нею.</p>
+
+<p><b>Ми не запускали справжнього навчання з підкріпленням.</b> Розділ 12
+описує третій етап RLHF, а заміряли ми best-of-n — інший спосіб тиснути на ту
+саму винагороду. Спільне в них те, що обидва вимірюються натами відходу від
+початкової політики, і саме тому їх можна класти на одну вісь. Різне те, що
+навчання з підкріпленням змінює <b>саму модель</b>, а best-of-n — лише спосіб
+нею користуватись. Наш результат — про те, що робить оптимізація недосконалої
+винагороди, а не про PPO зокрема.</p>
+
+<p><b>Скільки під нашими числами зерен.</b> Кожен арм у частині про перенесення
+навчено чотири рази з різною випадковою ініціалізацією, а модель
+винагороди — тричі. У таблицях і на фігурах стоять середні, а купи
+(найменше..найбільше) названі там, де від них залежить висновок. Різниця,
+менша за розкид між зернами, різницею не є — і ми ніде на такій не будували
+твердження.</p>
+
+<p><b>Числа корпусу не відтворяться</b> — про це вже сказано в розділі 06, але
+варто повторити: набір встановлених програм у кожного свій. Відтворюються форма
+кривих, порядок систем і те, з якого боку від рубежу стоїть результат.</p>
+
+<h2 id="s19"><span class="num">19 / Далі</span>Куди це веде</h2>
+
+<p>Підібʼємо те, що тепер відомо.</p>
+
+<p>Базова мовна модель уміє продовжувати текст і не вміє виконувати вказівки —
+не тому, що їй бракує знань, а тому, що роль співрозмовника не є найімовірнішим
+продовженням. Донавчання на суміші завдань цю роль ставить на місце. Обіцянка
+перенесення на нове завдання справджується не завжди, і межа проходить не там,
+де здається: переноситься не абстрактна слухняність, а вміння породжувати
+відповідь <b>тієї форми</b>, яку модель уже вміє породжувати.</p>
+
+<p>Уподобання людей додають те, чого не дає жоден набір прикладів, — розрізнення
+між двома правильними відповідями. Вони збираються парами, бо шкали в людей
+різні, а порядок спільний. Модель винагороди перетворює порядок на число за
+Бредлі-Террі, і в цьому числі має сенс лише різниця.</p>
+
+<p>Оптимізація цього числа працює до певної межі, і межа вимірюється відходом
+від початкової моделі. Далі за неї винагорода й далі росте, а те, заради чого
+все робилось, — уже ні. Тому в мету дописують повідець KL, а поруч завжди
+тримають <b>незалежну</b> міру якості.</p>
+
+<p>І остання думка, яку варто винести з теми цілком: <b>усе, що ми тут робили,
+міняє поведінку моделі, а не її знання</b>. Ваги передтренування лишаються
+основою; вказівки й уподобання лише вирішують, як цією основою користуватись.</p>
+
+<p>Звідси природне питання, з якого починається наступна тема. Обидва етапи —
+і донавчання на вказівках, і навчання на уподобаннях — правлять <b>усі</b> ваги
+моделі. Для мережі на кілька мільярдів параметрів це означає тримати в памʼяті
+самі ваги, їхні градієнти й іще дві допоміжні величини на кожну вагу — тобто
+в кілька разів більше, ніж займає сама модель. Питання: <b>чи справді треба
+правити всі ваги</b>, якщо ми міняємо поведінку, а не знання? Відповідь на нього
+— <a href="../39-peft-lora/lecture.html">тема 39</a>.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../37-scaling/lecture.html"><span class="dir">попередня</span><span class="ttl">37. Що змінює масштаб</span></a>
+    <a class="next" href="../39-peft-lora/lecture.html"><span class="dir">наступна</span><span class="ttl">39. PEFT і LoRA</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id,fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click',function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'),k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function bar(g,x,y,w,h,fill,alpha){
+  g.globalAlpha=(alpha===undefined?1:alpha); g.fillStyle=fill;
+  g.fillRect(x,y,Math.max(w,0),h); g.globalAlpha=1;
+}
+function box(g,x,y,w,h,fill,stroke){
+  if(fill){g.fillStyle=fill; g.fillRect(x,y,w,h);}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=1.5; g.strokeRect(x+0.5,y+0.5,w-1,h-1);}
+}
+function rbox(g,x,y,w,h,r,fill,stroke){
+  g.beginPath();
+  g.moveTo(x+r,y); g.lineTo(x+w-r,y); g.quadraticCurveTo(x+w,y,x+w,y+r);
+  g.lineTo(x+w,y+h-r); g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  g.lineTo(x+r,y+h); g.quadraticCurveTo(x,y+h,x,y+h-r);
+  g.lineTo(x,y+r); g.quadraticCurveTo(x,y,x+r,y); g.closePath();
+  if(fill){g.fillStyle=fill; g.fill();}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=1.4; g.stroke();}
+}
+function arrow(g,x0,y0,x1,y1,color,width){
+  g.strokeStyle=color; g.lineWidth=width||1.5;
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke();
+  var a=Math.atan2(y1-y0,x1-x0);
+  g.fillStyle=color; g.beginPath();
+  g.moveTo(x1,y1);
+  g.lineTo(x1-7*Math.cos(a-0.4),y1-7*Math.sin(a-0.4));
+  g.lineTo(x1-7*Math.cos(a+0.4),y1-7*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+function dot(g,x,y,r,color){ g.fillStyle=color; g.beginPath(); g.arc(x,y,r,0,6.2832); g.fill(); }
+function dash(g,x0,y0,x1,y1,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y0+0.5); g.lineTo(x1,y1+0.5); g.stroke(); g.restore();
+}
+function frame(g,x0,y0,x1,y1,hair){
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0+0.5,y0); g.lineTo(x0+0.5,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+}
+/* Лічильниковий генератор із хеш-перемішуванням. Еталонний LCG курсу непридатний
+   для сотень тисяч чисел поспіль (грабля №23): накопичена сума виходить неправильна,
+   а рівномірний шум іде діагональними смугами. */
+function RNG(seed){
+  var s=(seed>>>0)||1;
+  return function(){
+    s=(s+0x9E3779B9)>>>0;
+    var z=s;
+    z=Math.imul(z^(z>>>16),0x21f0aaad)>>>0;
+    z=Math.imul(z^(z>>>15),0x735a2d97)>>>0;
+    z=(z^(z>>>15))>>>0;
+    return z/4294967296;
+  };
+}
+function gauss(r){
+  var u=r(), v=r();
+  if(u<1e-12) u=1e-12;
+  return Math.sqrt(-2*Math.log(u))*Math.cos(6.283185307*v);
+}
+
+
+/* ═══════ числа, заміряні для цієї теми ═══════ */
+/* Стенд: українські переклади повідомлень програм із /usr/share/locale.
+   Частина А (перенесення) — m38x_transfer.py, частина Б (винагорода) — m38x_reward.py,
+   числа корпусу — m38x_corpus.py. Файл складено скриптом, руками нічого не набрано. */
+var FLOOR={"клас": {"chast": 0.82, "vip": 0.5, "K": 2, "ans": "успіх"}, "далі": {"chast": 0.0467, "vip": 0.0001, "K": 7863, "ans": "для"}, "звідки": {"chast": 0.3433, "vip": 0.125, "K": 8, "ans": "gcc"}};
+var TASKS=['клас','далі','звідки'];
+var task6=0;
+var TRANSFER={"звідки": {"zero": [0.08, 0.1033, 0.11, 0.08], "mix": [0.645, 0.6467, 0.6917, 0.6317], "ceiling": [0.81, 0.8133, 0.805, 0.825], "base": [0.1383, 0.08, 0.0767, 0.08]}, "далі": {"zero": [0.0017, 0.0, 0.0, 0.0], "mix": [0.1217, 0.115, 0.1183, 0.1033], "ceiling": [0.165, 0.1517, 0.1617, 0.1717], "base": [0.2067, 0.2233, 0.2217, 0.21]}};
+var GOODHART={"ns": [1, 2, 4, 8, 16, 32], "kl": [0.0, 0.1931, 0.6363, 1.2044, 1.8351, 2.497], "reward": [0.0, 3.9881, 6.9531, 9.4649, 11.346, 13.2926], "truth": [0.1244, 0.1384, 0.1356, 0.1291, 0.1173, 0.1161], "oracle": [0.1244, 0.1877, 0.2421, 0.2862, 0.3231, 0.3659]};
+
+
+/* ═══════ 1 · дві підказки, дві ролі ═══════ */
+function draw1(){
+  var cv=I('c1'), g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), paper=css('--paper');
+  var cw=318, x0=16, x1=W-cw-16;
+  var cols=[
+    {x:x0, ttl:'РОЗПОВІДНА ПІДКАЗКА', p:'Столиця Франції — це', out:'Париж',
+     role:'роль: автор речення', ok:true, c:teal},
+    {x:x1, ttl:'ПИТАЛЬНА ПІДКАЗКА', p:'Яка столиця Франції?', out:'Яка столиця Італії?',
+     role:'роль: співрозмовник?', ok:false, c:rose}
+  ];
+  for(var i=0;i<2;i++){
+    var c=cols[i];
+    capt(g,c.ttl,c.x,22,soft,10.5,true);
+    rbox(g,c.x,32,cw,46,8,paper,hair);
+    capt(g,c.p,c.x+14,61,ink,13.5,false);
+    arrow(g,c.x+cw/2,86,c.x+cw/2,120,soft,1.6);
+    capt(g,'модель продовжує',c.x+cw/2+8,108,soft,10.5,false);
+    rbox(g,c.x,128,cw,46,8,paper,c.c);
+    capt(g,c.out,c.x+14,157,c.c,13.5,true);
+    capt(g,c.role,c.x,196,soft,11,false);
+    capt(g,c.ok?'це те, що хотіли':'це не те, що хотіли',c.x,216,c.ok?teal:rose,11.5,true);
+  }
+  dash(g,x0,238,W-16,238,hair);
+  capt(g,'обидва продовження правдоподібні · різниця не в знаннях моделі, а в тому,',
+       W/2,262,soft,11.5,false,'center');
+  capt(g,'яку роль пропонує текст',W/2,280,soft,11.5,false,'center');
+}
+
+/* ═══════ 2 · розподіл продовжень ═══════ */
+function draw2(){
+  var cv=I('c2'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber');
+  var f=+I('q2').value/100;
+  I('o2').textContent=Math.round(f*100)+'%';
+  var names=['відповідь','ще одне питання','заголовок або перелік','те саме іншою мовою'];
+  var w=[0.40+7.6*f, 2.20-1.20*f, 1.00-0.15*f, 0.80-0.10*f];
+  var sum=w[0]+w[1]+w[2]+w[3], p=[];
+  for(var i=0;i<4;i++) p.push(w[i]/sum);
+  var best=0; for(i=1;i<4;i++) if(p[i]>p[best]) best=i;
+  var x0=210, x1=W-70, y0=44, rowh=56;
+  for(i=0;i<4;i++){
+    var y=y0+i*rowh;
+    capt(g,names[i],x0-12,y+16,i===best?ink:soft,12,i===best,'right');
+    bar(g,x0,y,(x1-x0)*p[i],22,i===0?teal:(i===best?rose:hair),1);
+    capt(g,f2(p[i]),x0+(x1-x0)*p[i]+8,y+16,soft,11.5,false);
+  }
+  frame(g,x0,y0-8,x1,y0+4*rowh-30,hair);
+  capt(g,'ймовірність продовження',x0,H-40,soft,11,false);
+  capt(g,'рожевим — найімовірніше · бірюзовим — те, чого ми хотіли',x0,H-20,soft,10.5,false);
+  I('v2a').textContent=names[best];
+  I('v2b').textContent=f2(p[0]);
+  var tag=(best===0)?'t-ok':'t-no';
+  var cap=(best===0)?'відповідь виграла':'відповідь програла';
+  var txt;
+  if(best===0){
+    txt='При частці діалогових текстів '+Math.round(f*100)+'% найімовірніше продовження — '+
+        '<b>відповідь</b> ('+f2(p[0])+'). Модель поводиться «як слухняна» — але лише тому, '+
+        'що змінився корпус, а не тому, що вона зрозуміла прохання.';
+  } else {
+    txt='При частці діалогових текстів '+Math.round(f*100)+'% найімовірніше продовження — '+
+        '<b>'+names[best]+'</b> ('+f2(p[best])+'), а відповідь дістає лише '+f2(p[0])+
+        '. Саме це й бачить користувач, який поставив питання базовій моделі.';
+  }
+  verd('v2',tag,cap,txt);
+}
+
+/* ═══════ 3 · приклад як послідовність токенів ═══════ */
+function draw3(){
+  var cv=I('c3'), g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), paper=css('--paper'), amber=css('--amber');
+  var toks=[
+    {t:'<клас>',k:0},{t:'зʼєднання',k:1},{t:'відхилено',k:1},
+    {t:'<sep>',k:0},{t:'<збій>',k:2},{t:'<eos>',k:2}
+  ];
+  var x=14, y=64, hgt=34, i, xs=[];
+  g.font=mono(12,false);
+  for(i=0;i<toks.length;i++){
+    var wd=g.measureText(toks[i].t).width+18;
+    xs.push({x:x,w:wd});
+    var col=toks[i].k===2?rose:(toks[i].k===0?amber:soft);
+    rbox(g,x,y,wd,hgt,7,paper,col);
+    capt(g,toks[i].t,x+wd/2,y+22,toks[i].k===2?rose:ink,12,toks[i].k===2,'center');
+    x+=wd+7;
+  }
+  capt(g,'ВКАЗІВКА',xs[0].x,48,amber,10.5,true);
+  capt(g,'ВХІД',xs[1].x,48,soft,10.5,true);
+  capt(g,'МЕЖА',xs[3].x,48,amber,10.5,true);
+  capt(g,'ВІДПОВІДЬ',xs[4].x,48,rose,10.5,true);
+  var mid=xs[3].x+xs[3].w;
+  capt(g,'дано моделі',xs[0].x,132,soft,11.5,false);
+  arrow(g,xs[0].x,142,mid,142,soft,1.2);
+  capt(g,'модель мусить породити',xs[4].x,132,rose,11.5,false);
+  arrow(g,xs[4].x,142,xs[5].x+xs[5].w,142,rose,1.2);
+  dash(g,14,166,W-14,166,hair);
+  capt(g,'той самий формат для всіх завдань — тоді вказівка стає',14,192,soft,11.5,false);
+  capt(g,'єдиним, що їх розрізняє',14,212,ink,11.5,true);
+  I('v3a').textContent=toks.length;
+  I('v3b').textContent='2';
+}
+
+/* ═══════ 4 · яка частка токенів несе помилку ═══════ */
+function draw4(){
+  var cv=I('c4'), g=dpr(cv), W=LW(cv);
+  var soft=css('--soft'), hair=css('--hair'), rose=css('--rose'), ink=css('--ink'),
+      paper=css('--paper');
+  var na=+I('a4').value, ctx=16, tot=ctx+na;
+  I('o4').textContent=na;
+  var cell=Math.min(20, (W-40)/32), x0=20, y=70;
+  for(var i=0;i<tot;i++){
+    var isAns=i>=ctx;
+    box(g,x0+i*(cell+2),y,cell,cell,isAns?rose:paper,isAns?rose:hair);
+  }
+  capt(g,'вказівка й вхід — '+ctx+' токенів',x0,54,soft,11,false);
+  capt(g,'відповідь — '+na,x0+ctx*(cell+2),54,rose,11,true);
+  var share=na/tot;
+  var bx0=20, bx1=W-20, by=140;
+  box(g,bx0,by,bx1-bx0,24,paper,hair);
+  bar(g,bx0,by,(bx1-bx0)*share,24,rose,1);
+  capt(g,'частка токенів, на яких стоїть помилка',bx0,by-10,soft,11,false);
+  capt(g,Math.round(share*100)+'%',bx0+(bx1-bx0)*share+8,by+17,rose,12,true);
+  capt(g,'усе решта модель бачить, але не вгадує',bx0,by+52,soft,11.5,false);
+  I('v4a').textContent=tot;
+  I('v4b').textContent=Math.round(share*100)+'%';
+  var tag = share<0.2?'t-no':(share<0.4?'t-mid':'t-ok');
+  verd('v4',tag,share<0.2?'сигналу мало':(share<0.4?'сигналу помірно':'сигналу багато'),
+    'Приклад має <b>'+tot+'</b> токенів, помилку несуть <b>'+na+'</b> — це '+
+    Math.round(share*100)+'%. '+
+    (share<0.2
+      ? 'Класифікація з короткою міткою — найгірший випадок: майже весь приклад для навчання марний, і прикладів треба тим більше.'
+      : (share<0.4
+        ? 'Коротка текстова відповідь дає помірний сигнал: більша частина прикладу все одно лише контекст.'
+        : 'Довга відповідь використовує приклад майже повністю — саме тому породжувальні завдання вчаться з меншої кількості прикладів.')));
+}
+
+/* ═══════ 5 · як перевіряють перенесення ═══════ */
+function draw5(){
+  var cv=I('c5'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), paper=css('--paper');
+  var names=['завдання A','завдання B','завдання C'];
+  for(var i=0;i<3;i++){
+    rbox(g,20,54+i*44,170,34,8,paper,hair);
+    capt(g,names[i],105,76+i*44,ink,12,false,'center');
+  }
+  capt(g,'НАВЧАННЯ БАЧИТЬ',20,38,soft,10.5,true);
+  for(i=0;i<3;i++) arrow(g,196,71+i*44,268,142,soft,1.2);
+  rbox(g,270,120,150,44,9,paper,teal);
+  capt(g,'модель',345,147,teal,13,true,'center');
+  arrow(g,426,142,498,142,teal,1.6);
+  rbox(g,500,120,180,44,9,paper,rose);
+  capt(g,'завдання Z',590,147,rose,13,true,'center');
+  capt(g,'ЗАХОВАНЕ',500,104,rose,10.5,true);
+  rbox(g,500,54,180,34,8,paper,hair);
+  capt(g,'жодного прикладу',590,76,soft,11,false,'center');
+  g.save(); g.setLineDash([4,4]); g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(590,90); g.lineTo(590,118); g.stroke(); g.restore();
+  dash(g,20,206,W-20,206,hair);
+  capt(g,'заміряна величина — точність на завданні Z, і тільки вона',20,232,soft,11.5,false);
+  capt(g,'усе, що модель показує на A, B і C, до питання про перенесення не стосується',
+       20,254,soft,11.5,false);
+}
+
+
+/* ═══════ 6 · коридор рубежів ═══════ */
+function draw6(){
+  var cv=I('c6'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber'), paper=css('--paper');
+  var t=TASKS[task6], f=FLOOR[t];
+  var x0=150, x1=W-40, y0=54, yh=170;
+  frame(g,x0,y0,x1,y0+yh,hair);
+  function ypos(v){return y0+yh-v*yh;}
+  /* коридор між нулем і більшим із двох рубежів */
+  var top=Math.max(f.chast,f.vip);
+  g.fillStyle=rose; g.globalAlpha=0.10;
+  g.fillRect(x0+1,ypos(top),x1-x0-1,y0+yh-ypos(top)); g.globalAlpha=1;
+  var lines=[
+    {v:f.chast, c:rose,  n:'найчастіша: «'+f.ans+'»'},
+    {v:f.vip,   c:amber, n:'випадкова (1 із '+f.K+')'}
+  ];
+  for(var i=0;i<2;i++){
+    var y=ypos(lines[i].v);
+    g.strokeStyle=lines[i].c; g.lineWidth=2;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,lines[i].n,x0-10,y+4,lines[i].c,11.5,true,'right');
+    capt(g,f4(lines[i].v),x1-4,y-7,lines[i].c,12,true,'right');
+  }
+  capt(g,'1.0000',x0-10,y0+4,soft,10.5,false,'right');
+  capt(g,'0.0000',x0-10,y0+yh+4,soft,10.5,false,'right');
+  capt(g,'точність на 600 перевірних рядках',x0,y0+yh+26,soft,11,false);
+  capt(g,'рожева смуга — зона, де результату ще немає',x0,y0+yh+46,soft,11,false);
+  I('v6a').textContent=f4(f.chast);
+  I('v6b').textContent=f4(f.vip);
+  var hi=Math.max(f.chast,f.vip);
+  var tail;
+  if(f.chast>0.30){
+    tail='Тут головна планка — <b>константа</b>: відповіді дуже нерівні, і мовчазне '+
+         '«завжди те саме» вже дає '+f4(f.chast)+'. Число нижче за це — поразка, '+
+         'хоч би як велично воно виглядало.';
+  } else if(f.chast>f.vip){
+    tail='Тут <b>обидва рубежі низькі</b>: константа дає лише '+f4(f.chast)+', а тик '+
+         'навмання — майже нуль. Тому навіть скромна на вигляд точність тут є здобутком.';
+  } else {
+    tail='Тут головна планка — <b>випадковий вибір</b>: константа слабша за нього, '+
+         'бо жодна відповідь не переважає.';
+  }
+  verd('v6','t-mid','коридор завдання «'+t+'»',
+    'Щоб число щось означало, воно мусить перевищити <b>'+f4(hi)+'</b> — більший '+
+    'із двох рубежів. У цього завдання допустимих відповідей <b>'+f.K+'</b>, '+
+    'найчастіша — «'+f.ans+'» ('+f4(f.chast)+'), тик навмання — '+f4(f.vip)+'. '+tail);
+}
+
+
+/* ═══════ 12 · усі системи на одній лінійці ═══════ */
+var task12=0, TASK12=['звідки','далі'];
+function mean(a){var s=0,i; for(i=0;i<a.length;i++) s+=a[i]; return s/a.length;}
+function lo(a){var m=a[0],i; for(i=1;i<a.length;i++) if(a[i]<m) m=a[i]; return m;}
+function hi(a){var m=a[0],i; for(i=1;i<a.length;i++) if(a[i]>m) m=a[i]; return m;}
+function spread(a){return a.length<2?'':' ('+f4(lo(a))+'..'+f4(hi(a))+')';}
+function draw12(){
+  var cv=I('c12'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber');
+  var t=TASK12[task12], d=TRANSFER[t], f=FLOOR[t];
+  var rows=[
+    {n:'нульовий постріл',   v:d.zero,    c:rose},
+    {n:'у суміші з іншими',  v:d.mix,     c:teal},
+    {n:'стеля (тільки воно)',v:d.ceiling, c:teal},
+    {n:'базова, без вказівок',v:d.base,   c:soft}
+  ];
+  var x0=190, x1=W-56, y0=48, rowh=44;
+  var top=1.0;
+  function X(v){return x0+v/top*(x1-x0);}
+  /* рубежі — вертикальні лінії */
+  var fl=[{v:f.vip,c:amber,n:'випадкова'},{v:f.chast,c:soft,n:'найчастіша'}];
+  for(var i=0;i<2;i++){
+    var xx=X(fl[i].v);
+    g.save(); g.setLineDash([4,4]); g.strokeStyle=fl[i].c; g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(xx+0.5,y0-14); g.lineTo(xx+0.5,y0+rows.length*rowh-8); g.stroke();
+    g.restore();
+    capt(g,fl[i].n,xx,y0-20,fl[i].c,10.5,true,'center');
+  }
+  for(i=0;i<rows.length;i++){
+    var y=y0+i*rowh, m=mean(rows[i].v);
+    capt(g,rows[i].n,x0-12,y+16,ink,11.5,false,'right');
+    bar(g,x0,y+2,X(m)-x0,20,rows[i].c,0.9);
+    if(rows[i].v.length>1){
+      var a=X(lo(rows[i].v)), b=X(hi(rows[i].v));
+      g.strokeStyle=ink; g.lineWidth=1.4;
+      g.beginPath(); g.moveTo(a,y+12); g.lineTo(b,y+12); g.stroke();
+      g.beginPath(); g.moveTo(a,y+6); g.lineTo(a,y+18); g.moveTo(b,y+6); g.lineTo(b,y+18); g.stroke();
+    }
+    /* підпис значення підкладаємо тлом: інакше пунктир рубежу ріже цифри */
+    var lx=X(m)+8;
+    g.font=mono(11.5,true);
+    var lw=g.measureText(f4(m)).width;
+    bar(g,lx-3,y+4,lw+6,17,css('--raise'),1);
+    capt(g,f4(m),lx,y+17,rows[i].c,11.5,true);
+  }
+  frame(g,x0,y0-14,x1,y0+rows.length*rowh-8,hair);
+  capt(g,'точність на 600 перевірних рядках · обмежений вибір',x0,H-34,soft,11,false);
+  capt(g,'вусики — розкид по зернах',x0,H-16,soft,10.5,false);
+  var z=mean(d.zero), c=mean(d.ceiling), floorHi=Math.max(f.vip,f.chast);
+  I('v12a').textContent=f4(z);
+  I('v12b').textContent=f4(c);
+  verd('v12', z<floorHi?'t-no':'t-ok', z<floorHi?'перенесення немає':'щось перенеслось',
+    'Стеля цього завдання — <b>'+f4(c)+'</b>'+spread(d.ceiling)+' проти найбільшого рубежу '+
+    f4(floorHi)+'. Отже завдання вчиться, і стенд не заслабкий — тільки тому наступне '+
+    'число щось означає. Нульовий постріл дає <b>'+f4(z)+'</b>'+spread(d.zero)+' — '+
+    (z<floorHi
+      ? (z<f.vip
+          ? 'тобто нижче за <b>обидва</b> рубежі — і за найчастішу відповідь ('+f4(f.chast)+
+            '), і за випадковий вибір ('+f4(f.vip)+'). Корисного перенесення нуль.'
+          : 'тобто далеко не дотягує до найчастішої відповіді ('+f4(f.chast)+
+            '). Корисного перенесення нуль.')
+      : 'вище за обидва рубежі — вміння виконувати вказівку таки перенеслось.')+
+    ' А базова модель, яка вказівок не бачила зовсім, дає '+f4(mean(d.base))+'.');
+}
+
+/* ═══════ 16 · Ґудгарт: винагорода проти справжньої метрики ═══════ */
+function draw16(){
+  var cv=I('c16'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber');
+  var n=+I('n16').value, NS=GOODHART.ns, cur=NS[n];
+  I('o16').textContent=cur;
+  var x0=64, x1=W-150, y0=36, yh=196;
+  frame(g,x0,y0,x1,y0+yh,hair);
+  function X(i){return x0+i/(NS.length-1)*(x1-x0);}
+  var TR=GOODHART.truth, RW=GOODHART.reward;
+  /* кожна крива у своєму масштабі: інакше та, що менша, лягає в пряму */
+  var tmin=lo(TR), tmax=hi(TR), tpad=(tmax-tmin)*0.25;
+  var rmin=lo(RW), rmax=hi(RW), rpad=(rmax-rmin)*0.10;
+  function Yt(v){return y0+yh-(v-(tmin-tpad))/((tmax+tpad)-(tmin-tpad))*yh;}
+  function Yr(v){return y0+yh-(v-(rmin-rpad))/((rmax+rpad)-(rmin-rpad))*yh;}
+  function line(arr,Y,color,width){
+    g.strokeStyle=color; g.lineWidth=width; g.beginPath();
+    for(var i=0;i<arr.length;i++){ if(i===0) g.moveTo(X(i),Y(arr[i])); else g.lineTo(X(i),Y(arr[i])); }
+    g.stroke();
+  }
+  line(RW,Yr,amber,2.2);
+  line(TR,Yt,teal,2.6);
+  var bestT=0, i; for(i=1;i<TR.length;i++) if(TR[i]>TR[bestT]) bestT=i;
+  dash(g,X(bestT),y0,X(bestT),y0+yh,hair);
+  capt(g,'максимум',X(bestT),y0+yh-8,teal,10.5,true,'center');
+  dot(g,X(n),Yt(TR[n]),4.5,teal);
+  dot(g,X(n),Yr(RW[n]),4.5,amber);
+  for(i=0;i<NS.length;i++) capt(g,String(NS[i]),X(i),y0+yh+18,soft,10,false,'center');
+  capt(g,'кандидатів n',x0,y0+yh+40,soft,11,false);
+  capt(g,'справжня метрика',x0,y0-16,teal,10.5,true);
+  capt(g,f4(tmax),x0-8,Yt(tmax)+4,teal,10,false,'right');
+  capt(g,f4(tmin),x0-8,Yt(tmin)+4,teal,10,false,'right');
+  capt(g,'винагорода',x1,y0-16,amber,10.5,true,'right');
+  capt(g,'+'+f2(rmax),x1+6,Yr(rmax)+4,amber,10,false);
+  capt(g,f2(rmin),x1+6,Yr(rmin)+4,amber,10,false);
+  var px=x1+58;
+  capt(g,'n = '+cur,px,y0+60,ink,12,true);
+  capt(g,'KL '+f4(GOODHART.kl[n]),px,y0+80,soft,11,false);
+  I('v16a').textContent=f4(TR[n]);
+  I('v16b').textContent=(RW[n]>0?'+':'')+f4(RW[n]);
+  if(n===0){
+    verd('v16','t-mid','відбору ще немає',
+      'При n = 1 ми беремо єдиного кандидата, тобто просто користуємось політикою як вона є. '+
+      'Справжня метрика тут <b>'+f4(TR[0])+'</b> — точка відліку. Відхід від початкової '+
+      'політики нульовий.');
+    return;
+  }
+  verd('v16', n<=bestT?'t-ok':'t-no', n<=bestT?'винагорода ще працює':'винагорода вже не працює',
+    'Від n=1 до n='+cur+' винагорода зросла на <b>+'+f4(RW[n])+'</b>, а справжня метрика — '+
+    (TR[n]>=TR[0]?'на <b>+'+f4(TR[n]-TR[0])+'</b>':'на <b>'+f4(TR[n]-TR[0])+'</b>')+
+    ' (відхід '+f4(GOODHART.kl[n])+' ната). '+
+    (n<=bestT
+      ? 'Тут обидві криві ще йдуть угору — відбір допомагає.'
+      : 'Максимум справжньої метрики лишився на n='+NS[bestT]+' ('+f4(TR[bestT])+
+        '). Далі винагорода росте, а користь падає — і без окремої, незалежної метрики '+
+        'цього не видно взагалі.'));
+}
+
+/* ═══════ 17 · скільки користі лишилось незібраним ═══════ */
+function draw17(){
+  var cv=I('c17'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose');
+  var NS=GOODHART.ns, TR=GOODHART.truth, OR=GOODHART.oracle;
+  var x0=64, x1=W-40, y0=40, yh=200;
+  frame(g,x0,y0,x1,y0+yh,hair);
+  var top=hi(OR)*1.12;
+  function Y(v){return y0+yh-v/top*yh;}
+  var slot=(x1-x0)/NS.length, bw=slot*0.30;
+  for(var i=0;i<NS.length;i++){
+    var cx=x0+slot*(i+0.5);
+    bar(g,cx-bw-2,Y(OR[i]),bw,y0+yh-Y(OR[i]),hair,1);
+    bar(g,cx+2,Y(TR[i]),bw,y0+yh-Y(TR[i]),teal,1);
+    capt(g,String(NS[i]),cx,y0+yh+18,soft,10,false,'center');
+    /* при рівних значеннях два підписи налазять один на одного (грабля №12) */
+    if(Math.abs(OR[i]-TR[i])<0.003){
+      capt(g,f4(TR[i]),cx,Y(TR[i])-8,teal,9.5,false,'center');
+    } else {
+      capt(g,f4(OR[i]),cx-bw/2-2,Y(OR[i])-6,soft,9.5,false,'center');
+      capt(g,f4(TR[i]),cx+bw/2+2,Y(TR[i])-6,teal,9.5,false,'center');
+    }
+  }
+  capt(g,'кандидатів n',x0,y0+yh+40,soft,11,false);
+  capt(g,'сірим — оракул: найкраще, що було серед тих самих кандидатів',x0,y0-22,soft,10.5,false);
+  capt(g,'бірюзовим — те, що обрала винагорода',x0,y0-6,teal,10.5,true);
+  capt(g,f4(top),x0-8,y0+6,soft,10,false,'right');
+  capt(g,'0',x0-8,y0+yh+4,soft,10,false,'right');
+}
+
+
+
+/* ═══════ 7 · згода розмітників і стеля моделі ═══════ */
+function draw7(){
+  var cv=I('c7'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), paper=css('--paper');
+  var p=+I('p7').value/1000;
+  I('o7').textContent=f3(p);
+  function q(pp){return (1+Math.sqrt(Math.max(2*pp-1,0)))/2;}
+  var x0=60, x1=W-40, y0=34, yh=200;
+  frame(g,x0,y0,x1,y0+yh,hair);
+  function X(v){return x0+(v-0.5)/0.5*(x1-x0);}
+  function Y(v){return y0+yh-(v-0.5)/0.5*yh;}
+  /* діагональ «згода = стеля» */
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(X(0.5),Y(0.5)); g.lineTo(X(1),Y(1)); g.stroke();
+  capt(g,'якби це були одне й те саме',X(0.86),Y(0.80),soft,10.5,false);
+  /* крива стелі */
+  g.strokeStyle=teal; g.lineWidth=2; g.beginPath();
+  for(var i=0;i<=200;i++){
+    var pp=0.5+i/200*0.5, xx=X(pp), yy=Y(q(pp));
+    if(i===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+  }
+  g.stroke();
+  var qq=q(p);
+  dash(g,X(0.5),Y(qq),X(p),Y(qq),hair);
+  dash(g,X(p),Y(0.5),X(p),Y(qq),hair);
+  dot(g,X(p),Y(qq),4.5,teal);
+  dot(g,X(p),Y(p),4.5,rose);
+  capt(g,'стеля моделі',X(p)+10,Y(qq)-8,teal,11.5,true);
+  capt(g,'згода людей',X(p)+10,Y(p)+18,rose,11.5,true);
+  capt(g,'0.50',X(0.5),y0+yh+18,soft,10.5,false,'center');
+  capt(g,'0.75',X(0.75),y0+yh+18,soft,10.5,false,'center');
+  capt(g,'1.00',X(1),y0+yh+18,soft,10.5,false,'center');
+  capt(g,'згода між двома розмітниками',x0,y0+yh+38,soft,11,false);
+  capt(g,'1.00',x0-8,y0+6,soft,10.5,false,'right');
+  capt(g,'0.50',x0-8,y0+yh+4,soft,10.5,false,'right');
+  I('v7a').textContent=f4(qq);
+  I('v7b').textContent='+'+f4(qq-p);
+  verd('v7','t-ok','стеля вища за згоду',
+    'Якщо двоє розмітників збігаються у <b>'+f3(p)+'</b> випадків, кожен окремо '+
+    'називає справжню кращу відповідь у <b>'+f4(qq)+'</b> — тобто бездоганна модель '+
+    'винагороди збігатиметься з розмітником на <b>'+f4(qq-p)+'</b> частіше, ніж '+
+    'розмітники між собою. '+
+    (p>0.97 ? 'На краю праворуч обидві величини зливаються: коли люди майже завжди згодні, різниці немає.'
+            : (p<0.55 ? 'На краю ліворуч обидві прямують до 0.5: люди кидають монетку, і вчитись нема на чому.'
+                      : 'Плутати ці два числа означає занижувати вимоги до моделі винагороди.')));
+}
+
+/* ═══════ 8 · бали пливуть, порядок тримається ═══════ */
+function draw8(){
+  var cv=I('c8'), g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), paper=css('--paper');
+  var ans=['A','B','C'];
+  var r1=[7,5,3], r2=[9,8,6];
+  var x0=110, x1=W-150, y0=52;
+  for(var i=0;i<3;i++){
+    var y=y0+i*54;
+    capt(g,'відповідь '+ans[i],x0-14,y+16,ink,12,false,'right');
+    /* строгий розмітник */
+    bar(g,x0,y,(x1-x0)*r1[i]/10,10,rose,1);
+    capt(g,r1[i]+'/10',x0+(x1-x0)*r1[i]/10+8,y+9,rose,10.5,true);
+    /* щедрий розмітник */
+    bar(g,x0,y+14,(x1-x0)*r2[i]/10,10,teal,1);
+    capt(g,r2[i]+'/10',x0+(x1-x0)*r2[i]/10+8,y+23,teal,10.5,true);
+  }
+  capt(g,'розмітник зі «строгою» лінійкою',x0,34,rose,11,true);
+  capt(g,'розмітник зі «щедрою» лінійкою',x0+280,34,teal,11,true);
+  dash(g,x0-100,224,W-20,224,hair);
+  capt(g,'A вище за B, B вище за C — в обох. Це і є те спільне,',x0-100,250,soft,11.5,false);
+  capt(g,'на чому можна вчитись.',x0-100,268,ink,11.5,true);
+}
+
+/* ═══════ 9 · Бредлі-Террі: різниця → ймовірність → втрата ═══════ */
+function draw9(){
+  var cv=I('c9'), g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose');
+  var d=+I('d9').value/100;
+  I('o9').textContent=(d>=0?'+':'')+f2(d);
+  var sg=1/(1+Math.exp(-d)), ls=-Math.log(Math.max(sg,1e-12));
+  var x0=56, x1=W-46, y0=28, yh=190;
+  frame(g,x0,y0,x1,y0+yh,hair);
+  function X(v){return x0+(v+4)/8*(x1-x0);}
+  function Ys(v){return y0+yh-v*yh;}          /* ймовірність 0..1 */
+  function Yl(v){return y0+yh-Math.min(v,4)/4*yh;} /* втрата 0..4 */
+  /* сигмоїда */
+  g.strokeStyle=teal; g.lineWidth=2; g.beginPath();
+  for(var i=0;i<=240;i++){
+    var v=-4+i/240*8, xx=X(v), yy=Ys(1/(1+Math.exp(-v)));
+    if(i===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+  }
+  g.stroke();
+  /* втрата */
+  g.strokeStyle=rose; g.lineWidth=2; g.beginPath();
+  var pen=false;
+  for(i=0;i<=240;i++){
+    v=-4+i/240*8;
+    var L=-Math.log(1/(1+Math.exp(-v)));
+    if(L>4){pen=false; continue;}
+    xx=X(v); yy=Yl(L);
+    if(!pen){g.moveTo(xx,yy); pen=true;} else g.lineTo(xx,yy);
+  }
+  g.stroke();
+  dash(g,X(0),y0,X(0),y0+yh,hair);
+  capt(g,'0',X(0),y0+yh+18,soft,10.5,false,'center');
+  capt(g,'−4',X(-4),y0+yh+18,soft,10.5,false,'center');
+  capt(g,'+4',X(4),y0+yh+18,soft,10.5,false,'center');
+  capt(g,'модель помиляється',X(-4)+6,y0+16,rose,10.5,false);
+  capt(g,'модель має рацію',X(4)-6,y0+16,teal,10.5,false,'right');
+  dot(g,X(d),Ys(sg),4.5,teal);
+  dot(g,X(d),Yl(Math.min(ls,4)),4.5,rose);
+  capt(g,'ймовірність вибору',x0,y0+yh+40,teal,11,true);
+  capt(g,'втрата, нат',x0+200,y0+yh+40,rose,11,true);
+  capt(g,'різниця оцінок',x0+360,y0+yh+40,soft,11,false);
+  I('v9a').textContent=f4(sg);
+  I('v9b').textContent=f4(ls);
+  var tag = d<-0.5?'t-no':(d<0.5?'t-mid':'t-ok');
+  verd('v9',tag, d<-0.5?'переплутала':(d<0.5?'вагається':'вгадала'),
+    'Різниця <b>'+(d>=0?'+':'')+f2(d)+'</b> означає, що модель дає кращій відповіді '+
+    'ймовірність <b>'+f4(sg)+'</b>, і платить за це втратою <b>'+f4(ls)+'</b> ната. '+
+    (d<-0.5
+      ? 'Ліворуч від нуля втрата росте майже прямою й не насичується — саме звідси беруться найбільші градієнти.'
+      : (d<0.5
+        ? 'Біля нуля модель фактично кидає монетку: ймовірність близька до 0.5, втрата близька до ln 2 = 0.6931.'
+        : 'Праворуч втрата швидко сходить нанівець: на впевнено правильних парах навчання майже нічого не робить.')));
+}
+
+
+/* ═══════ 10 · три етапи RLHF ═══════ */
+function draw10(){
+  var cv=I('c10'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber'), paper=css('--paper');
+  var bw=192, gap=(W-40-3*bw)/2, y=76, bh=76;
+  var st=[
+    {n:'1 · ВКАЗІВКИ', a:'донавчання на парах', b:'«вказівка → відповідь»', c:teal},
+    {n:'2 · ВИНАГОРОДА', a:'Бредлі-Террі на парах', b:'«A краще за B»', c:amber},
+    {n:'3 · ОПТИМІЗАЦІЯ', a:'винагорода мінус', b:'штраф за відхід', c:rose}
+  ];
+  for(var i=0;i<3;i++){
+    var x=20+i*(bw+gap);
+    rbox(g,x,y,bw,bh,10,paper,st[i].c);
+    capt(g,st[i].n,x+bw/2,y+24,st[i].c,11,true,'center');
+    capt(g,st[i].a,x+bw/2,y+45,ink,11.5,false,'center');
+    capt(g,st[i].b,x+bw/2,y+63,ink,11.5,false,'center');
+    if(i<2) arrow(g,x+bw+6,y+bh/2,x+bw+gap-6,y+bh/2,soft,1.5);
+  }
+  /* де стоїть людина */
+  for(i=0;i<2;i++){
+    var xx=20+i*(bw+gap)+bw/2;
+    arrow(g,xx,52,xx,y-6,teal,1.4);
+    capt(g,'люди',xx,44,teal,11,true,'center');
+  }
+  var x3=20+2*(bw+gap)+bw/2;
+  capt(g,'людей немає',x3,44,rose,11,true,'center');
+  /* повідець */
+  var yb=y+bh+40;
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=rose; g.lineWidth=1.4;
+  g.beginPath();
+  g.moveTo(20+bw/2, y+bh); g.lineTo(20+bw/2, yb); g.lineTo(x3, yb); g.lineTo(x3, y+bh);
+  g.stroke(); g.restore();
+  capt(g,'повідець KL: не відходь далеко від того, що вийшло на етапі 1',
+       W/2, yb+22, rose, 11.5, true, 'center');
+  dash(g,20,H-52,W-20,H-52,hair);
+  capt(g,'етап 3 оптимізує не людину, а її замінник — модель винагороди з етапу 2',
+       20,H-28,soft,11.5,false);
+}
+
+/* ═══════ 11 · KL best-of-n: формула проти прямої суми ═══════ */
+function draw11(){
+  var cv=I('c11'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), paper=css('--paper');
+  var n=+I('n11').value;
+  I('o11').textContent=n;
+  var formula=Math.log(n)-(n-1)/n;
+  /* пряма сума по M сходинках */
+  var M=2000, kl=0, k, q;
+  for(k=1;k<=M;k++){
+    q=Math.pow(k/M,n)-Math.pow((k-1)/M,n);
+    if(q>0) kl+=q*Math.log(q*M);
+  }
+  /* ліва панель: крива KL(n) */
+  var x0=48, x1=336, y0=30, yh=180;
+  frame(g,x0,y0,x1,y0+yh,hair);
+  var maxKL=Math.log(32)-31/32;
+  function X(v){return x0+(v-1)/31*(x1-x0);}
+  function Y(v){return y0+yh-v/maxKL*yh;}
+  g.strokeStyle=teal; g.lineWidth=2; g.beginPath();
+  for(var i=1;i<=32;i++){
+    var xx=X(i), yy=Y(Math.log(i)-(i-1)/i);
+    if(i===1) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+  }
+  g.stroke();
+  dot(g,X(n),Y(formula),4.5,rose);
+  capt(g,'KL, нат',x0,y0-10,soft,10.5,false);
+  capt(g,f4(maxKL),x0-6,y0+6,soft,10,false,'right');
+  capt(g,'0',x0-6,y0+yh+4,soft,10,false,'right');
+  capt(g,'1',X(1),y0+yh+18,soft,10,false,'center');
+  capt(g,'8',X(8),y0+yh+18,soft,10,false,'center');
+  capt(g,'16',X(16),y0+yh+18,soft,10,false,'center');
+  capt(g,'32',X(32),y0+yh+18,soft,10,false,'center');
+  capt(g,'кандидатів n',x0,y0+yh+40,soft,11,false);
+  /* права панель: куди зсувається розподіл по черзі */
+  var bx0=390, bx1=W-30, by0=30, byh=180, BINS=20;
+  frame(g,bx0,by0,bx1,by0+byh,hair);
+  var mx=0, vals=[];
+  for(i=0;i<BINS;i++){
+    var lo=i/BINS, hi=(i+1)/BINS;
+    var v=Math.pow(hi,n)-Math.pow(lo,n);
+    vals.push(v); if(v>mx) mx=v;
+  }
+  var bw=(bx1-bx0)/BINS;
+  for(i=0;i<BINS;i++){
+    var h=vals[i]/mx*(byh-12);
+    bar(g,bx0+i*bw+1,by0+byh-h,bw-2,h,i===BINS-1?rose:teal,i===BINS-1?1:0.55);
+  }
+  capt(g,'де опиняється обраний кандидат',bx0,by0-10,soft,10.5,false);
+  capt(g,'найгірші',bx0,by0+byh+18,soft,10,false);
+  capt(g,'найкращі',bx1,by0+byh+18,soft,10,false,'right');
+  capt(g,'черга за винагородою',bx0,by0+byh+40,soft,11,false);
+  I('v11a').textContent=f4(formula);
+  I('v11b').textContent=f4(kl);
+  var diff=Math.abs(formula-kl);
+  verd('v11', diff<0.0001?'t-ok':'t-mid', diff<0.0001?'формула збіглася':'сходинки завеликі',
+    'При n = <b>'+n+'</b> формула ln n − (n−1)/n дає <b>'+f4(formula)+'</b>, а пряма сума '+
+    'по 2000 сходинок — <b>'+f4(kl)+'</b>. Розбіжність '+f4(diff)+'. '+
+    (n===1 ? 'При одному кандидаті відбору немає взагалі, тож і відхід нульовий.'
+           : 'Праворуч видно, куди відбір зсунув розподіл: чим більше n, тим щільніше '+
+             'обраний кандидат тулиться до верхівки черги.'));
+}
+
+
+/* ═══════ 13 · коли перебір починає шкодити (механізм) ═══════ */
+var kind13=0;
+var NS13=[1,2,4,8,16,32,64,128,256];
+function goodhart(sig,kind){
+  /* штучний стенд, і саме він тут предмет: істина рівномірна на [0,1],
+     проксі = істина + похибка. Дві породи похибки з однаковим типовим розміром. */
+  var TR=1500, K=256, r=RNG(20240938), out=[], i, j, t, e, u;
+  var acc=new Array(NS13.length); for(i=0;i<NS13.length;i++) acc[i]=0;
+  var tt=new Array(K), pp=new Array(K);
+  for(var trial=0;trial<TR;trial++){
+    for(j=0;j<K;j++){
+      t=r();
+      if(kind===0){ e=sig*gauss(r); }
+      else { u=r()*0.999998+0.000001; e=sig*0.30*Math.tan(Math.PI*(u-0.5)); }
+      tt[j]=t; pp[j]=t+e;
+    }
+    var bestP=-1e18, bestT=0, idx=0;
+    for(i=0;i<NS13.length;i++){
+      for(; idx<NS13[i]; idx++){
+        if(pp[idx]>bestP){ bestP=pp[idx]; bestT=tt[idx]; }
+      }
+      acc[i]+=bestT;
+    }
+  }
+  for(i=0;i<NS13.length;i++) out.push(acc[i]/TR);
+  return out;
+}
+function draw13(){
+  var cv=I('c13'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber');
+  var sig=+I('err13').value/100;
+  I('o13').textContent=f2(sig);
+  var cur=goodhart(sig,kind13);
+  var x0=56, x1=W-40, y0=32, yh=200;
+  frame(g,x0,y0,x1,y0+yh,hair);
+  function X(i){return x0+i/(NS13.length-1)*(x1-x0);}
+  function Y(v){return y0+yh-(v-0.4)/0.6*yh;}
+  /* сірим — той самий стенд без похибки (стеля відбору) */
+  var ideal=goodhart(0,0);
+  g.strokeStyle=hair; g.lineWidth=1.6; g.beginPath();
+  for(var i=0;i<NS13.length;i++){ if(i===0) g.moveTo(X(i),Y(ideal[i])); else g.lineTo(X(i),Y(ideal[i])); }
+  g.stroke();
+  capt(g,'проксі без похибки',X(3),Y(ideal[3])-12,soft,10.5,false);
+  /* кольором — поточна крива */
+  var col=kind13===0?teal:rose;
+  g.strokeStyle=col; g.lineWidth=2.4; g.beginPath();
+  for(i=0;i<NS13.length;i++){ if(i===0) g.moveTo(X(i),Y(cur[i])); else g.lineTo(X(i),Y(cur[i])); }
+  g.stroke();
+  var bi=0; for(i=1;i<NS13.length;i++) if(cur[i]>cur[bi]) bi=i;
+  dot(g,X(bi),Y(cur[bi]),5,col);
+  /* біля правого краю центрований підпис вилітає за канву — тоді вирівнюємо праворуч */
+  var edge = X(bi) > x1-90;
+  capt(g,'найкраще n = '+NS13[bi], edge?X(bi)+4:X(bi), Y(cur[bi])+(edge?22:-14),
+       col,11.5,true, edge?'right':'center');
+  for(i=0;i<NS13.length;i++) capt(g,String(NS13[i]),X(i),y0+yh+18,soft,10,false,'center');
+  capt(g,'кандидатів n',x0,y0+yh+40,soft,11,false);
+  capt(g,'1.00',x0-8,y0+6,soft,10,false,'right');
+  capt(g,'0.40',x0-8,y0+yh+4,soft,10,false,'right');
+  capt(g,'справжня якість обраного',x0,y0-12,soft,10.5,false);
+  I('v13a').textContent=NS13[bi];
+  I('v13b').textContent=f4(cur[NS13.length-1]);
+  var drop=cur[bi]-cur[NS13.length-1];
+  var tag = drop>0.01?'t-no':'t-ok';
+  verd('v13',tag, drop>0.01?'перебір почав шкодити':'перебір лише допомагає',
+    (kind13===0
+      ? 'Звичайний шум величиною '+f2(sig)+': максимум справжньої якості на n = <b>'+NS13[bi]+'</b>, '+
+        'тобто на найдальшому краї. Крива йде нижче за сіру, але <b>не розвертається</b>. '+
+        'Наскільки не крути повзунок — горба не буде.'
+      : 'Рідкі великі похибки величиною '+f2(sig)+': максимум на n = <b>'+NS13[bi]+'</b>, '+
+        'далі якість падає до <b>'+f4(cur[NS13.length-1])+'</b> — на '+f4(drop)+' нижче за пік. '+
+        'Оптимізатор почав вигрібати аномалії проксі замість добрих кандидатів.'));
+}
+
+
+/* ═══════ 14 · RLHF проти DPO ═══════ */
+function draw14(){
+  var cv=I('c14'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber'), paper=css('--paper');
+  function row(y,title,items,note,col){
+    capt(g,title,20,y-12,col,11.5,true);
+    var x=20;
+    for(var i=0;i<items.length;i++){
+      var it=items[i];
+      g.font=mono(11.5,false);
+      var wd=g.measureText(it.t).width+22;
+      rbox(g,x,y,wd,38,8,paper,it.train?col:hair);
+      capt(g,it.t,x+wd/2,y+24,it.train?col:soft,11.5,it.train,'center');
+      x+=wd+10;
+    }
+    capt(g,note,20,y+62,soft,11,false);
+  }
+  row(46,'RLHF · чотири мережі',[
+    {t:'політика',train:true},{t:'її заморожена копія',train:false},
+    {t:'модель винагороди',train:false},{t:'критик',train:true}
+  ],'навчаються дві · жеребкування на кожному кроці · вузький оптимум коефіцієнта',rose);
+  dash(g,20,150,W-20,150,hair);
+  row(190,'DPO · дві мережі',[
+    {t:'політика',train:true},{t:'заморожена початкова',train:false}
+  ],'навчається одна · жеребкування немає · пари уподобань ті самі',teal);
+  capt(g,'кольором — те, що навчається; сірим — те, що лише рахує',20,H-14,soft,10.5,false);
+}
+
+/* ═══════ 15 · що оптимізує кожен етап ═══════ */
+function draw15(){
+  var cv=I('c15'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      teal=css('--teal'), rose=css('--rose'), amber=css('--amber'), paper=css('--paper');
+  var st=[
+    {n:'передтренування', v:'правдоподібність тексту', c:soft},
+    {n:'вказівки',        v:'схожість на еталонну відповідь', c:amber},
+    {n:'уподобання',      v:'ймовірність сподобатись людині', c:teal},
+    {n:'—',               v:'істинність', c:rose}
+  ];
+  var y=40;
+  for(var i=0;i<4;i++){
+    var last=(i===3);
+    rbox(g,20,y,178,40,8,paper,last?rose:hair);
+    capt(g,st[i].n,109,y+25,last?rose:ink,12,false,'center');
+    arrow(g,204,y+20,268,y+20,last?rose:soft,1.3);
+    capt(g,st[i].v,278,y+25,st[i].c,12.5,last,'left');
+    if(last){
+      capt(g,'жоден етап цього не оптимізує',278,y+44,rose,11,true);
+    }
+    y+=56;
+  }
+  dash(g,20,H-46,W-20,H-46,hair);
+  capt(g,'правда потрапляє в модель побічно — і лише настільки, наскільки',20,H-24,soft,11.5,false);
+  capt(g,'правдиве частіше й приємніше за неправдиве',20,H-6,soft,11.5,false);
+}
+
+
+/* ═══════ звʼязування ═══════ */
+function redrawAll(){
+  draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw12(); draw7();
+  draw8(); draw9(); draw10(); draw11(); draw16(); draw17(); draw13(); draw14(); draw15();
+}
+on('q2','input',draw2);
+on('a4','input',draw4);
+segment('seg6', function(i){ task6=i; draw6(); });
+segment('seg12', function(i){ task12=i; draw12(); });
+on('p7','input',draw7);
+on('d9','input',draw9);
+on('n11','input',draw11);
+on('n16','input',draw16);
+segment('seg13', function(i){ kind13=i; draw13(); });
+on('err13','input',draw13);
+redrawAll();
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+})();
+</script>
+
+</body>
+</html>

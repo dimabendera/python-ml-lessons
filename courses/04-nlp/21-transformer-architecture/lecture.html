@@ -1,0 +1,2315 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Трансформер: архітектура і чому витіснила RNN</title>
+<meta name="description" content="Трансформер знімає три межі рекурентних мереж, і кожну ми заміряли: градієнт до першого слова на ста словах у RNN дорівнює нулю у float32, а в трансформера слабший лише в 101.7 раза; чотири потоки замість одного коштують RNN у 19.26 раза більше процесорного часу, трансформеру — у 2.10. А в перплексії на українському корпусі з 675 тисяч слововживань виходить інше. На маленьких моделях різниці немає: 153.8210 проти 158.2041, купи по пʼятьох зернах перетинаються. На однакових параметрах різниця величезна — 153.8210 проти 220.5763, — але тому, що рекурентна мережа від зайвих параметрів гіршає. І обидві програють суміші біграми з уніграмою, яка дає 131.7046 без жодного навчання.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+var, .mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* позначення довжини в тексті — моноширинне, як і решта символів формул */
+var{font-family:"JetBrains Mono",monospace; font-style:normal; font-size:.9em; color:var(--rose)}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми довгий — тримаємо його в колонці */
+h1{overflow-wrap:break-word}
+
+/* сегменти цієї теми переносяться по два в рядок */
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 5 · Тема 21</p>
+    <h1>Архітектура і чому витіснила RNN</h1>
+    <p class="stand">Рекурентна мережа читає текст ланцюгом, і з ланцюга ростуть усі
+      три її межі: сигнал не доходить назад, уся фраза стискається в один вектор,
+      кроки не розпаралелюються. Трансформер прибирає ланцюг — і всі три межі падають
+      разом. Ця тема показує його будову цілком, називає ціну й закінчується власним
+      заміром на українському корпусі. Замір виявився цікавішим за очікуване: на
+      маленькій моделі між архітектурами нічия, на однаковій кількості параметрів
+      різниця величезна — бо рекурентна мережа від зайвих параметрів <b>гіршає</b>, —
+      а виграють в обох звичайні таблиці частот.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Три стіни рекурентності</a></li>
+        <li><a href="#s2">Одна ідея замість трьох латок</a></li>
+        <li><a href="#s3">Увага на трьох словах</a></li>
+        <li><a href="#s4">Стіна перша: шлях завдовжки один</a></li>
+        <li><a href="#s5">Стіна друга: горла немає</a></li>
+        <li><a href="#s6">Стіна третя: глибина стала</a></li>
+        <li><a href="#s7">Скільки коштує вільне ядро</a></li>
+        <li><a href="#s8">Ціна ідеї: квадрат</a></li>
+        <li><a href="#s9">Карта одного шару</a></li>
+        <li><a href="#s10">Залишок</a></li>
+        <li><a href="#s11">Нормалізація шару</a></li>
+        <li><a href="#s12">Навіщо ще й FFN</a></li>
+        <li><a href="#s13">Увага сліпа до порядку</a></li>
+        <li><a href="#s14">Маска: не підглядати</a></li>
+        <li><a href="#s15">Скільки важить кожна частина</a></li>
+        <li><a href="#s16">Порівняння на нашому корпусі</a></li>
+        <li><a href="#s17">Дві новини, і друга гірша</a></li>
+        <li><a href="#s18">Чого саме бракує</a></li>
+        <li><a href="#s19">Що лишилось у голові</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../20-rnn-limits/lecture.html">← 20. Межі RNN</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../22-self-attention/lecture.html">22. Self-attention покроково →</a></nav>
+  </div>
+</header>
+<main class="col">
+<p class="lead">Пʼять тем поспіль ми вчили машину читати текст так, як його читає людське
+око: зліва направо, слово за словом, тримаючи в голові стан. Цей спосіб працює — і має
+три вади, які блок 4 виміряв, а не переказав. Ця тема показує архітектуру, що знімає
+всі три однією ідеєю, і чесно каже, скільки ця ідея коштує. А наприкінці — власний
+замір на українському корпусі, у якому <b>жодна з двох мереж не виграла</b>, зате
+знайшлася справжня різниця між ними: одна архітектура вміє перетворювати параметри на
+якість, а друга — ні. Саме через це трансформер зрештою й витіснив рекурентні мережі,
+і саме це варто винести з теми.</p>
+
+<h2 id="s1"><span class="num">Розділ 1</span>Три стіни, у які вперлась рекурентність</h2>
+
+<p>Почнемо з того, де ми стоїмо. Рекурентна мережа читає речення по одному слову.
+Після кожного слова вона оновлює <b>стан</b> — вектор чисел, який несе із собою все,
+що встигла зрозуміти. Наступне слово вона читає вже разом із цим станом.</p>
+
+<p>Так влаштовані всі моделі попереднього блоку: проста рекурентна мережа з теми
+<a href="../17-rnn/lecture.html">17</a>, гейтовані LSTM і GRU з теми
+<a href="../18-lstm-gru/lecture.html">18</a> й перекладач seq2seq із теми
+<a href="../19-seq2seq/lecture.html">19</a>. Схема гарна, і вона працює. Але вона
+впирається у три речі, і всі три ростуть із одного кореня — <b>з ланцюга</b>.
+Тема <a href="../20-rnn-limits/lecture.html">20</a> заміряла кожну з них окремо;
+пригадаємо їх коротко, бо далі ми питатимемо з трансформера саме за них.</p>
+
+<h3>Стіна перша: сигнал не доходить назад</h3>
+
+<p>Мережа вчиться так: рахує помилку на виході й дивиться, наскільки кожна вага винна
+в цій помилці. Ця «частка провини» називається <b>градієнтом</b> і поширюється назад по
+тому самому ланцюгу, яким ішли дані, — від останнього слова до першого.</p>
+
+<p>Дорогою вона множиться. На кожному кроці назад градієнт помножується на одну й ту
+саму матрицю ваг. Помножити число на 0.9 сто разів — це поділити його на 37 тисяч;
+помножити на 0.5 сто разів — це поділити на десять у тридцятому степені. Тому до
+першого слова довгого речення від градієнта не лишається <b>нічого</b>.</p>
+
+<h3>Стіна друга: одне вузьке горло</h3>
+
+<p>Коли рекурентною мережею перекладають, першу мережу (енкодер) просять прочитати
+всю фразу джерела й віддати свій стан — <b>один вектор</b>. Друга мережа (декодер)
+бачить тільки цей вектор і з нього пише переклад цілком. Скільки б слів не було в
+джерелі — три чи тридцять, — розмір вектора той самий, бо він заданий наперед. Уся
+фраза мусить пролізти крізь одну й ту саму дірку.</p>
+
+<h3>Стіна третя: кроки не розпаралелюються</h3>
+
+<p>Щоб порахувати стан після пʼятого слова, треба знати стан після четвертого. Щоб
+знати четвертий — треба третій. Це не питання реалізації, а <b>структура залежностей</b>:
+у реченні з тридцяти слів рівно тридцять кроків мусять статися один за одним. Скільки
+б процесорів ти не приставив, обігнати цей порядок не можна.</p>
+
+<figure>
+  <div class="fig-head">Схема 1 · Три стіни, і в усіх трьох один корінь</div>
+  <p class="fig-sub">Перемикач обирає стіну. Малюнок показує, чому вона виникає саме
+    з ланцюгової будови, а не з чогось іншого.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">яку стіну показати</span>
+        <div class="seg wrap" id="seg1">
+          <button data-i="0" aria-pressed="true">сигнал назад</button>
+          <button data-i="1" aria-pressed="false">одне горло</button>
+          <button data-i="2" aria-pressed="false">порядок кроків</button>
+        </div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>Малюнок схематичний: він показує будову, а не заміряні числа. Заміри
+    трьох стін ідуть далі в темі, кожен окремо.</figcaption>
+</figure>
+
+<div class="note"><b>Чому це саме «стіни», а не «недоліки».</b><br>
+Недолік лікують налаштуванням: додав шар, підкрутив швидкість навчання — стало краще.
+Ці три речі налаштуванням не лікуються, бо вони випливають із самої форми моделі.
+Гейти в LSTM послаблюють першу, увага в seq2seq послаблює другу — але жоден із цих
+прийомів ланцюга не прибирає, а отже не прибирає й причини.</div>
+
+<h2 id="s2"><span class="num">Розділ 2</span>Одна ідея замість трьох латок</h2>
+
+<p>Трансформер починається з питання, яке звучить майже нахабно: <b>а навіщо взагалі
+ланцюг?</b></p>
+
+<p>Слово в реченні залежить не від «попереднього стану». Воно залежить від <b>інших
+конкретних слів</b>. У фразі «книжку, яку я вчора купив у тому магазині біля вокзалу,
+було зіпсовано» слово «зіпсовано» узгоджується з «книжку» — через десять слів.
+Ланцюг мусить пронести цей звʼязок через десять посередників, кожен із яких може
+його загубити. А можна просто <b>подивитись напряму</b>.</p>
+
+<p>Це і є вся ідея. Замість стану, що повзе вздовж речення, кожне слово дивиться
+одразу на всі слова речення й саме вирішує, які з них зараз важливі. Операція
+називається <b>self-attention</b> — увага до себе, бо речення дивиться саме на себе,
+а не на якийсь інший текст.</p>
+
+<figure>
+  <div class="fig-head">Схема 2 · Ланцюг проти прямих звʼязків</div>
+  <p class="fig-sub">Повзунок додає слів у речення. Угорі — як інформація ходить у
+    рекурентній мережі, унизу — у трансформері. Числа під малюнком рахують звʼязки.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="n2">слів у реченні <output id="n2o">6</output></label>
+        <input id="n2" type="range" min="3" max="12" step="1" value="6">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кроків до слова 1</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>звʼязків усього</b><i id="v2b">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>Верхній ряд: стрілка є лише між сусідами, тож із останнього слова до
+    першого треба пройти всі проміжні. Нижній ряд: з останнього слова стрілка йде до
+    кожного, зокрема й до першого, — один крок незалежно від довжини.</figcaption>
+</figure>
+
+<p>Подивись на нижній ряд уважно. Прямих звʼязків стало багато — і це та ціна, яку
+трансформер платить: їх рівно стільки, скільки пар слів у реченні. Але <b>довжина
+шляху</b> між будь-якими двома словами перестала залежати від відстані між ними. Саме
+з цього однією операцією випадають усі три стіни, і далі ми розберемо кожну.</p>
+
+<h2 id="s3"><span class="num">Розділ 3</span>Що означає «подивитись»: увага на трьох словах</h2>
+
+<p>«Кожне слово дивиться на всі» — гарна метафора, але поки що порожня. Розберемо, що
+відбувається насправді, на трьох словах і на числах, які можна перевірити в думці.</p>
+
+<p>Візьмімо фразу «зелена трава росте» і скажімо, що зараз слово <code>росте</code>
+збирає для себе контекст. Кожне слово вже перетворене на вектор чисел — це ембединг,
+до якого ми звикли в блоці 3. Далі три кроки.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · наскільки кожне слово доречне</span>
+    <p>Для слова <code>росте</code> модель рахує по одному числу на кожне слово
+    речення — <b>бал доречності</b>. Це просто число: більше означає «дивись сюди
+    уважніше». Звідки воно береться, розбирає тема <code>22-self-attention</code>;
+    поки що досить того, що модель уміє його рахувати й учиться робити це добре.</p>
+    <div class="eq">бал(росте → зелена) = 0.4 · бал(росте → трава) = 2.6 · бал(росте → росте) = 1.0</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · перетворюємо бали на частки</span>
+    <p>Бали треба звести до ваг, які невідʼємні й у сумі дають одиницю, — інакше
+    «увага» не буде розподілом. Це робить <b>softmax</b>: кожен бал підносять як
+    показник експоненти, а потім ділять на суму всіх таких величин. Експонента тут
+    потрібна, щоб відʼємні бали теж дали додатне число, а більший бал діставав
+    непропорційно більшу вагу.</p>
+    <div class="eq">e<span class="sup">0.4</span>=1.49 · e<span class="sup">2.6</span>=13.46 · e<span class="sup">1.0</span>=2.72 · сума 17.67</div>
+    <div class="eq">ваги: 1.49/17.67 = 0.08 · 13.46/17.67 = 0.76 · 2.72/17.67 = 0.15</div>
+    <p>Перевір складанням: 0.08 + 0.76 + 0.15 = 0.99, решта — округлення. Модель
+    вирішила віддати три чверті уваги слову <code>трава</code>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · зважена суміш</span>
+    <p>Тепер вектори слів складають із цими вагами. Новий вектор слова
+    <code>росте</code> — це 0.08 частки вектора «зелена» плюс 0.76 частки «трава»
+    плюс 0.15 частки самого себе.</p>
+    <div class="eq">новий(росте) = 0.08·v(зелена) + 0.76·v(трава) + 0.15·v(росте)</div>
+  </div>
+</div>
+
+<p>Ось і все. Після цієї операції вектор слова <code>росте</code> вже не «слово росте
+взагалі», а «росте <b>у цьому реченні, поруч із травою</b>». Те саме одночасно
+відбувається з кожним словом: кожне збирає собі свою суміш зі своїми вагами.</p>
+
+<p>Три властивості цієї операції варто назвати одразу, бо вони пояснюють усе, що
+буде далі.</p>
+
+<ul>
+<li><b>Вона не має ланцюга.</b> Ваги для слова «росте» не потребують того, що
+порахувалося для слова «зелена». Усі слова можна обробити одночасно.</li>
+<li><b>Вона однаково дістає близьке й далеке.</b> Слово на відстані одиниця й слово
+на відстані тридцять для неї просто два доданки суми.</li>
+<li><b>Вона нічого не памʼятає про порядок.</b> Суміш — це сума, а сума не знає, у
+якому порядку її складали. До цього ми ще повернемось, бо це справжня проблема.</li>
+</ul>
+
+<figure>
+  <div class="fig-head">Інтерактив 3 · Один бал змінює всю суміш</div>
+  <p class="fig-sub">Повзунок міняє бал доречності слова <code>трава</code>. Стовпчики
+    показують ваги після softmax, і вони завжди складаються в одиницю.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="b3">бал слова «трава» <output id="b3o">2.6</output></label>
+        <input id="b3" type="range" min="-20" max="50" step="1" value="26">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вага «зелена»</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>вага «трава»</b><i id="v3b">—</i></div>
+        <div class="cellv"><b>вага «росте»</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>сума ваг</b><i id="v3d">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Бали двох інших слів тримаємо сталими: 0.4 в «зелена» і 1.0 в «росте».
+    Числа порахує сама сторінка за формулою softmax — це та сама арифметика, що в
+    розкладі вище.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">Розділ 4</span>Стіна перша падає: шлях завдовжки один</h2>
+
+<p>Повернімось до градієнта. Він іде назад тим самим маршрутом, яким ішла інформація
+вперед, і слабшає на кожному кроці цього маршруту. Тож питання не «яка мережа краща»,
+а просте геометричне: <b>скільки кроків між першим словом і останнім</b>.</p>
+
+<p>У рекурентній мережі відповідь — стільки, скільки слів. У трансформері остання
+позиція дивиться на першу <b>напряму</b>, тож крок один; додатковий крок дає кожен
+наступний шар, і якщо шарів два, то маршрут завдовжки два незалежно від того, чи в
+реченні пʼять слів, чи пʼятсот.</p>
+
+<figure>
+  <div class="fig-head">Схема 4 · Скільки множень стоїть на шляху назад</div>
+  <p class="fig-sub">Повзунок міняє довжину речення. Ліворуч — маршрут градієнта від
+    останнього слова до першого в рекурентній мережі, праворуч — у трансформері
+    з двох шарів.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="n4">слів у реченні <output id="n4o">30</output></label>
+        <input id="n4" type="range" min="4" max="100" step="1" value="30">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кроків, RNN</b><i id="v4a">—</i></div>
+        <div class="cellv"><b>кроків, трансформер</b><i id="v4b">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Схема рахує довжину маршруту, а не силу сигналу: сила залежить ще й від
+    самих ваг. Але кількість множень — це те, що визначає, чи буде затухання
+    показниковим, чи ні.</figcaption>
+</figure>
+
+<p>Чому це вирішує справу. Коли множників <var>T</var> і кожен трохи менший за
+одиницю, добуток спадає <b>показниково</b>: удвічі довше речення — і затухання не
+вдвічі гірше, а в квадраті. Коли множників рівно два, спадати нема чому.</p>
+
+<p>Це можна не переказувати, а поміряти, і ми поміряли. Беремо ненавчену мережу,
+подаємо їй випадкове речення з <var>T</var> слів, беремо вихід на <b>останньому</b>
+слові й дивимось, яка норма градієнта доходить до вектора <b>першого</b> слова.
+Відношення «норма на останньому / норма на першому» показує, у скільки разів сигнал
+ослаб дорогою. Пʼять зерен, узято медіану.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>слів у реченні</th><th>RNN, у скільки разів слабший</th><th>трансформер</th></tr></thead>
+<tbody>
+<tr><td>10</td><td>1 072</td><td>13.3</td></tr>
+<tr><td>25</td><td>1.6 · 10⁸</td><td>35.1</td></tr>
+<tr><td>50</td><td>4.3 · 10¹⁶</td><td>77.0</td></tr>
+<tr class="hot"><td>100</td><td>нуль — числа скінчилися</td><td>101.7</td></tr>
+</tbody></table></div>
+
+<p>Прочитай нижній рядок ще раз. У рекурентної мережі на ста кроках градієнт до
+першого слова дорівнює <b>точно нулю</b> — не «малому числу», а нулю: результат
+провалився нижче за найменше додатне число, яке вміщає float32, і машина записала його
+як нуль. Перше слово речення не може вплинути на навчання ніяк.</p>
+
+<p>У трансформера на тих самих ста кроках сигнал слабший у <b>101.7 раза</b>. Сто
+разів — це дрібниця: градієнти такого порядку оптимізатор бачить щодня. І зверни увагу
+на форму ряду: 13.3 → 35.1 → 77.0 → 101.7. Він росте <b>приблизно як сама довжина</b>,
+а не як степінь. Це не затухання, а розведення: увага ділить одиницю ваги між
+<var>T</var> позиціями, тож на кожну припадає приблизно 1/<var>T</var>.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 5 · Заміряне ослаблення сигналу до першого слова</div>
+  <p class="fig-sub">Висота стовпчика — у скільки десяткових порядків слабший градієнт,
+    що доходить до першого слова. Повзунок міняє довжину речення. На ста словах
+    стовпчик RNN виходить за шкалу: там уже нуль.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="t5">слів у реченні <output id="t5o">10</output></label>
+        <input id="t5" type="range" min="0" max="3" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>RNN</b><i id="v5a" class="sm">—</i></div>
+        <div class="cellv"><b>трансформер</b><i id="v5b" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>Обидві мережі <b>при ініціалізації</b>, до навчання; розмір вектора 128,
+    пʼять зерен, медіана. Рекурентна мережа — один шар, трансформер — два: саме ті
+    конфігурації, які порівнюються далі в темі. Стовпчик заввишки 6 означає ослаблення
+    в мільйон разів; на ста словах стовпчик RNN виходить за шкалу, бо там нуль.</figcaption>
+</figure>
+
+<div class="note warn"><b>Чесна межа цього заміру.</b><br>
+Числа зняті з <b>ненавчених</b> мереж. У навченої рекурентної мережі ваги можуть
+підлаштуватися так, що затухання сповільниться, — саме цього й навчаються гейти LSTM.
+Тому таблиця вище — не про те, наскільки погана навчена RNN, а про те, <b>з чого вона
+починає</b> й проти чого мусить боротися все навчання. Трансформерові боротися нема
+з чим: у нього немає ланцюга, який треба перемогти.</div>
+
+<h2 id="s5"><span class="num">Розділ 5</span>Стіна друга падає: горла більше немає</h2>
+
+<p>Друга стіна була про те, що вся фраза мусить пролізти крізь один вектор. У
+трансформері такого місця просто <b>немає</b> — і це не покращення, а відсутність
+самої конструкції.</p>
+
+<p>Порахуймо руками. Хай розмір вектора <var>d</var> = 128, а в реченні <var>T</var> = 20
+слів.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">рекурентний перекладач</span>
+    <p>Енкодер прочитав 20 слів і віддав стан. Це <var>d</var> = <b>128 чисел</b>.
+    Декодер більше нічого не бачить. На кожне слово джерела припадає 128/20 = <b>6.4
+    числа</b>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">трансформер</span>
+    <p>Після шару уваги лишається <var>T</var> векторів по <var>d</var> чисел:
+    20 × 128 = <b>2 560 чисел</b>. Кожна наступна позиція дивиться на всі. На кожне
+    слово джерела припадає рівно <b>128 чисел</b> — стільки, скільки й було.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">і головне — як воно поводиться з довжиною</span>
+    <p>Зробимо речення вдвічі довшим. У рекурентного перекладача лишиться ті самі 128
+    чисел, тобто на слово припаде вдвічі менше. У трансформера стане 40 × 128 = 5 120
+    чисел, тобто на слово — стільки само. <b>Пропускна здатність росте разом із
+    входом.</b></p>
+  </div>
+</div>
+
+<figure>
+  <div class="fig-head">Інтерактив 6 · Скільки чисел про джерело доступно моделі</div>
+  <p class="fig-sub">Повзунок міняє довжину фрази. Ліва смуга — рекурентний перекладач
+    зі стисненням в один вектор, права — трансформер. Розмір вектора всюди 128.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="n6">слів у джерелі <output id="n6o">20</output></label>
+        <input id="n6" type="range" min="2" max="60" step="1" value="20">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>чисел на слово, RNN</b><i id="v6a">—</i></div>
+        <div class="cellv"><b>чисел на слово, трансформер</b><i id="v6b">—</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>Це арифметика будови, а не заміряна якість: 128 чисел не «вміщають рівно
+    стільки-то змісту». Але сам факт, що в одному випадку місце ділиться на довжину, а
+    в другому — ні, від якості не залежить.</figcaption>
+</figure>
+
+<p>Тут варто бути точним, щоб не приписати трансформерові чужу заслугу. Механізм
+уваги придумали <b>не</b> в трансформері — його додали саме до рекурентного
+перекладача, щоб декодер міг дивитися на всі стани енкодера, а не лише на останній.
+Трансформер зробив інше: він викинув усе інше й лишив <b>саму увагу</b>. Заголовок
+статті, у якій його описали, так і звучить: увага — це все, що потрібно.</p>
+
+<h2 id="s6"><span class="num">Розділ 6</span>Стіна третя падає: глибина не залежить від довжини</h2>
+
+<p>Третя стіна — про порядок обчислень. Назвемо величину, яка тут усе вирішує:
+<b>послідовна глибина</b> — це найдовший ланцюжок дій, кожна з яких мусить дочекатися
+попередньої. Усе, що не в цьому ланцюжку, можна робити одночасно.</p>
+
+<div class="scroll-x"><table class="plain">
+<thead><tr><th>модель</th><th>послідовна глибина на реченні з <var>T</var> слів</th></tr></thead>
+<tbody>
+<tr><td>рекурентна мережа</td><td><b><var>T</var></b> — рівно стільки кроків, скільки слів</td></tr>
+<tr><td>трансформер</td><td><b>кількість шарів</b> — і все; довжина речення не входить у формулу</td></tr>
+</tbody></table></div>
+
+<p>Різниця не кількісна, а якісна: у першому рядку довжина речення стоїть, у другому
+її немає. Речення на пʼятсот слів для трансформера з двох шарів — це та сама глибина
+два, що й речення на пʼять.</p>
+
+<figure>
+  <div class="fig-head">Схема 7 · Послідовна глибина: що мусить чекати, а що ні</div>
+  <p class="fig-sub">Повзунок міняє довжину речення. Смуги показують, скільки дій
+    стоять у черзі одна за одною. Ширина смуги — те, що можна робити одночасно.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="n7">слів у реченні <output id="n7o">16</output></label>
+        <input id="n7" type="range" min="4" max="64" step="1" value="16">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>глибина, RNN</b><i id="v7a">—</i></div>
+        <div class="cellv"><b>глибина, трансформер</b><i id="v7b">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>Трансформер тут із двох шарів — саме стільки в моделі, яку ми міряємо
+    в цій темі. Глибина трансформера не залежить від довжини речення взагалі: смуга
+    праворуч не міняється, коли повзунок їде.</figcaption>
+</figure>
+
+<div class="note warn"><b>Обережно з фразою «а отже, трансформер швидший».</b><br>
+Це найпоширеніший переказ, і в такому вигляді він неправдивий. Послідовна глибина
+каже, <b>що можна робити одночасно</b>, а не скільки часу піде. На одному ядрі
+одночасно не робиться нічого, і там трансформер цілком може бути повільнішим —
+у нашому власному замірі так і вийшло. Ціна ланцюга проступає лише тоді, коли
+ядер більше за одне. Числа — у наступному розділі.</div>
+
+<h2 id="s7"><span class="num">Розділ 7</span>Скільки коштує вільне ядро: наш замір</h2>
+
+<p>Перевіримо тезу про розпаралелення числом, бо в переказі вона бреше. Дослід
+простий: даємо обом моделям <b>однакову роботу</b> — добуток «розмір пачки × довжина
+речення» тримаємо сталим і рівним 8 192, — і робимо один повний крок навчання: прохід
+уперед, назад і оновлення ваг. Довжину міняємо від 8 до 512, пачку зменшуємо стільки
+ж разів. Міряємо <b>процесорний</b> час: він рахує роботу всіх потоків разом і не
+залежить від того, чим ще зайнята машина.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>довжина · пачка</th><th>RNN, 1 потік</th><th>трансформер, 1 потік</th><th>RNN, 4 потоки</th><th>трансформер, 4 потоки</th></tr></thead>
+<tbody>
+<tr><td>8 · 1024</td><td>1.5905</td><td>1.9746</td><td>4.9279</td><td>4.5209</td></tr>
+<tr><td>32 · 256</td><td>1.6016</td><td>1.9735</td><td>6.2237</td><td>3.3954</td></tr>
+<tr><td>128 · 64</td><td>1.6087</td><td>1.9836</td><td>8.6760</td><td>4.4612</td></tr>
+<tr><td>512 · 16</td><td>1.6632</td><td>2.2068</td><td>32.0278</td><td>4.6310</td></tr>
+</tbody></table></div>
+
+<p><b>Перший стовпчик пари — найважливіший, і він проти популярного переказу.</b>
+На одному ядрі рекурентна мережа від довжини майже не дорожчає: 1.5905 → 1.6632,
+тобто в <b>1.05 раза</b> при збільшенні довжини у 64 рази. Трансформер дорожчає в
+<b>1.12 раза</b> і при цьому на одному ядрі просто <b>дорожчий</b> — на восьми словах
+1.9746 проти 1.5905, тобто в 1.24 раза. Ніякого прискорення тут немає й бути не може:
+одне ядро одночасно не робить нічого.</p>
+
+<p>А тепер дамо обом чотири потоки замість одного — і напрям зміни перевертається. Час трансформера від довжини майже не рухається: 4.5209 → 4.6310, тобто в 1.02 раза. Час RNN росте з 4.9279 до 32.0278 — у 6.50 раза. На найдовшому рядку рекурентна мережа коштує в 6.92 раза дорожче за трансформер, хоч роботи в них однаково. І окремо звір кожну модель саму з собою: перехід від одного потоку до чотирьох коштує рекурентній мережі в 19.26 раза більше процесорного часу, а трансформерові — усього в 2.10. <b>Ось у чому ціна ланцюга:</b> 512 послідовних кроків означають 512 моментів, коли потоки мусять дочекатися один одного, і за кожен треба заплатити.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 8 · Що дають три додаткові ядра</div>
+  <p class="fig-sub">Однакова робота, різна довжина речення. Перемикач обирає, скільки
+    потоків дозволено. Висота стовпчика — процесорні секунди на один крок навчання.</p>
+  <div class="panel">
+    <canvas id="c8" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">потоків</span>
+        <div class="seg" id="seg8">
+          <button data-i="0" aria-pressed="true">один</button>
+          <button data-i="1" aria-pressed="false">чотири</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>RNN, найдовше</b><i id="v8a" class="sm">—</i></div>
+        <div class="cellv"><b>трансформер, найдовше</b><i id="v8b" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v8v"></div>
+    </div>
+  </div>
+  <figcaption>Машина: чотири ядра, без відеокарти. Процесорний час, медіана з пʼяти
+    повторів після прогріву. Пачка й довжина міняються разом так, щоб роботи було
+    однаково.</figcaption>
+</figure>
+
+<div class="note"><b>Це число живе разом зі своєю конфігурацією.</b><br>
+Тут порівнюються дві <b>повні мовні моделі</b> зі словником на 8 183 слова: рекурентна
+з одним шаром і трансформер із двома. Тема <a href="../20-rnn-limits/lecture.html">20</a>
+міряла споріднену річ на інших моделях — голому шарі LSTM проти голого шару уваги, без
+ембедингів і без вихідного шару, — і числа там інші. Збігається не величина, а форма
+висновку: на одному ядрі довжина майже нічого не міняє, а на чотирьох ланцюг дорожчає
+різко. Порівнюй числа лише всередині однієї конфігурації.</div>
+
+<div class="note"><b>Чому взагалі можна поміряти «розпаралелення» на завантаженій машині.</b><br>
+Стінний годинник тут ні до чого: він показує, скільки ти чекав, а це залежить від
+сусідніх програм. Процесорний час рахує лише роботу твого процесу — і саме тому в
+ньому видно накладні витрати на синхронізацію: коли потоки чекають один на одного,
+це очікування записується як робота. Тому зростання процесорного часу від додаткових
+потоків — не парадокс, а точний вимір того, скільки коштує узгодження.</div>
+
+<h2 id="s8"><span class="num">Розділ 8</span>Ціна ідеї: квадрат</h2>
+
+<p>Тепер про рахунок, який трансформер таки виставляє. Якщо кожне слово дивиться на
+кожне, то балів доречності треба порахувати <var>T</var> × <var>T</var>. Це <b>квадрат
+довжини</b>, і він росте швидко.</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>слів</th><th>кроків у RNN</th><th>пар в увазі</th><th>у скільки разів більше</th></tr></thead>
+<tbody>
+<tr><td>10</td><td>10</td><td>100</td><td>10</td></tr>
+<tr><td>100</td><td>100</td><td>10 000</td><td>100</td></tr>
+<tr><td>1 000</td><td>1 000</td><td>1 000 000</td><td>1 000</td></tr>
+<tr class="hot"><td>10 000</td><td>10 000</td><td>100 000 000</td><td>10 000</td></tr>
+</tbody></table></div>
+
+<p>Ось де рекурентна мережа лишається кращою й досі. Її вартість росте <b>лінійно</b>:
+удвічі довший текст — удвічі більше роботи. У трансформера вчетверо. На реченні з
+шести слів (а це медіана нашого корпусу) різниця не важить нічого; на книжці —
+важить усе.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 9 · Лінійно проти квадратично</div>
+  <p class="fig-sub">Повзунок міняє довжину тексту. Ліва смуга — скільки кроків робить
+    рекурентна мережа, права — скільки пар порівнює увага.</p>
+  <div class="panel">
+    <canvas id="c9" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="n9">слів у тексті <output id="n9o">64</output></label>
+        <input id="n9" type="range" min="4" max="4096" step="4" value="64">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>кроків, RNN</b><i id="v9a" class="sm">—</i></div>
+        <div class="cellv"><b>пар в увазі</b><i id="v9b" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v9v"></div>
+    </div>
+  </div>
+  <figcaption>Шкала логарифмічна, інакше праву смугу не видно було б на екрані.
+    Підпис під кожною смугою — саме число, а не логарифм.</figcaption>
+</figure>
+
+<p>Саме тому в кожної моделі на трансформері є <b>довжина контексту</b> — стеля, вище
+за яку вона тексту не бачить. У рекурентної мережі такої стелі немає: вона й на
+мільйоні слів робитиме мільйон кроків, просто довго. Квадрат — не дрібниця, і скільки
+саме він коштує в секундах, міряє тема <code>24-transformer-training</code>.</p>
+
+<h2 id="s9"><span class="num">Розділ 9</span>Карта: що всередині одного шару</h2>
+
+<p>Досі ми говорили про увагу так, ніби шар трансформера — це вона й нічого більше.
+Насправді в шарі чотири частини, і кожна робить свою роботу. Розберемо карту, а
+далі — кожен блок окремо.</p>
+
+<figure>
+  <div class="fig-head">Схема 10 · Один шар трансформера, чотири частини</div>
+  <p class="fig-sub">Перемикач підсвічує частину й каже, що вона робить. Дані йдуть
+    знизу вгору; тонкі лінії збоку — залишкові зʼєднання, які несуть вхід повз блок.</p>
+  <div class="panel">
+    <canvas id="c10" width="700" height="480" data-lw="700" data-lh="480"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що підсвітити</span>
+        <div class="seg wrap" id="seg10">
+          <button data-i="0" aria-pressed="true">нормалізація</button>
+          <button data-i="1" aria-pressed="false">увага</button>
+          <button data-i="2" aria-pressed="false">залишок</button>
+          <button data-i="3" aria-pressed="false">FFN</button>
+        </div>
+      </div>
+      <div class="verdict" id="v10v"></div>
+    </div>
+  </div>
+  <figcaption>Порядок саме такий, як у моделі, яку ми міряємо: нормалізація стоїть
+    <b>перед</b> блоком, а не після нього. Обидва варіанти трапляються, і різницю
+    між ними ми назвемо окремо.</figcaption>
+</figure>
+
+<p>Прочитаймо карту словами. Вектори слів заходять знизу. Спершу їх
+<b>нормалізують</b>, потім вони проходять <b>увагу</b> й перемішуються між собою;
+результат <b>додається</b> до того, що заходило. Далі ще одна нормалізація, потім
+<b>FFN</b> — маленька мережа, яка обробляє кожну позицію окремо, — і знову додавання.
+Вихід шару стає входом наступного.</p>
+
+<h2 id="s10"><span class="num">Розділ 10</span>Залишок: навіщо додавати вхід до виходу</h2>
+
+<p><b>Залишкове зʼєднання</b> (residual connection) — це тонка лінія на схемі, що
+обходить блок. Замість «вихід = блок(вхід)» пишуть:</p>
+
+<div class="eq">вихід = вхід + блок(вхід)</div>
+
+<p>Словами: блок не замінює вектор, а лише <b>дописує до нього поправку</b>. Звідси й
+назва: блок рахує залишок — те, чого у вхідному векторі бракувало.</p>
+
+<p>Навіщо це потрібно, найлегше побачити з боку градієнта. Похідна суми — це сума
+похідних, тож у виразі <code>вхід + блок(вхід)</code> одиниця стоїть окремим доданком:
+частина градієнта проходить крізь зʼєднання <b>незміненою</b>, хоч би що зробив блок.
+Помножити на нуль тут неможливо: до всього, що порахував блок, завжди додається
+чистий вхід.</p>
+
+<p>Наслідок практичний: шари можна складати десятками. Без залишків глибока мережа
+губить сигнал на кожному поверсі — це та сама біда, що й затухання в ланцюгу, тільки
+не вздовж речення, а вглиб моделі.</p>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Нормалізація шару: приводимо числа до спільної мірки</h2>
+
+<p>Це поняття курс досі не вводив, тож розберемо його з нуля.</p>
+
+<p><b>Проблема.</b> Вектор слова — це купка чисел. Після кількох перемножень на
+матриці ці числа можуть розʼїхатися: в одному векторі всі значення в межах ±0.1, у
+сусідньому — ±50. Далі їх чекає softmax і функції на кшталт GELU, які до масштабу
+дуже чутливі: при великих числах softmax перетворюється на «усе одному, решті нуль»,
+а похідні стають нульовими. Модель перестає вчитися, і винен у цьому не зміст, а
+масштаб.</p>
+
+<p><b>Розвʼязок.</b> Перед кожним блоком беремо вектор і приводимо його до спільної
+мірки: віднімаємо середнє й ділимо на розкид. Операція зветься <b>нормалізація шару</b>
+(layer normalization).</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · середнє</span>
+    <p>Хай у векторі шість чисел: <code>2.0 · −1.0 · 0.5 · 3.5 · −2.0 · 1.0</code>.
+    Складаємо: 2.0 − 1.0 + 0.5 + 3.5 − 2.0 + 1.0 = 4.0. Ділимо на шість:
+    середнє = <b>0.6667</b>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · відхилення від середнього</span>
+    <p>Віднімаємо середнє від кожного числа:
+    <code>1.3333 · −1.6667 · −0.1667 · 2.8333 · −2.6667 · 0.3333</code>.
+    Тепер їхня сума — нуль: склади надруковані числа, вийде −0.0002, і вся ця
+    дрібниця — округлення на четвертому знаку.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · розкид</span>
+    <p>Підносимо кожне відхилення до квадрата, беремо середнє з квадратів і корінь із
+    нього — це <b>стандартне відхилення</b>, звичайна міра розкиду. Квадрати:
+    1.7778, 2.7778, 0.0278, 8.0278, 7.1111, 0.1111; їхнє середнє 3.3056; корінь
+    <b>1.8181</b>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · ділимо</span>
+    <p>Кожне відхилення ділимо на 1.8181:
+    <code>0.7333 · −0.9167 · −0.0917 · 1.5584 · −1.4668 · 0.1833</code>.
+    У результату середнє нуль, а розкид одиниця — <b>завжди</b>, з якого б вектора
+    ми не починали.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 5 · дві навчані ручки</span>
+    <p>Насамкінець результат множать на вектор <code>gamma</code> й додають вектор
+    <code>beta</code> — по одному числу на кожну координату. Це навчані параметри:
+    якщо моделі десь потрібен інший масштаб, вона його поверне. Тобто нормалізація не
+    забороняє великих чисел, а лише робить масштаб <b>вибором моделі</b>, а не
+    випадковістю.</p>
+  </div>
+</div>
+
+<figure>
+  <div class="fig-head">Інтерактив 11 · Що робить нормалізація з вектором</div>
+  <p class="fig-sub">Повзунок розтягує вхідний вектор — множить усі шість чисел на
+    спільний множник. Ліва половина — до нормалізації, права — після.</p>
+  <div class="panel">
+    <canvas id="c11" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="k11">множник входу <output id="k11o">1.0</output></label>
+        <input id="k11" type="range" min="1" max="120" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>розкид до</b><i id="v11a">—</i></div>
+        <div class="cellv"><b>розкид після</b><i id="v11b">—</i></div>
+      </div>
+      <div class="verdict" id="v11v"></div>
+    </div>
+  </div>
+  <figcaption>Числа рахує сама сторінка за формулою з розкладу вище, з
+    <code>gamma</code> = 1 і <code>beta</code> = 0. Числа ліворуч їдуть разом із
+    повзунком, числа праворуч не міняються зовсім — у цьому й уся суть операції.
+    Масштаб лівої половини підлаштовується під найбільше число, тож дивись на
+    підписи, а не на висоту.</figcaption>
+</figure>
+
+<div class="note warn"><b>Не плутай із трьома сусідками.</b><br>
+У курсі вже є «нормалізація тексту» — зведення слів до єдиної форми, зовсім інша
+операція над буквами, а не над числами. Є «нормалізація довжини» — ділення на кількість
+слів, щоб довгі документи не переважували короткі. І є <b>пакетна нормалізація</b>
+(batch normalization) з курсу машинного навчання: вона рахує середнє <b>по всіх
+прикладах пачки</b> для кожної координати, а нормалізація шару — <b>по всіх координатах
+одного прикладу</b>. Різниця принципова: нормалізація шару не залежить від того, які
+ще приклади поруч, тому працює однаково при пачці з 64 речень і при одному реченні.</div>
+
+<h3>Перед блоком чи після нього</h3>
+
+<p>Порядок можна поставити двома способами, і обидва трапляються:</p>
+
+<div class="scroll-x"><table class="plain">
+<thead><tr><th>назва</th><th>що робить</th></tr></thead>
+<tbody>
+<tr><td>post-norm</td><td>вхід + блок(вхід), а вже потім нормалізація — так було в первісній статті</td></tr>
+<tr><td>pre-norm</td><td>вхід + блок(нормалізація(вхід)) — нормалізація стоїть усередині, перед блоком</td></tr>
+</tbody></table></div>
+
+<p>Різниця важить більше, ніж здається. У post-norm нормалізація стоїть <b>на самому
+залишковому шляху</b> — тобто той чистий доданок, заради якого залишок і придумали,
+дорогою переробляється. У pre-norm шлях від входу до виходу лишається чистим
+додаванням наскрізь через усі шари.</p>
+
+<p>Саме тому глибокі моделі зазвичай будують у pre-norm: там залишковий шлях
+непошкоджений, і градієнт має чим дійти до нижніх шарів. Ми цього не міряли — це
+висновок із будови, а не з нашого досліду; у моделях, які ми міряємо далі в темі,
+стоїть pre-norm.</p>
+
+<h2 id="s12"><span class="num">Розділ 12</span>Навіщо ще й FFN</h2>
+
+<p>Увага вміє одне: <b>перемішувати</b> вектори позицій. Подивись на формулу з
+розділу 3 — новий вектор є зваженою сумою старих. Скільки б разів ти не змішував
+вектори між собою, ти лишаєшся в тому самому наборі напрямків, у які вони й дивилися.
+Потрібне щось, що вміє <b>перетворювати</b> окремий вектор.</p>
+
+<p>Це й робить <b>FFN</b> (feed-forward network) — крихітна двошарова мережа, яку
+застосовують до кожної позиції <b>окремо й однаково</b>. Вона розширює вектор,
+пропускає через нелінійність і стискає назад:</p>
+
+<div class="eq">128 чисел → 512 чисел → нелінійність → 128 чисел</div>
+
+<p>Чотирикратне розширення — звичайна пропорція, і вона не випадкова: широкий
+проміжний шар дає місце, де нелінійність може щось відокремити, а вузький вихід
+повертає вектор до розміру, з яким працює решта моделі.</p>
+
+<p>Розподіл праці простий і його варто запамʼятати: <b>увага вирішує, звідки взяти
+інформацію, FFN вирішує, що з нею зробити</b>. Без уваги позиції не спілкуються; без
+FFN шар лишається лінійним перемішувачем.</p>
+
+<p>І несподіванка: саме FFN, а не увага, зʼїдає більшість параметрів. У нашій моделі
+на один шар припадає 66 048 чисел на увагу й 131 712 на FFN — тобто FFN у
+<b>1.99 раза</b> важчий.</p>
+
+<h2 id="s13"><span class="num">Розділ 13</span>Увага сліпа до порядку слів</h2>
+
+<p>Повернімось до третьої властивості з розділу 3, і тепер вона перетворюється на
+проблему.</p>
+
+<p>Зважена сума не знає, у якому порядку складали доданки. Тому якщо переставити
+слова у вхідному реченні, <b>виходи переставляться так само — і більше нічого не
+зміниться</b>. Ця властивість зветься <b>еквіваріантність щодо перестановки</b>:
+не «вихід той самий», а «вихід переставляється разом із входом». Для звичайної мережі
+це було б добре. Для мови це катастрофа: «пес вкусив листоношу» й «листоноша вкусив
+пса» стануть для моделі однією фразою, поданою в різному порядку.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 12 · Переставили слова — суміш та сама</div>
+  <p class="fig-sub">Перемикач міняє порядок слів у реченні. Стовпчики — ваги уваги
+    для виділеного слова. Дивись на підписи під стовпчиками: вони їдуть разом зі
+    словами, а самі ваги лишаються тими самими.</p>
+  <div class="panel">
+    <canvas id="c12" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">порядок слів</span>
+        <div class="seg wrap" id="seg12">
+          <button data-i="0" aria-pressed="true">пес вкусив листоношу</button>
+          <button data-i="1" aria-pressed="false">листоношу вкусив пес</button>
+          <button data-i="2" aria-pressed="false">вкусив пес листоношу</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>набір ваг</b><i id="v12a" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v12v"></div>
+    </div>
+  </div>
+  <figcaption>Ваги тут задані вручну, щоб показати саму властивість: вони залежать
+    тільки від того, <b>які</b> слова в реченні, і не залежать від того, <b>де</b>
+    вони стоять. Схема ілюструє будову операції, а не заміряну модель.</figcaption>
+</figure>
+
+<p>Лікують це <b>позиційним кодуванням</b>: до вектора кожного слова додають ще один
+вектор, що залежить лише від номера позиції. Після цього «пес» на першому місці й
+«пес» на третьому — уже різні вектори, і бали доречності виходять різні. Наша модель
+тримає таких векторів стільки, скільки позицій дозволено, і вчить їх разом з усім
+іншим. Як саме будують цей вектор і які варіанти бувають, розбирає тема
+<code>23-multihead-masking</code>.</p>
+
+<p>Тут важливо побачити ширшу закономірність. Ланцюг рекурентної мережі давав порядок
+<b>безкоштовно</b>: слова просто приходили одне за одним. Трансформер, викинувши
+ланцюг, викинув разом із ним і порядок — і мусив повернути його <b>окремою деталлю</b>.
+Це типова угода в інженерії: за свободу платять явністю.</p>
+
+<h2 id="s14"><span class="num">Розділ 14</span>Маска: не підглядати у відповідь</h2>
+
+<p>Є ще одна деталь, без якої мовна модель на трансформері не працює зовсім.</p>
+
+<p>Задача мовної моделі — угадати наступне слово за попередніми. Але увага за
+замовчуванням дивиться <b>на всі</b> слова речення, зокрема й на ті, що стоять
+праворуч. Тобто, угадуючи третє слово, модель бачить третє слово. Вона миттєво
+навчиться просто його копіювати, дістане чудову перплексію на навчанні й буде
+абсолютно непридатною, бо на новому тексті майбутнього немає.</p>
+
+<p>Лікування прямолінійне: перед softmax балам доречності до всіх позицій праворуч
+підставляють <b>мінус нескінченність</b>. Експонента від мінус нескінченності — нуль,
+тож після softmax ці слова дістають вагу рівно нуль. Це і є <b>причинна маска</b>
+(causal mask): «причинна» тому, що дозволяє впливати лише з минулого в майбутнє.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 13 · Трикутник дозволеного</div>
+  <p class="fig-sub">Кожен рядок — слово, яке зараз збирає контекст. Клітинка світла,
+    якщо на це слово дивитися можна, і темна, якщо ні. Повзунок підсвічує один рядок.</p>
+  <div class="panel">
+    <canvas id="c13" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="p13">яке слово збирає контекст <output id="p13o">4</output></label>
+        <input id="p13" type="range" min="1" max="8" step="1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>дозволено дивитись</b><i id="v13a">—</i></div>
+        <div class="cellv"><b>закрито маскою</b><i id="v13b">—</i></div>
+      </div>
+      <div class="verdict" id="v13v"></div>
+    </div>
+  </div>
+  <figcaption>Речення з восьми слів. Клітинок усього 64, дозволених 36 — це рівно
+    половина квадрата плюс діагональ. Маска нічого не пришвидшує: закриті клітинки
+    все одно рахуються, просто їхній внесок обнуляється.</figcaption>
+</figure>
+
+<div class="note"><b>Маска — це вибір задачі, а не властивість архітектури.</b><br>
+Той самий трансформер без маски бачить речення цілком, і для задач, де відповідь
+залежить від усього тексту — класифікації, пошуку сутностей, — так і треба. Модель
+із маскою породжує текст; модель без маски його розуміє. Родини BERT і GPT
+відрізняються насамперед цим, і блок 6 повернеться до різниці докладно.</div>
+
+<h2 id="s15"><span class="num">Розділ 15</span>Скільки важить кожна частина</h2>
+
+<p>Перш ніж міряти якість, порахуймо, з чого модель складається. Це корисно, бо
+відповідає на питання, яке інакше висітиме над усім порівнянням: <b>а може,
+трансформер виграє просто тому, що більший?</b></p>
+
+<p>Беремо словник у 8 183 слова й розмір вектора 128. Ембединги — 8 183 × 128, вихідний
+шар — стільки само плюс зсуви. Це спільна частина, однакова в усіх трьох моделей.
+Різниця лише в тілі:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>частина</th><th>RNN, стан 128</th><th>трансформер</th><th>RNN, стан 520</th></tr></thead>
+<tbody>
+<tr><td>ембединги слів</td><td>1 047 424</td><td>1 047 424</td><td>1 047 424</td></tr>
+<tr><td>вихідний шар</td><td>1 055 607</td><td>1 055 607</td><td>1 055 607</td></tr>
+<tr><td>тіло моделі</td><td>33 024</td><td>404 736</td><td>404 688</td></tr>
+<tr class="hot"><td>усього</td><td>2 136 055</td><td>2 507 767</td><td>2 507 719</td></tr>
+</tbody></table></div>
+
+<p>Перші два рядки однакові в усіх трьох: словник той самий, розмір вектора той самий.
+Уся різниця — у третьому рядку. Тіло трансформера в <b>12.26 раза</b> важче за тіло
+вузької рекурентної мережі, і саме звідси береться майже вся різниця в підсумку.</p>
+
+<p>Третій стовпчик — це і є відповідь на заперечення «а може, справа в розмірі».
+Ми взяли ту саму рекурентну мережу й розширили її стан із 128 до 520 так, щоб тіло
+вийшло майже точно таким, як у трансформера: 404 688 проти 404 736 — різниця у
+<b>48</b> чисел із чотирьохсот тисяч. Тепер обидві моделі однакові за розміром і різні
+за будовою, і будь-яка різниця в якості буде різницею будови.</p>
+
+<h2 id="s16"><span class="num">Розділ 16</span>Порівняння на нашому корпусі</h2>
+
+<p>Тепер найголовніше. Ми поставили всі моделі на один корпус, один поділ і одну
+метрику й поміряли чесно. Спершу — про правила, бо саме вони роблять число вартим
+довіри.</p>
+
+<p><b>Дані.</b> Українські переклади інтерфейсів, що лежать у системі: 93 392 речення,
+674 948 слововживань. Після відсіву дуже коротких і дуже довгих лишається 91 602
+речення; вони діляться на три частини — <b>навчальну</b> (78 319), <b>відкладену</b>
+(4 122) і <b>перевірну</b> (9 161). Словник за навчальною частиною при порозі частоти
+5 — 8 183 слова разом зі службовими.</p>
+
+<p><b>Метрика — перплексія.</b> Це середня «розгубленість» моделі: скільки слів вона
+фактично тримає за рівноможливі, коли вгадує наступне. Перплексія 100 означає, що
+модель поводиться так, ніби вибирає навмання зі ста слів. Менше — краще.</p>
+
+<p><b>Правило, яке тут вирішує все.</b> Кожній моделі дібрано її головний
+гіперпараметр, і дібрано <b>на відкладеній вибірці</b>. Лічильникам — величину
+згладжування й вагу суміші; мережам — швидкість навчання. Перевірна вибірка не бачила
+жодного добору: її дістали один раз, наприкінці.</p>
+
+<div class="note warn"><b>Чому це не формальність.</b><br>
+Добір гіперпараметра рухає результат сильніше, ніж вибір моделі. У таблиці нижче стоять
+два рядки з <b>однаковою</b> біграмою — вони відрізняються тільки величиною згладжування,
+і між ними прірва в сотні пунктів. Тобто модель, якій дали покрутити ручку, майже завжди
+виглядає краще за модель, якій не дали, — незалежно від того, чи вона краща насправді.
+Правило одне: <b>або крутять усім, або нікому</b>. І крутять на відкладеній вибірці,
+бо інакше «найкраще» означає лише «найкраще на тому, чим потім міряємо».</div>
+
+<h3>Добір швидкості навчання</h3>
+
+<p>Швидкість навчання — це те, наскільки сильно мережа посуває ваги після кожної пачки
+прикладів. Замала — мережа не встигає нічого вивчити за прохід; завелика — вона
+перестрибує потрібне. Ось уся сітка, перплексія <b>на відкладеній</b>:</p>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>швидкість навчання</th><th>RNN, стан 128</th><th>трансформер</th><th>RNN, стан 520</th></tr></thead>
+<tbody>
+<tr><td>0.001</td><td>222.4594</td><td>176.1675</td><td>218.5608</td></tr>
+<tr><td>0.002</td><td>173.8622</td><td>153.3719</td><td>224.5828</td></tr>
+<tr><td>0.004</td><td>159.6216</td><td>154.2530</td><td>263.4470</td></tr>
+<tr><td>0.008</td><td>207.0342</td><td>165.1053</td><td>412.6386</td></tr>
+<tr class="hot"><td>обрано</td><td>0.004</td><td>0.002</td><td>0.001</td></tr>
+</tbody></table></div>
+
+<p>Дві речі варто прочитати з цієї таблиці.</p>
+
+<p><b>Перша.</b> Мінімум кожного стовпчика лежить <b>усередині</b> сітки, а не на її
+краю. Це не формальність: якби найкраще значення виявилось скраю, ми б не побачили
+справжнього оптимуму, і сітку треба було б розширювати.</p>
+
+<p><b>Друга.</b> Оптимуми в моделей <b>різні</b>. Якби ми взяли одну швидкість «для
+всіх», хтось із них рахувався б не в найкращому своєму вигляді — і різниця, яку ми
+потім називаємо різницею архітектур, частково була б різницею налаштування.</p>
+
+<div class="note"><b>Один стовпчик довелося доміряти.</b><br>
+У широкої рекурентної мережі найкраще з цих чотирьох значень лягло на <b>лівий край</b> сітки: 218.5608 на швидкості 0.001. Це ще не оптимум, а лише підозра на нього: мінімум на краю означає, що далі може бути краще, а ми туди просто не подивились. Тому для неї ми доміряли ще одну точку, 0.0005: там перплексія на відкладеній становить <b>262.0881</b>, тобто помітно гірше. Крива йде вгору з обох боків — отже 0.001 таки є справжнім мінімумом, і тільки тепер її число можна ставити поруч із рештою.<br><br>Це те саме правило, з якого починався розділ, тільки в дії: <b>мінімум на краю сітки не є мінімумом</b>, доки ти не подивився за край.</div>
+
+<h3>Що вийшло</h3>
+
+<div class="scroll-x"><table class="nums">
+<thead><tr><th>модель</th><th>перплексія</th><th>купа по пʼятьох зернах</th><th>навчання</th></tr></thead>
+<tbody>
+<tr><td>рівномірна здогадка</td><td>8 183</td><td>—</td><td>—</td></tr>
+<tr><td>біграма, добавка 1.0</td><td>704.4347</td><td>—</td><td>—</td></tr>
+<tr><td>уніграма</td><td>634.7340</td><td>—</td><td>—</td></tr>
+<tr><td>RNN, стан 520</td><td>220.5763</td><td>204.5013…254.5541</td><td>113.6 с</td></tr>
+<tr><td>RNN, стан 128</td><td>158.2041</td><td>155.1877…165.0853</td><td>96.2 с</td></tr>
+<tr><td>біграма, добавка 0.003</td><td>155.1849</td><td>—</td><td>—</td></tr>
+<tr class="hot"><td>трансформер</td><td>153.8210</td><td>148.6361…167.9125</td><td>125.1 с</td></tr>
+<tr class="hot"><td>суміш, лямбда 0.85</td><td>131.7046</td><td>—</td><td>—</td></tr>
+</tbody></table></div>
+
+<p>Стовпчик «купа» — це проміжок від найгіршого зерна до найкращого. У лічильників його
+немає, бо в них немає випадковості: та сама таблиця частот на тих самих даних щоразу
+дає те саме число. «Навчання» — процесорні секунди на одну епоху, медіана по зернах,
+на чотирьох ядрах в один потік.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 14 · Головне порівняння блоку</div>
+  <p class="fig-sub">Перплексія на перевірній вибірці, менше — краще. Вусики на
+    стовпчиках нейромереж — розкид по пʼятьох зернах. Перемикач показує окремо
+    лічильники й окремо мережі.</p>
+  <div class="panel">
+    <canvas id="c14" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що показати</span>
+        <div class="seg wrap" id="seg14">
+          <button data-i="0" aria-pressed="true">усе разом</button>
+          <button data-i="1" aria-pressed="false">лише мережі</button>
+          <button data-i="2" aria-pressed="false">лише лічильники</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкраща модель</b><i id="v14a" class="sm">—</i></div>
+        <div class="cellv"><b>відрив від наступної</b><i id="v14b" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v14v"></div>
+    </div>
+  </div>
+  <figcaption>Один поділ, одна метрика, пʼять зерен на кожну мережу. Гіперпараметр кожної
+    моделі дібрано на відкладеній вибірці. Мережі навчені <b>одну епоху</b>, тобто
+    бачили корпус рівно один раз.</figcaption>
+</figure>
+
+<h2 id="s17"><span class="num">Розділ 17</span>Три висновки, і всі три незручні</h2>
+
+<h3>Перший: у найкращій конфігурації різниці немає</h3>
+
+<p><b>Медіана трансформера краща:</b> 153.8210 проти 158.2041 у рекурентної мережі, тобто на 4.38 пункту. Якби ми на цьому спинились, тема закінчилася б бадьорим «трансформер виграв». Але медіана — це ще не результат.</p>
+
+<p><b>Дивитись треба на розкид, а не на медіану.</b> купа трансформера по пʼятьох зернах — <b>148.6361…167.9125</b>, тобто завширшки 19.28 пункту. Купа рекурентної мережі — <b>155.1877…165.0853</b>, завширшки 9.90. Перша накриває другу цілком, а отже купи <b>перетинаються</b>. За правилом, яким користується весь курс, це означає одне: <b>на цьому корпусі за один прохід різниці між двома архітектурами ми не встановили</b>. Перевага в медіані менша за розкид, який дає сам вибір початкових ваг.<br><br>І ця сама фраза містить другий результат, менш очевидний. Розкид трансформера в 1.95 раза більший за розкид рекурентної мережі: та сама конфігурація на різних зернах дає то 148.6361, то 167.9125. Рекурентна мережа натомість щоразу приходить майже в ту саму точку. <b>Трансформер тут не гірший — він нестабільніший</b>, і стабільність його навчання є окремою інженерною задачею, до якої повертається тема <code>24-transformer-training</code>.</p>
+
+<div class="note warn"><b>Чому пʼять зерен, а не три.</b><br>
+Зерно задає початкові ваги й порядок пачок; більше воно не міняє нічого. Здавалося б,
+трьох прогонів досить, щоб побачити розкид. Ось чому ні.<br><br>
+Ті самі перші три зерна рекурентної мережі дали купу <b>157.9844…158.5072</b> — завширшки 0.52 пункту. Це виглядало як зразкова відтворюваність: три прогони практично в одну точку. Додаємо ще два зерна тієї самої конфігурації — і купа стає <b>155.1877…165.0853</b>, тобто завширшки 9.90. Ширша в 19.04 раза.<br><br>
+Мораль коротка: <b>вузька купа — це привід перевірити, а не привід радіти</b>. Два
+додаткові прогони коштують кілька хвилин і вирішують, чи є взагалі про що говорити.</div>
+
+<h3>Другий, і він найважливіший: параметри в якість перетворює не кожен</h3>
+
+<p>Тепер поставимо моделі в умови, де розмір однаковий. Це третій рядок таблиці:
+рекурентна мережа зі станом 520, у якої тіло на 404 688 параметрів проти 404 736 у
+трансформера — різниця у <b>48</b> чисел.</p>
+
+<p>Результат різкий. Широка рекурентна мережа дала <b>220.5763</b>, купа 204.5013…254.5541 — проти 153.8210 (купа 148.6361…167.9125) у трансформера. Це <b>66.76 пункту</b> різниці, і цього разу купи навіть близько не перетинаються: між ними чистий проміжок у 36.59 пункту. Швидкість навчання їй добирали окремо, тією самою сіткою, що й решті, і навіть довелося її продовжити — тобто ручку крутили всім.</p>
+
+<p>А тепер найдивніше в усій темі. Порівняй широку рекурентну мережу не з трансформером, а <b>саму з собою</b>: вузька, зі станом 128, дала 158.2041, широка — 220.5763. Ми додали їй 371 664 параметрів, і вона стала гіршою на <b>62.37 пункту</b>. Не «майже не покращилась» — <b>гіршою</b>.</p>
+
+<div class="note"><b>Ось як це формулюється точно.</b><br>
+<b>Трансформер перетворює параметри на якість, а рекурентна мережа — ні.</b> Її
+оптимум лежить на <b>меншій</b> моделі: широкий стан вона за один прохід навчити не
+встигає, і додані числа стають не знанням, а тягарем. Трансформер із тією самою
+кількістю параметрів дає найкраще, що ми взагалі бачили від нейромереж на цьому
+корпусі.<br><br>
+Саме це, а не різниця медіан, і є архітектурною перевагою, яку варто запамʼятати.
+Вона не про те, хто кращий на маленькій моделі, — там нічия. Вона про те, <b>хто
+здатен рости</b>. І це рівно та властивість, заради якої трансформер зрештою й
+витіснив рекурентні мережі: коли зʼявились дані й машини, рости зміг лише він.</div>
+
+<p>Ціна цього названа чесно: одна епоха трансформера коштує 125.1 процесорних секунд проти 96.2 у рекурентної мережі, тобто в 1.30 раза дорожче. Це чесна ціна за більшу модель: у трансформера 2 507 767 параметрів проти 2 136 055.</p>
+
+<h3>Третій: перемоги над задачею немає ні в кого</h3>
+
+<p><b>Найкраща модель на нашому корпусі — не нейромережа.</b> Суміш біграми з уніграмою дає 131.7046 проти 153.8210 у трансформера, тобто виграє <b>22.12 пункту</b>. У ній два дібрані числа, жодного навчання й кілька секунд роботи.</p>
+
+<p>І тут купи ні до чого: у лічильників немає випадковості, а відрив такий, що жодне
+зерно його не перекриє. Це не «майже нічия», як між двома мережами, — це виразна
+поразка, і вимовити її треба вголос.</p>
+
+<figure>
+  <div class="fig-head">Схема 15 · Дві різниці, які справді є</div>
+  <p class="fig-sub">Обидві сходинки — різниці, у яких купи по зернах не перетинаються.
+    Ліва: трансформер проти рекурентної мережі <b>тієї самої ваги</b>. Права: той самий
+    трансформер проти суміші лічильників.</p>
+  <div class="panel">
+    <canvas id="c15" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>кращий за RNN 520 на</b><i id="v15a">—</i></div>
+        <div class="cellv"><b>гірший за суміш на</b><i id="v15b">—</i></div>
+      </div>
+      <div class="verdict" id="v15v"></div>
+    </div>
+  </div>
+  <figcaption>Різниці медіан із таблиці вище, порахованих із надрукованих там чисел.
+    Різницю між трансформером і вузькою рекурентною мережею (стан 128) сюди не
+    поставлено навмисне: там купи перетинаються, тобто різниці немає.</figcaption>
+</figure>
+
+<h2 id="s18"><span class="num">Розділ 18</span>Чого саме бракує</h2>
+
+<p>Спокуса тут одна: сказати «отже, трансформер переоцінений». Це був би неправильний
+висновок із правильного заміру, тож розберемо, що насправді сталося.</p>
+
+<p><b>Наш корпус — 675 тисяч слововживань.</b> Це приблизно як одна товста книжка. У
+такому обсязі кожна пара слів, яку модель побачила, трапилася кілька разів, а більшість
+пар не трапилася жодного разу. Для таблиці частот це рай: вона просто запамʼятовує те,
+що бачила, і згладжування ділить решту ймовірності між рештою словника. Робити висновки
+з малої вибірки таблиця не вміє — але тут і не треба, бо вибірка вся тут.</p>
+
+<p><b>Нейромережа влаштована протилежно.</b> Вона не запамʼятовує пари, а стискає їх
+у ваги й тим змушена <b>узагальнювати</b>: слова зі схожою поведінкою дістають схожі
+вектори, і те, що модель вивчила про одне, переноситься на інше. Узагальнення — сильна
+здатність, але вона окупається лише тоді, коли запамʼятати неможливо. На книжці
+запамʼятати можливо.</p>
+
+<div class="eq">мало даних → виграє памʼять · багато даних → виграє узагальнення</div>
+
+<p>Тією самою межею пояснюється й перший результат — той, де дві архітектури
+виявились нерозрізненними. Трансформер відрізняється від рекурентної мережі тим, як
+він <b>дістає далекий контекст</b>. Але наші речення мають медіанну довжину шість слів:
+далекого контексту в них просто немає, дістава́ти нема чого, і перевага, заради якої
+всю архітектуру й будували, не має де проявитись. Три стіни ми зняли — а стояли вони
+не на цьому корпусі.</p>
+
+<p>Наш замір стоїть на лівому боці цієї межі. Перевага трансформера в літературі
+здобувається на корпусах у <b>тисячі разів</b> більших — там пар, яких модель не
+бачила, більшість, і таблиця частот перетворюється на майже суцільне згладжування.
+Наш замір цієї області просто не дістає.</p>
+
+<div class="note"><b>І це не поразка, а вимір.</b><br>
+Ми поміряли не «наскільки трансформер хороший», а <b>чого бракує, щоб він показав
+себе</b>. Відповідь: даних. Саме тому історія архітектур закінчується не блоком про
+архітектури, а блоком про масштаб: коли перемогти можна лише більшою кількістю тексту,
+питання «яка модель краща» перетворюється на питання «скільки тексту ти можеш
+прочитати».</div>
+
+<h2 id="s19"><span class="num">Розділ 19</span>Що лишилось у голові</h2>
+
+<p>Коротко, і кожен рядок можна перевірити тим, що вище.</p>
+
+<ul>
+<li><b>Одна ідея замість ланцюга.</b> Кожне слово дивиться на всі слова напряму й саме
+вирішує, які з них важливі.</li>
+<li><b>Три стіни падають разом.</b> Шлях назад завдовжки в кілька кроків замість
+кількох сотень; жодного вузького горла; послідовна глибина не залежить від довжини
+речення.</li>
+<li><b>Ціна — квадрат.</b> Пар для порівняння рівно <var>T</var>², і саме звідси
+береться стеля довжини контексту.</li>
+<li><b>Шар — це чотири частини.</b> Нормалізація, увага, залишок, FFN. Увага вирішує,
+звідки взяти; FFN — що з цим зробити.</li>
+<li><b>Порядок треба повертати руками.</b> Увага його не бачить, тож позицію дописують
+окремим вектором.</li>
+<li><b>Перевага трансформера — не в тому, що він кращий на маленькій моделі</b>: там нічия, купи по зернах перетинаються. Вона в тому, що він <b>уміє рости</b>: на однакових параметрах він дає 153.8210, а рекурентна мережа — 220.5763, тобто від зайвих параметрів вона стає гіршою. А над задачею на цьому корпусі не виграв ніхто: обидві мережі програють таблиці частот.</li>
+</ul>
+
+<p>Далі блок розбирає те, що ми тут навмисне лишили закритим. Тема
+<code>22-self-attention</code> відкриває, звідки беруться бали доречності, — і рахує
+Q, K і V руками на справжньому реченні. Тема <code>23-multihead-masking</code> бере
+три деталі, які ми лише назвали: кілька голів уваги, позиційне кодування й маску, — і
+міряє, скільки коштує прибрати кожну. Тема <code>24-transformer-training</code>
+рахує, у що обходиться навчання й чому вартість росте квадратично з довжиною.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../20-rnn-limits/lecture.html"><span class="dir">попередня</span><span class="ttl">20. Межі RNN</span></a>
+    <a class="next" href="../22-self-attention/lecture.html"><span class="dir">наступна</span><span class="ttl">22. Self-attention покроково</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function thou(n){
+  var s=String(n), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function roundRect(g,x,y,w,h,r){
+  g.beginPath();
+  g.moveTo(x+r,y); g.lineTo(x+w-r,y); g.quadraticCurveTo(x+w,y,x+w,y+r);
+  g.lineTo(x+w,y+h-r); g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  g.lineTo(x+r,y+h); g.quadraticCurveTo(x,y+h,x,y+h-r);
+  g.lineTo(x,y+r); g.quadraticCurveTo(x,y,x+r,y); g.closePath();
+}
+function arrow(g,x1,y1,x2,y2,color,w){
+  g.strokeStyle=color; g.fillStyle=color; g.lineWidth=w||1.4;
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke();
+  var a=Math.atan2(y2-y1,x2-x1), s=5;
+  g.beginPath();
+  g.moveTo(x2,y2);
+  g.lineTo(x2-s*Math.cos(a-0.4), y2-s*Math.sin(a-0.4));
+  g.lineTo(x2-s*Math.cos(a+0.4), y2-s*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+function plural(n,one,few,many){
+  var t=n%10, h=n%100;
+  if(h>=11 && h<=14) return many;
+  if(t===1) return one;
+  if(t>=2 && t<=4) return few;
+  return many;
+}
+function razy(n){ return plural(n,'раз','рази','разів'); }
+function sliv(n){ return plural(n,'слово','слова','слів'); }
+function supDigits(n){
+  var S='⁰¹²³⁴⁵⁶⁷⁸⁹', s=String(n), out='', i;
+  for(i=0;i<s.length;i++) out+=S.charAt(+s.charAt(i));
+  return out;
+}
+function sci(v){
+  if(v<1000) return f1(v);
+  if(v<10000) return String(Math.round(v));
+  var e=Math.floor(Math.log(v)/Math.LN10), m=v/Math.pow(10,e);
+  return f1(m)+' · 10'+supDigits(e);
+}
+
+/* ═══════ заміряні числа ═══════ */
+/* Градієнт: ненавчені мережі, розмір вектора 128, пʼять зерен, медіана.
+   Відношення «норма на останньому слові / норма на першому». */
+var GRAD_T = [10, 25, 50, 100];
+var GRAD = {10:[1071.81, 13.25], 25:[1.5921e8, 35.07], 50:[4.2665e16, 77.05], 100:[Infinity, 101.74]};
+var FLOAT32_ORDERS = 45;   /* нижче цього float32 записує число як нуль */
+
+/* Один крок навчання, робота стала: батч × довжина = 8192.
+   Процесорні секунди, медіана з пʼяти повторів, чотириядерна машина. */
+var PAR_LEN = [8, 32, 128, 512];
+var PAR = {
+  1: {rnn:[1.5905, 1.6016, 1.6087, 1.6632], trf:[1.9746, 1.9735, 1.9836, 2.2068]},
+  4: {rnn:[4.9279, 6.2237, 8.6760, 32.0278], trf:[4.5209, 3.3954, 4.4612, 4.6310]}
+};
+
+/* Головне порівняння: перплексія на перевірній вибірці. */
+var MAIN = [
+  {n:'біграма +1.0',  v:704.4347,  lo:704.4347,   hi:704.4347,   kind:'c'},
+  {n:'уніграма',      v:634.7340,  lo:634.7340,   hi:634.7340,   kind:'c'},
+  {n:'RNN 128',       v:158.2041,  lo:155.1877, hi:165.0853, kind:'n'},
+  {n:'RNN 520',       v:220.5763, lo:204.5013,hi:254.5541,kind:'n'},
+  {n:'біграма дібр.', v:155.1849, lo:155.1849, hi:155.1849, kind:'c'},
+  {n:'трансформер',   v:153.8210,  lo:148.6361, hi:167.9125, kind:'n'},
+  {n:'суміш',         v:131.7046,  lo:131.7046,   hi:131.7046,   kind:'c'}
+];
+
+/* ═══════ фігура 1 · три стіни ═══════ */
+var w1 = 0;
+function draw1(){
+  var cv=I('c1'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), teal=css('--teal'),
+      hair=css('--hair'), paper=css('--paper'), raise=css('--raise');
+  var n=6, bw=62, bh=42, gap=26, x0=(W-(n*bw+(n-1)*gap))/2, y=112, i;
+
+  function box(x,y,w,h,fill,stroke,label,lab2){
+    g.fillStyle=fill; roundRect(g,x,y,w,h,8); g.fill();
+    g.strokeStyle=stroke; g.lineWidth=1.4; roundRect(g,x,y,w,h,8); g.stroke();
+    capt(g,label,x+w/2,y+h/2+4,ink,12,true,'center');
+    if(lab2) capt(g,lab2,x+w/2,y+h+15,soft,10,false,'center');
+  }
+
+  if(w1===0){
+    capt(g,'СИГНАЛ ІДЕ НАЗАД І МНОЖИТЬСЯ НА КОЖНОМУ КРОЦІ',W/2,34,soft,11,true,'center');
+    for(i=0;i<n;i++) box(x0+i*(bw+gap), y, bw, bh, raise, hair, 'слово '+(i+1));
+    for(i=n-1;i>0;i--){
+      var xa=x0+i*(bw+gap), xb=x0+(i-1)*(bw+gap)+bw;
+      arrow(g, xa, y+bh/2, xb+4, y+bh/2, rose, 1.6);
+      capt(g,'× 0.9',(xa+xb)/2, y-10, rose, 10, false, 'center');
+    }
+    var v=1, bx=x0, by=y+bh+52;
+    capt(g,'що лишається від сигналу:',x0,by-8,soft,11,false,'left');
+    for(i=n-1;i>=0;i--){
+      var hh=Math.max(2, 56*v);
+      g.fillStyle=rose; g.globalAlpha=0.25+0.75*v;
+      g.fillRect(x0+i*(bw+gap)+bw/2-16, by+62-hh, 32, hh);
+      g.globalAlpha=1;
+      capt(g,f2(v),x0+i*(bw+gap)+bw/2, by+78, soft, 10, false, 'center');
+      v*=0.9;
+    }
+    capt(g,'на шостому кроці лишилось 0.59, на сотому — 0.00003',W/2,H-10,soft,11,false,'center');
+  } else if(w1===1){
+    capt(g,'УСЯ ФРАЗА СТИСКАЄТЬСЯ В ОДИН ВЕКТОР',W/2,34,soft,11,true,'center');
+    var lw=46, lg=8, lx=40, ly=90;
+    for(i=0;i<n;i++) box(lx+i*(lw+lg), ly, lw, 36, raise, hair, String(i+1));
+    capt(g,'слова джерела',lx, ly-14, soft, 11, false, 'left');
+    var cx=W/2+30, cy=ly+90;
+    g.fillStyle=rose; roundRect(g,cx-34,cy-20,68,40,8); g.fill();
+    capt(g,'один',cx,cy-2,paper,11,true,'center');
+    capt(g,'вектор',cx,cy+12,paper,11,true,'center');
+    for(i=0;i<n;i++) arrow(g, lx+i*(lw+lg)+lw/2, ly+36, cx, cy-22, hair, 1.1);
+    var rx=W-40-6*(lw+lg)+lg, ry=H-84;
+    for(i=0;i<n;i++) box(rx+i*(lw+lg), ry, lw, 36, raise, hair, String(i+1));
+    for(i=0;i<n;i++) arrow(g, cx, cy+22, rx+i*(lw+lg)+lw/2, ry-2, teal, 1.1);
+    capt(g,'слова перекладу',rx, ry+52, soft, 11, false, 'left');
+    capt(g,'скільки б слів не було — розмір вектора той самий',W/2,54,soft,11,false,'center');
+  } else {
+    capt(g,'КРОК t НЕ МОЖНА ПОЧАТИ, ПОКИ НЕ ЗАКІНЧИВСЯ t−1',W/2,34,soft,11,true,'center');
+    var sy=96;
+    for(i=0;i<n;i++){
+      box(x0+i*(bw+gap), sy, bw, bh, i===0?raise:paper, hair, 'крок '+(i+1));
+      if(i<n-1) arrow(g, x0+i*(bw+gap)+bw, sy+bh/2, x0+(i+1)*(bw+gap)-4, sy+bh/2, teal, 1.6);
+    }
+    capt(g,'час →',W-42,sy+bh+22,soft,11,false,'right');
+    g.strokeStyle=hair; g.lineWidth=1; g.setLineDash([4,4]);
+    for(i=0;i<n;i++){
+      g.beginPath(); g.moveTo(x0+i*(bw+gap)+bw/2, sy+bh); g.lineTo(x0+i*(bw+gap)+bw/2, sy+bh+34); g.stroke();
+    }
+    g.setLineDash([]);
+    capt(g,'чотири вільні ядра тут не допоможуть:',W/2,H-52,soft,12,false,'center');
+    capt(g,'пʼятий крок не має що рахувати, поки немає четвертого',W/2,H-32,ink,12,true,'center');
+  }
+}
+function upd1(){
+  draw1();
+  if(w1===0) verd('v1v','t-no','ланцюг множень',
+    'Градієнт помножується на матрицю ваг на кожному кроці назад. Шість кроків лишають '+
+    '0.59 сигналу, сто кроків — три стотисячні. Це показникове спадання, і воно росте разом із довжиною речення.');
+  else if(w1===1) verd('v1v','t-no','стала пропускна здатність',
+    'Розмір вектора заданий наперед і не залежить від довжини фрази. Що довша фраза, то менше місця припадає на кожне її слово.');
+  else verd('v1v','t-no','порядок не обійти',
+    'Залежність між кроками — це структура моделі, а не деталь реалізації. Скільки б ядер не було, довжина черги дорівнює довжині речення.');
+}
+
+/* ═══════ фігура 2 · ланцюг проти прямих звʼязків ═══════ */
+function draw2(){
+  var cv=I('c2'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'),
+      raise=css('--raise'), ink=css('--ink');
+  var n=+I('n2').value, i, j;
+  var x0=44, x1=W-44, step=(x1-x0)/(n-1);
+  var yA=104, yB=250, r=11;
+
+  capt(g,'РЕКУРЕНТНА МЕРЕЖА: ТІЛЬКИ СУСІДИ',x0,32,soft,11,true,'left');
+  g.strokeStyle=hair; g.lineWidth=1.2;
+  for(i=0;i<n-1;i++) arrow(g, x0+i*step+r, yA, x0+(i+1)*step-r-2, yA, hair, 1.3);
+  for(i=0;i<n;i++){
+    g.fillStyle=(i===0||i===n-1)?rose:raise;
+    g.beginPath(); g.arc(x0+i*step, yA, r, 0, 6.2832); g.fill();
+    g.strokeStyle=(i===0||i===n-1)?rose:hair; g.lineWidth=1.4; g.stroke();
+    capt(g,String(i+1), x0+i*step, yA+4, (i===0||i===n-1)?css('--paper'):soft, 10, true, 'center');
+  }
+  capt(g,'щоб дійти від слова '+n+' до слова 1, треба пройти всі проміжні',x0,yA+34,soft,11,false,'left');
+
+  capt(g,'ТРАНСФОРМЕР: ОСТАННЄ СЛОВО ДИВИТЬСЯ НА ВСІ',x0,yB-72,soft,11,true,'left');
+  var lx=x0+(n-1)*step;
+  for(i=0;i<n-1;i++){
+    var mx=(lx+x0+i*step)/2, my=yB-30-Math.min(34, 6+step*0.28);
+    g.strokeStyle=teal; g.lineWidth=1.1; g.globalAlpha=0.75;
+    g.beginPath(); g.moveTo(lx, yB-r); g.quadraticCurveTo(mx, my, x0+i*step, yB-r); g.stroke();
+    g.globalAlpha=1;
+  }
+  for(i=0;i<n;i++){
+    g.fillStyle=(i===0||i===n-1)?rose:raise;
+    g.beginPath(); g.arc(x0+i*step, yB, r, 0, 6.2832); g.fill();
+    g.strokeStyle=(i===0||i===n-1)?rose:hair; g.lineWidth=1.4; g.stroke();
+    capt(g,String(i+1), x0+i*step, yB+4, (i===0||i===n-1)?css('--paper'):soft, 10, true, 'center');
+  }
+  capt(g,'від слова '+n+' до слова 1 — одна стрілка, хоч би скільки слів було між ними',
+       x0, yB+32, ink, 11, false, 'left');
+}
+function upd2(){
+  var n=+I('n2').value;
+  I('n2o').textContent=n;
+  draw2();
+  I('v2a').textContent=(n-1)+' проти 1';
+  I('v2b').textContent=(n-1)+' проти '+(n*(n-1)/2);
+  var tag = n<=5 ? 't-mid' : 't-ok';
+  verd('v2v',tag,'шлях не залежить від довжини',
+    'Ланцюгу треба '+(n-1)+' '+plural(n-1,'крок','кроки','кроків')+', трансформеру — один. '+
+    'Але звʼязків у трансформера '+(n*(n-1)/2)+' проти '+(n-1)+', тобто в '+
+    f1((n*(n-1)/2)/(n-1))+' раза більше. Це і є та ціна, яку він платить за прямий доступ.');
+}
+
+/* ═══════ фігура 3 · softmax на трьох словах ═══════ */
+var WORDS3=['зелена','трава','росте'];
+function draw3(){
+  var cv=I('c3'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var s=+I('b3').value/10, sc=[0.4, s, 1.0], i;
+  var ex=[Math.exp(sc[0]), Math.exp(sc[1]), Math.exp(sc[2])];
+  var sum=ex[0]+ex[1]+ex[2];
+  var wgt=[ex[0]/sum, ex[1]/sum, ex[2]/sum];
+
+  var y0=H-56, hMax=190, bw=88, gap=64, x0=(W-(3*bw+2*gap))/2;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-20,y0+0.5); g.lineTo(x0+3*bw+2*gap+20,y0+0.5); g.stroke();
+  for(i=0;i<3;i++){
+    var x=x0+i*(bw+gap), h=Math.max(2, wgt[i]*hMax);
+    g.fillStyle=(i===1)?rose:teal; g.globalAlpha=(i===1)?1:0.7;
+    roundRect(g,x,y0-h,bw,h,5); g.fill(); g.globalAlpha=1;
+    capt(g,f2(wgt[i]), x+bw/2, y0-h-9, ink, 14, true, 'center');
+    capt(g,WORDS3[i], x+bw/2, y0+18, soft, 12, false, 'center');
+    capt(g,'бал '+f1(sc[i]), x+bw/2, y0+34, soft, 10, false, 'center');
+  }
+  capt(g,'ВАГИ УВАГИ ДЛЯ СЛОВА «РОСТЕ» — ЗАВЖДИ В СУМІ ОДИНИЦЯ', W/2, 30, soft, 11, true, 'center');
+  g.strokeStyle=hair; g.lineWidth=1; g.setLineDash([3,4]);
+  g.beginPath(); g.moveTo(x0-20, y0-hMax+0.5); g.lineTo(x0+3*bw+2*gap+20, y0-hMax+0.5); g.stroke();
+  g.setLineDash([]);
+  capt(g,'вага 1.00', x0+3*bw+2*gap+16, y0-hMax-6, soft, 10, false, 'right');
+}
+function upd3(){
+  var s=+I('b3').value/10;
+  I('b3o').textContent=f1(s);
+  var ex=[Math.exp(0.4), Math.exp(s), Math.exp(1.0)];
+  var sum=ex[0]+ex[1]+ex[2];
+  var w=[ex[0]/sum, ex[1]/sum, ex[2]/sum];
+  draw3();
+  I('v3a').textContent=f2(w[0]);
+  I('v3b').textContent=f2(w[1]);
+  I('v3c').textContent=f2(w[2]);
+  I('v3d').textContent=f2(w[0]+w[1]+w[2]);
+  var top = (w[1]>=w[0] && w[1]>=w[2]) ? 'трава' : (w[2]>=w[0] ? 'росте' : 'зелена');
+  if(w[1]>=0.9) verd('v3v','t-mid','увага майже вся в одному місці',
+    'Вага слова «трава» — '+f2(w[1])+'. Решта разом дістає '+f2(1-w[1])+
+    ': решта речення для цієї позиції перестала існувати.');
+  else if(w[1]<=0.15) verd('v3v','t-mid','слово «трава» майже не помічене',
+    'Вага «трави» — '+f2(w[1])+', і найбільшу вагу '+f2(Math.max(w[0],w[2]))+' дістало слово «'+top+'». '+
+    'Бал нижчий за сусідні означає, що суміш збирається без цього слова.');
+  else verd('v3v','t-ok','розподіл, а не вибір',
+    'Ваги '+f2(w[0])+' / '+f2(w[1])+' / '+f2(w[2])+' у сумі дають '+f2(w[0]+w[1]+w[2])+'. '+
+    'Найбільше уваги дістало слово «'+top+'» — але жодне не викинуто зовсім.');
+}
+
+/* ═══════ фігура 4 · довжина шляху назад ═══════ */
+var LAYERS = 2;
+function draw4(){
+  var cv=I('c4'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var n=+I('n4').value;
+  var half=W/2, i;
+
+  capt(g,'RNN', half/2, 34, rose, 13, true, 'center');
+  capt(g,'ТРАНСФОРМЕР, 2 ШАРИ', half+half/2, 34, teal, 13, true, 'center');
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(half+0.5, 20); g.lineTo(half+0.5, H-20); g.stroke();
+
+  /* ліворуч: n множень маленькими рисками */
+  var cols=Math.min(20, n), rows=Math.ceil(n/cols);
+  var cw=Math.min(14, (half-70)/cols), ch=13;
+  var sx=(half-cols*cw)/2, sy=90;
+  for(i=0;i<n;i++){
+    var cx=sx+(i%cols)*cw, cy=sy+Math.floor(i/cols)*ch;
+    g.fillStyle=rose; g.globalAlpha=0.85;
+    g.fillRect(cx+1, cy, Math.max(3,cw-3), 9);
+    g.globalAlpha=1;
+  }
+  capt(g, n+' множень поспіль', half/2, sy+rows*ch+26, ink, 12, true, 'center');
+  capt(g, 'кожне трохи зменшує сигнал', half/2, sy+rows*ch+44, soft, 11, false, 'center');
+
+  /* праворуч: 2 множення */
+  var bx=half+half/2, by=100;
+  for(i=0;i<LAYERS;i++){
+    g.fillStyle=teal; g.globalAlpha=0.85;
+    g.fillRect(bx-32+i*36, by, 28, 34); g.globalAlpha=1;
+  }
+  capt(g, LAYERS+' множення', bx, by+62, ink, 12, true, 'center');
+  capt(g, 'скільки шарів — стільки й кроків', bx, by+80, soft, 11, false, 'center');
+  capt(g, 'довжина речення сюди не входить', bx, by+98, soft, 11, false, 'center');
+}
+function upd4(){
+  var n=+I('n4').value;
+  I('n4o').textContent=n;
+  draw4();
+  I('v4a').textContent=String(n);
+  I('v4b').textContent=String(LAYERS);
+  verd('v4v', n>=20?'t-no':'t-mid', 'у '+f1(n/LAYERS)+' раза довший маршрут',
+    'На реченні з '+n+' слів градієнт у рекурентній мережі проходить '+n+
+    ' '+plural(n,'множення','множення','множень')+', а в трансформері — '+LAYERS+
+    '. Показникове спадання можливе там, де множників багато; там, де їх два, спадати нема чому.');
+}
+
+/* ═══════ фігура 5 · заміряний градієнт ═══════ */
+function draw5(){
+  var cv=I('c5'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'),
+      ink=css('--ink'), amber=css('--amber');
+  var k=+I('t5').value, T=GRAD_T[k], i;
+  var MAXO=18, y0=H-52, hMax=H-110;
+  var pairs=[['RNN',rose],['трансформер',teal]];
+  var bw=110, gap=90, x0=(W-(2*bw+gap))/2 - 40;
+
+  /* сітка порядків */
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(i=0;i<=MAXO;i+=3){
+    var y=y0-hMax*i/MAXO;
+    g.globalAlpha=0.55; g.beginPath(); g.moveTo(x0-30,y+0.5); g.lineTo(W-40,y+0.5); g.stroke(); g.globalAlpha=1;
+    capt(g,'10'+supDigits(i), x0-38, y+4, soft, 10, false, 'right');
+  }
+  capt(g,'у скільки разів слабший', x0-38, y0-hMax-18, soft, 10, false, 'left');
+
+  for(i=0;i<2;i++){
+    var v=GRAD[T][i];
+    var o=isFinite(v)? Math.log(v)/Math.LN10 : FLOAT32_ORDERS;
+    var shown=Math.min(o, MAXO), h=Math.max(3, hMax*shown/MAXO);
+    var x=x0+i*(bw+gap);
+    g.fillStyle=pairs[i][1]; g.globalAlpha=0.85;
+    roundRect(g,x,y0-h,bw,h,5); g.fill(); g.globalAlpha=1;
+    capt(g,pairs[i][0], x+bw/2, y0+20, soft, 12, false, 'center');
+    if(!isFinite(v)){
+      /* стовпчик упирається у верх шкали — підпис кладемо ВСЕРЕДИНУ,
+         інакше він наїжджає на підпис осі (грабля №12) */
+      capt(g,'нуль', x+bw/2, y0-h+26, css('--paper'), 15, true, 'center');
+      capt(g,'за шкалою:', x+bw/2, y0-h+44, css('--paper'), 10, false, 'center');
+      capt(g,'у float32 таких', x+bw/2, y0-h+57, css('--paper'), 10, false, 'center');
+      capt(g,'чисел уже немає', x+bw/2, y0-h+70, css('--paper'), 10, false, 'center');
+    } else {
+      capt(g, sci(v)+' ×', x+bw/2, y0-h-9, ink, 13, true, 'center');
+    }
+  }
+  capt(g,'речення з '+T+' слів', W/2, 30, soft, 12, true, 'center');
+}
+function upd5(){
+  var k=+I('t5').value, T=GRAD_T[k];
+  I('t5o').textContent=T;
+  draw5();
+  var r=GRAD[T][0], t=GRAD[T][1];
+  I('v5a').textContent = isFinite(r) ? sci(r)+' ×' : 'нуль';
+  I('v5b').textContent = f1(t)+' ×';
+  if(!isFinite(r)) verd('v5v','t-no','сигнал зник повністю',
+    'На '+T+' словах градієнт RNN до першого слова дорівнює точно нулю: результат провалився '+
+    'нижче за найменше число, яке вміщає float32. Трансформер на тих самих '+T+' словах '+
+    'слабший лише в '+f1(t)+' раза.');
+  else verd('v5v', r/t > 1000 ? 't-no' : 't-mid', 'розрив у '+sci(r/t)+' раза',
+    'На '+T+' словах RNN ослабила сигнал у '+sci(r)+' '+razy(Math.round(Math.min(r,1e6)))+
+    ', трансформер — у '+f1(t)+' раза. Ряд трансформера росте приблизно як сама довжина, ряд RNN — як степінь.');
+}
+
+/* ═══════ фігура 6 · скільки чисел доступно ═══════ */
+var DMODEL=128;
+function draw6(){
+  var cv=I('c6'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var n=+I('n6').value;
+  var a=DMODEL/n, b=DMODEL;
+  var y0=H-56, hMax=H-118, bw=130, gap=120, x0=(W-(2*bw+gap))/2;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-30,y0+0.5); g.lineTo(x0+2*bw+gap+30,y0+0.5); g.stroke();
+  var vals=[a,b], names=['рекурентний перекладач','трансформер'], cols=[rose,teal], i;
+  for(i=0;i<2;i++){
+    var h=Math.max(2, hMax*vals[i]/DMODEL), x=x0+i*(bw+gap);
+    g.fillStyle=cols[i]; g.globalAlpha=0.85; roundRect(g,x,y0-h,bw,h,5); g.fill(); g.globalAlpha=1;
+    capt(g, f1(vals[i]), x+bw/2, y0-h-10, ink, 15, true, 'center');
+    capt(g, names[i], x+bw/2, y0+20, soft, 11.5, false, 'center');
+  }
+  capt(g,'ЧИСЕЛ ПРО ДЖЕРЕЛО НА ОДНЕ ЙОГО СЛОВО', W/2, 30, soft, 11, true, 'center');
+  capt(g,'фраза з '+n+' слів, розмір вектора 128', W/2, H-14, soft, 11, false, 'center');
+}
+function upd6(){
+  var n=+I('n6').value;
+  I('n6o').textContent=n;
+  draw6();
+  I('v6a').textContent=f1(DMODEL/n);
+  I('v6b').textContent=String(DMODEL);
+  var r=DMODEL/(DMODEL/n);
+  verd('v6v', n<=4 ? 't-mid' : 't-no', n<=4 ? 'на короткій фразі різниця мала' : 'горло тисне',
+    'На фразі з '+n+' слів рекурентний перекладач має '+f1(DMODEL/n)+
+    ' '+plural(Math.round(DMODEL/n),'число','числа','чисел')+' на слово, трансформер — 128. '+
+    'Це в '+f1(r)+' раза більше, і відношення дорівнює самій довжині фрази: '+
+    'у першому випадку місце ділиться на довжину, у другому — ні.');
+}
+
+/* ═══════ фігура 7 · послідовна глибина ═══════ */
+function draw7(){
+  var cv=I('c7'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var n=+I('n7').value, i;
+  /* стовпчик мусить закінчитись ВИЩЕ за нижні підписи, інакше смуги наїжджають
+     на текст, а скрипт цього не бачить (грабля №12) */
+  var topY=88, rowH=Math.min(9, (H-topY-72)/n);
+  var lx=60, rx=W/2+50, colW=W/2-120;
+
+  capt(g,'RNN: '+n+' дій одна за одною', lx, 34, rose, 12, true, 'left');
+  capt(g,'ТРАНСФОРМЕР: '+LAYERS+' дії одна за одною', rx, 34, teal, 12, true, 'left');
+  capt(g,'одна смуга = один поверх черги', lx, 56, soft, 10.5, false, 'left');
+  capt(g,'ширина = скільки можна робити одночасно', rx, 56, soft, 10.5, false, 'left');
+
+  for(i=0;i<n;i++){
+    g.fillStyle=rose; g.globalAlpha=0.75;
+    g.fillRect(lx, topY+i*rowH, colW*0.42, Math.max(1.1, rowH-1.4));
+    g.globalAlpha=1;
+  }
+  for(i=0;i<LAYERS;i++){
+    g.fillStyle=teal; g.globalAlpha=0.75;
+    g.fillRect(rx, topY+i*(rowH*n/LAYERS), colW, Math.max(2, rowH*n/LAYERS-3.5));
+    g.globalAlpha=1;
+  }
+  capt(g,'вузька смуга: на кожному поверсі', lx, H-42, soft, 10.5, false, 'left');
+  capt(g,'працює лише одне слово', lx, H-26, soft, 10.5, false, 'left');
+  capt(g,'широка смуга: на кожному поверсі', rx, H-42, ink, 10.5, false, 'left');
+  capt(g,'працюють усі '+n+' '+sliv(n)+' разом', rx, H-26, ink, 10.5, false, 'left');
+}
+function upd7(){
+  var n=+I('n7').value;
+  I('n7o').textContent=n;
+  draw7();
+  I('v7a').textContent=String(n);
+  I('v7b').textContent=String(LAYERS);
+  verd('v7v','t-ok','глибина стала',
+    'Речення з '+n+' слів дає рекурентній мережі чергу з '+n+
+    ' '+plural(n,'дії','дій','дій')+', а трансформерові — з '+LAYERS+
+    ' '+plural(LAYERS,'дії','дій','дій')+'. Посунь повзунок: ліва смуга росте, права не міняється взагалі.');
+}
+
+/* ═══════ фігура 8 · заміряне розпаралелення ═══════ */
+var th8 = 0;
+function draw8(){
+  var cv=I('c8'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var d=PAR[th8===0?1:4], i;
+  var MAXV=34, y0=H-58, hMax=H-116;
+  var groups=PAR_LEN.length, gw=(W-120)/groups, bw=Math.min(30,(gw-16)/2);
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(i=0;i<=MAXV;i+=5){
+    var y=y0-hMax*i/MAXV;
+    g.globalAlpha=0.5; g.beginPath(); g.moveTo(74,y+0.5); g.lineTo(W-30,y+0.5); g.stroke(); g.globalAlpha=1;
+    capt(g,String(i), 68, y+4, soft, 10, false, 'right');
+  }
+  capt(g,'процесорних секунд на крок', 74, y0-hMax-16, soft, 10.5, false, 'left');
+  for(i=0;i<groups;i++){
+    var gx=80+i*gw+gw/2;
+    var vals=[d.rnn[i], d.trf[i]], cols=[rose,teal], j;
+    for(j=0;j<2;j++){
+      var h=Math.max(2, hMax*Math.min(vals[j],MAXV)/MAXV);
+      var x=gx-bw-4+j*(bw+8);
+      g.fillStyle=cols[j]; g.globalAlpha=0.85; roundRect(g,x,y0-h,bw,h,4); g.fill(); g.globalAlpha=1;
+      capt(g, f2(vals[j]), x+bw/2, y0-h-8, ink, 10.5, true, 'center');
+    }
+    capt(g,'довжина '+PAR_LEN[i], gx, y0+19, soft, 10.5, false, 'center');
+  }
+  g.fillStyle=rose; g.fillRect(W-190, 20, 11, 11);
+  capt(g,'RNN', W-174, 30, soft, 11, false, 'left');
+  g.fillStyle=teal; g.fillRect(W-118, 20, 11, 11);
+  capt(g,'трансформер', W-102, 30, soft, 11, false, 'left');
+  capt(g, th8===0?'один потік':'чотири потоки', 80, 30, ink, 12, true, 'left');
+}
+function upd8(){
+  draw8();
+  var d=PAR[th8===0?1:4], last=PAR_LEN.length-1;
+  I('v8a').textContent=f2(d.rnn[last])+' с';
+  I('v8b').textContent=f2(d.trf[last])+' с';
+  var growR=d.rnn[last]/d.rnn[0], growT=d.trf[last]/d.trf[0];
+  if(th8===0) verd('v8v','t-mid','на одному ядрі виграє RNN',
+    'Від довжини 8 до 512 час RNN змінився в '+f2(growR)+' раза, час трансформера — в '+
+    f2(growT)+'. Обидва майже не ростуть, але трансформер дорожчий: '+f2(d.trf[last])+
+    ' проти '+f2(d.rnn[last])+' с, тобто в '+f2(d.trf[last]/d.rnn[last])+' раза.');
+  else verd('v8v','t-ok','три вільні ядра міняють картину',
+    'На чотирьох потоках час RNN росте з довжиною в '+f2(growR)+' раза, а трансформера — в '+
+    f2(growT)+'. На найдовшому рядку RNN коштує '+f2(d.rnn[last])+' с проти '+f2(d.trf[last])+
+    ' у трансформера — у '+f2(d.rnn[last]/d.trf[last])+' раза дорожче. Ось де проступає ціна ланцюга.');
+}
+
+/* ═══════ фігура 9 · лінійно проти квадратично ═══════ */
+function draw9(){
+  var cv=I('c9'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var n=+I('n9').value;
+  var a=n, b=n*n, MAXL=Math.log(4096*4096)/Math.LN10;
+  var y0=H-58, hMax=H-118, bw=140, gap=110, x0=(W-(2*bw+gap))/2, i;
+  g.strokeStyle=hair; g.lineWidth=1;
+  for(i=0;i<=Math.ceil(MAXL);i+=2){
+    var y=y0-hMax*i/MAXL;
+    g.globalAlpha=0.5; g.beginPath(); g.moveTo(x0-40,y+0.5); g.lineTo(x0+2*bw+gap+30,y+0.5); g.stroke(); g.globalAlpha=1;
+    capt(g,'10'+supDigits(i), x0-46, y+4, soft, 10, false, 'right');
+  }
+  var vals=[a,b], names=['кроків у RNN','пар в увазі'], cols=[teal,rose];
+  for(i=0;i<2;i++){
+    var o=Math.log(vals[i])/Math.LN10, h=Math.max(2, hMax*o/MAXL), x=x0+i*(bw+gap);
+    g.fillStyle=cols[i]; g.globalAlpha=0.85; roundRect(g,x,y0-h,bw,h,5); g.fill(); g.globalAlpha=1;
+    capt(g, thou(vals[i]), x+bw/2, y0-h-10, ink, 14, true, 'center');
+    capt(g, names[i], x+bw/2, y0+20, soft, 11.5, false, 'center');
+  }
+  capt(g,'ШКАЛА ЛОГАРИФМІЧНА · ТЕКСТ ІЗ '+thou(n)+' СЛІВ', W/2, 30, soft, 11, true, 'center');
+}
+function upd9(){
+  var n=+I('n9').value;
+  I('n9o').textContent=thou(n);
+  draw9();
+  I('v9a').textContent=thou(n);
+  I('v9b').textContent=thou(n*n);
+  verd('v9v', n<=128 ? 't-ok' : (n<=1024 ? 't-mid' : 't-no'),
+    n<=128 ? 'на такій довжині квадрат дешевий' : (n<=1024?'квадрат уже помітний':'квадрат керує вартістю'),
+    'Текст завдовжки '+thou(n)+' '+sliv(n)+': рекурентна мережа зробить '+thou(n)+
+    ' '+plural(n,'крок','кроки','кроків')+', а увага порівняє '+thou(n*n)+
+    ' пар — у '+thou(n)+' '+razy(n)+' більше. Відношення завжди дорівнює самій довжині.');
+}
+
+/* ═══════ фігура 10 · карта шару ═══════ */
+var part10=0;
+var PART10=[
+  {t:'нормалізація шару', d:'Приводить числа кожного вектора до спільної мірки: середнє нуль, розкид одиниця. Стоїть перед блоком, тому шлях залишку лишається чистим додаванням.'},
+  {t:'self-attention', d:'Єдине місце, де позиції спілкуються між собою. Кожне слово збирає зважену суміш усіх слів речення й саме обирає ваги.'},
+  {t:'залишкове зʼєднання', d:'Тонка лінія повз блок. Вихід дорівнює входу плюс поправка, тож частина градієнта проходить крізь шар незміненою.'},
+  {t:'FFN', d:'Двошарова мережа для кожної позиції окремо: 128 чисел → 512 → нелінійність → 128. Тут живе більшість параметрів шару.'}
+];
+function draw10(){
+  var cv=I('c10'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'),
+      ink=css('--ink'), raise=css('--raise'), paper=css('--paper');
+  var titles=[
+    {t:'вхід: вектори слів', k:-1},
+    {t:'нормалізація шару', k:0},
+    {t:'self-attention', k:1},
+    {t:'+  додати вхід', k:2},
+    {t:'нормалізація шару', k:0},
+    {t:'FFN  128 → 512 → 128', k:3},
+    {t:'+  додати вхід', k:2}
+  ];
+  var n=titles.length, bh=36, bw=250, cx=W/2-72;
+  var top=54, bottom=H-34, pitch=(bottom-top)/(n-1), i;
+  function cy(i){ return bottom - i*pitch; }          /* 0 — знизу */
+
+  /* стрілки між сусідніми блоками */
+  for(i=0;i<n-1;i++) arrow(g, cx, cy(i)-bh/2, cx, cy(i+1)+bh/2+3, hair, 1.3);
+
+  /* залишкові лінії збоку: від входу до першого додавання, від нього до другого */
+  var sx=cx+bw/2+22, hotRes=(part10===2);
+  g.strokeStyle=hotRes?teal:hair; g.lineWidth=hotRes?2.2:1.3;
+  g.beginPath();
+  g.moveTo(cx+bw/2, cy(0)); g.lineTo(sx, cy(0)); g.lineTo(sx, cy(3)); g.lineTo(cx+bw/2, cy(3));
+  g.stroke();
+  g.beginPath();
+  g.moveTo(cx+bw/2, cy(3)); g.lineTo(sx+24, cy(3)); g.lineTo(sx+24, cy(6)); g.lineTo(cx+bw/2, cy(6));
+  g.stroke();
+  capt(g,'залишок', sx+32, cy(1)+4, hotRes?teal:soft, 10.5, hotRes, 'left');
+  capt(g,'залишок', sx+32, cy(4)+4, hotRes?teal:soft, 10.5, hotRes, 'left');
+
+  for(i=0;i<n;i++){
+    var r=titles[i], hot=(r.k===part10), y=cy(i)-bh/2;
+    g.fillStyle= hot ? (r.k===2?teal:rose) : raise;
+    roundRect(g, cx-bw/2, y, bw, bh, 8); g.fill();
+    g.strokeStyle= hot ? (r.k===2?teal:rose) : hair; g.lineWidth=1.4;
+    roundRect(g, cx-bw/2, y, bw, bh, 8); g.stroke();
+    capt(g, r.t, cx, y+bh/2+4, hot?paper:(r.k<0?soft:ink), 12, true, 'center');
+  }
+  capt(g,'ВИХІД ШАРУ ↑', cx, cy(6)-bh/2-12, soft, 10.5, true, 'center');
+  capt(g,'ДАНІ ЙДУТЬ ЗНИЗУ ВГОРУ', 22, 24, soft, 10.5, true, 'left');
+}
+function upd10(){
+  draw10();
+  verd('v10v','t-ok', PART10[part10].t, PART10[part10].d);
+}
+
+/* ═══════ фігура 11 · нормалізація шару ═══════ */
+var BASE11=[2.0,-1.0,0.5,3.5,-2.0,1.0];
+function stats11(v){
+  var i, m=0; for(i=0;i<v.length;i++) m+=v[i]; m/=v.length;
+  var s=0; for(i=0;i<v.length;i++) s+=(v[i]-m)*(v[i]-m); s=Math.sqrt(s/v.length);
+  return {mean:m, sd:s};
+}
+function draw11(){
+  var cv=I('c11'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var k=+I('k11').value/10, i;
+  var raw=[], norm=[];
+  for(i=0;i<6;i++) raw.push(BASE11[i]*k);
+  var st=stats11(raw);
+  for(i=0;i<6;i++) norm.push((raw[i]-st.mean)/st.sd);
+  var half=W/2, mid=H/2+16, unit=Math.min(26, (H/2-58)/Math.max(2.2, 12*0.5));
+  function panel(x0, vals, color, title, scale){
+    capt(g, title, x0+110, 30, soft, 11, true, 'center');
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0, mid+0.5); g.lineTo(x0+230, mid+0.5); g.stroke();
+    var bw=26, gp=12, sx=x0+(230-(6*bw+5*gp))/2, j;
+    for(j=0;j<6;j++){
+      var h=vals[j]*scale;
+      g.fillStyle=color; g.globalAlpha=0.85;
+      if(h>=0) g.fillRect(sx+j*(bw+gp), mid-h, bw, Math.max(1,h));
+      else g.fillRect(sx+j*(bw+gp), mid, bw, Math.max(1,-h));
+      g.globalAlpha=1;
+      capt(g, f1(vals[j]), sx+j*(bw+gp)+bw/2, h>=0?mid-h-6:mid-h+14, ink, 9.5, false, 'center');
+    }
+  }
+  var maxRaw=0;
+  for(i=0;i<6;i++) maxRaw=Math.max(maxRaw, Math.abs(raw[i]));
+  var scaleRaw=Math.min(20, (H/2-56)/Math.max(maxRaw,0.001));
+  panel(24, raw, rose, 'ДО НОРМАЛІЗАЦІЇ', scaleRaw);
+  panel(W-254, norm, teal, 'ПІСЛЯ НОРМАЛІЗАЦІЇ', (H/2-56)/1.6);
+  arrow(g, W/2-16, mid, W/2+16, mid, hair, 1.6);
+  capt(g,'числа ліворуч їдуть разом із повзунком', 24, H-16, soft, 10.5, false, 'left');
+  capt(g,'а тут ті самі числа завжди', W-254, H-16, ink, 10.5, false, 'left');
+}
+function upd11(){
+  var k=+I('k11').value/10, i;
+  I('k11o').textContent=f1(k);
+  var raw=[]; for(i=0;i<6;i++) raw.push(BASE11[i]*k);
+  var st=stats11(raw);
+  var norm=[]; for(i=0;i<6;i++) norm.push((raw[i]-st.mean)/st.sd);
+  var stn=stats11(norm);
+  draw11();
+  I('v11a').textContent=f4(st.sd);
+  I('v11b').textContent=f4(stn.sd);
+  verd('v11v','t-ok','розкид після завжди 1.0000',
+    'Помножили вхід на '+f1(k)+' — розкид до нормалізації став '+f4(st.sd)+
+    '. Після нормалізації він '+f4(stn.sd)+', а середнє '+f4(Math.abs(stn.mean))+
+    '. Хоч би як розтягнути вхід, вихід не міняється: масштаб перестає бути випадковістю.');
+}
+
+/* ═══════ фігура 12 · перестановка слів ═══════ */
+var ord12=0;
+var ORDERS12=[
+  {w:['пес','вкусив','листоношу'], i:[0,1,2]},
+  {w:['листоношу','вкусив','пес'], i:[2,1,0]},
+  {w:['вкусив','пес','листоношу'], i:[1,0,2]}
+];
+var W12=[0.21, 0.55, 0.24];   /* вага за словом: пес, вкусив, листоношу */
+function draw12(){
+  var cv=I('c12'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var o=ORDERS12[ord12], i;
+  var y0=H-70, hMax=180, bw=120, gap=60, x0=(W-(3*bw+2*gap))/2;
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-24,y0+0.5); g.lineTo(x0+3*bw+2*gap+24,y0+0.5); g.stroke();
+  for(i=0;i<3;i++){
+    var wi=W12[o.i[i]], h=Math.max(2, wi*hMax*1.6), x=x0+i*(bw+gap);
+    g.fillStyle= wi===0.55 ? rose : teal; g.globalAlpha=0.8;
+    roundRect(g,x,y0-h,bw,h,5); g.fill(); g.globalAlpha=1;
+    capt(g, f2(wi), x+bw/2, y0-h-9, ink, 14, true, 'center');
+    capt(g, o.w[i], x+bw/2, y0+20, ink, 12, true, 'center');
+    capt(g, 'позиція '+(i+1), x+bw/2, y0+36, soft, 10, false, 'center');
+  }
+  capt(g,'ВАГИ УВАГИ ЙДУТЬ ЗА СЛОВАМИ, А НЕ ЗА ПОЗИЦІЯМИ', W/2, 30, soft, 11, true, 'center');
+  capt(g,'сума ваг '+f2(W12[0]+W12[1]+W12[2])+' — та сама в усіх трьох порядках', W/2, H-14, soft, 11, false, 'center');
+}
+function upd12(){
+  draw12();
+  var o=ORDERS12[ord12], i, s=[];
+  for(i=0;i<3;i++) s.push(f2(W12[o.i[i]]));
+  I('v12a').textContent=s.join(' · ');
+  verd('v12v','t-no','порядок не помічено',
+    'Речення «'+o.w.join(' ')+'»: ваги '+s.join(' / ')+
+    '. Переключи порядок — числа переїдуть разом зі словами, а набір лишиться той самий. '+
+    'Для уваги ці три речення нерозрізненні, тож позицію доводиться дописувати окремим вектором.');
+}
+
+/* ═══════ фігура 13 · причинна маска ═══════ */
+var N13=8;
+function draw13(){
+  var cv=I('c13'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'),
+      ink=css('--ink'), paper=css('--paper');
+  var p=+I('p13').value, i, j;
+  var cell=Math.min(30, (H-110)/N13), x0=(W-N13*cell)/2+30, y0=60;
+  for(i=0;i<N13;i++){
+    for(j=0;j<N13;j++){
+      var allowed=(j<=i);
+      var hot=(i===p-1);
+      g.fillStyle = allowed ? (hot?teal:css('--teal-w')) : (hot?css('--rose-w'):paper);
+      g.fillRect(x0+j*cell, y0+i*cell, cell-2, cell-2);
+      g.strokeStyle=hair; g.lineWidth=0.8;
+      g.strokeRect(x0+j*cell+0.5, y0+i*cell+0.5, cell-2, cell-2);
+      if(!allowed) capt(g,'−∞', x0+j*cell+cell/2-1, y0+i*cell+cell/2+4, soft, 9, false, 'center');
+      else if(hot) capt(g,'✓', x0+j*cell+cell/2-1, y0+i*cell+cell/2+4, paper, 10, true, 'center');
+    }
+    capt(g, String(i+1), x0-8, y0+i*cell+cell/2+4, (i===p-1)?ink:soft, 10, (i===p-1), 'right');
+    capt(g, String(i+1), x0+i*cell+cell/2-1, y0-8, soft, 10, false, 'center');
+  }
+  capt(g,'на яке слово дивимось →', x0, y0-26, soft, 10.5, false, 'left');
+  capt(g,'яке слово збирає контекст', 18, y0+N13*cell/2, soft, 10.5, false, 'left');
+  capt(g,'світле — дозволено · темне з −∞ — закрито маскою', W/2, H-18, soft, 11, false, 'center');
+}
+function upd13(){
+  var p=+I('p13').value;
+  I('p13o').textContent=p;
+  draw13();
+  I('v13a').textContent=String(p);
+  I('v13b').textContent=String(N13-p);
+  verd('v13v', p===N13 ? 't-ok' : 't-mid', p+' з '+N13+' відкрито',
+    'Слово на позиції '+p+' бачить '+p+' '+plural(p,'слово','слова','слів')+
+    ' — себе й усе, що ліворуч. Решта '+(N13-p)+' '+plural(N13-p,'дістає','дістають','дістають')+
+    ' бал мінус нескінченність, а після softmax — вагу нуль. Дозволених клітинок у всій таблиці '+
+    (N13*(N13+1)/2)+' із '+(N13*N13)+'.');
+}
+
+/* ═══════ фігура 14 · головне порівняння ═══════ */
+var view14=0;
+function draw14(){
+  var cv=I('c14'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var rows=MAIN.filter(function(m){
+    if(view14===1) return m.kind==='n';
+    if(view14===2) return m.kind==='c';
+    return true;
+  });
+  var i, maxV=0;
+  for(i=0;i<rows.length;i++) maxV=Math.max(maxV, rows[i].hi);
+  maxV=Math.ceil(maxV/100)*100;
+  var y0=H-64, hMax=H-118, gw=(W-96)/rows.length, bw=Math.min(74, gw-14);
+  g.strokeStyle=hair; g.lineWidth=1;
+  var stepv=maxV>500?200:100;
+  for(i=0;i<=maxV;i+=stepv){
+    var y=y0-hMax*i/maxV;
+    g.globalAlpha=0.5; g.beginPath(); g.moveTo(66,y+0.5); g.lineTo(W-24,y+0.5); g.stroke(); g.globalAlpha=1;
+    capt(g,String(i), 60, y+4, soft, 10, false, 'right');
+  }
+  capt(g,'перплексія · менше — краще', 70, y0-hMax-16, soft, 10.5, false, 'left');
+  var best=1e9, bestName='';
+  for(i=0;i<rows.length;i++) if(rows[i].v<best){best=rows[i].v; bestName=rows[i].n;}
+  for(i=0;i<rows.length;i++){
+    var m=rows[i], x=72+i*gw+(gw-bw)/2, h=Math.max(2, hMax*m.v/maxV);
+    g.fillStyle=(m.kind==='n')?teal:rose; g.globalAlpha=(m.n===bestName)?1:0.62;
+    roundRect(g,x,y0-h,bw,h,4); g.fill(); g.globalAlpha=1;
+    var labelY=y0-h-10;
+    if(m.hi>m.lo){
+      var yl=y0-hMax*m.lo/maxV, yh=y0-hMax*m.hi/maxV, cxx=x+bw/2;
+      g.strokeStyle=ink; g.lineWidth=1.2; g.globalAlpha=0.75;
+      g.beginPath(); g.moveTo(cxx,yl); g.lineTo(cxx,yh); g.stroke();
+      g.beginPath(); g.moveTo(cxx-6,yl); g.lineTo(cxx+6,yl); g.stroke();
+      g.beginPath(); g.moveTo(cxx-6,yh); g.lineTo(cxx+6,yh); g.stroke();
+      g.globalAlpha=1;
+      labelY=Math.min(labelY, yh-9);   /* підпис вище за вусик, а не поверх нього */
+    }
+    capt(g, f1(m.v), x+bw/2, labelY, ink, 11.5, true, 'center');
+    capt(g, m.n, x+bw/2, y0+18, soft, 10, false, 'center');
+  }
+  g.fillStyle=rose; g.fillRect(W-206, 20, 11, 11);
+  capt(g,'лічильники', W-190, 30, soft, 11, false, 'left');
+  g.fillStyle=teal; g.fillRect(W-104, 20, 11, 11);
+  capt(g,'нейромережі', W-88, 30, soft, 11, false, 'left');
+}
+function upd14(){
+  draw14();
+  var rows=MAIN.filter(function(m){
+    if(view14===1) return m.kind==='n';
+    if(view14===2) return m.kind==='c';
+    return true;
+  }).slice().sort(function(a,b){return a.v-b.v;});
+  I('v14a').textContent=rows[0].n+' · '+f2(rows[0].v);
+  I('v14b').textContent=f2(rows[1].v-rows[0].v);
+  var txt;
+  var over = !(rows[0].hi < rows[1].lo || rows[1].hi < rows[0].lo);
+  if(view14===1) txt='Серед мереж попереду «'+rows[0].n+'»: '+f2(rows[0].v)+' проти '+
+    f2(rows[1].v)+' у наступної, різниця '+f2(rows[1].v-rows[0].v)+' пункту. Купи по пʼятьох зернах '+
+    (over ? 'ПЕРЕТИНАЮТЬСЯ ('+f2(rows[0].lo)+'…'+f2(rows[0].hi)+' проти '+
+            f2(rows[1].lo)+'…'+f2(rows[1].hi)+'), тобто різниці на цих даних немає.'
+          : 'не перетинаються ('+f2(rows[0].lo)+'…'+f2(rows[0].hi)+' проти '+
+            f2(rows[1].lo)+'…'+f2(rows[1].hi)+'), тобто різниця справжня.');
+  else if(view14===2) txt='Серед лічильників попереду суміш біграми з уніграмою: '+f2(rows[0].v)+
+    '. Наступна модель відстає на '+f2(rows[1].v-rows[0].v)+
+    ' пункту. Жодного навчання тут немає — самі частоти й два дібрані числа.';
+  else txt='Найкраща модель на цьому корпусі — «'+rows[0].n+'» із перплексією '+f2(rows[0].v)+
+    '. Наступна відстає на '+f2(rows[1].v-rows[0].v)+' пункту. Зверни увагу на колір першого стовпчика.';
+  verd('v14v', view14===1?(over?'t-mid':'t-ok'):(rows[0].kind==='c'?'t-no':'t-ok'),
+    view14===1?(over?'купи перетинаються':'різниця справжня'):'найкраща — '+rows[0].n, txt);
+}
+
+/* ═══════ фігура 15 · дві сходинки ═══════ */
+function draw15(){
+  var cv=I('c15'); if(!cv) return;
+  var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  function get(n){ var i; for(i=0;i<MAIN.length;i++) if(MAIN[i].n===n) return MAIN[i].v; return 0; }
+  var wide=get('RNN 520'), trf=get('трансформер'), mix=get('суміш');
+  var win=wide-trf, lose=trf-mix;
+  var maxd=Math.max(win, lose);
+  var y0=H-72, hMax=H-140, bw=150, gap=120, x0=(W-(2*bw+gap))/2, i;
+  var vals=[win, lose], cols=[teal, rose],
+      names=['кращий за RNN 520', 'гірший за суміш'],
+      sub=['при однаковій кількості параметрів', 'проти таблиць частот'];
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-30,y0+0.5); g.lineTo(x0+2*bw+gap+30,y0+0.5); g.stroke();
+  for(i=0;i<2;i++){
+    var h=Math.max(2, hMax*vals[i]/maxd), x=x0+i*(bw+gap);
+    g.fillStyle=cols[i]; g.globalAlpha=0.85; roundRect(g,x,y0-h,bw,h,5); g.fill(); g.globalAlpha=1;
+    capt(g, f2(vals[i]), x+bw/2, y0-h-11, ink, 16, true, 'center');
+    capt(g, names[i], x+bw/2, y0+20, ink, 12, true, 'center');
+    capt(g, sub[i], x+bw/2, y0+36, soft, 10, false, 'center');
+  }
+  capt(g,'РІЗНИЦЯ ПЕРПЛЕКСІЙ, ПУНКТІВ', W/2, 30, soft, 11, true, 'center');
+}
+function upd15(){
+  draw15();
+  function get(n){ var i; for(i=0;i<MAIN.length;i++) if(MAIN[i].n===n) return MAIN[i].v; return 0; }
+  var wide=get('RNN 520'), trf=get('трансформер'), mix=get('суміш');
+  var win=wide-trf, lose=trf-mix;
+  I('v15a').textContent=f2(win)+' пункту';
+  I('v15b').textContent=f2(lose)+' пункту';
+  var higher = lose>win ? 'права сходинка вища' : 'ліва сходинка вища';
+  verd('v15v','t-mid',higher,
+    'При однаковій кількості параметрів трансформер обійшов рекурентну мережу на '+f2(win)+
+    ' пункту — обидві купи по зернах далеко одна від одної. І він же відстав від суміші '+
+    'лічильників на '+f2(lose)+'. Ліва сходинка — про архітектуру, права — про дані.');
+}
+
+/* ═══════ звʼязування ═══════ */
+segment('seg1', function(i){ w1=i; upd1(); });
+on('n2','input',upd2);
+on('b3','input',upd3);
+on('n4','input',upd4);
+on('t5','input',upd5);
+on('n6','input',upd6);
+on('n7','input',upd7);
+segment('seg8', function(i){ th8=i; upd8(); });
+on('n9','input',upd9);
+segment('seg10', function(i){ part10=i; upd10(); });
+on('k11','input',upd11);
+segment('seg12', function(i){ ord12=i; upd12(); });
+on('p13','input',upd13);
+segment('seg14', function(i){ view14=i; upd14(); });
+
+function redrawAll(){
+  upd1(); upd2(); upd3(); upd4(); upd5(); upd6(); upd7(); upd8();
+  upd9(); upd10(); upd11(); upd12(); upd13(); upd14(); upd15();
+}
+redrawAll();
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+
+})();
+</script>
+</html>

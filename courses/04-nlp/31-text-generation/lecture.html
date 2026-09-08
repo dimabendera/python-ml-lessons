@@ -1,0 +1,2673 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Як модель породжує текст</title>
+<meta name="description" content="Модель дає розподіл над наступним токеном, а нам потрібна ціла послідовність — звідси задача пошуку, у якої 8.2 · 10 у 77-му кандидатів на двадцяти токенах. Тема показує, чому жадібний вибір не є найімовірнішою послідовністю (0.2000 проти 0.2550 на двох кроках), як влаштований beam search і чому він любить коротке, чим платить нормалізація на довжину і що дав точний пошук у великій системі перекладу: порожній рядок у 51.8 % речень і BLEU 2.1 замість 30.3. На власному стенді промінь укорочує вихід із 2.00 до 1.32 токена при 7.21 в еталона, а за примусово однакової довжини жадібне декодування йде по колу в 0.9467 виходів проти 0.0000 у top-p. Службовий токен, якого в корпусі 0.0433, займає 0.7737 жадібного виходу — найкоротший доказ того, що правдоподібність продовження не є його якістю.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code,
+td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+</style>
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 7 · Тема 31</p>
+    <h1>Як модель породжує текст</h1>
+    <p class="stand">Навчена мовна модель уміє рівно одне: сказати, наскільки
+      ймовірне кожне наступне слово. А потрібне нам зовсім інше — ціле речення.
+      Між цими двома реченнями ховається окрема задача з власними правилами,
+      власними пастками й одним неприємним відкриттям: продовження, яке модель
+      вважає найімовірнішим, майже ніколи не є найкращим. Ця тема про те, чому
+      так, і що з цим роблять.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Модель уміє одне, а треба інше</a></li>
+        <li><a href="#s2">Скільки взагалі існує продовжень</a></li>
+        <li><a href="#s3">Жадібний вибір програє на двох кроках</a></li>
+        <li><a href="#s4">Промінь: кілька версій одночасно</a></li>
+        <li><a href="#s5">Коли зупинятись</a></li>
+        <li><a href="#s6">Чому промінь любить коротке</a></li>
+        <li><a href="#s7">Нормалізація на довжину і її ціна</a></li>
+        <li><a href="#s8">Прокляття променя</a></li>
+        <li><a href="#s9">Найімовірніше не означає найкраще</a></li>
+        <li><a href="#s10">Те саме на нашому стенді</a></li>
+        <li><a href="#s11">Інша дорога: тягнути навмання</a></li>
+        <li><a href="#s12">Температура</a></li>
+        <li><a href="#s13">Хвіст, і навіщо його різати</a></li>
+        <li><a href="#s14">Виродження: цикл, що сам себе годує</a></li>
+        <li><a href="#s15">Штраф за повтор і заборонені n-грами</a></li>
+        <li><a href="#s16">Чим це міряти</a></li>
+        <li><a href="#s17">Що з цього забрати</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../30-multilingual/lecture.html">← 30. Багатомовність і українська</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../32-ner/lecture.html">32. NER →</a></nav>
+  </div>
+</header>
+<main class="col">
+
+<p class="lead">Уяви, що ти вмієш робити одну-єдину річ: тобі показують початок
+речення, а ти називаєш, наскільки ймовірне кожне слово української мови на
+наступному місці. Не одне слово — а <b>всі</b> слова одразу, кожне зі своїм
+числом. Саме це вміє мовна модель, і нічого більше вона не вміє. Тема
+<a href="../16-language-model/lecture.html">16</a> навчила першу таку модель на
+лічильниках, теми <a href="../21-transformer-architecture/lecture.html">21</a> —
+<a href="../28-gpt-family/lecture.html">28</a> зробили її трансформером. Усі вони
+відповідають на одне питання: <b>що далі?</b></p>
+
+<p>Але коли ми просимо модель перекласти речення, дописати коментар до коду або
+скласти резюме документа, нам потрібне не одне слово. Нам потрібна ціла
+<b>послідовність</b> — і не абияка, а хороша. Між «модель знає розподіл над
+наступним токеном» і «на екрані готове речення» лежить окремий алгоритм. Він
+зветься <b>декодуванням</b>, він не є частиною моделі, його не навчають — його
+<b>обирають</b>. І та сама навчена модель із двома різними декодерами дає такий
+різний текст, що людина вирішить, ніби це дві різні системи.</p>
+
+<div class="note"><b>Що тут нового після теми 28.</b> Тема про GPT-родину вже
+показала пʼять способів дістати слово з розподілу й дала перше число. Тут ми
+беремо ту саму розвилку й розкопуємо її до дна: звідки взагалі береться задача
+пошуку, чому точну відповідь на неї знайти неможливо, чому <b>ширший</b> пошук
+дає <b>гірший</b> текст і чому жодна з метрик, якими це заведено міряти, не є
+якістю. Це найдовший ланцюжок «здорового глузду, який виявився хибним» у всьому
+курсі.</div>
+
+<h2 id="s1"><span class="num">Розділ 1</span>Модель уміє одне, а треба інше</h2>
+
+<p>Почнімо з того, що саме віддає модель. На вхід їй подають те, що вже написано:
+<span class="raw">x</span><span class="sub">1</span>,
+<span class="raw">x</span><span class="sub">2</span>, …,
+<span class="raw">x</span><span class="sub">t−1</span> — послідовність токенів
+(токен — це шматок тексту, з яким модель працює: слово, частина слова або знак).
+На виході вона дає одне число на кожен елемент словника:</p>
+
+<div class="eq">p( <span class="raw">x</span><span class="sub">t</span> = <span class="raw">w</span> | <span class="raw">x</span><span class="sub">1</span> … <span class="raw">x</span><span class="sub">t−1</span> )</div>
+
+<p>Читається це так: «ймовірність того, що на місці номер
+<span class="raw">t</span> стоїть слово <span class="raw">w</span>, за умови що
+перед ним стоїть ось такий початок». Вертикальна риска означає «за умови». Усі
+ці числа додатні й у сумі дають рівно одиницю — тобто це справжній розподіл
+імовірностей над словником. У нашому корпусі словник має близько восьми тисяч
+слів, отже модель на кожному кроці віддає вісім тисяч чисел.</p>
+
+<p>Тепер найважливіше. Імовірність <b>цілої</b> послідовності виводиться з цих
+покрокових чисел просто перемноженням:</p>
+
+<div class="eq">p( <span class="raw">x</span><span class="sub">1</span> … <span class="raw">x</span><span class="sub">T</span> ) = p( <span class="raw">x</span><span class="sub">1</span> ) × p( <span class="raw">x</span><span class="sub">2</span> | <span class="raw">x</span><span class="sub">1</span> ) × … × p( <span class="raw">x</span><span class="sub">T</span> | <span class="raw">x</span><span class="sub">1</span> … <span class="raw">x</span><span class="sub">T−1</span> )</div>
+
+<p>Це не гіпотеза й не наближення — це <b>ланцюгове правило</b>, тотожність із
+теорії ймовірностей, яка справджується завжди. Словами: ймовірність усього тексту
+дорівнює добутку ймовірностей кожного слова за умови всього, що йому передувало.
+Саме тому авторегресійну модель узагалі можна вважати моделлю тексту, а не лише
+моделлю наступного слова.</p>
+
+<p>А тепер поставимо задачу так, як її ставить математика. Ми хочемо не
+«якесь» продовження, а <b>найімовірніше</b>:</p>
+
+<div class="eq">найкраще = arg max<span class="sub">y</span> p( <span class="raw">y</span> | префікс )</div>
+
+<p><span class="raw">arg max</span> — це «той аргумент, на якому вираз досягає
+максимуму». Не саме максимальне значення, а те <span class="raw">y</span>, при
+якому воно досягається. Тобто: перебрати всі можливі продовження
+<span class="raw">y</span>, порахувати кожному ймовірність і взяти найкраще.</p>
+
+<p>Ось звідки береться <b>задача пошуку</b>. Модель дає оцінку кожному
+кандидатові, але кандидатів вона не перебирає — це робить окремий алгоритм.
+І весь подальший розділ теми — про те, що цей перебір нездійсненний, а всі
+практичні замінники йому мають ваду.</p>
+
+<figure>
+  <p class="fig-head">Петля породження</p>
+  <p class="fig-sub">Модель викликається знову й знову. Змінюється лише те, що
+    вже написано, і те, як із розподілу дістають одне слово.</p>
+  <div class="panel">
+    <canvas id="cA" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>що навчають</b><i class="sm">модель</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>що обирають</b><i class="sm">правило вибору</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-ok">головне</span><br>Праву коробку
+        можна замінити, не торкнувшись жодної ваги моделі. Саме тому декодування —
+        окрема тема, а не деталь архітектури.</p>
+    </div>
+  </div>
+  <figcaption>Модель бачить лише те, що вже написано, і віддає розподіл над
+    наступним токеном. Правило вибору перетворює вісім тисяч чисел на одне слово,
+    слово дописується до тексту, і все повторюється. Токен <b>кінець рядка</b>
+    (у нас він зветься <span class="raw">EOS</span>, end of sequence) — звичайний
+    елемент словника: коли правило обирає його, породження зупиняється.</figcaption>
+</figure>
+
+<h2 id="s2"><span class="num">Розділ 2</span>Скільки взагалі існує продовжень</h2>
+
+<p>Перебрати всі продовження — звучить як багато роботи. Порахуймо, скільки саме.</p>
+
+<p>Нехай у словнику <span class="raw">V</span> слів, а продовження має довжину
+<span class="raw">T</span> токенів. На першому місці може стояти будь-яке з
+<span class="raw">V</span> слів. На другому — теж будь-яке з
+<span class="raw">V</span>, і так для кожного з попередніх варіантів. Отже
+всього:</p>
+
+<div class="eq"><span class="raw">V</span> × <span class="raw">V</span> × … × <span class="raw">V</span> = <span class="raw">V</span><span class="sup">T</span></div>
+
+<p>Підставмо наші числа. Корпус цієї теми — українські переклади повідомлень
+програм, які вже лежать на машині; словник, зібраний із нього, має
+<b>7 867</b> слів. Довжина продовження — двадцять токенів. Тоді кандидатів:</p>
+
+<div class="eq">7 867<span class="sup">20</span> ≈ 8.2 × 10<span class="sup">77</span></div>
+
+<p>Щоб відчути це число: у видимому Всесвіті приблизно
+10<span class="sup">80</span> атомів — тобто <b>лише разів у сто більше</b>, ніж
+у нас кандидатів. Перебрати всі двадцятислівні продовження на нашому
+<b>іграшковому</b> словнику — задача того самого порядку, що перелічити атоми
+Всесвіту. У справжніх системах словник має 32-100 тисяч токенів, а відповідь
+буває довша за сотню токенів; там число не має ані назви, ані сенсу.</p>
+
+<figure>
+  <p class="fig-head">Кількість кандидатів росте по-справжньому швидко</p>
+  <p class="fig-sub">Висота стовпчика — кількість нулів у числі кандидатів,
+    а не саме число: інакше перший стовпчик був би невидимий.</p>
+  <div class="panel">
+    <canvas id="cB" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>словник</b><i>7 867</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>довжина 5</b><i class="sm">3.0 · 10¹⁹</i></div>
+        <div class="cellv"><b>довжина 20</b><i class="sm">8.2 · 10⁷⁷</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-no">безнадійно</span><br>Кожен доданий
+        токен множить кількість кандидатів на розмір словника. Це не «повільний
+        алгоритм», який можна прискорити, — це задача, у якої немає розміру.</p>
+    </div>
+  </div>
+  <figcaption>Шкала логарифмічна: одна поділка = у десять разів більше. Довжина
+    <b>3</b> дає 4.9 · 10¹¹ кандидатів — це вшістдесят разів більше, ніж людей на
+    Землі. Довжина <b>20</b> дає 8.2 · 10⁷⁷ — приблизно в сто разів менше, ніж
+    атомів у видимому Всесвіті. Пунктир якраз позначає цей рівень.</figcaption>
+</figure>
+
+<p>Може здатися, що безвихідь тут суто арифметична: мовляв, кандидатів багато,
+але ж є розумні алгоритми пошуку, які не перебирають усе підряд. Для деяких
+моделей це справді так. Якщо ймовірність наступного слова залежить лише від
+одного попереднього — як у біграмній моделі з теми
+<a href="../16-language-model/lecture.html">16</a>, — найімовірнішу послідовність
+знаходять динамічним програмуванням за час, лінійний по довжині. Саме так працює
+алгоритм Вітербі, і саме тому в старих системах точний пошук був звичайною
+справою.</p>
+
+<p>Нейронна мовна модель цю можливість руйнує. Вона дивиться на <b>увесь</b>
+префікс одразу, тож два різні початки ніколи не можна вважати «однаковим станом»
+і зливати. Динамічному програмуванню нема чого зливати — і воно вироджується в
+повний перебір.</p>
+
+<div class="note warn"><b>Це доведено, і формулювання суворіше, ніж очікуєш.</b>
+Для рекурентних мовних моделей питання «чи існує рядок з імовірністю, більшою за
+задане число» у загальному випадку <b>нерозвʼязне</b> — тобто алгоритму, який
+завжди дає відповідь, не існує взагалі, а не просто «його ще не знайшли». Якщо
+додати умову, яка робить модель коректним розподілом, задача стає розвʼязною,
+але пошук найкращого рядка обмеженої довжини лишається
+<span class="raw">NP</span>-повним, і навіть наближати його з наперед заданою
+точністю не вийде. Практичний висновок один: <b>точного декодування не буде
+ніколи</b>, і всі відомі способи — це евристики, тобто правила, які часто дають
+непогану відповідь і жодного разу нічого не гарантують.</div>
+
+<h2 id="s3"><span class="num">Розділ 3</span>Жадібний вибір програє на двох кроках</h2>
+
+<p>Найпростіша евристика напрошується сама: якщо перебрати всі послідовності
+не вийде, беремо на кожному кроці найімовірніше слово й не озираємось. Це
+<b>жадібне декодування</b> (greedy decoding).</p>
+
+<p>Слово «жадібне» тут технічний термін, а не оцінка: так називають будь-який
+алгоритм, який на кожному кроці робить найкращий <b>локальний</b> вибір і ніколи
+його не переглядає. Жадібне декодування детерміноване (той самий вхід завжди дає
+той самий вихід), коштує рівно один прохід моделі на токен — і має ваду, яку
+найлегше побачити на двох кроках.</p>
+
+<p>Візьмімо початок «не вдалося» і уявімо, що словник складається з кількох слів.
+Модель дає такі числа.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1 · що каже модель</span>
+    <p>Після «не вдалося» три кандидати:
+      <b>відкрити</b> — 0.5, <b>зберегти</b> — 0.3, <b>знайти</b> — 0.2.
+      Жадібне правило бере «відкрити»: воно найімовірніше.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · після «відкрити»</span>
+    <p>Модель вагається майже порівну: <b>файл</b> — 0.4,
+      <b>теку</b> — 0.3, <b>документ</b> — 0.3. Найкраще, що тут можна взяти, —
+      0.4.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · після «зберегти»</span>
+    <p>А тут модель майже впевнена: <b>файл</b> — 0.85, <b>зміни</b> — 0.15.</p>
+  </div>
+  <div class="step"><span class="lbl">підсумок</span>
+    <p>Жадібний шлях: 0.5 × 0.4 = <b>0.20</b>.<br>
+       Шлях через «зберегти»: 0.3 × 0.85 = <b>0.255</b>.</p>
+    <p>Жадібне правило дало <b>гіршу</b> послідовність: 0.255 ÷ 0.2000 = 1.275,
+      тобто найкращий шлях на <b>27.5 %</b> імовірніший за жадібний. І це попри
+      те, що на першому кроці жадібність обрала варіант, майже вдвічі
+      ймовірніший за суперника.</p>
+  </div>
+</div>
+
+<p>Причина проста й важлива: <b>ймовірність першого кроку нічого не каже про
+те, що буде на другому</b>. «Відкрити» — популярний початок, після якого модель
+розгублена; «зберегти» — рідший початок, після якого все зрозуміло. Жадібний
+алгоритм цієї другої обставини не бачить, бо дивиться рівно на один крок уперед.</p>
+
+<div class="note"><b>Це не патологія прикладу.</b> Явище має назву — помилка
+пошуку (search error): алгоритм повернув не те, що модель вважає найкращим. Для
+жадібного декодування помилка пошуку — не рідкість, а <b>норма</b>. У великій
+системі машинного перекладу (трансформер, англійська → німецька, увесь тест на
+2 169 речень) точний пошук показав, що жадібне декодування знаходить справжній
+максимум лише в <b>26.4 %</b> випадків: у <b>73.6 %</b> речень існувало інше
+продовження, яке сама модель оцінює вище. Промінь ширини 10 помиляється в
+<b>57.7 %</b> — краще, але теж більшість.</div>
+
+<figure>
+  <p class="fig-head">Два кроки, на яких жадібність програє</p>
+  <p class="fig-sub">Товщина лінії — ймовірність гілки. Праворуч від кожного
+    листка стоїть добуток уздовж шляху.</p>
+  <div class="panel">
+    <canvas id="cC" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>жадібно</b><i>0.2000</i></div>
+        <div class="cellv"><b>найкраще</b><i>0.2550</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>перебрано шляхів</b><i>7</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-no">жадібність програла</span><br>
+        Перший крок вона виграла з великим запасом (0.5 проти 0.3) — і саме тому
+        втратила все на другому.</p>
+    </div>
+  </div>
+  <figcaption>Рожевим — шлях, який обирає жадібне правило; бірюзовим — шлях із
+    найбільшою ймовірністю. Вони різні. Числа вигадані навмисно: на двох кроках
+    і сімох гілках усе можна перевірити на папері, а явище рівно те саме, що на
+    двадцятьох кроках і восьми тисячах гілок.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">Розділ 4</span>Промінь: кілька версій одночасно</h2>
+
+<p>Якщо біда в тому, що жадібний алгоритм тримає <b>одну</b> версію відповіді, —
+тримаймо кілька. Це і є <code>beam search</code>, у курсі його вперше показала
+тема <a href="../19-seq2seq/lecture.html">19</a>. Українською інколи кажуть
+«променевий пошук», але прижилась англійська назва; кількість версій, які ми
+тримаємо, звуть <b>шириною променя</b> (beam width).</p>
+
+<p>Алгоритм повністю вміщується в чотири рядки.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1</span>
+    <p>На початку є одна версія — порожня, з оцінкою 0.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2 · розширення</span>
+    <p>Кожну з версій, які ми тримаємо, продовжуємо <b>кожним</b> словом
+      словника. Якщо ширина <span class="raw">k</span>, а словник має
+      <span class="raw">V</span> слів, виходить <span class="raw">k</span> ×
+      <span class="raw">V</span> кандидатів.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 3 · відбір</span>
+    <p>Кожному кандидатові рахуємо оцінку й лишаємо
+      <b><span class="raw">k</span> найкращих</b>. Решту викидаємо назавжди —
+      їх ніхто вже не перегляне.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4</span>
+    <p>Повторюємо крок 2, поки не спрацює правило зупинки.</p>
+  </div>
+</div>
+
+<p>Одна деталь важлива для розуміння всього подальшого: <b>оцінка — це не
+добуток, а сума логарифмів</b>. Замість перемножувати ймовірності, беруть
+логарифм кожної й додають:</p>
+
+<div class="eq">оцінка( <span class="raw">y</span> ) = log p<span class="sub">1</span> + log p<span class="sub">2</span> + … + log p<span class="sub">m</span></div>
+
+<p>Причина суто обчислювальна. Модель рахує 32-бітними числами з рухомою
+комою, а найменше додатне число, яке в таке вміщається, — приблизно
+10<span class="sup">−38</span>. Двадцять множників по 0.1 дають
+10<span class="sup">−20</span>, і це ще вміщається; пʼятдесят множників дають
+10<span class="sup">−50</span>, і воно <b>перетворюється на нуль</b>. Далі всі
+кандидати мають оцінку нуль і стають нерозрізненними. Логарифм переводить
+добуток у суму й цього не допускає. Порядок кандидатів при цьому не міняється:
+логарифм — зростаюча функція, тож більшій імовірності завжди відповідає більший
+логарифм.</p>
+
+<p>І ще одна річ, яку варто помітити відразу: <b>логарифм числа, меншого за
+одиницю, відʼємний</b>. log 0.5 = −0.69, log 0.05 = −3.00. Отже оцінка завжди
+відʼємна, і «найкраща» означає «найближча до нуля». Ця дрібниця через два розділи
+переросте в головну ваду методу.</p>
+
+<p>Повернімось до нашого дерева. Ширина 1 — це рівно жадібне декодування, тобто
+жадібність не окремий метод, а окремий випадок променя. Ширина 2 вже знаходить
+правильну відповідь: після першого кроку в промені лишаються «відкрити»
+(−0.6931) і «зберегти» (−1.2040), обидва розширюються, і виграє
+−1.2040 + (−0.1625) = <b>−1.3665</b> проти −0.6931 + (−0.9163) = −1.6094. Це ті
+самі 0.255 і 0.2000, тільки в логарифмах.</p>
+
+<figure>
+  <p class="fig-head">Промінь крок за кроком</p>
+  <p class="fig-sub">Те саме дерево. Постав ширину й прокрути кроки: видно, що
+    саме промінь тримає, а що вже викинув.</p>
+  <div class="panel">
+    <canvas id="cD" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">ширина променя</span>
+        <div class="seg" id="segD">
+          <button data-i="0" aria-pressed="true">1</button>
+          <button data-i="1" aria-pressed="false">2</button>
+          <button data-i="2" aria-pressed="false">3</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="stD">крок <output id="stDo">1</output></label>
+        <input type="range" id="stD" min="1" max="2" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>у промені</b><i id="vDa">—</i></div>
+        <div class="cellv"><b>краща оцінка</b><i id="vDb">—</i></div>
+      </div>
+      <p class="verdict" id="vD"></p>
+    </div>
+  </div>
+  <figcaption>Суцільні лінії — гілки, які промінь тримає; бліді — уже викинуті.
+    Оцінка поруч із кожною версією — сума натуральних логарифмів. Зверни увагу, що
+    саме змінює ширина: не якість оцінювання, а <b>кількість шансів</b> дожити
+    до кроку, на якому все стане зрозуміло.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">Розділ 5</span>Коли зупинятись</h2>
+
+<p>Питання виглядає технічним, а насправді воно вирішує половину поведінки
+методу. Жадібному алгоритмові все просто: він зупиняється, коли обрав токен
+кінця рядка. У променя версій кілька, і закінчуються вони в різний час.</p>
+
+<p>Заведений порядок такий. Коли якась із версій обрала
+<span class="raw">EOS</span>, її <b>відкладають убік</b> як готову й більше не
+розширюють — але вона й далі бере участь у відборі найкращих
+<span class="raw">k</span>. Пошук триває, доки або не набереться
+<span class="raw">k</span> готових версій, або не буде досягнуто межі довжини.
+Наприкінці з усіх готових беруть найкращу за оцінкою.</p>
+
+<div class="note"><b>Чому це не дрібниця.</b> Готова версія свою оцінку більше
+не псує — вона зафіксована. А незавершені версії з кожним кроком стають гіршими,
+бо до відʼємної суми додається ще один відʼємний доданок. Тобто правило зупинки
+влаштоване так, що <b>короткі готові відповіді поступово витісняють довгі
+незавершені</b> просто з плином кроків. Це не помилка реалізації, це наслідок
+того, що ми складаємо відʼємні числа, — і наступний розділ саме про нього.</div>
+
+<p>Є й друге питання: коли зупинятись <b>напевно</b>. Строго кажучи, промінь має
+право зупинитись лише тоді, коли жодна з живих версій уже не може обігнати
+найкращу готову. Для цього потрібна оцінка згори на те, скільки версія ще може
+набрати, — а оскільки всі доданки відʼємні, така оцінка є: жива версія ніколи не
+покращить свою поточну суму. Отже правило «зупиняйся, коли найкраща жива версія
+гірша за найкращу готову» математично коректне. На практиці ним рідко
+користуються, бо воно змушує пошук працювати довше, а виграш крихітний.</p>
+
+<h2 id="s6"><span class="num">Розділ 6</span>Чому промінь любить коротке</h2>
+
+<p>Ми вже двічі сказали, що оцінка — сума відʼємних чисел. Тепер подивімось, що
+з цього випливає.</p>
+
+<p>Кожен новий токен додає до оцінки ще один відʼємний доданок. Отже
+<b>подовження версії ніколи не покращує її оцінку</b>. Ніколи. Навіть якщо
+наступне слово ідеально доречне й модель дає йому ймовірність 0.99, доданок
+дорівнює log 0.99 = −0.01 — маленький, але відʼємний.</p>
+
+<p>Звідси: за інших рівних умов коротша послідовність <b>завжди</b> має вищу
+оцінку, ніж довша. І це не вада алгоритму, а чесна властивість імовірності:
+короткий текст справді ймовірніший за довгий, бо ймовірність довгого — це
+добуток більшої кількості множників, кожен менший за одиницю.</p>
+
+<div class="note warn"><b>Пастка тут не в математиці, а в підміні задачі.</b>
+Ми хотіли «найкраще продовження», а поставили задачу «найімовірніше
+продовження». Це різні речі, і різниця найяскравіше видно саме в довжині: із
+двох правильних перекладів імовірніший той, що коротший, — а кращий не
+обовʼязково той самий.</div>
+
+<p>Порахуймо на конкретних числах. Дві версії відповіді, обидві осмислені.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>версія</th><th>токенів</th><th>логарифми по токенах</th><th>сума</th><th>на токен</th></tr></thead>
+<tbody>
+<tr><td>коротка</td><td>2</td><td>−0.70, −1.50</td><td>−2.20</td><td>−1.10</td></tr>
+<tr><td>довга</td><td>5</td><td>−0.70, −0.40, −0.30, −0.50, −0.60</td><td>−2.50</td><td>−0.50</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>За сумою виграє коротка: −2.20 ближче до нуля, ніж −2.50. За середнім на
+токен виграє довга, і з великим запасом: −0.50 проти −1.10. Тобто модель
+насправді <b>значно впевненіша</b> в кожному слові довгої версії — але промінь
+цього не бачить, бо порівнює суми.</p>
+
+<h2 id="s7"><span class="num">Розділ 7</span>Нормалізація на довжину і її ціна</h2>
+
+<p>Ліки напрошуються: поділити оцінку на довжину. У найпоширенішому вигляді
+ділять не просто на кількість токенів, а на кількість токенів у степені
+<span class="raw">alpha</span>:</p>
+
+<div class="eq">оцінка = ( log p<span class="sub">1</span> + … + log p<span class="sub">m</span> ) ÷ m<span class="sup">alpha</span></div>
+
+<p>Тут <span class="raw">m</span> — кількість токенів у версії, а
+<span class="raw">alpha</span> — число від 0 до 1, яке ми обираємо самі. При
+<span class="raw">alpha = 0</span> знаменник дорівнює одиниці й нічого не
+змінюється: це проста сума. При <span class="raw">alpha = 1</span> оцінкою стає
+середній логарифм на токен, тобто довжина перестає впливати зовсім. Проміжні
+значення — компроміс, і <span class="raw">alpha</span> добирають так само, як
+будь-який інший гіперпараметр: на відкладеній частині даних.</p>
+
+<figure>
+  <p class="fig-head">Одна ручка перевертає відповідь</p>
+  <p class="fig-sub">Ті самі дві версії з таблиці вище. Крути показник
+    <span class="raw">alpha</span> й дивись, яка з них виграє.</p>
+  <div class="panel">
+    <canvas id="cE" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="alE">показник <span class="raw">alpha</span> <output id="alEo">0.00</output></label>
+        <input type="range" id="alE" min="0" max="100" step="2" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>коротка</b><i id="vEa">—</i></div>
+        <div class="cellv"><b>довга</b><i id="vEb">—</i></div>
+      </div>
+      <p class="verdict" id="vE"></p>
+    </div>
+  </div>
+  <figcaption>Перелом стається на <b>alpha ≈ 0.14</b>: до нього виграє коротка
+    версія, після — довга. Зверни увагу, що жодне число моделі при цьому не
+    змінилось. Змінилось лише те, <b>що ми називаємо кращим</b>.</figcaption>
+</figure>
+
+<p>А тепер про ціну, бо ліки не безкоштовні. Їх три, і кожна варта того, щоб
+проговорити.</p>
+
+<p><b>Перша: ми більше не шукаємо найімовірнішу послідовність.</b> Поділена на
+довжину сума логарифмів — це не логарифм жодної ймовірності. Тобто ми свідомо
+перестали розвʼязувати задачу, яку поставили в розділі 1, і почали розвʼязувати
+іншу, для якої немає ані моделі, ані обґрунтування. Це працює, і це чесно
+називати підпіркою, а не теорією.</p>
+
+<p><b>Друга: зʼявився гіперпараметр, який залежить від задачі.</b> Ані теорія,
+ані модель не кажуть, яким має бути <span class="raw">alpha</span>: його
+добирають на відкладених даних окремо для кожної системи. Число з чужої статті
+переносити не можна — воно дібране під чужу довжину відповіді й чужий корпус.</p>
+
+<p><b>Третя, і найнеприємніша: нормалізація лікує симптом.</b> Вона прибирає
+перекос у бік коротких відповідей, але не прибирає причини, через яку максимум
+правдоподібності взагалі не збігається з якістю. Ось як це видно на числах.
+У великій системі перекладу (англійська → французька, тисяча речень тесту)
+міряли якість перекладу для різних ширин променя:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>ширина</th><th>5</th><th>10</th><th>100</th><th>500</th></tr></thead>
+<tbody>
+<tr><td>без нормалізації</td><td>36.42</td><td>36.30</td><td>32.83</td><td>14.66</td></tr>
+<tr class="hot"><td>нормалізація на довжину</td><td>36.02</td><td>35.94</td><td>35.80</td><td>35.11</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Прочитаймо цю таблицю уважно, бо в ній два висновки, і другий важливіший.
+<b>Перший:</b> нормалізація справді рятує від обвалу — на ширині 500 без неї
+якість падає з 36.42 до <b>14.66</b>, тобто система розвалюється, а з нею
+лишається <b>35.11</b>. <b>Другий:</b> найкраще число в усій таблиці —
+<b>36.42</b>, і воно стоїть у рядку <b>без</b> нормалізації, при
+<b>найменшій</b> ширині. Нормалізація не підняла стелю; вона лише не дала
+провалитись підлозі. І навіть із нею ширший промінь дає гірше, ніж вузький:
+35.11 проти 36.02.</p>
+
+<h2 id="s8"><span class="num">Розділ 8</span>Прокляття променя</h2>
+
+<p>Ось твердження, у яке важко повірити з першого разу: <b>ширший промінь
+шукає краще, а текст дає гірший</b>. Це не парадокс і не помилка вимірювання —
+це відтворюваний факт, який знаходили незалежно і в машинному перекладі, і у
+вільному породженні тексту.</p>
+
+<p>Почнімо з перекладу, бо там найдовший ряд вимірів. Ось якість перекладу
+(за метрикою BLEU: що більше, то краще) для ширин від 1 до 1000. Дані —
+системи машинного перекладу 2016 року, кожна навчена на своїй мовній парі.</p>
+
+<figure>
+  <p class="fig-head">Ширший промінь — гірший переклад</p>
+  <p class="fig-sub">Перемкни нормалізацію й подивись, як міняється форма кривої
+    і де стоїть максимум.</p>
+  <div class="panel">
+    <canvas id="cF" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">оцінка версії</span>
+        <div class="seg" id="segF">
+          <button data-i="0" aria-pressed="true">сума логарифмів</button>
+          <button data-i="1" aria-pressed="false">поділена на довжину</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкраща ширина</b><i id="vFa">—</i></div>
+        <div class="cellv"><b>там якість</b><i id="vFb">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>падіння до ширини 1000</b><i id="vFc">—</i></div>
+      </div>
+      <p class="verdict" id="vF"></p>
+    </div>
+  </div>
+  <figcaption>Три мовні пари з восьми, які міряли. Вісь ширини логарифмічна.
+    Без нормалізації максимум стоїть на ширині <b>4-30</b> залежно від пари, а
+    далі якість падає, подекуди катастрофічно: російсько-англійська дає
+    <b>26.9</b> на ширині 4 і <b>8.1</b> на ширині 1000. З нормалізацією обвал
+    майже зникає, максимум переїжджає на <b>30-50</b> — але після нього крива
+    все одно йде вниз.</figcaption>
+</figure>
+
+<p>Тепер про причину. Вона стає очевидною, щойно поставити крайнє питання: а що
+буде, якщо шукати <b>точно</b>, тобто справді знайти найімовірнішу
+послідовність? Для маленьких моделей це можна зробити. Зробили — і результат
+такий, що його доводиться перечитувати двічі.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>пошук</th><th>BLEU</th><th>довжина до еталона</th><th>помилок пошуку</th><th>порожній рядок</th></tr></thead>
+<tbody>
+<tr><td>жадібний</td><td>29.3</td><td>1.02</td><td>73.6 %</td><td>0.0 %</td></tr>
+<tr><td>промінь 10</td><td>30.3</td><td>1.00</td><td>57.7 %</td><td>0.0 %</td></tr>
+<tr class="hot"><td>точний</td><td>2.1</td><td>0.06</td><td>0.0 %</td><td>51.8 %</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Умови однакові для всіх трьох рядків: трансформер, переклад з англійської
+німецькою, увесь тест на 2 169 речень. Точний пошук за побудовою не робить
+жодної помилки пошуку — він знаходить справжній максимум. І цей максимум
+виявився <b>порожнім рядком у 51.8 % речень</b>. Тобто для більш ніж половини
+вхідних речень модель вважає найімовірнішим перекладом <b>ніщо</b>. Якість
+падає з 30.3 до 2.1, а середня довжина виходу — до 6 % від еталонної.</p>
+
+<div class="note warn"><b>Ось де ховається головна думка теми.</b> Промінь дає
+пристойний текст <b>не тому</b>, що добре шукає максимум, а тому, що шукає його
+<b>погано</b>. Він знаходить щось не надто ймовірне — і саме тому придатне.
+Розширення променя наближає нас до справжнього максимуму, а справжній максимум —
+це порожнеча. Ширина променя виявляється не «якістю пошуку», а несподівано
+вдалою <b>регуляризацією</b>: ми навмисне не дошукуємо до кінця.</div>
+
+<p>Це пояснює і форму кривої з фігури вище. Спершу, від ширини 1 до 4-30,
+розширення допомагає: воно рятує від грубих жадібних промахів на кшталт того,
+що ми бачили на двох кроках. Далі воно починає шкодити: промінь дедалі частіше
+знаходить справді найімовірніші — і тому короткі, безбарвні, а зрештою й
+порожні — відповіді.</p>
+
+<p>Є й спроба пояснити, <b>чому саме</b> недошуканий максимум виявляється
+кращим за справжній. Найпереконливіша з відомих така: якщо до задачі
+максимізації правдоподібності додати штраф за нерівномірність — щоб
+несподіваність (тобто мінус логарифм імовірності) розподілялась по реченню
+рівно, а не збиралась в одному місці, — то точний розвʼязок цієї нової задачі
+збігається з тим, що знаходить промінь у старій. Тобто промінь ненавмисно
+розвʼязує задачу, яку людська мова й справді розвʼязує: людина розподіляє
+інформацію по фразі рівномірно, а не вивалює все в останньому слові. Це
+гіпотеза, але вона єдина, що дає промінню виправдання, а не просто описує його
+поведінку.</p>
+
+<h2 id="s9"><span class="num">Розділ 9</span>Найімовірніше не означає найкраще</h2>
+
+<p>Тепер узагальнімо, бо йдеться вже не про промінь.</p>
+
+<p>Мовну модель навчають так: показують справжній людський текст і підкручують
+ваги, щоб цей текст став для моделі якомога ймовірнішим. Це називається оцінкою
+максимальної правдоподібності, і тема
+<a href="../24-transformer-training/lecture.html">24</a> показала її в дії.
+Здавалося б, звідси випливає: якщо модель навчена робити людський текст
+імовірним, то найімовірніший текст і буде найлюдськішим.</p>
+
+<p>Не випливає. Ось чому — і це найважливіший абзац теми.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1</span>
+    <p>Навчання робить високою ймовірність <b>усього корпусу разом</b>, тобто
+      величезної кількості різних текстів. Воно нічого не обіцяє про те, який
+      саме окремий рядок опиниться найімовірнішим.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2</span>
+    <p>Людський текст <b>не є</b> найімовірнішим текстом навіть за людською
+      міркою. Люди навмисне кажуть несподіване: у цьому й полягає зміст
+      повідомлення. Абсолютно передбачуване речення не несе інформації.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 3</span>
+    <p>Отже максимум розподілу лежить не там, де живе людський текст, а на
+      краю: у найбезпечнішому, найкоротшому, найзагальнішому. Це видно й
+      числом — про нього нижче.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4</span>
+    <p>Тому пошук максимуму й пошук хорошого тексту — <b>дві різні задачі</b>,
+      і що краще ми розвʼязуємо першу, то гірше виходить друга.</p>
+  </div>
+</div>
+
+<p>Число, яке це показує найпростіше, отримали на великій моделі GPT-2 (762
+мільйони ваг) на текстах із вебу: породили пʼять тисяч уривків завдовжки до 200
+токенів і порахували, наскільки кожен спосіб декодування дивує саму модель
+(це перплексія — міра з теми
+<a href="../16-language-model/lecture.html">16</a>; що вона більша, то менш
+очікуваний текст).</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>спосіб</th><th>перплексія</th><th>повторів</th></tr></thead>
+<tbody>
+<tr class="hot"><td>жива людина</td><td>12.38</td><td>0.28 %</td></tr>
+<tr><td>жадібне</td><td>1.50</td><td>73.66 %</td></tr>
+<tr><td>промінь 16</td><td>1.48</td><td>28.94 %</td></tr>
+<tr><td>чисте семплювання</td><td>22.73</td><td>0.22 %</td></tr>
+<tr><td><span class="raw">top-k</span> = 40</td><td>6.88</td><td>0.78 %</td></tr>
+<tr><td><span class="raw">top-p</span> = 0.95</td><td>13.13</td><td>0.36 %</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Читаємо. Промінь ширини 16 дає перплексію <b>1.48</b> — це означає, що модель
+майже не вагається на кожному кроці, тобто текст для неї гранично очікуваний.
+Жива людина дає <b>12.38</b>, тобто дивує модель у <b>8.4 раза</b> сильніше. Отже
+<b>текст, який модель вважає найправдоподібнішим, зовсім не схожий на текст,
+який пише людина</b> — і схожість тут навіть не «трохи менша», а на порядок.</p>
+
+<p>Друга колонка каже те саме з іншого боку. Частка згенерованих уривків, які
+закінчуються повторюваною фразою: у людини <b>0.28 %</b>, у жадібного
+<b>73.66 %</b>. Три чверті. Найближче до людини підійшло не те, що максимізує
+правдоподібність, а те, що тягне навмання з обрізаного розподілу: <b>0.36 %</b>
+у <span class="raw">top-p</span> при перплексії 13.13, майже точно як у
+людини.</p>
+
+<div class="note"><b>Головне речення теми, і тепер воно заслужене:</b>
+правдоподібність продовження не є його якістю. Це не риторика — це три
+незалежні заміри поспіль, у яких максимізація правдоподібності програє,
+а іноді розвалюється повністю.</div>
+
+<h2 id="s10"><span class="num">Розділ 10</span>Те саме на нашому стенді</h2>
+
+<p>Числа двох попередніх розділів узяті з великих систем. Природне питання: а чи
+видно те саме на моделі, яку можна навчити за кілька хвилин на ноутбуці без
+відеокарти? Видно — і це варте окремого розділу, бо на дрібному стенді можна
+подивитись на кожну ручку окремо.</p>
+
+<p><b>Стенд.</b> Корпус — українські переклади повідомлень програм, які вже
+лежать у системі
+(<code>/usr/share/locale/uk/LC_MESSAGES</code>); той самий, що в темах
+<a href="../16-language-model/lecture.html">16</a> і
+<a href="../28-gpt-family/lecture.html">28</a>. Словник — 7 867 слів,
+навчальна частина — 70 767 рядків. Модель — трансформер-декодер на два
+шари, 128 вимірів. Задача однакова для всіх способів: дано перші три
+слова перевірного рядка, дописати решту.</p>
+
+<h3>Спершу про швидкість навчання, бо тут ховається окремий урок</h3>
+
+<p>Швидкість навчання добирали логарифмічною сіткою з пʼятьох точок на
+<b>відкладеній</b> частині (не на перевірній: інакше це було б підглядання у
+відповідь). Але добирали <b>двічі</b>, на двох різних бюджетах — і результат
+вийшов різний.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>швидкість навчання</th><th>0.001</th><th>0.003</th><th>0.01</th><th>0.02</th><th>0.03</th></tr></thead>
+<tbody>
+<tr><td>1 000 кроків</td><td>201.51</td><td>150.14</td><td>139.10</td><td>135.21</td><td>136.91</td></tr>
+<tr><td>2 000 кроків</td><td>150.31</td><td>118.25</td><td>109.80</td><td>—</td><td>110.31</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Обидві сітки мають мінімум <b>усередині</b>, тобто краї перевірено. Але
+мінімуми стоять у різних місцях: на короткому бюджеті виграє <b>0.02</b>, на
+вдвічі довшому — <b>0.01</b>. Це не випадковість, а закономірність: коротке
+навчання систематично тягне до <b>більшого</b> кроку, бо модель мусить устигнути,
+і «краще» стає те, що швидше збігається, а не те, що дає кращий кінець. Практичний
+висновок: <b>гіперпараметр добирають на тому бюджеті, на якому потім
+навчатимеш</b>, а число з чужого прогону не переносять.</p>
+
+<div class="note warn"><b>І одразу чесна засторога: сітка теж має розкид.</b>
+Та сама конфігурація з іншим зерном випадковості дає іншу перплексію, і розкид
+на пʼятьох зернах становить <b>1.47</b> пункту. Отже різницю, меншу за
+це число, оголошувати перемогою не можна. Ми перевірили саме це: на другому
+зерні 0.02 дає 134.45, а 0.03 — 138.38, тобто порядок двох найкращих точок
+<b>відтворився</b>, і відрив (3.93) більший за розкид. А от у сітці на
+подвійному бюджеті різниця між двома найкращими точками — <b>0.51</b>, тобто
+<b>менша</b> за розкид між зернами. Там правильно казати не «0.01 — оптимум», а
+«верхівка кривої пласка, і ми взяли з неї одну точку».</div>
+
+<h3>Тепер саме декодування</h3>
+
+<p>Порівнюємо чотири величини. <b>Довжина</b> — скільки слів вийшло.
+<b>Цикл</b> — частка виходів, у яких чотири слова поспіль повторились. <b>F1</b> —
+наскільки набір слів збігається з тим, що стояло в тексті насправді, і поруч
+його <b>купа</b>, тобто найменше й найбільше значення на пʼятьох зернах.
+<b>logp на токен</b> — середній логарифм імовірності породжених слів.</p>
+
+<p>Пʼять зерен тут не формальність: різниця, менша за ширину купи, різницею не
+є, і кілька рядків нижче саме такі.</p>
+
+<div class="scroll-x">
+<table class="nums" id="tbl-ways">
+<thead><tr><th>спосіб</th><th>довжина</th><th>цикл</th><th>F1</th><th>купа F1</th><th>logp/токен</th></tr></thead>
+<tbody>
+<tr><td>жадібне</td><td>2.00</td><td>0.0067</td><td>0.1316</td><td>0.1243..0.1417</td><td>-1.6390</td></tr>
+<tr><td>температура 0.7</td><td>2.53</td><td>0.0000</td><td>0.1101</td><td>0.0967..0.1293</td><td>-2.7568</td></tr>
+<tr><td>температура 1.0</td><td>4.26</td><td>0.0000</td><td>0.0733</td><td>0.0693..0.0788</td><td>-4.5795</td></tr>
+<tr><td>температура 1.3</td><td>7.84</td><td>0.0000</td><td>0.0441</td><td>0.0413..0.0475</td><td>-6.5401</td></tr>
+<tr><td><span class="raw">top-k = 5</span></td><td>2.38</td><td>0.0013</td><td>0.1195</td><td>0.1093..0.1275</td><td>-2.1572</td></tr>
+<tr><td><span class="raw">top-k = 40</span></td><td>3.20</td><td>0.0013</td><td>0.0927</td><td>0.0862..0.0977</td><td>-3.0565</td></tr>
+<tr><td><span class="raw">top-p = 0.9</span></td><td>3.82</td><td>0.0000</td><td>0.0781</td><td>0.0734..0.0891</td><td>-3.8818</td></tr>
+<tr><td><span class="raw">top-p = 0.95</span></td><td>3.94</td><td>0.0000</td><td>0.0761</td><td>0.0711..0.0818</td><td>-4.2181</td></tr>
+<tr><td>промінь 2</td><td>1.56</td><td>0.0000</td><td>0.1287</td><td>0.1130..0.1366</td><td>-1.6497</td></tr>
+<tr class="hot"><td>промінь 2 + норм.</td><td>2.29</td><td>0.0140</td><td>0.1463</td><td>0.1381..0.1534</td><td>-1.5822</td></tr>
+<tr><td>промінь 4</td><td>1.39</td><td>0.0020</td><td>0.1248</td><td>0.1158..0.1317</td><td>-1.6955</td></tr>
+<tr><td>промінь 4 + норм.</td><td>2.84</td><td>0.0260</td><td>0.1427</td><td>0.1341..0.1527</td><td>-1.5280</td></tr>
+<tr><td>промінь 8</td><td>1.32</td><td>0.0000</td><td>0.1213</td><td>0.1142..0.1281</td><td>-1.7392</td></tr>
+<tr><td>промінь 8 + норм.</td><td>4.15</td><td>0.0720</td><td>0.1360</td><td>0.1243..0.1519</td><td>-1.4511</td></tr>
+<tr><td>справжнє продовження</td><td>7.21</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note"><b>Чому в таблиці немає distinct-2.</b> Ми його порахували —
+і викинули. На всіх без винятку способах він вийшов між 0.90 і 1.00, тобто нічого
+не розрізняє. Причина проста: продовження тут завдовжки два-чотири токени, а
+в такому уривку парам слів просто нема де повторитись. <b>distinct-2 придуманий
+для довгого тексту</b>, і на короткому він міряє довжину, а не різноманіття.
+Метрика, яка на твоїх даних однакова в усіх, — це не «усі однаково добрі», це
+«метрика тут не працює».</div>
+
+<p>Чотири речі варто прочитати з цієї таблиці, і четверта — про те, чого в ній
+<b>не</b> доведено.<br><br>
+<b>Перше: промінь укорочує відповідь, монотонно й чисто.</b> Від ширини 1 до 8
+довжина падає 2.00 → 1.56 → 1.39 → <b>1.32</b> токена, тоді як у справжнього
+продовження їх <b>7.21</b>. І це не тенденція, а доведена різниця: купи по
+пʼятьох зернах <b>не перетинаються на жодному кроці</b> — 1.87..2.13, потім
+1.44..1.66, потім 1.35..1.45, потім 1.27..1.37. Це те саме зміщення на довжину з
+розділу 6, тільки тепер на власних числах: що ширший пошук, то більше в нього
+нагод натрапити на коротку версію з високою сумою.<br><br>
+<b>Друге: нормалізація на довжину це розвертає — і купує повтори.</b> Промінь 8
+з поділом на довжину дає <b>4.15</b> токена замість 1.32 (купи 3.88..4.92 проти
+1.27..1.37, знову роздільні). Але подивись на колонку «цикл» у того самого
+рядка: <b>0.0720</b> проти <b>0.0000</b> без нормалізації, і купа цього числа (0.0600..0.1100) не дістає до нуля <b>на жодному зерні</b>. Виродження
+тут зʼявляється <b>рівно тоді, коли ми полагодили довжину</b> — ліки видно, і
+ціну за них видно теж.<br><br>
+<b>Третє: найправдоподібніше й найточніше — це різні рядки.</b> Найкращий
+<span class="raw">logp</span> на токен у променя 8 з нормалізацією (−1.4511), а
+найкращий збіг із еталоном — у променя 2 з нормалізацією (0.1463, купа
+0.1381..0.1534, і вона роздільна з купою променя 8). Ще виразніше з іншого
+кінця: температура 1.3 має <b>і</b> найгіршу правдоподібність (−6.5401),
+<b>і</b> найгірший F1 (0.0441). Тобто це не проста антикореляція, у якій одну
+величину можна перерахувати з другої. Це саме те, про що розділ 9: <b>жодна з
+двох не є якістю</b>, і кожна бреше по-своєму.<br><br>
+<b>Четверте, і це чесна межа таблиці.</b> Спокусливо сказати «ширший промінь
+псує F1»: 0.1316 у жадібного проти 0.1213 у променя 8. Але купи цих двох рядків
+<b>перетинаються</b> — 0.1243..0.1417 і 0.1142..0.1281. Отже напрямок є, а
+доведеної різниці на пʼятьох зернах <b>немає</b>. Доведене тут інше й
+конкретніше: промінь <b>укорочує вихід</b>, а нормалізація довжини <b>додає
+повторів</b>. Різницю, меншу за ширину купи, різницею називати не можна — навіть
+коли вона підтверджує те, у що ти вже повірив.</p>
+
+
+
+<figure>
+  <p class="fig-head">Прокляття променя на нашому стенді</p>
+  <p class="fig-sub">Що робить ширина променя з довжиною відповіді й зі збігом
+    із тим, що стояло в тексті насправді. Перемкни нормалізацію.</p>
+  <div class="panel">
+    <canvas id="cM" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">оцінка версії</span>
+        <div class="seg" id="segM">
+          <button data-i="0" aria-pressed="true">сума логарифмів</button>
+          <button data-i="1" aria-pressed="false">поділена на довжину</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>ширина 1</b><i id="vMa">—</i></div>
+        <div class="cellv"><b>ширина 8</b><i id="vMb">—</i></div>
+      </div>
+      <p class="verdict" id="vM"></p>
+    </div>
+  </div>
+  <figcaption>Рожева лінія — <b>F1 з еталоном</b>: те, заради чого все робилось.
+    Бірюзова — <b>довжина виходу</b>: у справжнього продовження вона
+    <b>7.21</b> токена. Ширина 1 — це жадібне декодування. Промінь при
+    цьому чесно робить свою роботу: на меншому прогоні (той, що в наступних
+    розділах) він знайшов послідовність <b>імовірнішу</b> за жадібну на
+    <b>34</b> підказках зі ста.</figcaption>
+</figure>
+
+<div class="note"><b>Звідки саме ці числа.</b> Таблиця вище й фігура — це
+<b>пʼять</b> моделей, навчених по 2 000 кроків із різними зернами, по 150
+підказок на кожну (промінь — по 100, бо він найдорожчий). Решта чисел цієї теми,
+починаючи з наступного розділу, — з <b>одного</b> прогону на <b>вдвічі
+меншому</b> бюджеті: 1 000 кроків, зерно 0. Це зроблено навмисно, щоб їх можна
+було відтворити за розумний час; там, де бюджет має значення, ми це називаємо.
+Числа двох прогонів різні, форма — та сама.</div>
+
+<div class="note"><b>Межі цього заміру, сказані вголос.</b> Наша модель
+крихітна, корпус — короткі системні повідомлення, продовження — двадцять
+токенів. Це <b>не</b> модель того, що робить велика система на довгому тексті.
+Крім того, набір встановлених програм у кожного свій, тож і словник, і всі
+підрахунки в читача будуть іншими. Відтворюється тут не значення, а
+<b>напрямок</b>: правдоподібність із шириною променя росте, збіг із дійсністю
+падає, а нормалізація на довжину повертає довжину, не повертаючи якості
+повністю.</div>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Інша дорога: тягнути навмання</h2>
+
+<p>Досі ми весь час намагалися <b>знайти</b> найкраще. Розділ 8 показав, що
+шукати краще — означає діставати гірше. Отже спробуймо протилежне: не шукати
+взагалі.</p>
+
+<p><b>Семплювання</b> (sampling) — це вибір наступного токена <b>навмання
+відповідно до тих імовірностей, які дала модель</b>. Якщо модель сказала «файл»
+з імовірністю 0.4, то «файл» випаде приблизно в чотирьох випадках із десяти. Не
+завжди, не ніколи — саме в чотирьох із десяти.</p>
+
+<p>Ось у чому принципова різниця, і її варто проговорити повільно. Пошук питає:
+«який рядок найімовірніший?». Семплювання питає інше: «як виглядає типовий рядок
+із того розподілу, який модель вивчила?». Друге питання ближче до того, чого ми
+насправді хочемо. Ми ж не просимо систему видати найтиповіше речення української
+мови — ми просимо її написати <b>речення</b>, і хочемо, щоб воно було схоже на
+те, як пишуть люди. А люди пишуть різне.</p>
+
+<div class="note"><b>Побутова аналогія.</b> Уяви, що ти вивчив розподіл росту
+дорослих людей і тебе просять «показати людину». Максимум розподілу — це людина
+рівно середнього зросту. Але якщо ти покажеш сто таких людей, вийде не натовп, а
+шеренга клонів. Щоб вийшов справжній натовп, треба <b>тягнути з розподілу</b>, а
+не брати його вершину сто разів поспіль.</div>
+
+<p>Ціна теж очевидна. Семплювання недетерміноване: два запуски дадуть різний
+текст, і відтворити результат можна лише зафіксувавши зерно генератора
+випадкових чисел. І воно вміє помилятися так, як пошук не вміє: коли-не-коли
+воно витягне слово, яке модель вважала майже неможливим, і далі текст піде
+навскіс. Про це — розділ 13.</p>
+
+<h2 id="s12"><span class="num">Розділ 12</span>Температура</h2>
+
+<p>Між двома крайнощами — «завжди найкраще» і «навмання за розподілом» — є
+неперервна ручка. Вона зветься <b>температурою</b> й діє на оцінки моделі до
+того, як їх перетворять на ймовірності.</p>
+
+<p>Нагадаємо, звідки взагалі беруться ймовірності. Модель віддає не їх, а сирі
+числа — <b>логіти</b>, по одному на слово словника. Вони бувають будь-якими:
+відʼємними, більшими за одиницю, якими завгодно. Щоб зробити з них розподіл,
+застосовують <span class="raw">softmax</span>: кожне число підносять до степеня
+<span class="raw">e</span> (це робить його додатним) і ділять на суму всіх таких
+степенів (це робить суму рівною одиниці). Температура вставляється всередину:</p>
+
+<div class="eq">p<span class="sub">i</span> = softmax( z<span class="sub">i</span> ÷ T )</div>
+
+<p>Тут <span class="raw">z</span><span class="sub">i</span> — логіт слова номер
+<span class="raw">i</span>, а <span class="raw">T</span> — температура. Що вона
+робить, видно з простого міркування. Ділення на
+<span class="raw">T</span> &lt; 1 <b>розтягує</b> відстані між логітами: те, що
+було більшим, стає ще більшим, і після softmax розподіл робиться
+<b>гострішим</b>. Ділення на <span class="raw">T</span> &gt; 1 <b>стискає</b>
+відстані, і розподіл робиться <b>пласкішим</b>.</p>
+
+<p>Дві межі варто запамʼятати, бо вони пояснюють усе інше:</p>
+
+<ul>
+<li><b>T → 0</b>: розрив між найкращим і рештою росте нескінченно, найкраще
+  забирає всю масу — семплювання перетворюється на <b>жадібне декодування</b>;</li>
+<li><b>T → ∞</b>: усі логіти зливаються в одне число — семплювання
+  перетворюється на вибір <b>рівномірно навмання</b> з усього словника.</li>
+</ul>
+
+<p>Тобто температура — не окремий метод, а неперервний місток між двома вже
+знайомими. І ось чому вона не розвʼязує задачі сама: вона тягне <b>увесь</b>
+розподіл одразу. Піднявши температуру заради різноманіття, ти піднімаєш заразом
+і ймовірність усіх безглуздих слів у хвості. Опустивши її заради обережності —
+приходиш у жадібність з усіма її бідами.</p>
+
+<figure>
+  <p class="fig-head">Що температура робить із розподілом</p>
+  <p class="fig-sub">Справжній розподіл нашої моделі на одному кроці. Крути
+    температуру й дивись на висоти й на число праворуч унизу.</p>
+  <div class="panel">
+    <canvas id="cG" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="tG">температура <output id="tGo">1.00</output></label>
+        <input type="range" id="tG" min="20" max="250" step="5" value="100">
+      </div>
+      <div class="ctl">
+        <span class="cap">де стоїть модель</span>
+        <div class="seg" id="segG">
+          <button data-i="0" aria-pressed="true">розгублена</button>
+          <button data-i="1" aria-pressed="false">упевнена</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>у найкращого</b><i id="vGa">—</i></div>
+        <div class="cellv"><b>ентропія</b><i id="vGb">—</i></div>
+      </div>
+      <p class="verdict" id="vG"></p>
+    </div>
+  </div>
+  <figcaption>Два справжні кроки нашої моделі: один із найбільшою невизначеністю
+    в перевірній вибірці, другий — із найменшою. Показано <b>10</b> найкращих
+    слів, останній стовпчик — увесь решта словника разом. <b>Ентропія</b> — це міра невизначеності в бітах: скільки
+    двійкових питань «так чи ні» треба в середньому, щоб угадати відповідь.
+    Нуль означає «модель певна», а верхня межа для нашого словника —
+    log₂ 7 867 ≈ <b>12.9</b> біта, тобто «модель не знає нічого». Хвіст тут
+    вважається набором слів однакової ймовірності — справжній хвіст трохи
+    нерівний, але напрямок від цього не міняється.</figcaption>
+</figure>
+
+<h2 id="s13"><span class="num">Розділ 13</span>Хвіст, і навіщо його різати</h2>
+
+<p>Тепер про те, чому температури мало й навіщо взагалі придумали
+<code>top-k</code> та <code>top-p</code>.</p>
+
+<p>Ось арифметика, яка все пояснює. Хай на якомусь кроці десять розумних слів
+разом забирають 0.95 маси, а решта 0.05 розмазана між сімома тисячами
+безглуздих. Імовірність витягти безглузде на <b>одному</b> кроці — пʼять
+відсотків, дрібниця. Але продовження має двадцять кроків, і безглуздя достатньо
+одного:</p>
+
+<div class="eq">p( хоч раз ) = 1 − (1 − 0.05)<span class="sup">20</span> = 1 − 0.3585 = <b>0.6415</b></div>
+
+<p>Тобто в двох випадках із трьох двадцятитокенне продовження зачепить хвіст
+принаймні раз. І це ще не вся біда. Витягнене безглузде слово <b>лишається в
+контексті</b>: далі модель мусить продовжувати текст, у якому вже стоїть щось,
+чого в навчальних даних не бувало. Вона такого не бачила, її передбачення стають
+ненадійними — і помилка не гасне, а розростається. Це називають накопиченням
+помилки (error compounding), і саме воно робить чисте семплювання непридатним
+на довгих виходах.</p>
+
+<p>Пʼять відсотків у цьому прикладі — це ще <b>оптимістична</b> оцінка. На нашій
+маленькій моделі сорок найкращих слів забирають у середньому лише
+<b>0.6533</b> маси, тобто в хвості лишається більш ніж третина. У великих
+моделей хвіст тонший, але він є завжди: словник має десятки тисяч токенів, і
+навіть мільйонні частки, помножені на десятки тисяч, складаються в помітне
+число.</p>
+
+<figure>
+  <p class="fig-head">Одна помилка на двадцять кроків — це майже завжди</p>
+  <p class="fig-sub">Пересунь довжину й подивись, як росте ймовірність зачепити
+    хвіст хоча б раз.</p>
+  <div class="panel">
+    <canvas id="cI" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="lnI">довжина продовження <output id="lnIo">20</output></label>
+        <input type="range" id="lnI" min="1" max="60" step="1" value="20">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>маса хвоста за крок</b><i>0.0500</i></div>
+        <div class="cellv"><b>хоч раз</b><i id="vIa">—</i></div>
+      </div>
+      <p class="verdict" id="vI"></p>
+    </div>
+  </div>
+  <figcaption>Крива — це 1 − (1 − 0.05)<span class="sup">m</span>, де
+    <b>m</b> — довжина. Числа тут узяті рівні для всіх кроків, щоб арифметику
+    можна було перевірити на папері; справжня маса хвоста гуляє від кроку до
+    кроку, але форма кривої від цього не міняється. Головне видно вже тут:
+    <b>рідкісна подія, помножена на довжину, перестає бути рідкісною</b>.</figcaption>
+</figure>
+
+<p>Отже хвіст треба різати. Два правила роблять це по-різному.</p>
+
+<p><b><code>top-k</code></b> лишає рівно <span class="raw">k</span> найкращих
+слів, решті дає нуль і перенормовує те, що лишилось, до одиниці. Широко відомим
+воно стало після роботи з породження історій 2018 року, де брали
+<span class="raw">k = 10</span>, і мотивацію там сформульовано просто: чисто
+випадкове семплювання вводить дуже малоймовірні слова, а модель під час навчання
+таких помилок не бачила — тому обмеження десятьма найкращими кандидатами знімає
+ризик.</p>
+
+<p>Вада <code>top-k</code> — у тому, що <span class="raw">k</span> однакове
+завжди, а розподіл — ні. Ось наш власний замір, і він показує розкид, якого від
+однієї моделі не чекаєш.</p>
+
+<div class="note"><b>Скільки насправді потрібно кандидатів.</b> Ми взяли
+<b>150</b> перевірних підказок, подивились на розподіл наступного слова
+в кожній і порахували, скільки найкращих слів треба скласти, щоб набрати задану
+масу. Щоб зібрати <b>половину</b> маси, у половині випадків досить
+<b>12</b> слів — а в найгіршому потрібно <b>244</b>, тобто
+у <b>20</b> разів більше. Одне число <span class="raw">k</span> на
+обидва випадки — це або зайві кандидати там, де модель певна, або відрізана
+половина розумних варіантів там, де вона вагається.<br><br>
+І ще одне число, яке варто побачити: <span class="raw">top-k</span> = 40 на
+нашій моделі забирає в середньому лише <b>0.6533</b> маси. Тобто третина
+ймовірності лишається за бортом — не тому, що правило погане, а тому, що наша
+модель <b>дуже невпевнена</b>: середня ентропія розподілу <b>6.74</b> біта
+з можливих 12.94. У добре навченої моделі ці числа набагато менші, і саме тому
+там <span class="raw">top-k</span> = 40 виглядає розумним вибором, а тут —
+ні.</div>
+
+<p><b><code>top-p</code></b> (він же ядерне семплювання, nucleus sampling) міряє
+не кількість, а <b>масу</b>. Слова впорядковують за спаданням імовірності й
+беруть стільки, скільки треба, щоб їхня сума вперше перевищила
+<span class="raw">p</span>. Кількість кандидатів при цьому <b>підлаштовується
+під впевненість моделі</b> сама: коли модель певна, набирається два-три слова;
+коли вагається — кілька сотень. Саме тому це правило витіснило
+<code>top-k</code> у більшості практичних систем.</p>
+
+<figure>
+  <p class="fig-head">Скільки слів набирає задану масу</p>
+  <p class="fig-sub">Крути поріг і дивись, як розходяться медіана й найгірший
+    випадок. Це і є та обставина, заради якої придумали
+    <span class="raw">top-p</span>.</p>
+  <div class="panel">
+    <canvas id="cH" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="pH">поріг маси <output id="pHo">0.90</output></label>
+        <input type="range" id="pH" min="0" max="4" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>медіана</b><i id="vHa">—</i></div>
+        <div class="cellv"><b>найгірший</b><i id="vHb">—</i></div>
+      </div>
+      <p class="verdict" id="vH"></p>
+    </div>
+  </div>
+  <figcaption>Наш замір на <b>150</b> перевірних підказках нашої моделі.
+    Стовпчики — медіана, девʼята десятина (тобто число, яке не перевищено в
+    девʼяти випадках із десяти) і максимум. Розрив між медіаною й максимумом і
+    є відповіддю на питання «чому не просто <span class="raw">top-k</span>».</figcaption>
+</figure>
+
+<h2 id="s14"><span class="num">Розділ 14</span>Виродження: цикл, що сам себе годує</h2>
+
+<p><b>Виродження</b> (degeneration) — це коли вихід перестає бути текстом. Він
+не стає неграматичним: слова на місці, відмінки узгоджені. Він стає
+<b>порожнім</b>: та сама фраза йде по колу, або продовження таке безбарвне, що
+підходить до будь-чого. Найпомітніший різновид — саме цикл, і в нього
+<b>два</b> різні механізми, які варто розрізняти.</p>
+
+<h3>Механізм перший: нерухома точка</h3>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1</span>
+    <p>Жадібне правило <b>детерміноване</b>: тому самому контекстові воно
+      завжди відповідає тим самим словом.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2</span>
+    <p>Уяви, що в якийсь момент найімовірнішим виявилось слово
+      <span class="raw">w</span>, і після його дописування контекст <b>з погляду
+      моделі майже не змінився</b> — бо вона й так дивилась переважно на
+      найближчі слова.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 3</span>
+    <p>Тоді на наступному кроці найімовірнішим знову буде
+      <span class="raw">w</span>. І знову. Це <b>нерухома точка</b>: стан
+      переходить сам у себе, і вийти нема як.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 4</span>
+    <p>Семплювання в тій самій ситуації має шанс
+      <span class="raw">1 − p</span> відхилитись і розірвати коло. Промінь —
+      ближчий до жадібного: він теж максимізує, і всі його версії втягуються в
+      ту саму воронку.</p>
+  </div>
+</div>
+
+<h3>Скільки виродження на нашому стенді</h3>
+
+<p>Поглянь ще раз на колонку «цикл» у таблиці розділу 10: там майже скрізь
+нулі. Спокусливо зробити висновок «виродження в нас немає». Висновок хибний, і
+причина в даних, а не в моделі: наші рядки — короткі системні повідомлення,
+кінець рядка передбачається легко, і продовження виходить завдовжки два-чотири
+токени. <b>Виродженню просто нема де розгорнутись.</b> Цикл — явище довгого
+тексту, і щоб його побачити, модель треба <b>змусити говорити</b>.</p>
+
+<p>Робимо це найпростішим обмеженим декодуванням: забороняємо токен кінця рядка
+й беремо рівно двадцять токенів у всіх способів. Довжина стає однаковою, і всі
+відмінності в таблиці — це відмінності декодування, а не довжини.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>спосіб, довжина 20</th><th>цикл</th><th>distinct-2</th><th>F1</th><th>logp/токен</th></tr></thead>
+<tbody>
+<tr><td>жадібне</td><td>0.9467</td><td>0.2681</td><td>0.0756</td><td>-1.7805</td></tr>
+<tr><td>промінь 4</td><td>0.7400</td><td>0.4195</td><td>0.0839</td><td>-1.6751</td></tr>
+<tr><td>промінь 8</td><td>0.6600</td><td>0.4500</td><td>0.0770</td><td>-1.6042</td></tr>
+<tr class="hot"><td><span class="raw">top-k = 5</span></td><td>0.4200</td><td>0.7179</td><td>0.0963</td><td>-2.6932</td></tr>
+<tr><td>температура 0.7</td><td>0.2000</td><td>0.8618</td><td>0.0959</td><td>-3.4820</td></tr>
+<tr><td><span class="raw">top-k = 40</span></td><td>0.0600</td><td>0.9516</td><td>0.0902</td><td>-3.6500</td></tr>
+<tr><td>температура 1.0</td><td>0.0000</td><td>0.9982</td><td>0.0663</td><td>-5.2292</td></tr>
+<tr><td><span class="raw">top-p = 0.9</span></td><td>0.0000</td><td>0.9954</td><td>0.0728</td><td>-4.6929</td></tr>
+<tr><td><span class="raw">top-p = 0.95</span></td><td>0.0000</td><td>0.9982</td><td>0.0656</td><td>-4.9148</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>І ось тут таблиця нарешті щось каже. Довжина в усіх однакова, тож усі
+відмінності — це відмінності способу вибору. Жадібне декодування зациклюється
+в <b>0.9467</b> виходів: із двадцяти слів у ньому майже завжди є чотири, що
+повторились. Промінь ширини 4 — у 0.7400, ширини 8 — у 0.6600. А
+<span class="raw">top-p</span> при обох порогах — у <b>0.0000</b>, тобто жодного
+разу зі ста пʼятдесяти. Різноманіття йде тим самим порядком: distinct-2 у
+жадібного <b>0.2681</b> проти <b>0.9954</b> у <span class="raw">top-p</span> 0.9
+— і тут, на довжині 20, ця метрика нарешті працює.<br><br>
+Тепер порівняй перший стовпчик з останнім. Найправдоподібніший текст (жадібне,
+−1.7805 на токен; промінь 8, −1.6042) — це водночас найзациклініший. Найменш
+правдоподібний (температура 1.0, −5.2292) — найрізноманітніший і без жодного
+циклу. <b>Ось воно, головне твердження теми, на власних числах: за однакової
+довжини висока правдоподібність прямо передбачає поганий текст.</b> І найкращий
+збіг із еталоном (<b>0.0963</b>) дістався не жадібному й не променю, а
+<span class="raw">top-k</span> = 5 — способові десь посередині.</p>
+
+<h3>А що саме воно повторює</h3>
+
+<p>Тепер найцікавіше. Подивимось, із чого складається зациклений вихід нашої
+моделі. Ось перший рядок жадібного декодування з примусовою довжиною, дослівно:</p>
+
+<div class="eq left">&lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt; &lt;unk&gt;</div>
+
+<p>Це <code>&lt;unk&gt;</code> — службовий токен, яким у словнику заміняють усі
+рідкісні слова. Він не помилка й не сміття: без нього словник розпух би хвостом
+із десятків тисяч форм. Але саме через це він <b>найчастіший</b> токен корпусу.
+І ось два числа поруч, які варто прочитати двічі:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>частка <span class="raw">&lt;unk&gt;</span></th><th>значення</th></tr></thead>
+<tbody>
+<tr><td>у навчальному корпусі</td><td>0.0433</td></tr>
+<tr class="hot"><td>у виході жадібного декодування</td><td>0.7737</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><b>Чотири відсотки корпусу перетворились на сімдесят сім відсотків виходу.</b>
+Це найкоротший доказ усього, про що ми говоримо з розділу 9: найімовірніший
+рядок — не типовий зразок із розподілу. Модель вивчила частоти правильно; це
+<b>правило вибору</b> перетворило «найчастіший» на «єдиний».</p>
+
+<p>А тепер лікування, і воно смішно просте: заборонимо цей токен. Це та сама
+операція, що й примусова довжина, — мінус нескінченність одному логіту.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>жадібне, довжина 20</th><th>цикл</th><th>distinct-2</th><th>F1</th></tr></thead>
+<tbody>
+<tr><td>як є</td><td>0.9467</td><td>0.2681</td><td>0.0756</td></tr>
+<tr class="hot"><td><span class="raw">&lt;unk&gt;</span> заборонено</td><td>0.2133</td><td>0.8944</td><td>0.0780</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Той самий рядок, та сама модель, той самий жадібний вибір — і замість двадцяти
+однакових токенів виходить ось що:</p>
+
+<div class="eq left">не буде використано для встановлення з’єднання з рухомою крапкою не вказано або т н рядків розбивати довгі рядки що це</div>
+
+<p>Текст, звісно, безглуздий: це маленька модель на тисячі кроків. Але він
+<b>український</b>, він різний і він не ходить по колу. Звідси практичне
+правило, з якого починається будь-який робочий декодер: <b>службові токени
+забороняють першим рядком</b>. Ніхто не породжує
+<code>&lt;unk&gt;</code>, <code>&lt;pad&gt;</code> чи
+<code>&lt;bos&gt;</code> — їх викидають із розгляду до того, як щось порівнювати.</p>
+
+<h3>Механізм другий: додатний зворотний звʼязок</h3>
+
+<p>Лишається другий, тонший механізм. У справжніх текстах повтори бувають —
+списки, приспіви, шаблонні рядки, однотипні повідомлення програм. Модель могла
+це вивчити: <b>текст, у якому фраза вже трапилась, і далі частіше містить її
+ж</b>. Тоді кожен новий повтор ставав би ще одним свідченням на користь
+наступного, і ймовірність повтору росла б із кожним разом.</p>
+
+<p>На великих моделях це заміряли прямо: узяли фразу, змусили модель повторити
+її двісті разів поспіль і дивились, що робиться з ймовірністю. Крива росте від
+перших повторів і притискається до одиниці. Ми поставили той самий дослід на
+своїй моделі.</p>
+
+<figure>
+  <p class="fig-head">Чи росте ймовірність повтору на нашій моделі</p>
+  <p class="fig-sub">Фразу дописуємо до справжніх підказок
+    <span class="raw">k</span> разів поспіль і питаємо, з якою ймовірністю
+    модель почне її вкотре.</p>
+  <div class="panel">
+    <canvas id="cJ" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>після одного</b><i id="vJa">—</i></div>
+        <div class="cellv"><b>після сімох</b><i id="vJb">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>фрази</b><i class="sm" id="vJc">—</i></div>
+      </div>
+      <p class="verdict" id="vJ"></p>
+    </div>
+  </div>
+  <figcaption>Три найчастіші пари слів навчального корпусу (службові токени з
+    добору виключено), усереднено по 150 підказках. Точку <b>0</b> на
+    графіку не показано навмисно: там фрази в контексті ще немає, тобто це
+    <b>інший</b> контекст, і порівнювати з ним нема сенсу. Дивитись треба на
+    криву від <b>1</b> і далі.</figcaption>
+</figure>
+
+<div class="note warn"><b>А от це не відтворилось — і сказати про це важливіше, ніж промовчати.</b>
+На нашій моделі ймовірність повтору з кожним повтором не росте, а <b>падає</b>:
+у найчастішої пари слів це 0.0024 після першого повтору й 0.0010 після сьомого.
+Так само на двох інших парах. Тобто додатного зворотного звʼязку тут немає.<br><br>
+Це не спростовує явища: воно описане на моделях у мільйони разів більших і на
+текстах у сотні токенів, а в нас модель на дві тисячі кроків і продовження на
+двадцять. Наш дослід говорить лише про наш стенд. Але порядок такий: спершу
+ставимо дослід, потім кажемо, що вийшло, — а не навпаки. Виродження, яке ми
+щойно бачили числом, тримається тут на <b>першому</b> механізмі, на нерухомій
+точці, а не на другому.</div>
+
+<p>Але дещо в контексті таки накопичується, і це видно з іншого боку. Замість
+питати про наперед обрану фразу, спитаймо простіше: <b>наскільки модель
+впевнена в тому слові, яке щойно обрала</b> — і як ця впевненість міняється,
+поки продовження росте.</p>
+
+<figure>
+  <p class="fig-head">Що довше модель говорить, то впевненіша вона стає</p>
+  <p class="fig-sub">Ймовірність слова, яке жадібне правило щойно обрало,
+    по кроках продовження. Дві криві: як є і з забороненим службовим токеном.</p>
+  <div class="panel">
+    <canvas id="cN" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>крок 1</b><i id="vNa">—</i></div>
+        <div class="cellv"><b>крок 20</b><i id="vNb">—</i></div>
+      </div>
+      <p class="verdict" id="vN"></p>
+    </div>
+  </div>
+  <figcaption>Наш замір на 150 підказках. Рожева крива — жадібне
+    декодування як є: воно заходить у цикл і <b>дедалі більше в ньому
+    впевнюється</b>. Бірюзова — те саме з забороненим
+    <code>&lt;unk&gt;</code>: впевненість лишається приблизно однаковою від
+    початку до кінця. Тобто зворотний звʼязок тут не властивість мови, а
+    властивість <b>однієї воронки</b>, у яку декодер провалився.</figcaption>
+</figure>
+
+<div class="note warn"><b>Обережно з висновком.</b> Цикл — це не помилка
+навчання й не ознака малої моделі. Це наслідок двох правильних речей одразу:
+модель чесно вивчила статистику текстів, а декодер чесно шукає максимум.
+Полагодити його, не чіпаючи жодного з двох, не вийде — тому й лагодять збоку,
+милицями з наступного розділу.</div>
+
+<h2 id="s15"><span class="num">Розділ 15</span>Штраф за повтор і заборонені n-грами</h2>
+
+<p>Обидва прийоми роблять одне: <b>міняють логіти перед тим, як із них
+обирати</b>. Модель при цьому не чіпають зовсім.</p>
+
+<h3>Штраф за повтор</h3>
+
+<p>Ідея: слово, яке вже трапилось у виході, має отримати гіршу оцінку. Правило
+записують так, і в ньому є хитрість, яку варто розібрати:</p>
+
+<div class="eq">z<span class="sub">i</span> ← z<span class="sub">i</span> ÷ θ, якщо z<span class="sub">i</span> &gt; 0 &nbsp;&nbsp;·&nbsp;&nbsp; z<span class="sub">i</span> ← z<span class="sub">i</span> × θ, якщо z<span class="sub">i</span> ≤ 0</div>
+
+<p>Тут <span class="raw">θ</span> ≥ 1 — сила штрафу (при
+<span class="raw">θ = 1</span> нічого не відбувається). Чому два випадки? Бо
+логіт може бути будь-якого знаку. Ділення додатного числа на
+<span class="raw">θ</span> &gt; 1 його <b>зменшує</b> — цього ми й хочемо. А от
+ділення <b>відʼємного</b> числа на <span class="raw">θ</span> &gt; 1 його
+<b>збільшує</b> (наближає до нуля), тобто нагороджує замість карати. Тому для
+відʼємних логітів множать.</p>
+
+<div class="note"><b>Цей поділ на два випадки — не з початкової роботи, а
+латка.</b> Там, де штраф запропонували, знака не розрізняли: логіт просто ділили
+на <span class="raw">θ</span>. На додатних логітах це працює, на відʼємних —
+навпаки: ділення відʼємного числа на 1.2 наближає його до нуля, тобто
+<b>піднімає</b> шанси повтореного слова. Помилку помітили не одразу, і поділ на
+два випадки зʼявився вже в бібліотечних реалізаціях. Мораль ширша за цей
+конкретний випадок: <b>операція над логітами мусить бути перевірена на обох
+знаках</b>, бо логіт — не ймовірність, і знака в нього немає наперед.</div>
+
+<p>Наскільки сильним має бути штраф — питання добору: надто слабкий нічого не
+міняє, надто сильний ламає текст. Фігура нижче показує цей обмін на нашій
+моделі.</p>
+
+<h3>Заборона повторених n-грам</h3>
+
+<p>Правило жорсткіше й простіше: <b>якщо крок утворить n-граму, яка у виході вже
+була, цей крок заборонено</b>. Технічно логіту відповідного слова присвоюють
+мінус нескінченність, і воно просто зникає з розгляду. Параметр
+<span class="raw">n</span> — довжина забороненої послідовності.</p>
+
+<p>Обидві милиці мають однакову природну ваду: <b>вони не вміють відрізнити
+поганий повтор від хорошого</b>. Мова повторює слова законно — у переліках, в
+означеннях, у назвах, що трапляються двічі в одному реченні. Заборона біграм
+(<span class="raw">n = 2</span>) забороняє <b>будь-яку</b> пару слів двічі; це
+звучить як каліцтво.</p>
+
+<div class="note warn"><b>Ми чекали, що це буде видно числом, — і не побачили.</b>
+На нашому стенді заборона біграм дала <b>найкращий</b> збіг із еталоном з усього,
+що ми пробували: 0.1203 проти 0.0756 без заборони. Пояснення не в тому,
+що милиця хороша, а в тому, що <b>лікувати було що</b>: без заборони
+0.9467 виходів ішли по колу. Ціна жорсткої заборони існує, але щоб її
+побачити, потрібна модель, яка й без неї не вироджується. Так і треба це
+подавати: наш замір показує <b>користь</b> і <b>не показує</b> ціни, а не
+доводить, що ціни немає.</div>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>заборона</th><th>цикл</th><th>distinct-2</th><th>F1</th><th>logp/токен</th></tr></thead>
+<tbody>
+<tr><td>без заборони</td><td>0.9467</td><td>0.2681</td><td>0.0756</td><td>-1.7805</td></tr>
+<tr class="hot"><td>заборонено 2-грами</td><td>0.0000</td><td>1.0000</td><td>0.1203</td><td>-2.7759</td></tr>
+<tr><td>заборонено 3-грами</td><td>0.0000</td><td>0.7354</td><td>0.1093</td><td>-2.5517</td></tr>
+<tr><td>заборонено 4-грами</td><td>0.0000</td><td>0.6109</td><td>0.1005</td><td>-2.3280</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note warn"><b>Одну колонку цієї таблиці читати не можна, і це наша
+власна пастка.</b> Наша міра циклу — «чи є у виході повторена
+<b>чотири</b>грама». А заборона n-грам при
+<span class="raw">n = 4</span> саме таку n-граму й унеможливлює. Отже нуль у
+нижньому рядку — не результат, а <b>тавтологія</b>: ми заборонили рівно те, що
+міряємо. Так само й для <span class="raw">n = 2</span> і
+<span class="raw">n = 3</span>: заборона коротшої n-грами автоматично забороняє
+й довшу. Метрику, яку прямо оптимізує втручання, цим втручанням
+<b>не оцінюють</b>.</div>
+
+<p>Дивитись тут треба на дві інші колонки, які заборона не оптимізує.
+<b>distinct-2</b>: 1.0000 у заборони біграм проти 0.6109 у заборони
+чотириграм. <b>F1</b>: 0.1203 проти 0.1005. Тобто <b>жорсткіша</b> заборона на
+нашому стенді працює краще за обережну — і це знову ж таки лише тому, що
+лікувати було що.</p>
+
+<figure>
+  <p class="fig-head">Штраф за повтор: чим лікуємось і чим платимо</p>
+  <p class="fig-sub">Крути силу штрафу. Ліворуч — скільки виходів зациклилось,
+    праворуч — наскільки текст лишився схожим на еталон.</p>
+  <div class="panel">
+    <canvas id="cL" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="peL">сила штрафу <output id="peLo">1.00</output></label>
+        <input type="range" id="peL" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>зациклилось</b><i id="vLa">—</i></div>
+        <div class="cellv"><b>F1 з еталоном</b><i id="vLb">—</i></div>
+      </div>
+      <p class="verdict" id="vL"></p>
+    </div>
+  </div>
+  <figcaption>Замір на нашій моделі, жадібне декодування з примусовою довжиною
+    20 токенів (інакше циклів просто нема на чому побачити: наші рядки короткі,
+    і без примусу модель обриває продовження за кілька слів). <b>F1 з
+    еталоном</b> — наскільки збігається набір слів із тим, що стояло в тексті
+    насправді.</figcaption>
+</figure>
+
+<div class="note"><b>Ширше: обмежене декодування.</b> Штраф і заборона — окремі
+випадки одного прийому. Перед вибором логіти можна змінювати як завгодно:
+заборонити кінець рядка, поки не набралось <span class="raw">N</span> токенів
+(мінімальна довжина); заборонити список слів; навпаки, змусити модель вжити
+задане слово; дозволити лише токени, що складають правильний JSON. Усе це зветься
+<b>обмеженим декодуванням</b> (constrained decoding), усе це живе <b>поза</b>
+моделлю, і саме тому все це можна додати до готової системи, нічого не
+перенавчаючи.</div>
+
+<h2 id="s16"><span class="num">Розділ 16</span>Чим це міряти</h2>
+
+<p>Ми весь час казали «гірше» й «краще». Настав час спитати, чим саме це
+міряють — і чому кожна з відповідей неповна.</p>
+
+<h3>Правдоподібність</h3>
+
+<p>Найпростіше: узяти середній логарифм імовірності на токен. Число є завжди,
+рахується миттєво, порівнюється між способами. І воно міряє <b>згоду моделі з
+самою собою</b>, а не якість. Розділ 8 показав, куди веде його максимізація: до
+порожнього рядка. Плюс окрема пастка: якщо оцінювати текст тією самою моделлю,
+яка його породила, вимір стає круговим.</p>
+
+<h3>Повторюваність</h3>
+
+<p>Частка виходів, у яких трапляється повторена n-грама, або частка виходів, що
+закінчуються циклом. Число чесне й корисне — але воно бачить лише один різновид
+виродження. Безбарвне продовження, яке підходить до будь-чого, повторюваності
+не має й тут виглядає бездоганно.</p>
+
+<h3>Різноманіття</h3>
+
+<p><b>distinct-n</b> — частка різних n-грам серед усіх породжених. Що більша,
+то різноманітніший текст. Вада очевидна, щойно її назвати: <b>випадковий набір
+слів має distinct-2 рівно одиницю</b>. Метрику, яку максимізує шум, не можна
+максимізувати.</p>
+
+<h3>Схожість на еталон</h3>
+
+<p>BLEU у перекладі, ROUGE у сумаризації, F1 по словах у нас — усі вони
+порівнюють вихід із тим, що написала людина. Це працює там, де правильна
+відповідь <b>одна</b>: переклад речення обмежений змістом оригіналу. У
+відкритому породженні еталона немає взагалі: продовжень історії тисячі, і всі
+правильні. Тому міряти вільний текст схожістю на єдиний зразок — це міряти не
+якість, а збіг.</p>
+
+<figure>
+  <p class="fig-head">Чим правдоподібніший текст, тим частіше він іде по колу</p>
+  <p class="fig-sub">Дев'ять способів декодування, у всіх <b>однакова</b> довжина
+    виходу — рівно двадцять токенів. Тому довжина тут нічого не пояснює.</p>
+  <div class="panel">
+    <canvas id="cK" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>кореляція</b><i id="vKa">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найправдоподібніший</b><i class="sm" id="vKb">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найменш правдоподібний</b><i class="sm" id="vKc">—</i></div>
+      </div>
+      <p class="verdict" id="vK"></p>
+    </div>
+  </div>
+  <figcaption>Наш замір. По горизонталі — середній логарифм імовірності на токен
+    (праворуч правдоподібніше), по вертикалі — частка виходів, у яких чотири слова
+    поспіль повторились. Довжину вирівняно навмисно: без цього обидві величини
+    міряли б переважно її, а не одна одну.</figcaption>
+</figure>
+
+<div class="note warn"><b>І окрема пастка, на яку ми самі наступили.</b> Якщо
+той самий звʼязок порахувати <b>без</b> вирівнювання довжини — тобто дозволити
+кожному способові зупинятись, коли він хоче, — кореляція між правдоподібністю й
+збігом із еталоном виходить <b>0.9225</b>, тобто сильно <b>додатна</b>: ніби
+правдоподібніше й справді краще. Пояснення просте й неприємне: жадібне
+декодування дає короткий вихід, короткий вихід має мало шансів сказати зайве —
+і F1 у нього високий не тому, що текст кращий, а тому, що його мало. Обидві
+величини насправді міряли <b>довжину</b>. Мораль загальна: перш ніж вірити
+кореляції двох метрик, спитай, чи немає третьої, яка рухає обидві.</div>
+
+<div class="note warn"><b>Зведімо це в одне речення.</b> Кожну з чотирьох метрик
+можна довести до максимуму виродженою системою: правдоподібність — порожнім
+рядком, різноманіття — шумом, повторюваність — будь-яким беззмістовним текстом
+без повторів, схожість на еталон — переписуванням еталона. Жодна з них не є
+якістю; вони корисні лише разом і лише як <b>сторожі</b>, тобто щоб побачити,
+що щось зламалось. Остаточну відповідь досі дає людина, яка читає вихід, — і це
+не тимчасова незручність, а наслідок того, що «хороший текст» не має
+визначення, яке можна порахувати.</div>
+
+<h2 id="s17"><span class="num">Розділ 17</span>Що з цього забрати</h2>
+
+<p>Практичний підсумок короткий, і він не «беріть <code>top-p</code> 0.9».
+Він у тому, що <b>спосіб декодування обирають під задачу</b>, і головне питання
+одне: чи є в задачі правильна відповідь.</p>
+
+<div class="scroll-x">
+<table class="plain">
+<thead><tr><th>задача</th><th>що брати й чому</th></tr></thead>
+<tbody>
+<tr><td>переклад, розпізнавання мовлення</td><td>правильна відповідь одна й
+  задана входом. Промінь <b>помірної</b> ширини із нормалізацією на довжину.
+  У заміряних системах оптимум стояв на ширині 4-30 без нормалізації і 30-50 з
+  нею; ширше — гірше в обох випадках.</td></tr>
+<tr><td>сумаризація, відповідь на питання за текстом</td><td>відповідь майже
+  задана входом. Промінь із нормалізацією плюс заборона повторених
+  n-грам — у переказі вона знімає найпомітнішу ваду.</td></tr>
+<tr><td>вільне писання, діалог, історія</td><td>правильної відповіді немає.
+  Семплювання з <code>top-p</code> (0.9-0.95), інколи з невеликим
+  зниженням температури. Промінь тут протипоказаний.</td></tr>
+<tr><td>структурований вихід (JSON, код за схемою)</td><td>обмежене
+  декодування: дозволяємо лише ті токени, що не ламають граматику. Решта
+  ручок майже не важить.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>І три звички, які варто винести звідси назовсім.</p>
+
+<p><b>Перша.</b> Побачивши поганий вихід, спершу спитай про декодер, а не про
+модель. Та сама вага, той самий корпус, змінена одна ручка — і текст інший.
+Перенавчання тут найчастіше зайве.</p>
+
+<p><b>Друга.</b> Цитуючи число про породження, називай спосіб декодування.
+«Ця модель дає таку-от перплексію» і «ця модель породжує ось такий текст» —
+твердження про різні речі. Перше стосується самої моделі, друге — пари «модель
+плюс декодер», і без назви декодера воно не має сенсу.</p>
+
+<p><b>Третя, головна.</b> Чим краще система розвʼязує задачу «знайти
+найімовірніше», тим гірший текст вона видає. Це не гра слів і не парадокс: ми
+бачили це числом тричі — на восьми мовних парах перекладу, де ширший промінь
+відбирає до 18.8 пункту якості; на точному пошуку, який у половині речень видає
+порожній рядок; і на власному стенді, де за однакової довжини найправдоподібніший
+спосіб іде по колу в <b>0.9467</b> виходів, а найменш правдоподібний — у жодному.
+Правдоподібність продовження не є його якістю, і жодна кількість обчислень цього
+не змінить.</p>
+
+<p>Наступна тема повертає нас із відкритої задачі в закриту. У
+<a href="../32-ner/lecture.html">розпізнаванні іменованих сутностей</a>
+правильна відповідь є, вона одна, і її можна звірити з еталоном потокенно. Здавалося б, після цієї теми має бути легше. Виявиться, що ні:
+там теж є метрика, яка показує 0.99 і не означає нічого.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../30-multilingual/lecture.html"><span class="dir">попередня</span><span class="ttl">30. Багатомовність і українська</span></a>
+    <a class="next" href="../32-ner/lecture.html"><span class="dir">наступна</span><span class="ttl">32. NER</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id,fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click',function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'),k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function pct(v,d){return (Math.round(v*Math.pow(10,d===undefined?2:d)*100)/Math.pow(10,d===undefined?2:d)).toFixed(d===undefined?2:d)+' %';}
+function thou(n){
+  var s=String(Math.round(n)),out='',k=0,i;
+  for(i=s.length-1;i>=0;i--){out=s.charAt(i)+out;k++;if(k%3===0&&i>0)out=' '+out;}
+  return out;
+}
+function plural(n,one,few,many){
+  var t=Math.round(n)%10,h=Math.round(n)%100;
+  if(h>=11&&h<=14) return many;
+  if(t===1) return one;
+  if(t>=2&&t<=4) return few;
+  return many;
+}
+function bar(g,x,y,w,h,fill,alpha){
+  g.globalAlpha=(alpha===undefined?1:alpha); g.fillStyle=fill;
+  g.fillRect(x,y,Math.max(w,0),h); g.globalAlpha=1;
+}
+function box(g,x,y,w,h,fill,stroke){
+  if(fill){g.fillStyle=fill; g.fillRect(x,y,w,h);}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=1.5; g.strokeRect(x+0.5,y+0.5,w-1,h-1);}
+}
+function arrow(g,x0,y0,x1,y1,color,width){
+  g.strokeStyle=color; g.lineWidth=width||1.5;
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke();
+  var a=Math.atan2(y1-y0,x1-x0);
+  g.fillStyle=color; g.beginPath();
+  g.moveTo(x1,y1);
+  g.lineTo(x1-6*Math.cos(a-0.4),y1-6*Math.sin(a-0.4));
+  g.lineTo(x1-6*Math.cos(a+0.4),y1-6*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+function dot(g,x,y,r,color){ g.fillStyle=color; g.beginPath(); g.arc(x,y,r,0,6.2832); g.fill(); }
+function dash(g,x0,y,x1,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke(); g.restore();
+}
+/* чипс зі словом: повертає ширину */
+function chip(g,txt,x,y,h,fill,stroke,ink,px){
+  g.font=mono(px||11,false);
+  var w=g.measureText(txt).width+14;
+  box(g,x,y,w,h,fill,stroke);
+  capt(g,txt,x+w/2,y+h/2+4,ink,px||11,false,'center');
+  return w;
+}
+
+
+/* ═══════ числа, заміряні для цієї теми ═══════ */
+/* Джерела чисел:
+   · WAYS, BEAMC, PEN, NEED, SNAP_*, LOOPC — власний замір теми,
+     скрипт _course_system/.work/b7/t31_work/nb31.py; ті самі числа друкує зошит;
+   · KO_* — опубліковані заміри якості перекладу для ширин променя 1..1000
+     (вісім мовних пар, системи 2016 року), звірені з таблицею джерела;
+   · дерево з розділів 3-4 і числа розділу 6-7 — вигадані навмисно, щоб їх
+     можна було перевірити на папері. */
+
+var VOCAB = 7867;                 /* слів у нашому словнику */
+
+/* ширини променя і якість перекладу (BLEU) для трьох мовних пар */
+var KO_W = [1,2,4,8,12,20,30,50,100,200,500,1000];
+var KO_RAW = [
+  ['чеська → англійська', [29.7,30.4,30.5,30.4,30.3,30.0,29.8,29.4,28.5,26.6,21.7,18.8]],
+  ['англійська → німецька',[26.8,27.9,28.4,28.4,28.5,28.5,28.5,28.4,28.1,27.6,26.7,25.7]],
+  ['російська → англійська',[25.5,26.6,26.9,26.6,26.4,25.9,25.5,24.1,21.9,17.9,11.4,8.1]]
+];
+var KO_NORM = [
+  ['чеська → англійська', [29.7,30.4,30.6,30.8,30.9,30.9,30.9,30.9,30.9,30.7,30.3,29.9]],
+  ['англійська → німецька',[26.8,28.0,28.6,28.9,29.0,29.1,29.1,29.2,29.2,29.2,29.1,28.7]],
+  ['російська → англійська',[25.5,26.9,27.5,27.7,27.8,27.8,27.7,27.7,27.6,27.1,25.9,24.8]]
+];
+
+/* дерево розділів 3-4: [слово, ймовірність, [нащадки]] */
+var TREE = [
+  ['відкрити', 0.5, [['файл',0.4],['теку',0.3],['документ',0.3]]],
+  ['зберегти', 0.3, [['файл',0.85],['зміни',0.15]]],
+  ['знайти',   0.2, [['файл',0.6],['шлях',0.4]]]
+];
+
+/* дві версії відповіді з розділів 6-7: логарифми по токенах */
+var SHORT_LP = [-0.70,-1.50];
+var LONG_LP  = [-0.70,-0.40,-0.30,-0.50,-0.60];
+
+/* маса хвоста за один крок у прикладі розділу 12 */
+var TAIL_STEP = 0.05;
+
+/* розподіл наступного слова: де модель упевнена і де розгублена */
+var SNAP_SURE   = {"entropy": 0.076, "prompt": "шлях у файловій", "words": ["системі", "<unk>", "для", "конфігурації", "даних", "встановлене", "до", "функції", "індекс", "типи", "відповідним", "прогрес", "принаймні", "адреси", "більший"], "probs": [0.99557, 0.00046, 0.00036, 0.00015, 0.00014, 0.00013, 7e-05, 7e-05, 7e-05, 6e-05, 5e-05, 4e-05, 4e-05, 4e-05, 4e-05], "tail": 0.00272};
+var SNAP_UNSURE = {"entropy": 10.196, "prompt": "відмова у <unk>", "words": ["<unk>", "не", "для", "у", "на", "з", "<eos>", "функції", "в", "значення", "до", "має", "назви", "і", "інструкції"], "probs": [0.09634, 0.02726, 0.01562, 0.01247, 0.01213, 0.00954, 0.00792, 0.00644, 0.00632, 0.00566, 0.00565, 0.00439, 0.00427, 0.00403, 0.00388], "tail": 0.77807};
+
+/* скільки найкращих слів треба, щоб набрати масу p */
+var NEED_P   = [0.5,0.8,0.9,0.95,0.99];
+var NEED_MED = [12, 155, 455, 1009, 3014];
+var NEED_Q90 = [69, 521, 1266, 2326, 4856];
+var NEED_MAX = [244, 1410, 2639, 3878, 6015];
+var N_PROMPT = 150;
+
+/* самопідсилення повтору: [{phrase, p:[по k повторів]}, …] — три найчастіші пари */
+var LOOPC = [{"phrase": "не вдалося", "p": [0.0234, 0.0024, 0.0025, 0.0013, 0.0015, 0.0017, 0.0012, 0.001]}, {"phrase": "під час", "p": [0.0023, 0.0015, 0.0011, 0.0005, 0.0006, 0.0008, 0.0008, 0.0007]}, {"phrase": "не можна", "p": [0.0234, 0.0037, 0.0027, 0.0019, 0.0012, 0.0022, 0.0019, 0.0007]}];
+
+/* впевненість жадібного вибору по кроках продовження: як є і з забороненим <unk> */
+var CONF = [0.2417, 0.1805, 0.1568, 0.163, 0.1797, 0.1859, 0.2101, 0.228, 0.2513, 0.251, 0.2847, 0.3468, 0.2876, 0.3422, 0.3587, 0.3791, 0.3562, 0.3691, 0.3132, 0.3035];
+var CONF_NOUNK = [0.227, 0.1899, 0.1428, 0.1715, 0.1504, 0.1577, 0.1467, 0.1795, 0.1606, 0.177, 0.1877, 0.1614, 0.1977, 0.2031, 0.1669, 0.2257, 0.2082, 0.216, 0.2329, 0.21];
+
+/* способи декодування, вільна довжина: [назва, довжина, цикл, distinct-2, F1, logp/токен] */
+var WAYS = [["жадібне", 2.0013, 0.0067, 0.9817, 0.1316, -1.639], ["температура 0.7", 2.5347, 0.0, 0.9938, 0.1101, -2.7568], ["температура 1.0", 4.2587, 0.0, 0.9994, 0.0733, -4.5795], ["температура 1.3", 7.8413, 0.0, 1.0, 0.0441, -6.5401], ["top-k 5", 2.3787, 0.0013, 0.9892, 0.1195, -2.1572], ["top-k 40", 3.2013, 0.0013, 0.9985, 0.0927, -3.0565], ["top-p 0.9", 3.824, 0.0, 0.9993, 0.0781, -3.8818], ["top-p 0.95", 3.9413, 0.0, 0.9997, 0.0761, -4.2181], ["промінь 2", 1.558, 0.0, 0.9974, 0.1287, -1.6497], ["промінь 2 + норм.", 2.29, 0.014, 0.9692, 0.1463, -1.5822], ["промінь 4", 1.39, 0.002, 0.991, 0.1248, -1.6955], ["промінь 4 + норм.", 2.842, 0.026, 0.9546, 0.1427, -1.528], ["промінь 8", 1.316, 0.0, 0.9951, 0.1213, -1.7392], ["промінь 8 + норм.", 4.154, 0.072, 0.905, 0.136, -1.4511]];
+
+/* те саме за ПРИМУСОВОЇ довжини 20 токенів: [назва, цикл, distinct-2, F1, logp/токен] */
+var FORCED = [["жадібне", 0.9467, 0.2681, 0.0756, -1.7805], ["промінь 4", 0.74, 0.4195, 0.0839, -1.6751], ["промінь 8", 0.66, 0.45, 0.077, -1.6042], ["top-k 5", 0.42, 0.7179, 0.0963, -2.6932], ["температура 0.7", 0.2, 0.8618, 0.0959, -3.482], ["top-k 40", 0.06, 0.9516, 0.0902, -3.65], ["температура 1.0", 0.0, 0.9982, 0.0663, -5.2292], ["top-p 0.9", 0.0, 0.9954, 0.0728, -4.6929], ["top-p 0.95", 0.0, 0.9982, 0.0656, -4.9148]];
+
+/* промінь на нашому стенді: ширина 1,2,4,8 */
+var BEAM_W = [1,2,4,8];
+var BEAM_RAW_F1   = [0.1316, 0.1287, 0.1248, 0.1213];
+var BEAM_RAW_LEN  = [2.0013, 1.558, 1.39, 1.316];
+var BEAM_NORM_F1  = [0.1316, 0.1463, 0.1427, 0.136];
+var BEAM_NORM_LEN = [2.0013, 2.29, 2.842, 4.154];
+var REF_LEN       = 7.21;
+
+/* штраф за повтор при примусовій довжині 20 */
+var PEN_TH   = [1.0,1.05,1.1,1.2,1.5,2.0];
+var PEN_LOOP = [0.9467, 0.96, 0.9267, 0.6267, 0.0133, 0.0];
+var PEN_F1   = [0.0756, 0.0756, 0.0781, 0.0883, 0.1081, 0.1068];
+
+
+/* ═══════ спільні дрібниці малювання ═══════ */
+function axes(g,x0,y0,x1,y1){
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0+0.5,y0+0.5); g.lineTo(x0+0.5,y1+0.5); g.lineTo(x1+0.5,y1+0.5); g.stroke();
+}
+function poly(g,pts,color,width){
+  g.strokeStyle=color; g.lineWidth=width||2; g.beginPath();
+  var i; for(i=0;i<pts.length;i++){ if(i) g.lineTo(pts[i][0],pts[i][1]); else g.moveTo(pts[i][0],pts[i][1]); }
+  g.stroke();
+}
+
+/* ─── фігура A · петля породження ─── */
+function drawA(){
+  var cv=I('cA'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), teal=css('--teal'),
+      hair=css('--hair'), pap=css('--paper'), rw=css('--rose-w'), tw=css('--teal-w');
+  var bx=[{x:24,w:150,t:'вже написано',s:'префікс'},
+          {x:198,w:112,t:'модель',s:'навчена'},
+          {x:334,w:158,t:'розподіл',s:'8 000 чисел'},
+          {x:516,w:160,t:'правило вибору',s:'обираємо ми'}];
+  var y=48,h=62,i;
+  for(i=0;i<bx.length;i++){
+    var b=bx[i], fill=(i===3?rw:(i===1?tw:pap)), st=(i===3?rose:(i===1?teal:hair));
+    box(g,b.x,y,b.w,h,fill,st);
+    capt(g,b.t,b.x+b.w/2,y+27,ink,13,true,'center');
+    capt(g,b.s,b.x+b.w/2,y+45,soft,10.5,false,'center');
+    if(i<bx.length-1) arrow(g,b.x+b.w+4,y+h/2,bx[i+1].x-5,y+h/2,soft,1.5);
+  }
+  /* маленький розподіл усередині третьої коробки */
+  var d=[0.30,0.19,0.13,0.09,0.07,0.05,0.04,0.03,0.02,0.02],k;
+  for(k=0;k<d.length;k++) bar(g,346+k*15,y+h+34-d[k]*70,10,d[k]*70,teal,0.75);
+  capt(g,'найімовірніші слова',334+79,y+h+48,soft,10,false,'center');
+  /* токен і зворотний звʼязок */
+  var tx=470,ty=196;
+  box(g,tx,ty,190,50,rw,rose);
+  capt(g,'один новий токен',tx+95,ty+30,rose,13,true,'center');
+  arrow(g,596,y+h+4,596,ty-5,soft,1.5);
+  g.strokeStyle=soft; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(tx-4,ty+25); g.lineTo(99,ty+25); g.stroke();
+  arrow(g,99,ty+25,99,y+h+6,soft,1.5);
+  capt(g,'дописуємо і повторюємо',280,ty+20,soft,11,false,'center');
+  capt(g,'зупиняємось, коли обрано кінець рядка',W/2,300,soft,11,false,'center');
+}
+
+/* ─── фігура B · скільки продовжень ─── */
+function drawB(){
+  var cv=I('cB'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), ink=css('--ink'), pap=css('--paper');
+  var Ts=[1,2,3,5,10,15,20], lg=Math.log(VOCAB)/Math.LN10;
+  var x0=54,y0=40,y1=H-56, bw=54, gap=30, i, mx=88;
+  axes(g,x0,y0,W-16,y1);
+  var yat=y1-(80/mx)*(y1-y0);
+  dash(g,x0,yat,W-16,teal);
+  capt(g,'атомів у видимому Всесвіті: 10 у 80-му степені',x0+6,yat-7,teal,10.5,false,'left');
+  for(i=0;i<Ts.length;i++){
+    var v=Math.floor(Ts[i]*lg), x=x0+18+i*(bw+gap), hh=(Ts[i]*lg/mx)*(y1-y0);
+    bar(g,x,y1-hh,bw,hh,rose,0.9);
+    var inside=hh>44, ly=inside?(y1-hh+17):(y1-hh-9), col=inside?pap:ink;
+    capt(g,'10',x+bw/2-9,ly,col,11,true,'center');
+    capt(g,String(v),x+bw/2+8,ly-6,col,10,true,'center');
+    capt(g,String(Ts[i]),x+bw/2,y1+18,soft,11,false,'center');
+  }
+  capt(g,'довжина продовження, токенів',W/2,H-14,soft,11,false,'center');
+  capt(g,'кількість нулів у числі кандидатів',x0-46,y0-16,soft,10.5,false,'left');
+}
+
+/* ─── дерево розділів 3-4 ─── */
+function treeGeom(){
+  var lv=[], y=30, i, j;
+  for(i=0;i<TREE.length;i++){
+    var kids=[];
+    for(j=0;j<TREE[i][2].length;j++){ kids.push({w:TREE[i][2][j][0],p:TREE[i][2][j][1],y:y}); y+=40; }
+    lv.push({w:TREE[i][0],p:TREE[i][1],kids:kids,
+             y:(kids[0].y+kids[kids.length-1].y)/2});
+    y+=16;
+  }
+  return lv;
+}
+var TX0=22, TW0=140, TX1=176, TW1=132, TX2=350, TW2=132;
+
+function treeNodes(g,lv,alpha1,alpha2,lvl2){
+  var soft=css('--soft'), ink=css('--ink'), hair=css('--hair'), pap=css('--paper');
+  var i,j;
+  box(g,TX0,lv[1].y-14,TW0,30,pap,hair);
+  capt(g,'не вдалося',TX0+TW0/2,lv[1].y+5,ink,12,true,'center');
+  for(i=0;i<lv.length;i++){
+    var n=lv[i];
+    g.globalAlpha=alpha1(i);
+    box(g,TX1,n.y-14,TW1,30,pap,hair);
+    capt(g,n.w,TX1+8,n.y+5,ink,12,false,'left');
+    capt(g,n.p.toFixed(2),TX1+TW1-8,n.y+5,soft,11,false,'right');
+    if(lvl2===false) continue;
+    for(j=0;j<n.kids.length;j++){
+      var kd=n.kids[j];
+      g.globalAlpha=alpha2(i,j);
+      box(g,TX2,kd.y-14,TW2,30,pap,hair);
+      capt(g,kd.w,TX2+8,kd.y+5,ink,12,false,'left');
+      capt(g,kd.p.toFixed(2),TX2+TW2-8,kd.y+5,soft,11,false,'right');
+    }
+  }
+  g.globalAlpha=1;
+}
+function treeEdges(g,lv,col1,col2,lvl2){
+  var i,j;
+  for(i=0;i<lv.length;i++){
+    var n=lv[i], s1=col1(i);
+    g.globalAlpha=s1.a; poly(g,[[TX0+TW0,lv[1].y],[TX1,n.y]],s1.c,s1.w);
+    if(lvl2===false) continue;
+    for(j=0;j<n.kids.length;j++){
+      var s2=col2(i,j);
+      g.globalAlpha=s2.a; poly(g,[[TX1+TW1,n.y],[TX2,n.kids[j].y]],s2.c,s2.w);
+    }
+  }
+  g.globalAlpha=1;
+}
+
+function drawC(){
+  var cv=I('cC'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+  var lv=treeGeom(), i, j;
+  treeEdges(g,lv,
+    function(i){ return i===0?{c:rose,a:1,w:3}:(i===1?{c:teal,a:1,w:3}:{c:hair,a:1,w:1.2}); },
+    function(i,j){
+      if(i===0&&j===0) return {c:rose,a:1,w:3};
+      if(i===1&&j===0) return {c:teal,a:1,w:3};
+      return {c:hair,a:1,w:1.2};
+    });
+  treeNodes(g,lv,function(){return 1;},function(){return 1;});
+  /* добутки праворуч */
+  for(i=0;i<lv.length;i++) for(j=0;j<lv[i].kids.length;j++){
+    var prod=lv[i].p*lv[i].kids[j].p;
+    var hot=(i===1&&j===0), gre=(i===0&&j===0);
+    capt(g,prod.toFixed(4),TX2+TW2+14,lv[i].kids[j].y+5,
+         hot?teal:(gre?rose:soft),12,hot||gre,'left');
+  }
+  capt(g,'крок 1',TX1,18,soft,10.5,false,'left');
+  capt(g,'крок 2',TX2,18,soft,10.5,false,'left');
+  capt(g,'добуток',TX2+TW2+14,18,soft,10.5,false,'left');
+  capt(g,'жадібний шлях',TX0,H-24,rose,11.5,true,'left');
+  capt(g,'найімовірніший шлях',TX0,H-8,teal,11.5,true,'left');
+}
+
+/* ─── фігура D · промінь покроково ─── */
+var stD={w:1,step:1};
+function beamKeep(width,step){
+  var lv=treeGeom(), i, j, cand=[];
+  for(i=0;i<lv.length;i++) cand.push({k:String(i),s:Math.log(lv[i].p)});
+  cand.sort(function(a,b){return b.s-a.s;});
+  var k1=cand.slice(0,width).map(function(o){return o.k;});
+  if(step===1) return {k1:k1,k2:null,best:cand[0].s};
+  var c2=[];
+  for(i=0;i<lv.length;i++){ if(k1.indexOf(String(i))<0) continue;
+    for(j=0;j<lv[i].kids.length;j++)
+      c2.push({k:i+'/'+j,s:Math.log(lv[i].p)+Math.log(lv[i].kids[j].p)});
+  }
+  c2.sort(function(a,b){return b.s-a.s;});
+  var k2=c2.slice(0,width).map(function(o){return o.k;});
+  return {k1:k1,k2:k2,best:c2[0].s};
+}
+function drawD(){
+  var cv=I('cD'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), hair=css('--hair');
+  var lv=treeGeom(), st=beamKeep(stD.w,stD.step), i, j;
+  function a1(i){ return st.k1.indexOf(String(i))>=0?1:0.18; }
+  function a2(i,j){
+    if(stD.step===1) return 0.10;
+    return (st.k2.indexOf(i+'/'+j)>=0)?1:(a1(i)===1?0.30:0.10);
+  }
+  treeEdges(g,lv,
+    function(i){ return {c:a1(i)===1?rose:hair,a:a1(i),w:a1(i)===1?2.6:1}; },
+    function(i,j){ var a=a2(i,j); return {c:a===1?rose:hair,a:a,w:a===1?2.6:1}; },
+    stD.step>1);
+  treeNodes(g,lv,a1,a2,stD.step>1);
+  for(i=0;i<lv.length;i++){
+    if(stD.step===1){
+      if(a1(i)===1) capt(g,(Math.log(lv[i].p)).toFixed(4),TX1+TW1+14,lv[i].y+5,rose,12,true,'left');
+    }else{
+      for(j=0;j<lv[i].kids.length;j++) if(a2(i,j)===1)
+        capt(g,(Math.log(lv[i].p)+Math.log(lv[i].kids[j].p)).toFixed(4),
+             TX2+TW2+14,lv[i].kids[j].y+5,rose,12,true,'left');
+    }
+  }
+  capt(g,'крок 1',TX1,18,soft,10.5,false,'left');
+  if(stD.step>1) capt(g,'крок 2',TX2,18,soft,10.5,false,'left');
+  capt(g,'оцінка',stD.step===1?TX1+TW1+14:TX2+TW2+14,18,soft,10.5,false,'left');
+  capt(g,'бліде — уже викинуто й не повернеться',TX0,H-10,soft,11,false,'left');
+  I('vDa').textContent=String(stD.w);
+  I('vDb').textContent=st.best.toFixed(4);
+  var found=Math.abs(st.best-Math.log(0.255))<1e-9;
+  if(stD.step===1){
+    verd('vD','t-mid','крок 1 з двох',
+      'Промінь ще нічого не вирішив: він лише лишив '+stD.w+
+      (stD.w===1?' найкращу версію':' найкращі версії')+' і викинув решту. Головне тут — що викинуте вже не повернеться.');
+  }else if(found){
+    verd('vD','t-ok','знайдено найкраще',
+      'Оцінка −1.3665, тобто ймовірність 0.2550. Це справжній максимум: ширини '+stD.w+
+      ' вистачило, щоб дотягти «зберегти» до другого кроку.');
+  }else{
+    verd('vD','t-no','максимум пропущено',
+      'Оцінка −1.6094, тобто ймовірність 0.2000. Ширина 1 — це жадібне декодування: '+
+      'гілку «зберегти» викинули на першому кроці, а саме вона вела до найкращого.');
+  }
+}
+
+
+/* обрізає підпис під задану ширину, щоб не наїжджав на сусідній (грабля №12) */
+function fit(g,txt,maxw,px){
+  g.font=mono(px,false);
+  if(g.measureText(txt).width<=maxw) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>maxw) t=t.slice(0,-1);
+  return t+'…';
+}
+
+/* ─── фігура E · нормалізація на довжину ─── */
+function scoreShort(a){ var s=0,i; for(i=0;i<SHORT_LP.length;i++) s+=SHORT_LP[i];
+  return s/Math.pow(SHORT_LP.length,a); }
+function scoreLong(a){ var s=0,i; for(i=0;i<LONG_LP.length;i++) s+=LONG_LP[i];
+  return s/Math.pow(LONG_LP.length,a); }
+function drawE(){
+  var cv=I('cE'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), ink=css('--ink');
+  var a=(+I('alE').value)/100;
+  I('alEo').textContent=a.toFixed(2);
+  var x0=62,y0=26,x1=W-140,y1=H-46, lo=-2.6, hi=-0.4;
+  function Y(v){ return y1-(v-lo)/(hi-lo)*(y1-y0); }
+  function X(t){ return x0+t*(x1-x0); }
+  axes(g,x0,y0,x1,y1);
+  var i,ps=[],pl=[];
+  for(i=0;i<=100;i++){ var t=i/100; ps.push([X(t),Y(scoreShort(t))]); pl.push([X(t),Y(scoreLong(t))]); }
+  poly(g,ps,rose,2.4); poly(g,pl,teal,2.4);
+  /* точка перетину */
+  var xc=X(0.1395); dash(g,x0,Y(scoreShort(0.1395)),x1,soft);
+  g.strokeStyle=soft; g.lineWidth=1; g.beginPath();
+  g.moveTo(xc+0.5,y0); g.lineTo(xc+0.5,y1); g.stroke();
+  capt(g,'0.14',xc+5,y0+12,soft,10.5,false,'left');
+  /* поточне положення */
+  var sx=scoreShort(a), lx=scoreLong(a);
+  g.strokeStyle=ink; g.lineWidth=1.5; g.beginPath();
+  g.moveTo(X(a)+0.5,y0); g.lineTo(X(a)+0.5,y1); g.stroke();
+  dot(g,X(a),Y(sx),4.5,rose); dot(g,X(a),Y(lx),4.5,teal);
+  capt(g,'коротка, 2 токени',x1+8,Y(scoreShort(1))+4,rose,11,true,'left');
+  capt(g,'довга, 5 токенів',x1+8,Y(scoreLong(1))+4,teal,11,true,'left');
+  var k; for(k=0;k<=5;k++){ var t=k/5; capt(g,t.toFixed(1),X(t),y1+17,soft,10.5,false,'center'); }
+  capt(g,'показник alpha',(x0+x1)/2,H-10,soft,11,false,'center');
+  for(k=0;k<=4;k++){ var v=lo+(hi-lo)*k/4; capt(g,v.toFixed(1),x0-8,Y(v)+4,soft,10.5,false,'right'); }
+  capt(g,'оцінка версії',x0-52,y0-8,soft,10.5,false,'left');
+  I('vEa').textContent=sx.toFixed(4);
+  I('vEb').textContent=lx.toFixed(4);
+  if(sx>lx) verd('vE','t-no','виграє коротка',
+    'Промінь обере двослівну відповідь: '+sx.toFixed(4)+' проти '+lx.toFixed(4)+
+    '. Модель при цьому впевненіша в кожному слові довгої версії — але оцінка цього не бачить.');
+  else verd('vE','t-ok','виграє довга',
+    'Тепер попереду довга версія: '+lx.toFixed(4)+' проти '+sx.toFixed(4)+
+    '. Жодне число моделі не змінилось — змінилось лише те, що ми називаємо кращим.');
+}
+
+/* ─── фігура F · ширина променя і якість перекладу ─── */
+var modeF=0;
+function drawF(){
+  var cv=I('cF'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var data=modeF?KO_NORM:KO_RAW, cols=[rose,amber,teal];
+  var x0=52,y0=26,x1=W-172,y1=H-48, lo=5, hi=32;
+  function X(i){ return x0+i/(KO_W.length-1)*(x1-x0); }
+  function Y(v){ return y1-(v-lo)/(hi-lo)*(y1-y0); }
+  axes(g,x0,y0,x1,y1);
+  var i,j;
+  for(j=0;j<data.length;j++){
+    var pts=[]; for(i=0;i<KO_W.length;i++) pts.push([X(i),Y(data[j][1][i])]);
+    poly(g,pts,cols[j],j===2?2.8:1.8);
+    for(i=0;i<KO_W.length;i++) dot(g,X(i),Y(data[j][1][i]),j===2?3:2.2,cols[j]);
+    capt(g,data[j][0],x1+10,Y(data[j][1][KO_W.length-1])+4,cols[j],10.5,j===2,'left');
+  }
+  for(i=0;i<KO_W.length;i++) if(i%2===0||i===KO_W.length-1)
+    capt(g,String(KO_W[i]),X(i),y1+17,soft,10,false,'center');
+  capt(g,'ширина променя',(x0+x1)/2,H-10,soft,11,false,'center');
+  for(i=0;i<=3;i++){ var v=lo+(hi-lo)*i/3; capt(g,v.toFixed(0),x0-8,Y(v)+4,soft,10.5,false,'right'); }
+  capt(g,'якість перекладу, BLEU',x0-44,y0-8,soft,10.5,false,'left');
+  /* показники для російсько-англійської */
+  var ru=data[2][1], bi=0;
+  for(i=1;i<ru.length;i++) if(ru[i]>ru[bi]) bi=i;
+  I('vFa').textContent=String(KO_W[bi]);
+  I('vFb').textContent=ru[bi].toFixed(1);
+  var drop=ru[bi]-ru[ru.length-1];
+  I('vFc').textContent=drop.toFixed(1)+' пункту';
+  if(modeF) verd('vF','t-mid','обвал прибрано, вада лишилась',
+    'Максимум переїхав на ширину '+KO_W[bi]+', падіння до ширини 1000 стало '+drop.toFixed(1)+
+    ' замість 18.8 пункту. Але максимум усе одно не скраю: ширший промінь і тут дає гірше.');
+  else verd('vF','t-no','ширше — гірше',
+    'Максимум стоїть на ширині '+KO_W[bi]+', а не на найширшій. Від нього до ширини 1000 якість '+
+    'падає на '+drop.toFixed(1)+' пункту — тобто вдесятеро довший пошук руйнує систему.');
+}
+
+/* ─── фігура G · температура ─── */
+var modeG=0;
+function tempDist(snap,T){
+  var n=snap.probs.length, i, w=[], sum=0;
+  for(i=0;i<n;i++){ var v=Math.pow(snap.probs[i],1/T); w.push(v); sum+=v; }
+  var rest=VOCAB-n, q=snap.tail/rest, tw=rest*Math.pow(q,1/T);
+  var Z=sum+tw, out=[];
+  for(i=0;i<n;i++) out.push(w[i]/Z);
+  var tp=tw/Z, ent=0;
+  for(i=0;i<n;i++) if(out[i]>1e-12) ent-=out[i]*Math.log(out[i])/Math.LN2;
+  if(tp>1e-12) ent-=tp*Math.log(tp/rest)/Math.LN2;
+  return {p:out,tail:tp,ent:ent};
+}
+function drawG(){
+  var cv=I('cG'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), ink=css('--ink');
+  var T=(+I('tG').value)/100; I('tGo').textContent=T.toFixed(2);
+  var snap=modeG?SNAP_SURE:SNAP_UNSURE;
+  var NSHOW=10, sub={probs:snap.probs.slice(0,NSHOW),
+                     tail:snap.tail+snap.probs.slice(NSHOW).reduce(function(a,b){return a+b;},0)};
+  var d=tempDist(sub,T);
+  var x0=44,y0=30,y1=H-56, n=NSHOW+1, slot=(W-x0-16)/n, bw=slot*0.66, i;
+  axes(g,x0,y0,W-16,y1);
+  var mx=Math.max(d.p[0],d.tail,0.05);
+  for(i=0;i<n;i++){
+    var v=(i<NSHOW)?d.p[i]:d.tail, x=x0+i*slot+(slot-bw)/2, hh=(v/mx)*(y1-y0);
+    bar(g,x,y1-hh,bw,hh,(i<NSHOW)?rose:teal,0.85);
+    capt(g,v.toFixed(3),x+bw/2,y1-hh-6,ink,10,false,'center');
+    var lbl=(i<NSHOW)?snap.words[i]:'решта';
+    capt(g,fit(g,lbl,slot-4,9.5),x+bw/2,y1+16,soft,9.5,false,'center');
+  }
+  capt(g,'останній стовпчик — увесь решта словника разом',W/2,H-10,soft,10.5,false,'center');
+  I('vGa').textContent=d.p[0].toFixed(4);
+  I('vGb').textContent=d.ent.toFixed(2)+' біта';
+  var maxent=Math.log(VOCAB)/Math.LN2;
+  if(T<0.75) verd('vG','t-no','гостріше',
+    'Найкраще слово забирає '+d.p[0].toFixed(4)+' маси, ентропія '+d.ent.toFixed(2)+
+    ' біта з можливих '+maxent.toFixed(1)+'. Це шлях до жадібності: різноманіття зникає.');
+  else if(T<1.25) verd('vG','t-mid','як навчено',
+    'Біля одиниці розподіл такий, яким його дала модель: у найкращого '+d.p[0].toFixed(4)+
+    ', ентропія '+d.ent.toFixed(2)+' біта. Хвіст разом важить '+d.tail.toFixed(4)+'.');
+  else verd('vG','t-no','пласкіше, і хвіст росте',
+    'У найкращого лишилось '+d.p[0].toFixed(4)+', а хвіст разом набрав '+d.tail.toFixed(4)+
+    '. Температура піднімає не лише розумні варіанти, а й тисячі безглуздих одразу.');
+}
+
+
+/* ─── фігура H · скільки слів набирає масу p ─── */
+function drawH(){
+  var cv=I('cH'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), ink=css('--ink');
+  var k=+I('pH').value; I('pHo').textContent=NEED_P[k].toFixed(2);
+  var vals=[NEED_MED[k],NEED_Q90[k],NEED_MAX[k]],
+      names=['медіана','девʼята десятина','найгірший випадок'], cols=[teal,amber,rose];
+  var top=Math.max.apply(null,NEED_MAX);
+  var x0=70,y0=32,y1=H-56, slot=(W-x0-40)/3, bw=slot*0.5, i;
+  axes(g,x0,y0,W-16,y1);
+  function Yv(v){ return y1-(Math.log(1+v)/Math.log(1+top))*(y1-y0); }
+  /* поділки логарифмічної осі */
+  var ticks=[1,10,100,1000];
+  for(i=0;i<ticks.length;i++) if(ticks[i]<=top){
+    dash(g,x0,Yv(ticks[i]),W-16,soft);
+    capt(g,thou(ticks[i]),x0-8,Yv(ticks[i])+4,soft,10,false,'right');
+  }
+  for(i=0;i<3;i++){
+    var x=x0+i*slot+(slot-bw)/2, hh=Math.max(y1-Yv(vals[i]),4);
+    bar(g,x,y1-hh,bw,hh,cols[i],0.88);
+    capt(g,thou(vals[i]),x+bw/2,y1-hh-8,ink,13,true,'center');
+    capt(g,fit(g,names[i],slot-6,10.5),x+bw/2,y1+18,soft,10.5,false,'center');
+  }
+  capt(g,'кандидатів, шкала логарифмічна',x0-62,y0-10,soft,10.5,false,'left');
+  capt(g,'наш замір на '+N_PROMPT+' підказках',W/2,H-10,soft,10.5,false,'center');
+  I('vHa').textContent=thou(vals[0]);
+  I('vHb').textContent=thou(vals[2]);
+  var ratio=vals[2]/Math.max(vals[0],1);
+  if(ratio>=8) verd('vH','t-no','одного k тут замало',
+    'Щоб набрати '+NEED_P[k].toFixed(2)+' маси, у половині випадків досить '+vals[0]+
+    ' слів, а в найгіршому потрібно '+vals[2]+' — у '+Math.round(ratio)+
+    ' разів більше. Стале k тут або ріже розумні варіанти, або тягне зайві.');
+  else verd('vH','t-mid','поріг високий, розкид стиснувся',
+    'Медіана '+vals[0]+', найгірший випадок '+vals[2]+', тобто розрив усього в '+
+    ratio.toFixed(1)+' раза. На високому порозі майже скрізь доводиться брати багато '+
+    'кандидатів, і розкид зникає. Опусти поріг — і він повернеться.');
+}
+
+/* ─── фігура I · хвіст, помножений на довжину ─── */
+function drawI(){
+  var cv=I('cI'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), ink=css('--ink');
+  var m=+I('lnI').value; I('lnIo').textContent=String(m);
+  var x0=54,y0=26,x1=W-24,y1=H-48, i, pts=[];
+  function X(v){ return x0+v/60*(x1-x0); }
+  function Y(v){ return y1-v*(y1-y0); }
+  axes(g,x0,y0,x1,y1);
+  for(i=0;i<=60;i++) pts.push([X(i),Y(1-Math.pow(1-TAIL_STEP,i))]);
+  poly(g,pts,rose,2.6);
+  var v=1-Math.pow(1-TAIL_STEP,m);
+  g.strokeStyle=ink; g.lineWidth=1.5; g.beginPath();
+  g.moveTo(X(m)+0.5,y0); g.lineTo(X(m)+0.5,y1); g.stroke();
+  dot(g,X(m),Y(v),5,rose);
+  capt(g,v.toFixed(4),X(m)+8,Y(v)-8,ink,13,true,'left');
+  for(i=0;i<=4;i++){ dash(g,x0,Y(i/4),x1,soft); capt(g,(i/4).toFixed(2),x0-8,Y(i/4)+4,soft,10.5,false,'right'); }
+  for(i=0;i<=6;i++) capt(g,String(i*10),X(i*10),y1+17,soft,10.5,false,'center');
+  capt(g,'довжина продовження, токенів',(x0+x1)/2,H-10,soft,11,false,'center');
+  capt(g,'ймовірність зачепити хвіст хоч раз',x0-46,y0-8,soft,10.5,false,'left');
+  I('vIa').textContent=v.toFixed(4);
+  if(v<0.3) verd('vI','t-ok','поки що дрібниця',
+    'На '+m+' кроках імовірність зачепити хвіст — '+v.toFixed(4)+
+    '. Коротке продовження справді можна тягнути з повного розподілу.');
+  else if(v<0.7) verd('vI','t-mid','уже помітно',
+    'На '+m+' кроках — '+v.toFixed(4)+'. Кожен третій-другий вихід зачепить слово, '+
+    'яке модель уважала майже неможливим.');
+  else verd('vI','t-no','майже напевно',
+    'На '+m+' кроках — '+v.toFixed(4)+'. Пʼятивідсоткова дрібниця, помножена на довжину, '+
+    'перестала бути дрібницею: хвіст спрацює майже в кожному виході.');
+}
+
+/* ─── фігура J · чи росте ймовірність повтору ─── */
+function drawJ(){
+  var cv=I('cJ'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), amber=css('--amber'), ink=css('--ink');
+  var cols=[rose,amber,teal], n=LOOPC[0].p.length, i, j;
+  var x0=60,y0=28,x1=W-176,y1=H-52;
+  var top=0;
+  for(j=0;j<LOOPC.length;j++) for(i=1;i<n;i++) top=Math.max(top,LOOPC[j].p[i]);
+  top=Math.max(top*1.35,0.02);
+  function X(k){ return x0+k/(n-1)*(x1-x0); }
+  function Y(v){ return y1-Math.min(v,top)/top*(y1-y0); }
+  axes(g,x0,y0,x1,y1);
+  for(i=0;i<=4;i++){ dash(g,x0,Y(top*i/4),x1,soft);
+    capt(g,(top*i/4).toFixed(3),x0-8,Y(top*i/4)+4,soft,10,false,'right'); }
+  for(j=0;j<LOOPC.length;j++){
+    var pts=[]; for(i=1;i<n;i++) pts.push([X(i),Y(LOOPC[j].p[i])]);
+    poly(g,pts,cols[j],2.4);
+    for(i=1;i<n;i++) dot(g,X(i),Y(LOOPC[j].p[i]),3.4,cols[j]);
+    capt(g,fit(g,LOOPC[j].phrase,164,10.5),x1+10,y0+14+j*18,cols[j],10.5,true,'left');
+  }
+  for(i=1;i<n;i++) capt(g,String(i),X(i),y1+17,soft,10.5,false,'center');
+  capt(g,'скільки разів фраза вже стоїть у контексті',(x0+x1)/2,H-12,soft,11,false,'center');
+  capt(g,'ймовірність повторити її знову',x0-52,y0-10,soft,10.5,false,'left');
+  var a=LOOPC[0].p[1], b=LOOPC[0].p[n-1];
+  I('vJa').textContent=a.toFixed(4);
+  I('vJb').textContent=b.toFixed(4);
+  I('vJc').textContent=LOOPC.map(function(o){return o.phrase;}).join(' · ');
+  var grew=0;
+  for(j=0;j<LOOPC.length;j++) if(LOOPC[j].p[n-1] > LOOPC[j].p[1]*1.5) grew++;
+  if(grew===LOOPC.length) verd('vJ','t-no','додатний зворотний звʼязок є',
+    'Усі три криві ростуть: після сімох повторів фраза стає помітно ймовірнішою, '+
+    'ніж після одного ('+b.toFixed(4)+' проти '+a.toFixed(4)+' у найчастішої). '+
+    'Наслідок підсилює свою причину.');
+  else if(grew>0) verd('vJ','t-mid','підсилення є не в усіх',
+    'Зросли '+grew+' криві з '+LOOPC.length+'. У найчастішої фрази після сімох повторів '+
+    b.toFixed(4)+' проти '+a.toFixed(4)+' після одного. На такій маленькій моделі '+
+    'механізм видно нерівно.');
+  else verd('vJ','t-no','а от це не відтворилось',
+    'Криві не ростуть: у найчастішої фрази після сімох повторів '+b.toFixed(4)+
+    ' проти '+a.toFixed(4)+' після одного. На нашій моделі додатного зворотного '+
+    'звʼязку немає — цикл тут тримається на іншому механізмі, і про це нижче.');
+}
+
+
+/* ─── фігура K · правдоподібність проти виродження, за однакової довжини ─── */
+function drawK(){
+  var cv=I('cK'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), ink=css('--ink');
+  var i, lx=[], ly=[];
+  for(i=0;i<FORCED.length;i++){ lx.push(FORCED[i][4]); ly.push(FORCED[i][1]); }
+  var xlo=Math.min.apply(null,lx), xhi=Math.max.apply(null,lx);
+  var padx=(xhi-xlo)*0.14||0.1; xlo-=padx; xhi+=padx;
+  var ylo=0, yhi=Math.max(1.02, Math.max.apply(null,ly)*1.12);
+  var x0=62,y0=28,x1=W-24,y1=H-52;
+  function X(v){ return x0+(v-xlo)/(xhi-xlo)*(x1-x0); }
+  function Y(v){ return y1-(v-ylo)/(yhi-ylo)*(y1-y0); }
+  axes(g,x0,y0,x1,y1);
+  var bestLp=0,worstLp=0;
+  for(i=1;i<FORCED.length;i++){
+    if(FORCED[i][4]>FORCED[bestLp][4]) bestLp=i;
+    if(FORCED[i][4]<FORCED[worstLp][4]) worstLp=i;
+  }
+  var placed=[];
+  var ord=[]; for(i=0;i<FORCED.length;i++) ord.push(i);
+  ord.sort(function(p,q){ return FORCED[q][1]-FORCED[p][1]; });   /* згори вниз */
+  for(var oi=0;oi<ord.length;oi++){
+    i=ord[oi];
+    var isSearch=(FORCED[i][0].indexOf('промінь')===0||FORCED[i][0]==='жадібне');
+    var c=isSearch?rose:teal, px=X(FORCED[i][4]), py=Y(FORCED[i][1]);
+    dot(g,px,py,(i===bestLp||i===worstLp)?6:4.5,c);
+    var right=px>(x0+x1)/2, k2, dir=(py>(y0+y1)/2? -13 : 13);
+    var ty=(dir<0? py-10 : py+4);
+    /* підписи не мають накладатись: розсовуємо їх від краю всередину поля */
+    for(k2=0;k2<20;k2++){
+      var clash=false, q2;
+      for(q2=0;q2<placed.length;q2++)
+        if(Math.abs(placed[q2]-ty)<13){ clash=true; break; }
+      if(!clash) break;
+      ty+=dir;
+    }
+    placed.push(ty);
+    capt(g,FORCED[i][0],px+(right?-11:11),ty,ink,10.5,
+         (i===bestLp||i===worstLp),right?'right':'left');
+  }
+  for(i=0;i<=4;i++){ var v=xlo+(xhi-xlo)*i/4; capt(g,v.toFixed(2),X(v),y1+17,soft,10.5,false,'center'); }
+  for(i=0;i<=4;i++){ var u=i/4; dash(g,x0,Y(u),x1,soft); capt(g,u.toFixed(2),x0-8,Y(u)+4,soft,10.5,false,'right'); }
+  capt(g,'середній логарифм імовірності на токен',(x0+x1)/2,H-12,soft,11,false,'center');
+  capt(g,'частка виходів, що зациклились',x0-54,y0-10,soft,10.5,false,'left');
+  capt(g,'пошук максимуму',x1-4,y0+10,rose,10.5,true,'right');
+  capt(g,'семплювання',x1-4,y0+26,teal,10.5,true,'right');
+  var mx=0,my=0; for(i=0;i<FORCED.length;i++){ mx+=lx[i]; my+=ly[i]; }
+  mx/=FORCED.length; my/=FORCED.length;
+  var num=0,d1=0,d2=0;
+  for(i=0;i<FORCED.length;i++){ num+=(lx[i]-mx)*(ly[i]-my); d1+=(lx[i]-mx)*(lx[i]-mx); d2+=(ly[i]-my)*(ly[i]-my); }
+  var r=num/Math.sqrt(d1*d2);
+  I('vKa').textContent=r.toFixed(4);
+  I('vKb').textContent=FORCED[bestLp][0]+' · '+FORCED[bestLp][1].toFixed(4);
+  I('vKc').textContent=FORCED[worstLp][0]+' · '+FORCED[worstLp][1].toFixed(4);
+  if(r>0.5) verd('vK','t-no','що правдоподібніше, то гірше',
+    'Кореляція '+r.toFixed(4)+', і вона <b>додатна</b>: чим ближчий логарифм до нуля, '+
+    'тобто чим правдоподібніший текст, то більша частка виходів іде по колу. '+
+    'Найправдоподібніший спосіб зациклюється в '+FORCED[bestLp][1].toFixed(4)+
+    ' виходів, найменш правдоподібний — у '+FORCED[worstLp][1].toFixed(4)+'.');
+  else verd('vK','t-mid','звʼязок слабший',
+    'Кореляція '+r.toFixed(4)+'. Порівняй крайні точки: '+FORCED[bestLp][0]+' дає '+
+    FORCED[bestLp][1].toFixed(4)+' циклів, '+FORCED[worstLp][0]+' — '+
+    FORCED[worstLp][1].toFixed(4)+'.');
+}
+
+/* ─── дві криві на спільній осі х із власними шкалами ─── */
+function twin(g,W,H,xs,a,b,labA,labB,labX,cur,dA,dB){
+  if(dA===undefined) dA=4; if(dB===undefined) dB=4;
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), ink=css('--ink');
+  var x0=60,y0=30,x1=W-64,y1=H-52, i;
+  function X(i){ return x0+i/(xs.length-1)*(x1-x0); }
+  var alo=Math.min.apply(null,a), ahi=Math.max.apply(null,a);
+  var blo=Math.min.apply(null,b), bhi=Math.max.apply(null,b);
+  if(ahi-alo<1e-9){ ahi=alo+Math.max(Math.abs(alo)*0.1,1e-3); }
+  if(bhi-blo<1e-9){ bhi=blo+Math.max(Math.abs(blo)*0.1,1e-3); }
+  var da=ahi-alo, db=bhi-blo;
+  alo-=da*0.24; ahi+=da*0.16; blo-=db*0.24; bhi+=db*0.16;
+  function YA(v){ return y1-(v-alo)/(ahi-alo)*(y1-y0); }
+  function YB(v){ return y1-(v-blo)/(bhi-blo)*(y1-y0); }
+  axes(g,x0,y0,x1,y1);
+  var pa=[],pb=[];
+  for(i=0;i<xs.length;i++){ pa.push([X(i),YA(a[i])]); pb.push([X(i),YB(b[i])]); }
+  poly(g,pa,rose,2.6); poly(g,pb,teal,2.6);
+  for(i=0;i<xs.length;i++){
+    dot(g,X(i),YA(a[i]),(cur===i)?6:4,rose);
+    dot(g,X(i),YB(b[i]),(cur===i)?6:4,teal);
+    capt(g,String(xs[i]),X(i),y1+17,soft,10.5,false,'center');
+  }
+  capt(g,a[0].toFixed(dA),X(0),YA(a[0])-10,rose,10,false,'center');
+  capt(g,a[xs.length-1].toFixed(dA),X(xs.length-1),YA(a[xs.length-1])-10,rose,10,false,'center');
+  capt(g,b[0].toFixed(dB),X(0),YB(b[0])+18,teal,10,false,'center');
+  capt(g,b[xs.length-1].toFixed(dB),X(xs.length-1),YB(b[xs.length-1])+18,teal,10,false,'center');
+  capt(g,labA,x0-52,y0-10,rose,10.5,true,'left');
+  capt(g,labB,x1+8,y0-10,teal,10.5,true,'right');
+  capt(g,labX,(x0+x1)/2,H-12,soft,11,false,'center');
+}
+
+/* ─── фігура L · штраф за повтор ─── */
+function drawL(){
+  var cv=I('cL'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var k=+I('peL').value; I('peLo').textContent=PEN_TH[k].toFixed(2);
+  twin(g,W,H,PEN_TH,PEN_LOOP,PEN_F1,'частка циклів','F1 з еталоном','сила штрафу',k,4,4);
+  I('vLa').textContent=PEN_LOOP[k].toFixed(4);
+  I('vLb').textContent=PEN_F1[k].toFixed(4);
+  var base=PEN_LOOP[0], bf=PEN_F1[0], bi=0, i2;
+  for(i2=1;i2<PEN_F1.length;i2++) if(PEN_F1[i2]>PEN_F1[bi]) bi=i2;
+  if(k===0) verd('vL','t-no','без штрафу',
+    'Жадібне декодування з примусовою довжиною зациклюється в '+PEN_LOOP[0].toFixed(4)+
+    ' виходів. Це та сама воронка, що в таблиці вище, — тепер дивимось, чим її лікувати.');
+  else if(PEN_LOOP[k]>=base-0.01 && PEN_F1[k]<=bf+0.002) verd('vL','t-no','штраф ще нічого не робить',
+    'Циклів '+PEN_LOOP[k].toFixed(4)+' проти '+base.toFixed(4)+' без штрафу, збіг із еталоном '+
+    PEN_F1[k].toFixed(4)+' проти '+bf.toFixed(4)+'. Такий слабкий штраф лише трохи посуває '+
+    'логіти й воронки не розриває.');
+  else if(k===bi) verd('vL','t-ok','найкраще з випробуваного',
+    'Тут найвищий збіг із еталоном у всій сітці: '+PEN_F1[k].toFixed(4)+' проти '+bf.toFixed(4)+
+    ' без штрафу, а циклів лишилось '+PEN_LOOP[k].toFixed(4)+' проти '+base.toFixed(4)+'.');
+  else if(PEN_F1[k]>bf) verd('vL','t-mid','краще, але не найкраще',
+    'Циклів '+PEN_LOOP[k].toFixed(4)+' проти '+base.toFixed(4)+', збіг із еталоном '+
+    PEN_F1[k].toFixed(4)+'. Це вже краще за відсутність штрафу, але нижче за найкращу точку '+
+    'сітки ('+PEN_F1[bi].toFixed(4)+' при '+PEN_TH[bi].toFixed(2)+').');
+  else verd('vL','t-mid','перестаралися',
+    'Циклів '+PEN_LOOP[k].toFixed(4)+', але збіг із еталоном упав до '+PEN_F1[k].toFixed(4)+
+    '. Штраф не вміє відрізнити поганий повтор від законного, і за такої сили починає '+
+    'викидати потрібні слова.');
+}
+
+/* ─── фігура M · прокляття променя на нашому стенді ─── */
+var modeM=0;
+function drawM(){
+  var cv=I('cM'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var f1=modeM?BEAM_NORM_F1:BEAM_RAW_F1, ln=modeM?BEAM_NORM_LEN:BEAM_RAW_LEN;
+  twin(g,W,H,BEAM_W,f1,ln,'F1 з еталоном','довжина виходу','ширина променя',-1,4,2);
+  I('vMa').textContent=f1[0].toFixed(4)+' · '+ln[0].toFixed(2);
+  I('vMb').textContent=f1[f1.length-1].toFixed(4)+' · '+ln[ln.length-1].toFixed(2);
+  var dF=f1[f1.length-1]-f1[0], dL=ln[ln.length-1]-ln[0];
+  if(!modeM) verd('vM','t-no','ширше — коротше',
+    'Від ширини 1 до 8 вихід укоротився з '+ln[0].toFixed(2)+' до '+ln[ln.length-1].toFixed(2)+
+    ' слова при '+REF_LEN.toFixed(2)+' в еталона — і <b>купи по пʼятьох зернах тут не '+
+    'перетинаються</b>, тобто це доведена різниця. Збіг із еталоном при цьому теж падає '+
+    '(на '+Math.abs(dF).toFixed(4)+'), але його купи перетинаються: напрямок є, доведеної '+
+    'різниці немає.');
+  else if(dF<0) verd('vM','t-mid','довжина повернулась, якість — ні',
+    'Нормалізація витягла довжину з '+ln[0].toFixed(2)+' до '+ln[ln.length-1].toFixed(2)+
+    ' слова (в еталона '+REF_LEN.toFixed(2)+'), тобто перекос вона таки лікує. Але збіг '+
+    'із еталоном усе одно нижчий, ніж у ширини 1: '+f1[f1.length-1].toFixed(4)+' проти '+
+    f1[0].toFixed(4)+'.');
+  else verd('vM','t-ok','нормалізація витягла обидва',
+    'Тут ширший промінь із нормалізацією підняв і довжину (до '+ln[ln.length-1].toFixed(2)+
+    ' при '+REF_LEN.toFixed(2)+' в еталона), і збіг із еталоном. Порівняй із сусіднім перемикачем.');
+}
+
+/* ─── фігура N · впевненість росте, поки модель ходить по колу ─── */
+function drawN(){
+  var cv=I('cN'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), ink=css('--ink');
+  var n=CONF.length, i, x0=58,y0=28,x1=W-200,y1=H-52;
+  var top=Math.max(Math.max.apply(null,CONF), Math.max.apply(null,CONF_NOUNK))*1.25;
+  function X(k){ return x0+k/(n-1)*(x1-x0); }
+  function Y(v){ return y1-v/top*(y1-y0); }
+  axes(g,x0,y0,x1,y1);
+  for(i=0;i<=4;i++){ dash(g,x0,Y(top*i/4),x1,soft);
+    capt(g,(top*i/4).toFixed(2),x0-8,Y(top*i/4)+4,soft,10,false,'right'); }
+  var a=[],b=[];
+  for(i=0;i<n;i++){ a.push([X(i),Y(CONF[i])]); b.push([X(i),Y(CONF_NOUNK[i])]); }
+  poly(g,a,rose,2.6); poly(g,b,teal,2.6);
+  for(i=0;i<n;i++){ dot(g,X(i),Y(CONF[i]),3,rose); dot(g,X(i),Y(CONF_NOUNK[i]),3,teal); }
+  capt(g,'жадібне як є',x1+8,Y(CONF[n-1])+4,rose,10.5,true,'left');
+  capt(g,'<unk> заборонено',x1+8,Y(CONF_NOUNK[n-1])+18,teal,10.5,true,'left');
+  for(i=0;i<n;i+=4) capt(g,String(i+1),X(i),y1+17,soft,10.5,false,'center');
+  capt(g,String(n),X(n-1),y1+17,soft,10.5,false,'center');
+  capt(g,'крок продовження',(x0+x1)/2,H-12,soft,11,false,'center');
+  capt(g,'ймовірність обраного слова',x0-50,y0-10,soft,10.5,false,'left');
+  I('vNa').textContent=CONF[0].toFixed(4)+' · '+CONF_NOUNK[0].toFixed(4);
+  I('vNb').textContent=CONF[n-1].toFixed(4)+' · '+CONF_NOUNK[n-1].toFixed(4);
+  var g1=CONF[n-1]-CONF[0], g2=CONF_NOUNK[n-1]-CONF_NOUNK[0];
+  if(g1>0.02 && g1>g2+0.02) verd('vN','t-no','воронка сама себе годує',
+    'Як є: від '+CONF[0].toFixed(4)+' на першому кроці до '+CONF[n-1].toFixed(4)+
+    ' на двадцятому — модель дедалі впевненіша в тому, що повторює. З забороненим '+
+    'службовим токеном крива пласка ('+CONF_NOUNK[0].toFixed(4)+' проти '+
+    CONF_NOUNK[n-1].toFixed(4)+'): підсилюється не мова, а конкретна воронка.');
+  else verd('vN','t-mid','криві близькі',
+    'Як є: '+CONF[0].toFixed(4)+' на початку і '+CONF[n-1].toFixed(4)+' наприкінці; '+
+    'із забороненим службовим токеном — '+CONF_NOUNK[0].toFixed(4)+' і '+
+    CONF_NOUNK[n-1].toFixed(4)+'. Порівнюй нахили, а не окремі точки.');
+}
+
+/* ═══════ звʼязування ═══════ */
+function drawAll(){
+  drawA(); drawB(); drawC(); drawD(); drawE(); drawF(); drawG();
+  drawH(); drawI(); drawJ(); drawK(); drawL(); drawM(); drawN();
+}
+segment('segD',function(i){ stD.w=i+1; drawD(); });
+on('stD','input',function(){ stD.step=+I('stD').value; I('stDo').textContent=String(stD.step); drawD(); });
+on('alE','input',drawE);
+segment('segF',function(i){ modeF=i; drawF(); });
+on('tG','input',drawG);
+segment('segG',function(i){ modeG=i; drawG(); });
+on('pH','input',drawH);
+on('lnI','input',drawI);
+on('peL','input',drawL);
+segment('segM',function(i){ modeM=i; drawM(); });
+window.addEventListener('resize',drawAll);
+if(window.matchMedia) try{ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',drawAll); }catch(e){}
+drawAll();
+})();
+
+</script>
+</body>
+</html>

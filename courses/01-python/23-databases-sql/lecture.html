@@ -210,7 +210,7 @@ footer a{color:var(--teal)}
 .nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
 .nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
 .nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
-.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
 .step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
   border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
 .step:hover{border-color:var(--rose);background:var(--rose-w)}
@@ -386,6 +386,19 @@ select * from drinks where category = 'кава' order by price</div>
 індексом, ухвалює <strong>планувальник запитів</strong> усередині бази — він знає розміри
 таблиць і наявні індекси, а ти ні. У <a href="#s11">розділі про індекси</a> ми цей план
 побачимо на власні очі.</p>
+
+<div class="note"><b>Три домовленості чужої мови — щоб далі не спотикатись.</b>
+SQL старший за Python і має власні дрібні правила, які ніде не оголошують уголос.
+<strong>Коментар</strong> у ньому починається не з <code>#</code>, а з
+<strong>двох дефісів</strong>: <code>-- це коментар до кінця рядка</code>.
+<strong>Регістр слів мови не важить</strong>: <code>select</code>,
+<code>SELECT</code> і <code>SeLeCt</code> — те саме слово, і в чужому коді ти
+найчастіше побачиш саме великі літери (<code>SELECT * FROM drinks</code>). Ми
+пишемо малими, щоб команда не перекрикувала назви таблиць і стовпців, — а от самі
+назви й значення в лапках регістр таки розрізняють. І <strong>крапка з комою</strong>
+в кінці оператора потрібна там, де операторів кілька підряд — у консолі бази або
+у файлі зі скриптом; у <code>execute()</code> оператор завжди один, тому крапка
+з комою там необовʼязкова.</div>
 
 <h3>Чому саме SQLite</h3>
 
@@ -571,7 +584,7 @@ con.execute("select 1")<br>
   <figcaption><b>Про прапорець.</b> Із SQLite 3.37 таблицю можна оголосити словом
     <code>STRICT</code> у кінці — тоді оголошені типи стають правилом, а не побажанням,
     і невідповідне значення дає <code>IntegrityError: cannot store TEXT value in INTEGER
-    column</code>. Це рекомендований спосіб для нового коду, але за замовчуванням його
+    column drinks.price</code> — з назвою таблиці й стовпця в кінці. Це рекомендований спосіб для нового коду, але за замовчуванням його
     немає, і мільйони наявних баз живуть із мовчазним перетворенням.</figcaption>
 </figure>
 
@@ -778,7 +791,7 @@ con.execute("... where login=?", (evil,))&nbsp;&nbsp;→ <span class="out">0 р�
 
 <div class="eq code">select count(*), avg(price), min(price), max(price), sum(price)<br>
 from drinks<br>
-<span class="out">(7, 43.571428571428571, 25, 60, 305)</span></div>
+<span class="out">(7, 43.57142857142857, 25, 60, 305)</span></div>
 
 <p><code>count(*)</code> рахує рядки, <code>avg</code> — середнє, <code>sum</code> — суму,
 <code>min</code> і <code>max</code> — межі: уся таблиця стиснулась в один рядок із пʼятьма
@@ -788,8 +801,8 @@ from drinks<br>
 <div class="eq code">select category, count(*), avg(price)<br>
 from drinks<br>
 group by category<br>
-<span class="out">('какао', 1, 40.0)</span><br>
 <span class="out">('кава', 4, 43.75)</span><br>
+<span class="out">('какао', 1, 40.0)</span><br>
 <span class="out">('чай', 2, 45.0)</span></div>
 
 <p>База розклала сім рядків на три купки за значенням <code>category</code> і порахувала
@@ -1008,6 +1021,37 @@ print(plan.fetchone()[3])<br>
 <p>Слово змінилося зі <code>SCAN</code> на <code>SEARCH</code>, а запит став виконуватись
 за <strong>0,020 мс</strong> замість 277.</p>
 
+<h3>Як читати план</h3>
+
+<p>План — це не текст, а таблиця: кожен рядок відповіді описує <strong>один крок</strong>
+виконання, а сам людський опис лежить у четвертому полі рядка, тобто в
+<code>row[3]</code> (перші три — службові: номер кроку, номер кроку-батька й поле,
+яке лишилось від старих версій і завжди дорівнює нулю).
+Тому й <code>fetchone()[3]</code>. Складний запит дасть кілька рядків: по одному на
+кожну таблицю й на кожне проміжне впорядкування.</p>
+
+<p>Сам опис читають зліва направо, і слів у ньому потрібно знати три:</p>
+
+<ul>
+  <li><code>SCAN <em>таблиця</em></code> — <strong>усі рядки підряд</strong>. Це червоний
+    прапорець тоді, коли ти шукав один запис; для <code>select</code> без
+    <code>where</code> це нормально й інакше бути не може;</li>
+  <li><code>SEARCH <em>таблиця</em> USING INDEX <em>імʼя</em> (<em>стовпець</em>=?)</code> —
+    <strong>пошук за індексом</strong>. У дужках написано найцінніше: <em>яку саме умову</em>
+    індекс закрив. Якщо у <code>where</code> було два стовпці, а в дужках один — другий
+    усе одно перевірятиметься перебором того, що знайшлось;</li>
+  <li><code>USE TEMP B-TREE FOR ORDER BY</code> — база <strong>будувала тимчасове
+    сортування</strong>, бо готового впорядкування під цей <code>order by</code>
+    не знайшлось. На великій вибірці саме цей рядок і буває найдорожчим.</li>
+</ul>
+
+<p>Практичний спосіб користуватись цим: створив індекс — прожени
+<code>explain query plan</code> на своєму запиті ще раз. Якщо <code>SCAN</code> лишився,
+індекс не підійшов (типова причина — умова написана так, що індекс незастосовний:
+<code>where lower(name) = ?</code> замість <code>where name = ?</code>), і місце під нього
+витрачено дарма. План — єдина чесна відповідь на питання «а індекс узагалі
+використовується?»; вимірювати це часом на маленькій таблиці марно.</p>
+
 <p><strong>Індекс</strong> — окрема структура, де значення стовпця лежать упорядковано,
 а поруч із кожним — вказівка, у якому рядку таблиці воно стоїть. Це покажчик у кінці
 книжки: щоб знайти слово, ти не гортаєш усі 500 сторінок. Пошук у впорядкованому переліку
@@ -1146,9 +1190,7 @@ print(dict(row))<br>
 і працює це завдяки одній властивості формату: такі рядки сортуються за абеткою в тому
 самому порядку, що й у часі. Звідки береться ця властивість, чому <code>01.03.2026</code>
 її не має і що робити з часовими поясами — у
-<a href="../24-datetime/lecture.html">наступній темі</a>. А в <code>practice.ipynb</code>
-ти створиш базу кавʼярні в тимчасовій теці, заллєш у неї меню, спіймаєш інʼєкцію на власні
-очі й побачиш, як <code>SCAN</code> перетворюється на <code>SEARCH</code>.</div>
+<a href="../24-datetime/lecture.html">наступній темі</a>.</div>
 
 <div class="nextsteps">
   <h3>Далі в темі</h3>
@@ -1925,15 +1967,15 @@ function drawIdx(){
   var baseMb=N*DB_BYTES_PER_ROW/1048576, idxMb=baseMb*0.7761;   /* 128,6 МБ → 228,4 МБ у замірі */
 
   mono(g,11); g.textAlign='left'; g.fillStyle=css('--soft');
-  g.fillText('explain query plan select * from drinks where name = ?',16,18);
+  g.fillText('explain query plan select * from items where name = ?',16,18);
 
   /* два плани поруч */
   var cw=(W-32-16)/2, k;
   tile(g,16,32,cw,72,css('--rose-w'),css('--rose'));
   monoB(g,12); g.fillStyle=css('--rose'); g.textAlign='center';
   g.fillText('без індексу',16+cw/2,52);
-  monoFit(g,'SCAN drinks',cw-16,13); g.fillStyle=css('--ink');
-  g.fillText('SCAN drinks',16+cw/2,74);
+  monoFit(g,'SCAN items',cw-16,13); g.fillStyle=css('--ink');
+  g.fillText('SCAN items',16+cw/2,74);
   mono(g,11); g.fillStyle=css('--soft');
   g.fillText(num(N)+' '+plural(N,'крок','кроки','кроків'),16+cw/2,93);
 

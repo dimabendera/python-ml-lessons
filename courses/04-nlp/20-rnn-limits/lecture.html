@@ -1,0 +1,1845 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Межі RNN</title>
+<meta name="description" content="Підручники пишуть, що RNN повільна, бо не розпаралелюється. На чотирьох ядрах без відеокарти це не відтворюється: при сталій роботі час LSTM від довжини 8 до 1024 змінюється у 1.08 раза, а час уваги — у 6.34. Теза виявляється структурною, і її ціна проступає лише коли ядер більше одного: чотири потоки коштують LSTM 10.48 раза процесорного часу проти 2.64 в уваги, а та сама робота, порізана на 128 послідовних шматків, дорожчає у 42.05 проти 1.45 раза на одному потоці. Дві інші межі теж заміряні: градієнт до першого слова на 100 кроках занулюється у float32, а вісім випадкових символів у вектор із 64 чисел влазять лише на 0.4211, тоді як у вектор із 256 — на 0.7200. І там, де рекурентність виграє: за 2048 кроків потоку час її кроку змінився у 1.12 раза проти 7.39 в уваги.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* сегменти цієї теми переносяться по два в рядок */
+.seg.wrap button{flex:1 1 46%}
+/* довгі рядки іграшкового корпусу не мусять розпирати сторінку */
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 4 · Тема 20</p>
+    <h1>Межі RNN</h1>
+    <p class="stand">«RNN не розпаралелюється, тому вона повільна» — фраза, яку
+      переказують без числа. Ми поміряли її на чотирьох ядрах без відеокарти, і в
+      такому вигляді вона не відтворилась. Ця тема називає три справжні межі
+      рекурентних мереж, кожну числом, і показує задачу, у якій рекурентність
+      досі виграє.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Де ми зупинились</a></li>
+        <li><a href="#s2">Межа перша: сигнал не доходить</a></li>
+        <li><a href="#s3">Межа друга: одне вузьке горло</a></li>
+        <li><a href="#s4">Межа третя: теза без числа</a></li>
+        <li><a href="#s5">Дослід А: однакова робота</a></li>
+        <li><a href="#s6">Дослід Б: чотири ядра</a></li>
+        <li><a href="#s7">Звідки береться різниця</a></li>
+        <li><a href="#s8">Чого ми не міряли</a></li>
+        <li><a href="#s9">Де RNN доречна досі</a></li>
+        <li><a href="#s10">Що рекурентна мережа вміє</a></li>
+        <li><a href="#s11">Три межі поруч</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../19-seq2seq/lecture.html">← 19. seq2seq і машинний переклад</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../21-transformer-architecture/lecture.html">21. Архітектура і чому витіснила RNN →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+<p class="lead">Чотири теми поспіль ми будували моделі, які читають текст по одному
+слову й несуть із собою стан. Вони працюють: мовна модель угадує наступне слово,
+гейти рятують памʼять від затухання, а seq2seq перекладає фразу з англійської на
+українську. Ця тема — не реклама того, що буде далі. Це чесний перелік: <b>що
+рекурентна мережа вміє, де саме вона впирається і де вона доречна досі</b>. Усі три
+межі ми поміряємо, а не перекажемо — бо найвідоміша з них у переказі виявилась
+неправдою на нашій машині.</p>
+
+<h2 id="s1"><span class="num">Розділ 1</span>Де ми зупинились</h2>
+
+<p>Коротко відновимо блок. Тема <code>16-language-model</code> поставила задачу, у
+якій порядок слів не можна ігнорувати: угадай наступне слово за попередніми. Тема
+<code>17-rnn</code> дала модель зі <b>станом</b> — числовим вектором, який мережа
+несе з кроку на крок і оновлює після кожного слова. Тема <code>18-lstm-gru</code>
+додала гейти: маленькі вентилі, які вирішують, що в стані лишити, а що стерти. Тема
+<code>19-seq2seq</code> зібрала з двох таких мереж перекладач: перша читає джерело
+й стискає його, друга з цього стиску пише переклад.</p>
+
+<p>Усе це справді працює. І кожна тема лишила по тріщині, на яку ми чемно казали
+«про це потім». Потім — це зараз.</p>
+
+<p>Перш ніж міряти, треба сказати неприємне про наш власний корпус. Ми весь блок
+працювали з українськими перекладами інтерфейсів, і в них <b>медіана довжини
+речення — 6 слів</b>, девʼяностий перцентиль — 11, а частка речень не
+довших за вісім слів — <b>0.7977</b>. Найдовше речення в корпусі має 550 слів, але
+таких одиниці.</p>
+
+<div class="note warn"><b>Корпус — поганий свідок у цій справі.</b><br>
+Проблеми, заради яких вигадали гейти й потім увагу, починаються на довгих
+залежностях. У реченні з шести слів довгої залежності немає. Тому далі ми міряємо
+межі <b>не на цьому корпусі</b>, а на штучних послідовностях потрібної довжини:
+там, де перевіряється будова, синтетика чесніша за реальні дані, бо дає рівно ту
+довжину, яку ми хочемо перевірити. Реальні числа на реальних парах перекладу вже
+заміряла тема <code>19-seq2seq</code>, і ми на них спираємось окремо.</div>
+
+<p>І ще одне попередження, без якого половина цієї теми не має сенсу. Щоб сказати
+«рекурентна мережа повільна», треба сказати <b>повільніша за що</b>. Нам потрібен
+другий спосіб побудувати шар, з яким можна порівнювати. Ми візьмемо <b>увагу</b> —
+шар, у якому кожна позиція дивиться відразу на всі інші, без жодної черги.</p>
+
+<div class="note"><b>Увага тут — мірка, а не рішення.</b><br>
+Ми беремо її тільки як другу будову для порівняння: у ній немає посилання на
+попередній крок, і саме ця відмінність нас цікавить. Як увага влаштована зсередини,
+навіщо в ній три різні ролі для того самого вектора й чому з неї виріс трансформер —
+це тема <code>22-self-attention</code> наступного блоку. У цій темі ми не
+стверджуємо, що увага розвʼязує хоч одну з трьох меж: ми її для цього не міряли.</div>
+
+<h2 id="s2"><span class="num">Розділ 2</span>Межа перша: до першого слова сигнал не доходить</h2>
+
+<p>Мережа вчиться так: вона робить передбачення, ми міряємо помилку, а потім
+питаємо кожну вагу — «наскільки зміниться помилка, якщо тебе трохи посунути?».
+Відповідь на це питання й зветься <b>градієнтом</b>. Слово страшне, але думка
+побутова: це стрілка, яка каже, у який бік і наскільки сильно смикати кожну
+ручку.</p>
+
+<p>У рекурентної мережі ця стрілка мусить пройти назад <b>крізь усі кроки</b>. Щоб
+дізнатись, як перше слово речення вплинуло на останнє передбачення, сигнал іде від
+останнього кроку до передостаннього, потім ще на крок назад, і так до початку. На
+кожному переході його множать на щось — і якщо це «щось» менше за одиницю, добуток
+швидко тане.</p>
+
+<p>Заміряємо просто. Беремо мережу <b>ще не навчену</b>, подаємо їй послідовність
+довжини <span class="raw">T</span>, штовхаємо похідну від останнього виходу назад і
+дивимось, яка сила стрілки доходить до входу першого кроку порівняно з входом
+останнього. Число, яке друкує зошит, — це відношення «сила на останньому кроці»
+поділити на «сила на першому». Що воно більше, то менше перше слово може вплинути
+на навчання. Конфігурація наша: розмір стану 64, три зерна, беремо медіану.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>довжина <span class="raw">T</span></th><th>звичайна RNN</th><th>LSTM</th><th>GRU</th></tr>
+<tr><td>10</td><td>1333</td><td>135</td><td>137</td></tr>
+<tr><td>25</td><td>3.2·10⁸</td><td>1.6·10⁵</td><td>3.9·10⁵</td></tr>
+<tr><td>50</td><td>2.3·10¹⁷</td><td>6.4·10¹⁰</td><td>6.4·10¹⁰</td></tr>
+<tr class="hot"><td>100</td><td>нуль</td><td>1.0·10²²</td><td>2.3·10²¹</td></tr>
+</table></div>
+
+<p>Читати таблицю треба так: «у стільки разів слабший». На довжині 25 у звичайної
+RNN до першого слова доходить сигнал у 3.2·10⁸ разів слабший за той, що є на
+останньому кроці. А на сотні кроків він доходить не «дуже слабким», а <b>точно
+нульовим</b>.</p>
+
+<p>Це не образ. У float32 — форматі, яким мережа рахує, — найменше додатне число має
+порядок приблизно 10<span class="sup">−38</span>. Коли добуток дрібних множників
+опускається нижче, машина не має чим його записати й кладе туди справжній нуль.
+Далі будь-яке множення на цей нуль дає нуль. <b>Перше слово стоклітинної
+послідовності не може вплинути на навчання ніяк</b> — не «слабко впливає», а не
+впливає.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 1 · Скільки порядків втрачає сигнал дорогою назад</div>
+  <p class="fig-sub">Стовпчик показує, у скільки разів слабший сигнал доходить до
+    першого кроку порівняно з останнім — у десяткових порядках. Повзунок міняє
+    довжину послідовності, перемикач підсвічує модель. Червона межа — те, нижче
+    чого float32 не вміє записати число.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="tg1">кроків у послідовності <output id="tg1o">10</output></label>
+        <input id="tg1" type="range" min="0" max="3" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <span class="cap">підсвітити</span>
+        <div class="seg" id="seg1">
+          <button data-i="0" aria-pressed="true">RNN</button>
+          <button data-i="1" aria-pressed="false">LSTM</button>
+          <button data-i="2" aria-pressed="false">GRU</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>RNN</b><i id="v1a" class="sm">—</i></div>
+        <div class="cellv"><b>LSTM</b><i id="v1b" class="sm">—</i></div>
+        <div class="cellv"><b>GRU</b><i id="v1c" class="sm">—</i></div>
+        <div class="cellv"><b>запас до межі</b><i id="v1d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>Мережі не навчені, розмір стану 64, три зерна, узято медіану.
+    Висота стовпчика — десятковий логарифм відношення: стовпчик заввишки 8 означає
+    ослаблення у сто мільйонів разів. Гейти відсувають межу, але йдуть у той самий
+    бік.</figcaption>
+</figure>
+
+<p>Гейти цю історію не скасовують. Вони її <b>вповільнюють</b>. На пʼятдесяти кроках
+LSTM теж віддає сигнал у 6.4·10¹⁰ разів слабший — це десятки мільярдів. Різниця з
+простою RNN величезна, і саме вона робить навчання можливим; але «довга памʼять» у
+назві LSTM — це порівняння з RNN, а не з нескінченністю.</p>
+
+<div class="note"><b>Що саме ми заміряли, і чого не заміряли.</b><br>
+Числа вище зняті з мережі <b>при ініціалізації</b>, тобто до навчання. У навченої
+мережі гейт забування може підійти впритул до одиниці й тримати сигнал набагато
+довше — тоді затухання буде повільніше. Обидва стани поруч міряє тема
+<code>18-lstm-gru</code>; тут ми беремо лише початковий, і цього досить, щоб
+побачити порядок біди.</div>
+
+
+<h2 id="s3"><span class="num">Розділ 3</span>Межа друга: одне вузьке горло</h2>
+
+<p>Друга межа не про час і не про градієнти. Вона про те, що модель <b>фізично не
+має куди подіти інформацію</b>.</p>
+
+<p>Пригадай будову перекладача з теми <code>19-seq2seq</code>. Енкодер читає
+англійське речення слово за словом і після останнього слова віддає свій стан —
+один вектор. Декодер бачить <b>тільки цей вектор</b> і з нього пише всю українську
+фразу. Скільки б слів не було в джерелі — три чи тридцять, — розмір вектора той
+самий, бо він дорівнює розмірові стану мережі, а той заданий наперед.</p>
+
+<p>Тема <code>19-seq2seq</code> заміряла наслідок на справжніх парах перекладу:
+GRU-енкодер і GRU-декодер зі станом на 192 числа, 58 132 пари з нашого корпусу, у
+яких обидва боки мають від двох до восьми слів. Частка правильно вгаданих токенів за
+довжиною джерела має там <b>горб</b>: на двох словах <b>0.3846</b>, найвище на
+трьох — <b>0.4458</b>, і далі рівний спад до <b>0.3449</b> на восьми. Від вершини до
+восьми слів — падіння на <b>0.1009</b>.</p>
+
+<div class="note warn"><b>Ці числа не наші — і головне в них не те, що здається.</b><br>
+0.3846, 0.4458 і 0.3449 заміряла тема <code>19-seq2seq</code> своїм зошитом і своєю
+конфігурацією; ми їх цитуємо, а не відтворюємо. І та сама тема зробила очевидний
+наступний крок: навчила ту саму модель із утричі коротшим вектором контексту (64 замість 192), щоб
+перевірити, чи винен саме він. Результат подвійний. Якість упала <b>скрізь</b> — на
+0.016-0.082 на кожній довжині, що набагато більше за розкид. А от <b>нахил</b>,
+тобто те, наскільки сильніше страждають саме довгі речення, змінився лише на 0.0052
+при сумарному розкиді 0.0065. Різниця, менша за розкид, різницею не є. Тобто спад
+із довжиною на справжньому перекладі <b>є</b>, а приписати його розмірові вектора
+там <b>не вдалося</b>.</div>
+
+<p>Ось чому далі ми міряємо не переклад. Питання «чи здатен розмір вектора взагалі
+бути стелею» треба ставити задачі, з якої прибрано все інше: словник, граматику,
+неоднозначність перекладу, нерівний розподіл довжин у корпусі. Лишиться чиста
+памʼять — і тоді відповідь буде про неї, а не про мову.</p>
+
+<h3>Задача-копія</h3>
+
+<p>Мережа читає послідовність випадкових символів, стискає її в один вектор, а
+потім має вимовити ту саму послідовність назад. Символів тридцять два, вони
+рівноймовірні й ніяк не повʼязані між собою. Це означає, що <b>вгадати не можна
+нічого</b>: щоб відповісти правильно, треба саме запамʼятати. Якщо мережа
+відповідає навмання, вона потрапляє в один символ із тридцяти двох, тобто дає
+0.0312.</p>
+
+<p>Будова — та сама, що в перекладачі: GRU читає, віддає останній стан, другий GRU
+з нього відновлює. Розмір стану тримаємо 64, довжину міняємо. Три зерна,
+двісті кроків навчання на кожну конфігурацію, дані щоразу свіжі — тож завчити
+конкретні приклади неможливо.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>довжина</th><th>частка правильних</th><th>по трьох зернах</th><th>у скільки разів вище за навмання</th></tr>
+<tr><td>4</td><td>0.8965</td><td>0.8945 … 0.9062</td><td>28.7×</td></tr>
+<tr class="hot"><td>8</td><td>0.4211</td><td>0.3840 … 0.4343</td><td>13.5×</td></tr>
+<tr><td>16</td><td>0.0355</td><td>0.0310 … 0.0427</td><td>1.1×</td></tr>
+<tr><td>32</td><td>0.0316</td><td>0.0313 … 0.0330</td><td>1.0×</td></tr>
+</table></div>
+
+<p>Чотири символи мережа тримає майже без помилок. Вісім — уже ледве кожен другий.
+А на шістнадцяти вона <b>падає до рівня навмання</b> і далі не відрізняється від
+монетки: купи по зернах на довжині 16 і 32 перетинаються, тож між ними різниці
+немає — обидві просто на дні.</p>
+
+<p>Тепер найважливіша перевірка. Якщо винен саме <b>розмір вектора</b>, то ширший
+вектор має рятувати. Тримаємо довжину сталою — вісім символів, рівно та довжина
+джерела, на якій тема <code>19-seq2seq</code> дістала найгірший результат, — і
+міняємо розмір стану.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>розмір вектора</th><th>частка правильних</th><th>по трьох зернах</th></tr>
+<tr><td>16</td><td>0.1428</td><td>0.1384 … 0.1438</td></tr>
+<tr><td>32</td><td>0.2415</td><td>0.2236 … 0.2649</td></tr>
+<tr class="hot"><td>64</td><td>0.4211</td><td>0.3840 … 0.4343</td></tr>
+<tr><td>128</td><td>0.5691</td><td>0.5667 … 0.5959</td></tr>
+<tr><td>256</td><td>0.7200</td><td>0.7192 … 0.7385</td></tr>
+</table></div>
+
+<p>Ось і відповідь. На тій самій довжині, з тим самим навчанням і тими самими
+даними ширший вектор піднімає якість з 0.1428 до 0.7200. Нічого, крім розміру
+вектора, ми не міняли — і тільки тому пояснення лишається одне. <b>На задачі, у якій
+немає нічого, крім памʼяті, стелю задає саме кількість чисел, у яку все мусить
+влізти.</b></p>
+
+<figure>
+  <div class="fig-head">Інтерактив 2 · Що влазить в один вектор</div>
+  <p class="fig-sub">Задача-копія: мережа читає випадкові символи, стискає їх в один
+    вектор і має вимовити назад. Перемикач обирає, що міняємо — довжину
+    послідовності чи розмір самого вектора. Вусики показують розкид по трьох зернах,
+    пунктир — рівень випадкового вгадування.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що міняємо</span>
+        <div class="seg" id="seg2">
+          <button data-i="0" aria-pressed="true">довжину</button>
+          <button data-i="1" aria-pressed="false">розмір вектора</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="p2">точка <output id="p2o">4</output></label>
+        <input id="p2" type="range" min="0" max="4" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>частка правильних</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>розкид по зернах</b><i id="v2b" class="sm">—</i></div>
+        <div class="cellv"><b>навмання дало б</b><i id="v2c">—</i></div>
+        <div class="cellv"><b>вище за навмання</b><i id="v2d">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>У першому положенні перемикача — довжина при сталому векторі 64;
+    у другому — сталі вісім символів при векторі різного розміру. Дві половини кажуть
+    одне: на цій задачі стеля залежить не від того, як мережа влаштована, а від того,
+    скільки чисел їй дали.</figcaption>
+</figure>
+
+<div class="note warn"><b>Що цей замір доводить, а що ні.</b><br>
+Він доводить, що розмір вектора <b>здатен</b> бути стелею, і показує, як ця стеля
+виглядає. Він <b>не</b> доводить, що саме вона пояснює спад якості перекладу з
+довжиною: на справжніх парах тема <code>19-seq2seq</code> цього розділити не змогла.
+Випадкові символи — навмисно найважчий випадок, бо в них немає жодної надмірності.
+У справжньому тексті сусідні слова підказують одне одного, тож частину інформації
+можна не памʼятати, а відновити — саме тому на восьми словах тема 19 дістає 0.3449,
+а не рівень навмання. Наш замір показує <b>механізм</b> у чистому вигляді й
+перебільшує його силу; реальні дані показують силу, але не називають причини.</div>
+
+<h2 id="s4"><span class="num">Розділ 4</span>Межа третя: теза, яку переказують без числа</h2>
+
+<p>А тепер найвідоміша фраза про рекурентні мережі: «RNN не розпаралелюється, тому
+вона повільна, тому її витіснив трансформер». Вона є майже в кожному підручнику, і
+майже завжди — без жодного числа поруч.</p>
+
+<p>Розберімо її на дві частини, бо вони різної якості. Перша частина — про
+<b>будову</b>, і вона правдива. Друга — про <b>час</b>, і ось із нею все складніше.</p>
+
+<h3>Частина, яка правдива</h3>
+
+<p>Один крок LSTM рахується так. Беремо поточне слово <span class="raw">x</span> і
+попередній стан <span class="raw">h</span>, множимо кожне на свою матрицю ваг,
+складаємо — і з цієї суми робимо чотири гейти.</p>
+
+<div class="eq">брама = <span class="raw">x</span> · <span class="raw">W</span><span class="sub">вх</span> + <span class="raw">h</span><span class="sub">попередній</span> · <span class="raw">W</span><span class="sub">стан</span> + <span class="raw">b</span></div>
+
+<p>Розшифруємо кожен символ. <span class="raw">x</span> — вектор поточного слова.
+<span class="raw">h</span><span class="sub">попередній</span> — стан, який лишився
+від попереднього кроку. <span class="raw">W</span><span class="sub">вх</span> і
+<span class="raw">W</span><span class="sub">стан</span> — дві таблиці ваг, які
+мережа вчить; множення на таблицю — це спосіб перемішати числа вектора з вагами й
+дістати новий вектор. <span class="raw">b</span> — зсув, стала добавка. «Брама» тут
+— проміжна величина, з якої далі вирізають чотири гейти.</p>
+
+<p>Уся суть у другому доданку. У ньому стоїть
+<span class="raw">h</span><span class="sub">попередній</span>. Поки крок
+<span class="raw">t−1</span> не порахований, крок <span class="raw">t</span>
+порахувати неможливо — не «незручно», а неможливо: одного з доданків просто немає.
+Речення з дванадцяти слів означає дванадцять дій, які мусять іти одна за одною.</p>
+
+<p>А формула уваги виглядає так:</p>
+
+<div class="eq">вихід = softmax( <span class="raw">Q</span> · <span class="raw">K</span><span class="sup">⊤</span> ÷ √<span class="raw">d</span> ) · <span class="raw">V</span></div>
+
+<p>Тут <span class="raw">Q</span>, <span class="raw">K</span> і
+<span class="raw">V</span> — три таблиці, у яких <b>рядок на кожну позицію</b>
+речення, і кожна з них дістається множенням входу на свою матрицю ваг.
+<span class="raw">K</span><span class="sup">⊤</span> — та сама таблиця, покладена
+набік, щоб її можна було помножити на першу. <span class="raw">d</span> — довжина
+одного рядка; ділення на її корінь потрібне лише для того, щоб числа не
+розліталися. <span class="raw">softmax</span> перетворює довільні числа рядка на
+частки, що дають у сумі одиницю, — тобто на ваги «скільки уваги кому».</p>
+
+<p>Порівняй із формулою LSTM. Тут немає жодного посилання на позицію
+<span class="raw">t−1</span>. Кожна позиція дивиться на всі позиції відразу, і
+порядок обчислення між ними не заданий. Зошит перевіряє це прямо: якщо переставити
+позиції на вході, кожна дістає рівно той самий вихід, лише переїжджає разом зі
+своїм місцем.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 3 · Скільки дій мусять чекати одна на одну</div>
+  <p class="fig-sub">Угорі — рекурентний шар: кожен кружечок може початись лише
+    після попереднього, тож ланцюг завдовжки як текст. Унизу — увага: усі позиції
+    рахуються разом, а по черзі йдуть тільки три стадії. Повзунок міняє довжину
+    тексту.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="n3">слів у тексті <output id="n3o">6</output></label>
+        <input id="n3" type="range" min="2" max="48" step="1" value="6">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>по черзі в RNN</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>по черзі в увазі</b><i id="v3b">—</i></div>
+        <div class="cellv"><b>відношення</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>клітинок уваги</b><i id="v3d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Це схема, а не замір: тут рахуються дії, а не секунди. Три стадії
+    уваги — порахувати проєкції, з них ваги, а вагами змішати значення; їхня
+    кількість не залежить від довжини. Зате клітинок у таблиці ваг стає стільки, скільки пар
+    позицій, і саме вони дорожчають у досліді А.</figcaption>
+</figure>
+
+<p>Ось де теза про розпаралелення правдива й перевірювана: у рекурентному шарі
+кількість дій, які мусять чекати одна на одну, дорівнює довжині тексту, а в увазі
+вона стала. Це <b>структурне</b> твердження. Воно нічого не каже про секунди.</p>
+
+
+<h2 id="s5"><span class="num">Розділ 5</span>Дослід А: однакова робота, різна довжина</h2>
+
+<p>Перевіримо другу частину тези — ту, що про час. Задача сформульована так, щоб
+роботи в усіх рядках було <b>однаково</b>: тримаємо сталим добуток «розмір батча ×
+довжина послідовності». Вісім тисяч сто девʼяносто дві позиції — і в тисячі
+коротких рядків, і в жменьці довгих. Міняється не обсяг роботи, а лише те, як вона
+розкладена.</p>
+
+<p>Міряємо один крок навчання цілком: прямий хід, втрата, зворотний хід. Розмір
+стану 128, один потік, три зерна, процесорний годинник. Машина — чотири ядра, без
+відеокарти.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>довжина</th><th>батч</th><th>LSTM, с</th><th>увага, с</th></tr>
+<tr><td>8</td><td>1024</td><td>0.1377</td><td>0.0436</td></tr>
+<tr><td>32</td><td>256</td><td>0.1335</td><td>0.0456</td></tr>
+<tr><td>128</td><td>64</td><td>0.1416</td><td>0.0622</td></tr>
+<tr><td>256</td><td>32</td><td>0.1411</td><td>0.0965</td></tr>
+<tr><td>512</td><td>16</td><td>0.1431</td><td>0.1426</td></tr>
+<tr class="hot"><td>1024</td><td>8</td><td>0.1477</td><td>0.2923</td></tr>
+</table></div>
+
+<div class="note warn"><b>Ці числа — з одного прогону, і в тебе вони будуть інші.</b>
+Час залежить від того, чим ще зайнята машина, від версії бібліотеки й навіть від того,
+як лягли дані в кеш процесора. Повторний прогін того самого зошита на тій самій машині
+дав нам, наприклад, 0.0965 замість 0.1046 у нижньому правому куті. Відтворюється тут не
+третій знак, а <b>форма</b>: стовпчик рекурентної мережі стоїть на місці, стовпчик уваги
+росте. Саме на форму й дивись — і саме її перевіряй у себе.</div>
+
+<p>Подивись на стовпчик LSTM згори вниз. Він <b>не росте</b>. Від довжини 8 до
+довжини 1024 час змінюється у 1.07 раза — це шум, а не залежність. Довші
+послідовності рекурентній мережі не дорожчають, поки роботи стільки ж.</p>
+
+<p>А стовпчик уваги росте, і росте помітно: у 6.70 раза на тому самому шляху.
+Причина в самій формулі. Вартість уваги складається з двох частин. Перша — це
+чотири множення на матриці ваг, по одному на кожну позицію; при сталій кількості
+позицій вона <b>не міняється</b>. Друга — та сама таблиця
+<span class="raw">Q</span> · <span class="raw">K</span><span class="sup">⊤</span>,
+у якій рядок і стовпець на кожну пару позицій усередині рядка. Пар у рядку довжини
+<span class="raw">n</span> є <span class="raw">n</span><span class="sup">2</span>, а
+рядків при сталому добутку стає вдвічі менше на кожне подвоєння довжини — отже
+разом ця частина росте <b>лінійно з довжиною</b>. На коротких рядках вона майже
+непомітна, на довгих починає визначати все.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 4 · Однакова робота, різна довжина, один потік</div>
+  <p class="fig-sub">Добуток «батч × довжина» сталий, тож роботи в кожній точці
+    однаково. Повзунок обирає довжину, перемикач — дивитись на секунди чи на
+    відношення до найкоротшого рядка.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="p4">довжина <output id="p4o">8</output></label>
+        <input id="p4" type="range" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <span class="cap">показати</span>
+        <div class="seg" id="seg4">
+          <button data-i="0" aria-pressed="true">секунди</button>
+          <button data-i="1" aria-pressed="false">у скільки разів</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>батч</b><i id="v4a">—</i></div>
+        <div class="cellv"><b>крок навчання</b><i id="v4b" class="sm">—</i></div>
+        <div class="cellv"><b>LSTM</b><i id="v4c">—</i></div>
+        <div class="cellv"><b>увага</b><i id="v4d">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Процесорний час одного кроку навчання, розмір стану 128, один потік,
+    три зерна. Пряма лінія LSTM і крива уваги — це і є весь дослід А: те, що
+    подорожчало з довжиною, — не рекурентність.</figcaption>
+</figure>
+
+<div class="note warn"><b>Це протилежне тому, що переказують.</b><br>
+На одному ядрі довші послідовності дорожчають <b>для уваги</b>, а не для LSTM.
+Твердження «RNN повільна, бо не розпаралелюється» на цій машині в такому вигляді
+не відтворюється взагалі: у нас є довжина, на якій увага коштує дорожче за LSTM,
+і немає жодної, на якій LSTM дорожчає від довжини.</div>
+
+<h2 id="s6"><span class="num">Розділ 6</span>Дослід Б: чотири ядра роблять гірше обом</h2>
+
+<p>Якщо теза про розпаралелення взагалі має грошовий вимір, він має проступити
+тоді, коли ми <b>дамо машині розпаралелювати</b>. Досі ми забороняли: усе рахувалось
+в один потік. Тепер візьмемо одну точку — розмір стану 512, батч 32, довжина
+128 — і порахуємо її двічі: дозволивши один потік і дозволивши чотири.</p>
+
+<p>І одразу про годинники, бо тут вони розходяться. <b>Стінний час</b> — це те, що
+показав би секундомір: скільки хвилин минуло. <b>Процесорний час</b> — скільки
+роботи насправді виконали всі ядра разом. На вільній машині вони близькі. На
+зайнятій стінний час роздувається просто тому, що нашу програму відсунули: вона
+чекала, а не працювала. Тому нижче наведені обидва, а поруч — навантаження машини
+в момент заміру.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th></th><th>1 потік</th><th>4 потоки</th><th>у скільки разів</th></tr>
+<tr><td>LSTM, стінний</td><td>0.9774</td><td>5.3650</td><td>5.49</td></tr>
+<tr class="hot"><td>LSTM, процесорний</td><td>0.7399</td><td>7.7522</td><td>10.48</td></tr>
+<tr><td>увага, стінний</td><td>0.4269</td><td>0.5910</td><td>1.38</td></tr>
+<tr class="hot"><td>увага, процесорний</td><td>0.2840</td><td>0.7490</td><td>2.64</td></tr>
+</table></div>
+
+<p>Навантаження машини під час цього заміру коливалось між 12.7 і 12.97 — тобто в черзі стояло
+більше роботи, ніж є ядер. Це <b>не</b> ідеальні умови, і саме тому стінні числа
+тут наведені лише поруч із процесорними, а не замість них.</p>
+
+<p>Результат несподіваний двічі. По-перше, чотири ядра зробили гірше <b>обом</b>:
+жодна з двох будов не стала швидшою від того, що їй дозволили більше потоків.
+По-друге — і це головне — <b>покарання розподілилось дуже нерівно</b>. LSTM
+втратив у 10.48 раза процесорного часу, увага — лише в 2.64. Різниця між
+покараннями — приблизно 3.97 раза.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 5 · Що дали чотири ядра замість одного</div>
+  <p class="fig-sub">Одна точка — стан 512, батч 32, довжина 128 — порахована
+    двічі. Повзунок обирає, скільки потоків дозволено, перемикач — який годинник
+    дивитись. Бліді стовпчики показують другий стан для порівняння.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="th5">дозволено потоків <output id="th5o">1</output></label>
+        <input id="th5" type="range" min="0" max="1" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <span class="cap">годинник</span>
+        <div class="seg" id="seg5">
+          <button data-i="0" aria-pressed="true">процесорний</button>
+          <button data-i="1" aria-pressed="false">стінний</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>LSTM</b><i id="v5a">—</i></div>
+        <div class="cellv"><b>увага</b><i id="v5b">—</i></div>
+        <div class="cellv"><b>плата LSTM</b><i id="v5c">—</i></div>
+        <div class="cellv"><b>плата уваги</b><i id="v5d">—</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>Навантаження машини під час заміру — між 12.7 і 12.97, тому стінні числа тут
+    орієнтовні, а висновок тримається на процесорних. Обидві будови від чотирьох
+    ядер програли; питання лише в тому, наскільки.</figcaption>
+</figure>
+
+<p>Ось де теза про розпаралелення нарешті перетворюється на число. Не «RNN
+повільніша», а: <b>коли машині дають більше ядер, рекурентний шар платить за це
+в кілька разів дорожче, ніж шар уваги</b>. На нашій машині — у 3.97 раза
+дорожче.</p>
+
+<h2 id="s7"><span class="num">Розділ 7</span>Звідки береться різниця: сто двадцять вісім дрібних дій</h2>
+
+<p>Здогад простий, і його можна перевірити без жодної мережі. Рекурентний шар на
+довжині 128 видає <b>128 послідовних дрібних операцій</b>. Кожну з них треба
+роздати чотирьом потокам і зібрати з них результат. Увага на тій самій довжині
+видає <b>кілька великих</b> операцій — і платить за роздачу кілька разів.</p>
+
+<p>Роздача коштує приблизно однаково незалежно від розміру шматка: розбудити
+потоки, дочекатися найповільнішого, звести результати. Якщо шматок великий, ця
+плата губиться на тлі роботи. Якщо дрібний — вона стає більшою за саму роботу.</p>
+
+<p>Перевіряємо це на голому множенні матриць. Беремо одне множення
+4096 × 512 × 512 і ріжемо його на <span class="raw">k</span> послідовних шматків по
+рядках. Роботи щоразу <b>рівно стільки ж</b> — міняється лише кількість викликів.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>шматків <span class="raw">k</span></th><th>1 потік, мс</th><th>4 потоки, мс</th><th>програш від чотирьох ядер</th></tr>
+<tr><td>1</td><td>21.55</td><td>34.95</td><td>1.62×</td></tr>
+<tr><td>2</td><td>22.05</td><td>46.91</td><td>2.13×</td></tr>
+<tr><td>8</td><td>22.44</td><td>113.60</td><td>5.06×</td></tr>
+<tr><td>32</td><td>24.80</td><td>424.84</td><td>17.13×</td></tr>
+<tr class="hot"><td>128</td><td>31.19</td><td>1311.51</td><td>42.05×</td></tr>
+</table></div>
+
+<p>Одному потоку майже байдуже, на скільки шматків порізана робота: від
+<span class="raw">k</span> = 1 до <span class="raw">k</span> = 128 час зростає у
+1.45 раза. Чотирьом потокам — не байдуже зовсім: 37.53 раза на тому самому
+шляху.</p>
+
+<p>І зверни увагу на останній рядок. <span class="raw">k</span> = 128 — це рівно
+довжина послідовності з досліду Б. Тобто LSTM там платив за синхронізацію сто
+двадцять вісім разів, а увага — кілька. Механізм заміряний окремо від мереж, на
+чистому множенні, і дає той самий порядок покарання.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 6 · Та сама робота, порізана на k шматків</div>
+  <p class="fig-sub">Жодних мереж: одне множення матриць 4096 × 512 × 512, поділене
+    на <span class="raw">k</span> послідовних викликів. Роботи щоразу стільки ж.
+    Повзунок обирає <span class="raw">k</span>, перемикач — які стовпчики
+    показувати. Шкала логарифмічна, бо числа розходяться в десятки разів.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="k6">шматків <output id="k6o">1</output></label>
+        <input id="k6" type="range" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <span class="cap">показати</span>
+        <div class="seg" id="seg6">
+          <button data-i="0" aria-pressed="true">обидва</button>
+          <button data-i="1" aria-pressed="false">1 потік</button>
+          <button data-i="2" aria-pressed="false">4 потоки</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>1 потік</b><i id="v6a">—</i></div>
+        <div class="cellv"><b>4 потоки</b><i id="v6b">—</i></div>
+        <div class="cellv"><b>програш</b><i id="v6c">—</i></div>
+        <div class="cellv"><b>плата за шматок</b><i id="v6d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>Останнє положення повзунка — <span class="raw">k</span> = 128 — це
+    рівно довжина послідовності з досліду Б. Механізм заміряний окремо від мереж, на
+    голому множенні матриць, і дає той самий порядок покарання.</figcaption>
+</figure>
+
+<div class="note"><b>Чому це не суперечить дослідові А.</b><br>
+У досліді А потік був один — роздавати не було кому, і плата за синхронізацію не
+виникала взагалі. Тому там LSTM від довжини не дорожчав. Теза про розпаралелення
+починає коштувати грошей рівно тоді, коли є що паралелити: не «рекурентність
+повільна», а «рекурентність не дає скористатися ядрами, і спроба скористатися
+коштує дорожче за виграш».</div>
+
+
+<h2 id="s8"><span class="num">Розділ 8</span>Що з цього випливає — і чого ми не міряли</h2>
+
+<p>Складімо три досліди в одне речення. <b>Теза про розпаралелення — про структуру
+залежностей, а не про час сама по собі.</b> Крок рекурентної мережі потребує
+попереднього кроку; позиції уваги — ні. Наслідок цієї структури видно тоді, коли
+машині дають кілька ядер: рекурентний шар видає стільки дрібних послідовних дій,
+скільки в тексті слів, і платить синхронізацію на кожній.</p>
+
+<p>А тепер те, що з цього <b>не</b> випливає, і що ми чесно не заміряли.</p>
+
+<ul>
+  <li><b>«RNN повільніша за увагу».</b> На нашій машині в один потік — ні. На
+    довжині 1024 при тій самій роботі увага коштувала дорожче за LSTM.</li>
+  <li><b>«Розмір вектора пояснює спад якості перекладу з довжиною».</b> На нашій
+    штучній задачі розмір вектора справді задає стелю. Але на справжніх парах тема
+    <code>19-seq2seq</code> цього не підтвердила: коротший вектор погіршив усе
+    рівномірно, а нахил кривої зсунувся менше, ніж на розкид.</li>
+  <li><b>«Увага розвʼязує вузьке горло».</b> Ми уваги на задачі перекладу не
+    міряли взагалі. Ми поміряли, що горло існує; що з ним робити — предмет
+    наступного блоку.</li>
+  <li><b>«Гейти розвʼязують затухання».</b> Вони його вповільнюють на кілька
+    порядків. На пʼятдесяти кроках LSTM теж віддає сигнал у мільярди разів
+    слабший.</li>
+  <li><b>Відеокарта.</b> Ми міряли на чотирьох ядрах без відеокарти. Там, де ядер
+    тисячі, картина інша, і наші числа про неї нічого не кажуть.</li>
+</ul>
+
+<div class="note"><b>Цитоване, не наш замір.</b><br>
+Теза про розпаралелення прийшла з роботи Vaswani та ін.
+<a href="https://arxiv.org/abs/1706.03762">«Attention Is All You Need»</a> (2017), і
+там вона сформульована саме структурно: у таблиці 1 порівнюється не час, а
+<b>кількість послідовних операцій</b> — <span class="raw">O(n)</span> у
+рекурентного шару проти <span class="raw">O(1)</span> в уваги, при вартості шару
+<span class="raw">O(n·d</span><span class="sup">2</span><span class="raw">)</span> і
+<span class="raw">O(n</span><span class="sup">2</span><span class="raw">·d)</span>
+відповідно. Час у тій роботі теж є, але заміряний на восьми відеокартах P100:
+базову модель навчали 100 000 кроків, тобто близько дванадцяти годин. Наші чотири
+ядра — інша машина, і саме тому наші числа виглядають інакше, а не тому, що теза
+хибна.</div>
+
+<p>Різниця між «структурним твердженням» і «твердженням про секунди» тут не
+академічна. Структурне твердження переносне: воно однакове на ноутбуці й на
+кластері. Твердження про секунди живе лише разом із машиною, на якій його
+заміряли, — і якщо машину не назвати, число не можна ані перевірити, ані
+спростувати.</p>
+
+<h2 id="s9"><span class="num">Розділ 9</span>Де рекурентна мережа доречна досі</h2>
+
+<p>Тепер чесно в інший бік, бо тема, яка перелічує лише слабкості, брехлива так
+само, як тема, що перелічує лише сильні місця.</p>
+
+<p>Уяви, що текст приходить <b>по одному слову</b> й відповідати треба одразу:
+розпізнавання мовлення на диктофоні, підказка при наборі, обробка потоку подій на
+пристрої без відеокарти. Тут головне питання не «скільки коштує весь текст», а
+«скільки коштує <b>наступне</b> слово, коли позаду вже тисяча».</p>
+
+<p>Рекурентна мережа несе стан сталого розміру: два вектори по 256 чисел, і це не
+залежить від того, скільки слів вона вже прочитала. Крок номер 2000 коштує рівно
+стільки ж, скільки крок номер 2. Увага мусить тримати всі попередні позиції й
+переглядати їх щоразу — те, що зазвичай звуть кешем ключів і значень.</p>
+
+<p>Заміряно на 2048 кроках, по одному кроку за раз, три зерна:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th></th><th>перший відрізок, мкс</th><th>останній відрізок, мкс</th><th>ріст</th><th>що тримаємо на кроці 2048</th></tr>
+<tr class="hot"><td>RNN</td><td>122.4</td><td>137.2</td><td>1.12</td><td>512 чисел</td></tr>
+<tr><td>увага з кешем</td><td>136.9</td><td>1012.0</td><td>7.39</td><td>1 048 576 чисел</td></tr>
+</table></div>
+
+<p>У рекурентної мережі <b>тренду немає</b>: по всіх восьми відрізках час кроку
+гуляє від 107.2 до 137.2 мкс без жодного напрямку, і відношення останнього
+відрізка до першого — 1.12, тобто той самий шум. А в уваги підйом рівний і
+монотонний: від 136.9 до 1012.0 мкс, тобто у 7.39 раза, і він ростиме далі, бо
+переглядати доводиться дедалі довший кеш. Памʼяті увазі на цьому кроці треба у
+2048 разів більше.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 7 · Потік без кінця: де виграє рекурентність</div>
+  <p class="fig-sub">2048 кроків, по одному за раз, наче слова надходять із
+    мікрофона. Повзунок обирає відрізок потоку, перемикач — дивитись на час кроку
+    чи на те, скільки чисел доводиться тримати.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="t7">відрізок потоку <output id="t7o">1-256</output></label>
+        <input id="t7" type="range" min="0" max="7" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <span class="cap">показати</span>
+        <div class="seg" id="seg7">
+          <button data-i="0" aria-pressed="true">час кроку</button>
+          <button data-i="1" aria-pressed="false">памʼять</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>RNN</b><i id="v7a" class="sm">—</i></div>
+        <div class="cellv"><b>увага з кешем</b><i id="v7b" class="sm">—</i></div>
+        <div class="cellv"><b>відношення</b><i id="v7c">—</i></div>
+        <div class="cellv"><b>кроків позаду</b><i id="v7d">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>Час кроку — медіана всередині відрізка, потім медіана по трьох
+    зернах. Памʼять рахується просто: рекурентна мережа тримає два вектори по
+    256 чисел, увага — по два вектори на кожен пройдений крок.</figcaption>
+</figure>
+
+<p>Ця перевага не косметична. На пристрої, у якого памʼять рахують у кілобайтах,
+а потік не має кінця, «стан сталого розміру» — це не оптимізація, а умова
+існування. Саме тому рекурентні шари досі стоять у розпізнаванні мовлення, у
+дрібних моделях на мікроконтролерах і скрізь, де вхід нескінченний.</p>
+
+<p>Додай сюди наш власний корпус. Медіана довжини речення в ньому — 6 слів,
+а частка речень, коротших за девʼять, — 0.7977. На такій довжині жодна з трьох меж не встигає
+проявитися: градієнт через шість кроків доходить чудово, шість слів у вектор
+влазять, а сто двадцять восьми послідовних дій просто не буває. <b>Для короткого
+тексту рекурентна мережа — нормальний робочий інструмент, а не історична
+памʼятка.</b></p>
+
+<h2 id="s10"><span class="num">Розділ 10</span>Що рекурентна мережа вміє</h2>
+
+<p>Зберемо в одному місці те, за що її брали й беруть.</p>
+
+<ul>
+  <li><b>Вона знає порядок.</b> Мішок слів із теми <code>04-bag-of-words</code> не відрізняв «пес вкусив
+    листоношу» від «листоноша вкусив пса»; рекурентна мережа відрізняє, бо читає
+    зліва направо й памʼятає, що було раніше.</li>
+  <li><b>Вона не має стелі за довжиною входу.</b> Кількість ваг не залежить від
+    того, скільки слів прийде: ті самі матриці застосовуються на кожному кроці.
+    Речення на пʼять слів і на пʼятсот обробляє та сама мережа.</li>
+  <li><b>Вона дешева в памʼяті на висновку.</b> Один вектор стану — і все.</li>
+  <li><b>Вона проста.</b> Крок LSTM — це пʼять рядків, які ми написали руками й
+    звірили з бібліотечним: вони збіглися без жодного відхилення.</li>
+</ul>
+
+<p>І там-таки, поруч, три межі, які ми заміряли:</p>
+
+<ul>
+  <li><b>Далеке минуле недосяжне.</b> На сотні кроків градієнт до першого слова
+    занулюється у float32; гейти відсувають цю межу, але не прибирають.</li>
+  <li><b>Стиснення в один вектор має ціну.</b> На задачі без надмірності частка
+    правильних падає з 0.8965 на чотирьох символах до рівня навмання на
+    шістнадцяти, і рятує це не інший алгоритм, а ширший вектор — з 0.1428 до
+    0.7200 на тій самій довжині.</li>
+  <li><b>Ядрами скористатися не вийде.</b> Чотири потоки замість одного коштували
+    рекурентному шарові 10.48 раза процесорного часу проти 2.64 в уваги.</li>
+</ul>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Три межі поруч</h2>
+
+<p>Три межі, які ми поміряли, — різної природи, і це важливо не сплутати.</p>
+
+<p><b>Затухання градієнта</b> — межа навчання. Вона про те, що мережа фізично не
+може дізнатися про звʼязок між далекими словами, бо сигнал не доходить. Її
+відсунули гейтами. Наступний блок працює з нею інакше — і це той самий рядок
+процитованої таблиці 1, який ми не наводили: поряд із кількістю послідовних
+операцій там стоїть <b>максимальна довжина шляху</b> між двома позиціями, і в
+уваги вона стала, а в рекурентного шару дорівнює довжині тексту.</p>
+
+<p><b>Вузьке горло</b> — межа памʼяті. Вона про те, що інформацію нема куди
+покласти. На задачі, з якої прибрано все інше, її не лікує довше навчання: при тій
+самій кількості кроків і тих самих даних усе вирішує розмір вектора. А от на
+справжньому перекладі відділити цю межу від решти причин темі <code>19-seq2seq</code>
+не вдалося — і це чесна межа нашого знання, а не дрібниця.</p>
+
+<p><b>Послідовність кроків</b> — межа обчислення. Вона нічого не псує в якості й на
+одному ядрі майже нічого не коштує. Вона стає дорогою рівно тоді, коли є багато
+ядер, які хочеться зайняти, — а саме це й сталося з машинами між 2014 і 2017
+роками.</p>
+
+<p>Остання думка, з якою варто вийти з блоку. Ми весь час порівнювали дві будови й
+жодного разу не сказали, що одна краща. Ми сказали інше: у них <b>різні профілі
+вартості</b>. Рекурентна платить довжиною ланцюга й розміром стану, увага платить
+квадратом довжини й розміром кешу. Що з цього вигідніше, залежить від того, який у
+тебе текст і яка машина, — і ми показали задачу, де виграє кожна.</p>
+
+<p>Наступний блок бере ту саму мірку, яку ми щойно виробили, і несе її далі:
+питання «скільки дій мусять чекати одна на одну» і «скільки чисел ми змушені
+тримати» доведеться ставити кожній наступній моделі курсу.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../19-seq2seq/lecture.html"><span class="dir">попередня</span><span class="ttl">19. seq2seq і машинний переклад</span></a>
+    <a class="next" href="../21-transformer-architecture/lecture.html"><span class="dir">наступна</span><span class="ttl">21. Архітектура і чому витіснила RNN</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn4(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thou(n){
+  var s=String(n), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function cut(g,txt,max,px,bold){
+  g.font=mono(px||11,!!bold);
+  if(g.measureText(txt).width<=max) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+function axisX(g,x0,x1,y,lo,hi,step,color){
+  g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+  var v;
+  for(v=lo; v<=hi+1e-9; v+=step){
+    var x=x0+(x1-x0)*(v-lo)/(hi-lo);
+    g.beginPath(); g.moveTo(x+0.5,y); g.lineTo(x+0.5,y+4); g.stroke();
+  }
+}
+
+/* ═══════ числа з зошита ═══════ */
+/* Усі масиви нижче надруковані practice.ipynb цієї теми. Часові числа заміряні
+   на чотирьох ядрах без відеокарти, процесорним годинником, фіксовані потоки. */
+
+var GRAD_T = [10, 25, 50, 100];
+var GRAD = {10: [1333, 134.7, 136.8], 25: [3.235e+08, 158500, 391200], 50: [2.333e+17, 6.358e+10, 6.372e+10], 100: [Infinity, 1.012e+22, 2.298e+21]};                 /* T -> [RNN, LSTM, GRU]; Infinity — занулився у float32 */
+var HGRAD = 64;
+
+var COPY_LEN = [[4, 0.8965, 0.8945, 0.9062], [8, 0.4211, 0.3840, 0.4343], [16, 0.0355, 0.0310, 0.0427], [32, 0.0316, 0.0313, 0.0330]];             /* [довжина, медіана, мін, макс] */
+var COPY_HID = [[16, 0.1428, 0.1384, 0.1438], [32, 0.2415, 0.2236, 0.2649], [64, 0.4211, 0.3840, 0.4343], [128, 0.5691, 0.5667, 0.5959], [256, 0.7200, 0.7192, 0.7385]];             /* [розмір вектора, медіана, мін, макс] */
+var CHANCE = 0.0312;
+
+var EXPA = [[8, 1024, 0.1377, 0.0436], [32, 256, 0.1335, 0.0456], [128, 64, 0.1416, 0.0622], [256, 32, 0.1411, 0.0965], [512, 16, 0.1431, 0.1426], [1024, 8, 0.1477, 0.2923]];                 /* [довжина, батч, LSTM с, увага с] */
+var EXPB = {lstm:{cpu:[0.7399,7.7522], wall:[0.9774,5.3650]}, attn:{cpu:[0.2840,0.7490], wall:[0.4269,0.5910]}};                 /* [модель][годинник] -> [1 потік, 4 потоки] */
+var EXPE = [[1, 21.55, 34.95], [2, 22.05, 46.91], [8, 22.44, 113.60], [32, 24.80, 424.84], [128, 31.19, 1311.51]];                 /* [k, 1 потік мс, 4 потоки мс] */
+var STREAM = {rnn:[122.4, 111.9, 117.4, 115.1, 114.6, 107.2, 115.9, 137.2], attn:[136.9, 231.0, 351.0, 477.2, 639.2, 736.5, 890.8, 1012.0]};             /* [модель] -> 8 відрізків, мікросекунди */
+var HS = 256, STREAM_STEPS = 2048, BUCKETS = 8;
+var SR_MIN = 107.2, SR_MAX = 137.2;
+
+/* ═══════ дрібні помічники цієї теми ═══════ */
+function supDigits(n){
+  var S='⁰¹²³⁴⁵⁶⁷⁸⁹', s=String(n), out='', i;
+  for(i=0;i<s.length;i++) out+=S.charAt(+s.charAt(i));
+  return out;
+}
+function ratioText(v){
+  if(!isFinite(v)) return 'нуль';
+  if(v<10000) return String(Math.round(v));
+  var e=Math.floor(Math.log(v)/Math.LN10), m=v/Math.pow(10,e);
+  return f1(m)+'·10'+supDigits(e);
+}
+function orders(v){ return isFinite(v) ? Math.log(v)/Math.LN10 : 45; }
+function razy(txt){
+  if(txt.indexOf('·')>=0) return 'разів';
+  var n=parseInt(txt,10), t=n%10, h=n%100;
+  if(h>=11 && h<=14) return 'разів';
+  if(t===1) return 'раз';
+  if(t>=2 && t<=4) return 'рази';
+  return 'разів';
+}
+function plural(n,one,few,many){
+  var t=n%10, h=n%100;
+  if(h>=11 && h<=14) return many;
+  if(t===1) return one;
+  if(t>=2 && t<=4) return few;
+  return many;
+}
+function bar(g,x,y,w,h,fill,alpha){
+  g.globalAlpha=(alpha===undefined?1:alpha); g.fillStyle=fill;
+  g.fillRect(x, y, w, h); g.globalAlpha=1;
+}
+function dash(g,x0,y,x1,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke(); g.restore();
+}
+
+/* ═══════════ фігура 1 · градієнт до першого кроку ═══════════ */
+var tg1 = 0, m1 = 0;
+var MODELS1 = ['RNN','LSTM','GRU'];
+
+function draw1(){
+  var cv=I('c1'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var T=GRAD_T[tg1], vals=GRAD[T], TOP=45, i;
+  var x0=76, x1=W-40, top=54, bot=H-58;
+
+  capt(g,'у скільки разів слабший сигнал доходить до першого кроку',x0,26,ink,12.5,true);
+  capt(g,'довжина '+T,x1,26,rose,12,true,'right');
+
+  /* вісь порядків */
+  for(i=0;i<=40;i+=10){
+    var y=bot-(bot-top)*i/TOP;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,'10'+supDigits(i),x0-8,y+4,soft,10.5,false,'right');
+  }
+  capt(g,'порядків',x0-8,top-14,soft,10,false,'right');
+
+  /* межа float32 */
+  var yf=bot-(bot-top)*38/TOP;
+  dash(g,x0,yf,x1,rose);
+  capt(g,'нижче цього float32 кладе нуль',x1-4,yf-7,rose,10.5,false,'right');
+
+  var bw=88, gap=(x1-x0-3*bw)/4;
+  for(i=0;i<3;i++){
+    var bx=x0+gap+i*(bw+gap), v=vals[i], o=Math.min(orders(v),TOP);
+    var bh=(bot-top)*o/TOP, live=(i===m1);
+    var col=isFinite(v)?(live?rose:teal):rose;
+    bar(g,bx,bot-bh,bw,bh,col,live?0.92:0.34);
+    if(!isFinite(v)){
+      g.strokeStyle=rose; g.lineWidth=1.5;
+      g.strokeRect(bx+0.5,bot-bh+0.5,bw-1,bh-1);
+    }
+    capt(g,ratioText(v),bx+bw/2,bot-bh-9,live?ink:soft,12,live,'center');
+    capt(g,MODELS1[i],bx+bw/2,bot+18,live?rose:soft,12,live,'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+  capt(g,'мережі не навчені · стан '+HGRAD+' · медіана трьох зерен',x0,H-14,soft,10.5);
+
+  function cell1(v){ return isFinite(v) ? ratioText(v)+'×' : 'нуль'; }
+  I('v1a').textContent=cell1(vals[0]);
+  I('v1b').textContent=cell1(vals[1]);
+  I('v1c').textContent=cell1(vals[2]);
+  var left=38-orders(vals[0]);
+  I('v1d').textContent = isFinite(vals[0]) ? f1(left)+' порядків' : 'вичерпано';
+
+  var oR=orders(vals[0]), oL=orders(vals[1]);
+  var tR=ratioText(vals[0]), tL=ratioText(vals[1]), tG=ratioText(vals[2]);
+  if(!isFinite(vals[0]))
+    verd('v1v','t-no','ПЕРШЕ СЛОВО ВТРАЧЕНО',
+      'На '+T+' кроках градієнт RNN до першого слова дорівнює точно нулю: добуток '+
+      'опустився нижче 10⁻³⁸, і float32 не має чим його записати. LSTM ще тримається — '+
+      'у нього '+tL+' '+razy(tL)+', тобто '+f1(oL)+' порядків при межі 38. '+
+      'Гейти виграли '+f1(38-oL)+' порядків запасу, а не безмежність.');
+  else if(oR>=15)
+    verd('v1v','t-no','ВІД СИГНАЛУ ЛИШИВСЯ ПИЛ',
+      'На '+T+' кроках RNN ослаблює сигнал у '+tR+' '+razy(tR)+' — це '+f1(oR)+
+      ' порядків із 38 доступних. LSTM на тій самій довжині втрачає '+f1(oL)+
+      ' порядків, тобто відстає від RNN на '+f1(oR-oL)+'. Це і є вся «довга памʼять»: '+
+      'запас, а не інша поведінка.');
+  else if(oR>=6)
+    verd('v1v','t-mid','СИГНАЛ ТАНЕ',
+      'На '+T+' кроках RNN ослаблює сигнал у '+tR+' '+razy(tR)+' — '+f1(oR)+
+      ' порядків із 38. Формально він ще існує, але поруч із помилкою округлення від '+
+      'нього мало користі. LSTM тут втрачає '+f1(oL)+' порядків, GRU дає '+tG+
+      '. До межі float32 в RNN лишається '+f1(left)+' порядків.');
+  else
+    verd('v1v','t-ok','НА ТАКІЙ ДОВЖИНІ ВСЕ ГАРАЗД',
+      'На '+T+' кроках усі три моделі живі: RNN ослаблює у '+tR+' '+razy(tR)+', LSTM у '+
+      tL+', GRU у '+tG+'. Витрачено лише '+f1(oR)+' порядків із 38. Саме тому на '+
+      'коротких реченнях — а в нашому корпусі медіана шість слів — проблеми не видно '+
+      'взагалі.');
+}
+on('tg1','input',function(e){ tg1=+e.target.value; I('tg1o').textContent=String(GRAD_T[tg1]); draw1(); });
+segment('seg1',function(i){ m1=i; draw1(); });
+
+/* ═══════════ фігура 2 · що влазить в один вектор ═══════════ */
+var mode2 = 0, p2 = 1;
+function pts2(){ return mode2===0 ? COPY_LEN : COPY_HID; }
+function idx2(){ return Math.min(p2, pts2().length-1); }
+
+function draw2(){
+  var cv=I('c2'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var pts=pts2(), sel=idx2(), i;
+  var x0=64, x1=W-30, top=52, bot=H-58;
+
+  capt(g, mode2===0 ? 'частка правильно відтворених символів за довжиною'
+                    : 'частка правильно відтворених символів за розміром вектора',
+       x0,26,ink,12.5,true);
+  /* підпис пунктиру — у легенді зверху, а не всередині поля: там він накривав стовпчик */
+  capt(g,'пунктир — навмання '+f4(CHANCE),x1,26,rose,10.5,false,'right');
+
+  for(i=0;i<=10;i+=2){
+    var y=bot-(bot-top)*i/10;
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,f1(i/10),x0-8,y+4,soft,10.5,false,'right');
+  }
+  var yc=bot-(bot-top)*CHANCE;
+  dash(g,x0,yc,x1,rose);
+
+  var bw=Math.min(84,(x1-x0)/pts.length-22), gap=(x1-x0-pts.length*bw)/(pts.length+1);
+  for(i=0;i<pts.length;i++){
+    var bx=x0+gap+i*(bw+gap), live=(i===sel);
+    var hh=(bot-top)*pts[i][1];
+    bar(g,bx,bot-hh,bw,hh,live?rose:teal,live?0.9:0.32);
+    var ylo=bot-(bot-top)*pts[i][2], yhi=bot-(bot-top)*pts[i][3];
+    g.strokeStyle=live?ink:soft; g.lineWidth=1.2;
+    g.beginPath(); g.moveTo(bx+bw/2,ylo); g.lineTo(bx+bw/2,yhi);
+    g.moveTo(bx+bw/2-7,ylo); g.lineTo(bx+bw/2+7,ylo);
+    g.moveTo(bx+bw/2-7,yhi); g.lineTo(bx+bw/2+7,yhi); g.stroke();
+    capt(g,f4(pts[i][1]),bx+bw/2,yhi-9,live?ink:soft,12,live,'center');
+    capt(g,String(pts[i][0]),bx+bw/2,bot+18,live?rose:soft,12,live,'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+  capt(g, mode2===0 ? 'довжина послідовності · вектор контексту сталий'
+                    : 'розмір вектора контексту · довжина стала, вісім символів',
+       x0,H-14,soft,10.5);
+
+  var cur=pts[sel];
+  I('v2a').textContent=f4(cur[1]);
+  I('v2b').textContent=f4(cur[2])+' … '+f4(cur[3]);
+  I('v2c').textContent=f4(CHANCE);
+  I('v2d').textContent=f1(cur[1]/CHANCE)+'×';
+
+  var over=cur[1]/CHANCE;
+  if(mode2===0){
+    if(cur[2]<=CHANCE*1.35)
+      verd('v2v','t-no','ДНО: МЕРЕЖА ВГАДУЄ',
+        'На довжині '+cur[0]+' частка правильних '+f4(cur[1])+' при рівні навмання '+
+        f4(CHANCE)+'. Уся купа по зернах ('+f4(cur[2])+' … '+f4(cur[3])+') лежить на дні, '+
+        'тобто вектор із '+64+' чисел уже не тримає нічого. Ані довше навчання, '+
+        'ані інший алгоритм тут не допоможуть: інформації просто нема куди покласти.');
+    else if(cur[1]>0.75)
+      verd('v2v','t-ok','ВЛАЗИТЬ',
+        'Чотири символи мережа тримає майже без помилок: '+f4(cur[1])+', тобто у '+
+        f1(over)+' раза вище за навмання. Вузьке горло на такій довжині ще не '+
+        'відчувається — і саме тому воно довго лишалось непомітним.');
+    else
+      verd('v2v','t-mid','ПОЧАЛО СИПАТИСЬ',
+        'На довжині '+cur[0]+' лишилось '+f4(cur[1])+' — ще у '+f1(over)+
+        ' раза вище за навмання, але вже майже кожен другий символ втрачено. '+
+        'Це та сама довжина джерела, на якій тема 19 дістала найгіршу якість перекладу.');
+  } else {
+    var base=COPY_HID[0][1];
+    if(cur[1]>0.6)
+      verd('v2v','t-ok','ШИРШИЙ ВЕКТОР РЯТУЄ',
+        'Вектор із '+cur[0]+' чисел дає '+f4(cur[1])+' на тих самих восьми символах, '+
+        'де вектор із '+COPY_HID[0][0]+' давав '+f4(base)+'. Ми не міняли ані алгоритм, '+
+        'ані дані, ані кількість кроків навчання — лише розмір. Отже впиралися саме '+
+        'в нього.');
+    else if(cur[1]>CHANCE*6)
+      verd('v2v','t-mid','ЩЕ ЗАМАЛО',
+        'Вектор із '+cur[0]+' чисел дає '+f4(cur[1])+' — у '+f1(over)+
+        ' раза вище за навмання, але до стелі далеко. Порівняй із найширшим: '+
+        f4(COPY_HID[COPY_HID.length-1][1])+' при '+COPY_HID[COPY_HID.length-1][0]+' числах.');
+    else
+      verd('v2v','t-no','ВЕКТОР ЗАМАЛИЙ',
+        'Вектор із '+cur[0]+' чисел дає лише '+f4(cur[1])+' — у '+f1(over)+
+        ' раза вище за навмання, тобто ледве відрізняється від здогаду. '+
+        'Вісім випадкових символів туди не влазять.');
+  }
+}
+function sync2(){
+  var box=I('p2');
+  if(box){ box.max=String(pts2().length-1); box.value=String(idx2()); }
+  I('p2o').textContent=String(pts2()[idx2()][0]);
+}
+on('p2','input',function(e){ p2=+e.target.value; sync2(); draw2(); });
+segment('seg2',function(i){ mode2=i; p2=Math.min(p2, pts2().length-1); sync2(); draw2(); });
+
+/* ═══════════ фігура 3 · скільки дій мусять чекати ═══════════ */
+var n3 = 6;
+function draw3(){
+  var cv=I('c3'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var n=n3, i, x0=48, x1=W-48;
+  var step=(n>1)?(x1-x0)/(n-1):0, r=Math.max(3.2,Math.min(9,step*0.34));
+
+  capt(g,'рекурентний шар: крок чекає на попередній',x0,26,ink,12.5,true);
+  var yR=68;
+  g.strokeStyle=rose; g.lineWidth=1.4;
+  for(i=0;i<n-1;i++){
+    g.beginPath(); g.moveTo(x0+i*step+r, yR); g.lineTo(x0+(i+1)*step-r, yR); g.stroke();
+  }
+  for(i=0;i<n;i++){
+    g.fillStyle=rose; g.globalAlpha=0.30+0.70*i/Math.max(1,n-1);
+    g.beginPath(); g.arc(x0+i*step, yR, r, 0, 6.2832); g.fill(); g.globalAlpha=1;
+  }
+  capt(g,'дій по черзі: '+n,x0,yR+30,rose,12,true);
+
+  capt(g,'увага: усі позиції рахуються разом',x0,140,ink,12.5,true);
+  var yA=176;
+  for(i=0;i<n;i++){
+    g.fillStyle=teal; g.globalAlpha=0.75;
+    g.beginPath(); g.arc(x0+i*step, yA, r, 0, 6.2832); g.fill(); g.globalAlpha=1;
+  }
+  g.strokeStyle=teal; g.lineWidth=1.2; g.globalAlpha=0.55;
+  for(i=0;i<n;i++){
+    g.beginPath(); g.moveTo(x0+i*step, yA+r); g.lineTo(x0+i*step, yA+22); g.stroke();
+  }
+  g.globalAlpha=1;
+  g.strokeStyle=teal; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x0,yA+22.5); g.lineTo(x1,yA+22.5); g.stroke();
+
+  var stages=['проєкції','ваги','змішування'], sw=(x1-x0-24)/3;
+  for(i=0;i<3;i++){
+    var sx=x0+i*(sw+12);
+    g.fillStyle=teal; g.globalAlpha=0.16; g.fillRect(sx, 228, sw, 34); g.globalAlpha=1;
+    g.strokeStyle=teal; g.lineWidth=1; g.strokeRect(sx+0.5, 228.5, sw-1, 33);
+    capt(g,stages[i],sx+sw/2,249,teal,12,true,'center');
+  }
+  capt(g,'дій по черзі: 3, і це число не залежить від довжини',x0,282,teal,12,true);
+
+  var maxN=48, bx=x0, bw=x1-x0;
+  capt(g,'скільки дій мусять чекати одна на одну',x0,314,soft,11);
+  bar(g,bx,322,bw*n/maxN,12,rose,0.85);
+  bar(g,bx,340,bw*3/maxN,12,teal,0.85);
+  capt(g,String(n),bx+bw*n/maxN+8,332,rose,11,true);
+  capt(g,'3',bx+bw*3/maxN+8,350,teal,11,true);
+
+  I('v3a').textContent=String(n);
+  I('v3b').textContent='3';
+  I('v3c').textContent=f1(n/3)+'×';
+  I('v3d').textContent=thou(n*n);
+
+  if(n<=3)
+    verd('v3v','t-ok','ЛАНЦЮГ КОРОТШИЙ ЗА САМУ УВАГУ',
+      'Текст завдовжки '+n+': ланцюг рекурентної мережі має довжину '+n+', а в уваги '+
+      'по черзі йдуть три стадії. На такому уривку рекурентність не просто не програє — '+
+      'їй нема на чому програти. Клітинок у таблиці ваг уваги при цьому '+thou(n*n)+'.');
+  else if(n<=8)
+    verd('v3v','t-ok','НА КОРОТКОМУ ТЕКСТІ РІЗНИЦІ МАЙЖЕ НЕМАЄ',
+      'Текст завдовжки '+n+': рекурентний ланцюг має довжину '+n+' проти трьох стадій '+
+      'уваги, тобто у '+f1(n/3)+' раза довший. На такій довжині це нічого не вирішує. '+
+      'Медіана довжини речення в нашому корпусі — шість слів, тобто ми весь блок жили '+
+      'саме тут. Клітинок у таблиці ваг уваги при цьому '+thou(n*n)+'.');
+  else if(n<32)
+    verd('v3v','t-mid','ЛАНЦЮГ ПОДОВШАВ',
+      'Текст завдовжки '+n+': рекурентний ланцюг у '+f1(n/3)+' раза довший за три стадії '+
+      'уваги. Кожна ланка дрібна, і саме дрібність робить їх дорогими, коли машині '+
+      'дозволяють кілька ядер. Клітинок у таблиці ваг уваги тим часом уже '+thou(n*n)+'.');
+  else
+    verd('v3v','t-no','ЛАНЦЮГ ДОВГИЙ, ТАБЛИЦЯ ВЕЛИКА',
+      'Текст завдовжки '+n+': рекурентний ланцюг у '+f1(n/3)+' раза довший за увагу. '+
+      'Але й увага платить своє — клітинок у її таблиці ваг уже '+thou(n*n)+'. '+
+      'Дві будови дорожчають у різні боки, і саме це ми міряємо в дослідах А та Б.');
+}
+on('n3','input',function(e){ n3=+e.target.value; I('n3o').textContent=String(n3); draw3(); });
+
+/* ═══════════ фігура 4 · дослід А ═══════════ */
+var p4 = 0, mode4 = 0;
+function draw4(){
+  var cv=I('c4'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var i, n=EXPA.length, x0=70, x1=W-34, top=56, bot=H-60;
+  var stepx=(x1-x0)/(n-1);
+  var vals=[], j;
+  for(i=0;i<n;i++){
+    if(mode4===0) vals.push([EXPA[i][2],EXPA[i][3]]);
+    else vals.push([EXPA[i][2]/EXPA[0][2], EXPA[i][3]/EXPA[0][3]]);
+  }
+  var mx=0;
+  for(i=0;i<n;i++) for(j=0;j<2;j++) if(vals[i][j]>mx) mx=vals[i][j];
+  mx*=1.18;
+
+  capt(g, mode4===0 ? 'процесорний час одного кроку навчання, секунди'
+                    : 'у скільки разів дорожче за найкоротший рядок', x0,26,ink,12.5,true);
+  capt(g,'LSTM',x1,26,rose,11.5,true,'right');
+  capt(g,'увага',x1-56,26,teal,11.5,true,'right');
+
+  for(i=0;i<=4;i++){
+    var y=bot-(bot-top)*i/4;
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g, mode4===0 ? f3(mx*i/4) : f1(mx*i/4)+'×', x0-8, y+4, soft, 10.5, false, 'right');
+  }
+  for(i=0;i<n;i++) capt(g,String(EXPA[i][0]),x0+i*stepx,bot+18,i===p4?rose:soft,11.5,i===p4,'center');
+  capt(g,'довжина послідовності · батч міняється так, щоб роботи було стільки ж',
+       x0,H-14,soft,10.5);
+
+  var gx=x0+p4*stepx;
+  g.save(); g.setLineDash([4,4]); g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(gx+0.5,top); g.lineTo(gx+0.5,bot); g.stroke(); g.restore();
+
+  var series=[[0,rose],[1,teal]];
+  for(j=0;j<2;j++){
+    g.strokeStyle=series[j][1]; g.lineWidth=2; g.beginPath();
+    for(i=0;i<n;i++){
+      var px=x0+i*stepx, py=bot-(bot-top)*vals[i][series[j][0]]/mx;
+      if(i===0) g.moveTo(px,py); else g.lineTo(px,py);
+    }
+    g.stroke();
+    for(i=0;i<n;i++){
+      var qx=x0+i*stepx, qy=bot-(bot-top)*vals[i][series[j][0]]/mx;
+      g.fillStyle=series[j][1]; g.globalAlpha=(i===p4)?1:0.55;
+      g.beginPath(); g.arc(qx,qy,(i===p4)?5:3.2,0,6.2832); g.fill(); g.globalAlpha=1;
+    }
+  }
+  var cur=vals[p4];
+  capt(g, mode4===0 ? f4(cur[0]) : f2(cur[0])+'×', gx, bot-(bot-top)*cur[0]/mx-10, rose,12,true,'center');
+  capt(g, mode4===0 ? f4(cur[1]) : f2(cur[1])+'×', gx, bot-(bot-top)*cur[1]/mx+20, teal,12,true,'center');
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+
+  I('v4a').textContent=thou(EXPA[p4][1]);
+  I('v4b').textContent='довжина '+EXPA[p4][0];
+  I('v4c').textContent=f4(EXPA[p4][2])+' с';
+  I('v4d').textContent=f4(EXPA[p4][3])+' с';
+
+  var rl=EXPA[p4][2]/EXPA[0][2], ra=EXPA[p4][3]/EXPA[0][3];
+  var dl=EXPA[p4][2], da=EXPA[p4][3], near=Math.abs(dl-da)/Math.max(dl,da)<0.05;
+  if(p4===0)
+    verd('v4v','t-mid','ПОЧАТОК ВІДЛІКУ',
+      'Найкоротші рядки: довжина 8, батч '+thou(EXPA[0][1])+'. LSTM коштує '+f4(dl)+
+      ' с, увага '+f4(da)+' с — увага тут утричі дешевша, бо її квадратична частина на '+
+      'восьми позиціях майже нічого не важить. Посунь повзунок праворуч.');
+  else if(near)
+    verd('v4v','t-mid','ТУТ ВОНИ ЗРІВНЯЛИСЬ',
+      'На довжині '+EXPA[p4][0]+' LSTM коштує '+f4(dl)+' с, увага '+f4(da)+
+      ' с — різниця менша за пʼять відсотків, тобто різниці немає. Але дорогою сюди '+
+      'LSTM змінився у '+f2(rl)+' раза, а увага — у '+f2(ra)+'. Рухається лише одна '+
+      'з двох кривих, і це не рекурентна.');
+  else if(da<dl)
+    verd('v4v','t-mid','УВАГА ЩЕ ДЕШЕВША, АЛЕ ДОГАНЯЄ',
+      'На довжині '+EXPA[p4][0]+' LSTM коштує '+f4(dl)+' с — це '+f2(rl)+
+      ' від того, що було на восьми, тобто нічого не змінилось. Увага коштує '+f4(da)+
+      ' с, а це вже '+f2(ra)+' від своєї початкової. Дорожчає рівно одна з двох будов, '+
+      'і це не рекурентна.');
+  else
+    verd('v4v','t-no','УВАГА ДОРОЖЧА ЗА LSTM',
+      'На довжині '+EXPA[p4][0]+' увага коштує '+f4(da)+' с проти '+f4(dl)+
+      ' с у LSTM. Від найкоротшого рядка LSTM змінився у '+f2(rl)+' раза, увага — у '+
+      f2(ra)+'. Теза «RNN повільна через довжину» на одному ядрі не просто не '+
+      'підтверджується — вона перевернута.');
+}
+on('p4','input',function(e){ p4=+e.target.value; I('p4o').textContent=String(EXPA[p4][0]); draw4(); });
+segment('seg4',function(i){ mode4=i; draw4(); });
+
+/* ═══════════ фігура 5 · дослід Б ═══════════ */
+var th5 = 0, clock5 = 0;
+var CLOCKS = ['cpu','wall'], CLOCK_NAME = ['процесорний','стінний'],
+    CLOCK_INSTR = ['процесорним','стінним'];
+function draw5(){
+  var cv=I('c5'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var ck=CLOCKS[clock5], i, j;
+  var series=[['LSTM',EXPB.lstm[ck],rose],['увага',EXPB.attn[ck],teal]];
+  var mx=0;
+  for(i=0;i<2;i++) for(j=0;j<2;j++) if(series[i][1][j]>mx) mx=series[i][1][j];
+  mx*=1.2;
+  var x0=76, x1=W-34, top=54, bot=H-62;
+
+  capt(g,CLOCK_NAME[clock5]+' час одного кроку навчання, секунди',x0,26,ink,12.5,true);
+  capt(g,'дозволено потоків: '+(th5===0?'1':'4'),x1,26,rose,12,true,'right');
+  for(i=0;i<=4;i++){
+    var y=bot-(bot-top)*i/4;
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,f2(mx*i/4),x0-8,y+4,soft,10.5,false,'right');
+  }
+  var gw=(x1-x0)/2, bw=58;
+  for(i=0;i<2;i++){
+    for(j=0;j<2;j++){
+      var bx=x0+i*gw+gw/2-bw-8+j*(bw+16), v=series[i][1][j];
+      var hh=(bot-top)*v/mx, live=(j===th5);
+      bar(g,bx,bot-hh,bw,hh,series[i][2],live?0.9:0.26);
+      capt(g,f4(v),bx+bw/2,bot-hh-9,live?ink:soft,11.5,live,'center');
+      capt(g,(j===0?'1 потік':'4 потоки'),bx+bw/2,bot+17,live?ink:soft,10.5,live,'center');
+    }
+    capt(g,series[i][0],x0+i*gw+gw/2,bot+37,series[i][2],12.5,true,'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+  capt(g,'стан 512 · батч 32 · довжина 128 · навантаження машини між 12.7 і 12.97',x0,H-13,soft,10.5);
+
+  var lv=EXPB.lstm[ck][th5], av=EXPB.attn[ck][th5];
+  /* округлюємо так само, як зошит, інакше останній знак розійдеться */
+  var lr=Math.round(EXPB.lstm[ck][1]/EXPB.lstm[ck][0]*100)/100;
+  var ar=Math.round(EXPB.attn[ck][1]/EXPB.attn[ck][0]*100)/100;
+  I('v5a').textContent=f4(lv)+' с';
+  I('v5b').textContent=f4(av)+' с';
+  I('v5c').textContent=f2(lr)+'×';
+  I('v5d').textContent=f2(ar)+'×';
+
+  if(th5===0)
+    verd('v5v','t-mid','ОДИН ПОТІК: ЧЕСНА БАЗА',
+      'Один потік, '+CLOCK_NAME[clock5]+' годинник: LSTM '+f4(lv)+' с, увага '+f4(av)+
+      ' с. Це наша точка відліку — тут ніхто нічого не паралелить, тож і плати за '+
+      'синхронізацію немає. Переведи повзунок на чотири потоки.');
+  else if(lr>ar)
+    verd('v5v','t-no','ЧОТИРИ ЯДРА ПОКАРАЛИ ОБОХ, LSTM СИЛЬНІШЕ',
+      'За '+CLOCK_INSTR[clock5]+' годинником чотири потоки коштували LSTM у '+f2(lr)+
+      ' раза дорожче, а увазі — у '+f2(ar)+'. Обидві будови програли, але LSTM програв '+
+      'у '+f2(lr/ar)+' раза сильніше. Ось де теза про розпаралелення нарешті '+
+      'перетворюється на число.');
+  else
+    verd('v5v','t-mid','ЗА ЦИМ ГОДИННИКОМ КАРТИНА ІНША',
+      'За '+CLOCK_INSTR[clock5]+' годинником чотири потоки дали LSTM множник '+f2(lr)+
+      ', а увазі '+f2(ar)+'. Стінний час на зайнятій машині — ненадійна мірка: він '+
+      'рахує й те, як довго нас відсували. Дивись на процесорний.');
+}
+on('th5','input',function(e){ th5=+e.target.value; I('th5o').textContent=(th5===0?'1':'4'); draw5(); });
+segment('seg5',function(i){ clock5=i; draw5(); });
+
+/* ═══════════ фігура 6 · та сама робота, порізана на k шматків ═══════════ */
+var k6 = 0, show6 = 0;
+function draw6(){
+  var cv=I('c6'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var i, n=EXPE.length, x0=76, x1=W-34, top=56, bot=H-62;
+  var LO=10000, HI=2000000;                   /* шкала в мікросекундах: 10 мс … 2 с */
+  function ypos(ms){
+    var us=ms*1000, t=(Math.log(us)-Math.log(LO))/(Math.log(HI)-Math.log(LO));
+    return bot-(bot-top)*Math.max(0,Math.min(1,t));
+  }
+  capt(g,'процесорний час того самого множення, логарифмічна шкала',x0,26,ink,12.5,true);
+  capt(g,'1 потік',x1,26,teal,11.5,true,'right');
+  capt(g,'4 потоки',x1-70,26,rose,11.5,true,'right');
+  var ticks=[10000,20000,50000,100000,200000,500000,1000000,2000000];
+  var lbl=['10 мс','20 мс','50 мс','100 мс','200 мс','500 мс','1 с','2 с'];
+  for(i=0;i<ticks.length;i++){
+    var y=bot-(bot-top)*(Math.log(ticks[i])-Math.log(LO))/(Math.log(HI)-Math.log(LO));
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g,lbl[i],x0-8,y+4,soft,10,false,'right');
+  }
+  var gw=(x1-x0)/n, bw=Math.min(30,gw/2.6);
+  for(i=0;i<n;i++){
+    var cx=x0+gw*(i+0.5), live=(i===k6);
+    var y1=ypos(EXPE[i][1]), y4=ypos(EXPE[i][2]), ytop=Math.min(y1,y4)-9;
+    if(show6!==2) bar(g,cx-bw-3,y1,bw,bot-y1,teal,live?0.9:0.3);
+    if(show6!==1) bar(g,cx+3,y4,bw,bot-y4,rose,live?0.9:0.3);
+    if(live){
+      /* два числа зустрічаються по центру групи, а не накладаються */
+      if(show6!==2) capt(g,f2(EXPE[i][1])+'  ',cx,ytop,teal,11,true,'right');
+      if(show6!==1) capt(g,'  '+f2(EXPE[i][2])+' мс',cx,ytop,rose,11,true,'left');
+    }
+    capt(g,String(EXPE[i][0]),cx,bot+18,live?ink:soft,11.5,live,'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+  capt(g,'на скільки послідовних шматків порізано одну й ту саму роботу',x0,H-14,soft,10.5);
+
+  var one=EXPE[k6][1], four=EXPE[k6][2], k=EXPE[k6][0];
+  I('v6a').textContent=f2(one)+' мс';
+  I('v6b').textContent=f2(four)+' мс';
+  I('v6c').textContent=f2(four/one)+'×';
+  var extra=(four-one)/k;                       /* зайве на один шматок, мілісекунди */
+  I('v6d').textContent = extra>=1 ? f2(extra)+' мс' : f1(extra*1000)+' мкс';
+
+  if(k===1)
+    verd('v6v','t-mid','ОДИН ВЕЛИКИЙ ВИКЛИК',
+      'Нерозрізана робота: один потік '+f2(one)+' мс, чотири потоки '+f2(four)+
+      ' мс. Навіть тут чотири ядра програють у '+f2(four/one)+' раза — це плата за '+
+      'роздачу, яку доводиться внести один раз. Ріж роботу далі й дивись, що буде.');
+  else if(four/one<5)
+    verd('v6v','t-mid','ПЛАТА ЩЕ ТЕРПИМА',
+      'Порізали на '+k+' '+plural(k,'шматок','шматки','шматків')+': один потік '+f2(one)+
+      ' мс, чотири — '+f2(four)+' мс, тобто у '+f2(four/one)+' раза гірше. На кожен '+
+      'шматок припадає близько '+(extra>=1?f2(extra)+' мс':f1(extra*1000)+' мкс')+
+      ' зайвої роботи, і поки шматки великі, це терпимо.');
+  else
+    verd('v6v','t-no','ПЛАТА ПЕРЕВАЖИЛА РОБОТУ',
+      'Порізали на '+k+' '+plural(k,'шматок','шматки','шматків')+': чотири потоки '+
+      'коштують '+f2(four)+' мс проти '+
+      f2(one)+' — у '+f2(four/one)+' раза гірше, хоч роботи стільки ж. Одному потоку '+
+      'та сама порізка коштувала лише '+f2(EXPE[k6][1]/EXPE[0][1])+' раза. Саме це й '+
+      'відбувається з рекурентним шаром на довжині '+k+'.');
+}
+on('k6','input',function(e){ k6=+e.target.value; I('k6o').textContent=String(EXPE[k6][0]); draw6(); });
+segment('seg6',function(i){ show6=i; draw6(); });
+
+/* ═══════════ фігура 7 · потік без кінця ═══════════ */
+var t7 = 0, mode7 = 0;
+function bucketEnd(i){ return (i+1)*(STREAM_STEPS/BUCKETS); }
+function draw7(){
+  var cv=I('c7'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var i, x0=76, x1=W-34, top=56, bot=H-62;
+  var endStep=bucketEnd(t7);
+  var memR=2*HS, memA=2*endStep*HS;
+  var MLO=100, MHI=2000000;
+  function ypos7(v){
+    var t=(Math.log(v)-Math.log(MLO))/(Math.log(MHI)-Math.log(MLO));
+    return bot-(bot-top)*Math.max(0,Math.min(1,t));
+  }
+
+  if(mode7===0){
+    var mx=0;
+    for(i=0;i<BUCKETS;i++){
+      if(STREAM.rnn[i]>mx) mx=STREAM.rnn[i];
+      if(STREAM.attn[i]>mx) mx=STREAM.attn[i];
+    }
+    mx*=1.2;
+    capt(g,'час одного кроку, мікросекунди',x0,26,ink,12.5,true);
+    capt(g,'RNN',x1,26,rose,11.5,true,'right');
+    capt(g,'увага',x1-52,26,teal,11.5,true,'right');
+    for(i=0;i<=4;i++){
+      var y=bot-(bot-top)*i/4;
+      g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+      capt(g,f1(mx*i/4),x0-8,y+4,soft,10.5,false,'right');
+    }
+    var stepx=(x1-x0)/(BUCKETS-1), j;
+    var lines=[[STREAM.rnn,rose],[STREAM.attn,teal]];
+    var gx=x0+t7*stepx;
+    g.save(); g.setLineDash([4,4]); g.strokeStyle=hair;
+    g.beginPath(); g.moveTo(gx+0.5,top); g.lineTo(gx+0.5,bot); g.stroke(); g.restore();
+    for(j=0;j<2;j++){
+      g.strokeStyle=lines[j][1]; g.lineWidth=2; g.beginPath();
+      for(i=0;i<BUCKETS;i++){
+        var px=x0+i*stepx, py=bot-(bot-top)*lines[j][0][i]/mx;
+        if(i===0) g.moveTo(px,py); else g.lineTo(px,py);
+      }
+      g.stroke();
+      for(i=0;i<BUCKETS;i++){
+        var ax=x0+i*stepx, ay=bot-(bot-top)*lines[j][0][i]/mx;
+        g.fillStyle=lines[j][1]; g.globalAlpha=(i===t7)?1:0.5;
+        g.beginPath(); g.arc(ax,ay,(i===t7)?5:3,0,6.2832); g.fill(); g.globalAlpha=1;
+      }
+    }
+    capt(g,f1(STREAM.rnn[t7])+' мкс',gx,bot-(bot-top)*STREAM.rnn[t7]/mx+20,rose,11.5,true,'center');
+    capt(g,f1(STREAM.attn[t7])+' мкс',gx,bot-(bot-top)*STREAM.attn[t7]/mx-10,teal,11.5,true,'center');
+    for(i=0;i<BUCKETS;i++)
+      capt(g,String(bucketEnd(i)),x0+i*stepx,bot+18,i===t7?ink:soft,10.5,i===t7,'center');
+    capt(g,'кроків пройдено',x0,H-14,soft,10.5);
+  } else {
+    capt(g,'скільки чисел доводиться тримати, логарифмічна шкала',x0,26,ink,12.5,true);
+    var k;
+    var tk=[100,1000,10000,100000,1000000], tl=['100','1 000','10 000','100 000','1 000 000'];
+    for(k=0;k<tk.length;k++){
+      var yy=ypos7(tk[k]);
+      g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,yy+0.5); g.lineTo(x1,yy+0.5); g.stroke();
+      capt(g,tl[k],x0-8,yy+4,soft,10,false,'right');
+    }
+    var bw=110, cx1=x0+(x1-x0)*0.30, cx2=x0+(x1-x0)*0.70;
+    var yR=ypos7(memR), yA=ypos7(memA);
+    bar(g,cx1-bw/2,yR,bw,bot-yR,rose,0.9);
+    bar(g,cx2-bw/2,yA,bw,bot-yA,teal,0.9);
+    capt(g,thou(memR),cx1,yR-9,ink,12,true,'center');
+    capt(g,thou(memA),cx2,yA-9,ink,12,true,'center');
+    capt(g,'RNN: два вектори',cx1,bot+18,rose,11.5,true,'center');
+    capt(g,'увага: кеш на '+endStep+' '+plural(endStep,'крок','кроки','кроків'),
+         cx2,bot+18,teal,11.5,true,'center');
+    capt(g,'стан рекурентної мережі не залежить від того, скільки вже прочитано',
+         x0,H-14,soft,10.5);
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bot+0.5); g.lineTo(x1,bot+0.5); g.stroke();
+
+  function nums(v){ return thou(v)+' '+plural(v,'число','числа','чисел'); }
+  I('v7a').textContent = mode7===0 ? f1(STREAM.rnn[t7])+' мкс' : nums(memR);
+  I('v7b').textContent = mode7===0 ? f1(STREAM.attn[t7])+' мкс' : nums(memA);
+  I('v7c').textContent = mode7===0 ? f2(STREAM.attn[t7]/STREAM.rnn[t7])+'×'
+                                   : f0x(memA/memR);
+  I('v7d').textContent = String(endStep);
+
+  var growR=STREAM.rnn[t7]/STREAM.rnn[0], growA=STREAM.attn[t7]/STREAM.attn[0];
+  if(mode7===1){
+    if(t7===0)
+      verd('v7v','t-mid','ПОЧАТОК ПОТОКУ: РІЗНИЦЯ ВЖЕ Є',
+        'Позаду лише '+endStep+' '+plural(endStep,'крок','кроки','кроків')+', а увага вже '+
+        'тримає '+nums(memA)+' проти '+nums(memR)+' у RNN — у '+f0x(memA/memR)+
+        '. Стан рекурентної мережі більше не зросте ніколи, а кеш уваги росте на два '+
+        'вектори з кожним кроком. Веди повзунок далі.');
+    else
+      verd('v7v','t-ok','ПАМʼЯТЬ РОЗІЙШЛАСЬ',
+        'Позаду '+endStep+' '+plural(endStep,'крок','кроки','кроків')+'. RNN тримає ті '+
+        'самі '+nums(memR)+', бо її стан не залежить від довжини прочитаного. Увага '+
+        'тримає '+nums(memA)+' — у '+f0x(memA/memR)+'. На пристрої, у якого памʼять '+
+        'рахують у кілобайтах, це і є вся розмова.');
+    return;
+  }
+  if(t7===0)
+    verd('v7v','t-mid','ПОЧАТОК ПОТОКУ: ОБИДВІ ШВИДКІ',
+      'На перших '+endStep+' кроках крок RNN коштує '+f1(STREAM.rnn[0])+' мкс, крок уваги '+
+      f1(STREAM.attn[0])+' мкс — вони майже рівні, бо переглядати ще майже нічого. '+
+      'Веди повзунок далі й дивись, яка з двох ліній піде вгору.');
+  else if(STREAM.attn[t7]>STREAM.rnn[t7])
+    verd('v7v','t-ok','РЕКУРЕНТНІСТЬ ВИГРАЄ',
+      'Позаду '+endStep+' '+plural(endStep,'крок','кроки','кроків')+'. Крок RNN коштує '+
+      f1(STREAM.rnn[t7])+' мкс — це '+f2(growR)+' від початкового, і тренду тут немає: '+
+      'по всіх восьми відрізках RNN гуляє від '+f1(SR_MIN)+' до '+f1(SR_MAX)+
+      ' мкс без напрямку. А крок уваги коштує '+f1(STREAM.attn[t7])+' мкс, тобто '+
+      f2(growA)+' від свого початкового, і росте монотонно. Перемкни на памʼять — '+
+      'там розрив ще більший.');
+  else
+    verd('v7v','t-mid','ЧАС ЩЕ РІВНИЙ',
+      'Позаду '+endStep+' '+plural(endStep,'крок','кроки','кроків')+'. За часом кроку '+
+      'RNN ('+f1(STREAM.rnn[t7])+' мкс) і увага ('+f1(STREAM.attn[t7])+' мкс) поки '+
+      'нерозрізненні. Перемкни на памʼять: там вони розійшлися давно.');
+}
+function f0x(v){ return String(Math.round(v))+'×'; }
+on('t7','input',function(e){
+  t7=+e.target.value;
+  I('t7o').textContent=(t7*(STREAM_STEPS/BUCKETS)+1)+'-'+bucketEnd(t7);
+  draw7();
+});
+segment('seg7',function(i){ mode7=i; draw7(); });
+
+/* ═══════════ старт ═══════════ */
+function drawAll(){ draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7(); }
+I('tg1o').textContent=String(GRAD_T[tg1]);
+I('p2o').textContent=String(pts2()[idx2()][0]);
+I('n3o').textContent=String(n3);
+I('p4o').textContent=String(EXPA[p4][0]);
+I('th5o').textContent=(th5===0?'1':'4');
+I('k6o').textContent=String(EXPE[k6][0]);
+I('t7o').textContent='1-'+bucketEnd(0);
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+
+})();
+</script>
+</html>

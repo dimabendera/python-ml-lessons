@@ -1,0 +1,2354 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T5 і BART</title>
+<meta name="description" content="Третя архітектура блоку: енкодер читає вхід в обидва боки, декодер пише вихід зліва направо, перехресна увага їх зшиває. Блок декодера коштує 264 576 ваг проти 198 272 в енкодера — саме звідси правило «2P проти P». Усе стає «текст у текст»: задача класифікації переписується як пара рядків, а голова на 258 ваги міняється на проєкцію словника на 1 019 358. На нашому корпусі при зрівняних тілах (925 696 ваг) три архітектури дали 0.7731, 0.7662, 0.7362 F1 на пʼятьох зернах, а TF-IDF — 0.7379. Псування проміжками проти окремих слів: 6.5140 проти 6.6720 ната при уніграмному рубежі 6.9418.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 6 · Тема 29</p>
+    <h1>T5 і BART</h1>
+    <p class="stand">Енкодер уміє читати, але не вміє писати. Декодер уміє писати,
+      але бачить лише те, що ліворуч. Третя архітектура вміє обидва — і разом із
+      нею приходить ідея, від якої зникає різниця між задачами: подай текст,
+      отримай текст.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Третій кут трикутника</a></li>
+        <li><a href="#s2">Що бачить кожна позиція</a></li>
+        <li><a href="#s3">Енкодер-декодер, зібраний наново</a></li>
+        <li><a href="#s4">Перехресна увага: міст між стосами</a></li>
+        <li><a href="#s5">Ціна блоку й правило «2P»</a></li>
+        <li><a href="#s6">Усе — текст у текст</a></li>
+        <li><a href="#s7">Одна задача, переписана словами</a></li>
+        <li><a href="#s8">Коли відповідь — слово, а не номер класу</a></li>
+        <li><a href="#s9">Псування тексту як проксі-задача</a></li>
+        <li><a href="#s10">Проміжки проти окремих слів</a></li>
+        <li><a href="#s11">Скільки псувати: ручка, яку легко не помітити</a></li>
+        <li><a href="#s12">Уніграмний рубіж: коли модель уже є</a></li>
+        <li><a href="#s13">Три архітектури на нашій задачі</a></li>
+        <li><a href="#s14">Те саме на великих даних</a></li>
+        <li><a href="#s15">Одна модель, багато задач — і рахунок за це</a></li>
+        <li><a href="#s16">Породження лишається послідовним</a></li>
+        <li><a href="#s17">Межі й наш макет</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../28-gpt-family/lecture.html">← 28. GPT-родина</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../30-multilingual/lecture.html">30. Багатомовність і українська →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">Три теми поспіль курс складав ту саму мозаїку з різних боків.
+<a href="../26-bert/lecture.html">26 · BERT</a> дала <b>енкодер</b>: стос, у якому
+кожне слово бачить усе речення одразу, ліворуч і праворуч. Він чудово розуміє текст
+і не вміє написати жодного слова. Тема про родину GPT дала <b>декодер</b>: стос, у якому
+кожна позиція бачить лише те, що вже написано, — і саме тому він уміє продовжувати
+текст, слово за словом, нескінченно. Кожен із них уміє рівно половину роботи.
+Ця тема — про третю фігуру, яка вміє обидві половини, і про те, що з цього виходить.
+А виходить дещо більше за ще одну архітектуру: виходить спосіб записати
+<b>будь-яку</b> задачу однаково.</p>
+
+<h2 id="s1"><span class="num">Розділ 1</span>Третій кут трикутника</h2>
+
+<p>Почнімо з побутової картинки, бо далі буде багато схем.</p>
+
+<p>Уяви трьох людей за роботою з текстом.</p>
+
+<p><b>Перший — коректор.</b> Йому дають готову сторінку, він читає її цілком,
+скільки завгодно разів, туди й назад, і в кінці каже одну річ: «тут помилка»,
+«це юридичний документ», «третє речення про гроші». Він нічого не пише — він
+<b>оцінює</b>. Щоб дістати від нього відповідь, треба поставити біля нього людину
+з бланком, куди він цю оцінку впише. Це енкодер, а людина з бланком — голова задачі.</p>
+
+<p><b>Другий — стенографіст під диктовку власної уяви.</b> Він пише зліва направо
+й ніколи не заглядає вперед, бо попереду ще нічого немає. Кожне наступне слово він
+вибирає, дивлячись лише на вже написане. Він чудово продовжує текст і погано
+оцінює його цілком: коли він дійшов до третього слова, останнього він ще не бачив.
+Це декодер.</p>
+
+<p><b>Третій — перекладач.</b> Він спершу читає весь оригінал — уважно, цілком,
+в обидва боки, бо в українській головне слово може стояти в кінці, а в англійській
+на початку. Потім він відкладає оригінал <b>убік, але не закриває його</b> — і
+починає писати переклад слово за словом, раз у раз зазираючи назад в оригінал.
+У ньому живуть обидва попередні: коректор усередині читає, стенографіст усередині
+пише. Це <b>енкодер-декодер</b>.</p>
+
+<div class="note"><b>Ця тема вже була — і це навмисне.</b>
+<a href="../19-seq2seq/lecture.html">Тема 19</a> вводила енкодер-декодер для
+конкретної задачі: перекласти англійський рядок українською. Тоді це виглядало як
+пристрій, придуманий під переклад. Зараз ми зберемо ту саму конструкцію наново — і
+побачимо, що переклад тут ні до чого. Це <b>загальна форма</b>, у яку вкладається
+класифікація, витягання відповіді, переказ і все інше. Читати попередню тему для
+цього не треба: усе, що знадобиться, є нижче.</div>
+
+<p>Дві моделі, які дали цій темі назву, — саме такі перекладачі, тільки перекладають
+вони не з мови на мову, а з <b>питання на відповідь</b>. <b>T5</b> — від «Text-To-Text
+Transfer Transformer», тобто «трансформер переносу, текст у текст»; пʼять слів на
+літеру T, звідси й пʼятірка. <b>BART</b> — від «Bidirectional and Auto-Regressive
+Transformers», «двонаправлений і авторегресійний трансформери» разом; сама назва
+каже, що це BERT і GPT, зшиті в одну модель.</p>
+
+<figure>
+  <p class="fig-head">Що бачить кожна позиція у трьох архітектурах</p>
+  <p class="fig-sub">Клітинка зафарбована, якщо позиція рядка має право дивитись
+    на позицію стовпця. Повзунок виділяє один рядок — одного, хто дивиться.</p>
+  <div class="panel">
+    <canvas id="c1" width="640" height="290" data-lw="640" data-lh="290"></canvas>
+    <div>
+      <div class="seg" id="seg1">
+        <button data-i="0" aria-pressed="true">енкодер</button>
+        <button data-i="1" aria-pressed="false">декодер</button>
+        <button data-i="2" aria-pressed="false">енкодер-декодер</button>
+      </div>
+      <div class="ctl">
+        <label for="pos1">позиція, що дивиться <output id="pos1v">3</output></label>
+        <input type="range" id="pos1" min="1" max="5" step="1" value="3">
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>дозволених пар</b><i id="k1a">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>що на виході</b><i class="sm" id="k1b">—</i></div>
+      </div>
+      <div class="verdict" id="v1"></div>
+    </div>
+  </div>
+  <figcaption>Уся різниця між трьома архітектурами — це <b>малюнок дозволів</b>.
+    Ніяких інших відмінностей у будові блоків немає: та сама увага, ті самі
+    повнозвʼязні шари, та сама нормалізація. Міняється лише те, кому дозволено
+    дивитись на кого.</figcaption>
+</figure>
+
+<h2 id="s2"><span class="num">Розділ 2</span>Що бачить кожна позиція</h2>
+
+<p>Розберімо цей малюнок дозволів повільно, бо він і є вся тема.</p>
+
+<p>Увага — це операція, у якій кожна позиція збирає зважену суміш інших позицій.
+Хто до кого має право додатися, вирішує <b>маска</b>: таблиця з нулів і одиниць,
+де рядок — це той, хто дивиться, а стовпець — той, на кого дивляться. Заборонену
+пару маска викидає ще до softmax, тож у сумі вона важить рівно нуль.</p>
+
+<p>Ось три можливі таблиці для речення з чотирьох слів.</p>
+
+<div class="eq left">повністю видима (енкодер)      причинна (декодер)
+     1  2  3  4                    1  2  3  4
+1 |  +  +  +  +                1 |  +  .  .  .
+2 |  +  +  +  +                2 |  +  +  .  .
+3 |  +  +  +  +                3 |  +  +  +  .
+4 |  +  +  +  +                4 |  +  +  +  +
+
+   + дозволено          . заборонено маскою</div>
+
+<p>Ліва таблиця має 16 дозволених пар із 16, права — 10 із 16: усю діагональ плюс
+половину того, що під нею. Це не метафора, це буквальні числа: <code>n(n+1)/2</code>
+для причинної маски проти <code>n²</code> для повністю видимої. На чотирьох
+словах — 10 проти 16, на двадцяти — 210 проти 400.</p>
+
+<p>Тепер головне питання, заради якого все й затіяно: <b>чому не можна просто взяти
+повністю видиму маску скрізь?</b></p>
+
+<p>Тому що завдання декодера — передбачити наступне слово. Якщо позиція 3 має право
+дивитись на позицію 4, то, передбачаючи слово 4, вона його вже <b>бачить</b>. Задача
+з передбачення перетворюється на списування, втрата падає майже до нуля, а модель
+не вчиться нічого. Курс уже показував цей витік числами в темі
+<a href="../23-multihead-masking/lecture.html">23 · Multi-head і маскування</a>:
+без причинної маски перплексія обвалюється не тому, що модель порозумнішала, а тому,
+що постановку задачі зіпсовано.</p>
+
+<p>А завдання енкодера — не передбачати нічого. Йому дають готовий текст і питають
+про нього. Тут заглядати праворуч не просто дозволено, а <b>необхідно</b>: у реченні
+«не вдалося записати новий файл індексу» слово «не» на початку змінює зміст усього,
+що після нього, і позиція «вдалося» мусить це «не» бачити.</p>
+
+<p>Енкодер-декодер бере обидві таблиці й додає третю — <b>перехресну</b>. У ній
+рядки — позиції того, що пишеться, а стовпці — позиції того, що прочитано. Вона
+завжди повністю видима: коли перекладач пише третє слово перекладу, він має право
+подивитись на будь-яке місце оригіналу, зокрема на останнє. Ніякого витоку тут
+немає, бо оригінал — це вхід, а не відповідь.</p>
+
+<div class="note"><b>Запамʼятай трійку.</b> Самоувага енкодера — <b>повністю
+видима</b>. Самоувага декодера — <b>причинна</b>. Перехресна увага — <b>повністю
+видима</b>, але дивиться не на себе, а на енкодер. Три різні маски в одній моделі,
+і кожна стоїть там, де стоїть, з окремої причини.</div>
+
+<h2 id="s3"><span class="num">Розділ 3</span>Енкодер-декодер, зібраний наново</h2>
+
+<p>Тепер зберімо конструкцію по деталях, не спираючись на памʼять про тему 19.</p>
+
+<p>На вході — послідовність токенів, назвімо її <b>джерело</b>. На виході — інша
+послідовність, назвімо її <b>ціль</b>. Довжини різні й ніяк не повʼязані: джерело
+може мати двадцять токенів, ціль — три.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · вхідні ембединги</span>
+    <p>Кожен токен джерела перетворюється на вектор із таблиці ембедингів, і до нього
+      додається вектор позиції. Речення з 20 токенів при ширині моделі 128 стає
+      таблицею 20 × 128.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · стос енкодера</span>
+    <p>Ця таблиця проходить крізь кілька однакових блоків. У кожному — самоувага
+      з повністю видимою маскою, потім повнозвʼязний шар, і навколо кожного —
+      залишкове зʼєднання й нормалізація. Форма не міняється: увійшло 20 × 128,
+      вийшло 20 × 128. Змінився <b>зміст</b>: тепер у кожному рядку сидить не слово,
+      а слово разом зі своїм оточенням.</p>
+    <p>Цей результат називають <b>памʼяттю</b> (memory) енкодера. Вона рахується
+      <b>один раз</b> і далі не міняється, скільки б слів декодер не написав.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · декодер, крок за кроком</span>
+    <p>Декодер починає з єдиного токена-початку. Його блок робить <b>три</b> речі
+      підряд: самоувагу з причинною маскою (подивитись, що вже написано), перехресну
+      увагу в памʼять енкодера (подивитись в оригінал) і повнозвʼязний шар.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · вихідна проєкція</span>
+    <p>Останній вектор декодера множиться на матрицю розміру «ширина × словник»
+      і перетворюється на бал для кожного слова словника. Softmax робить із балів
+      розподіл, з нього береться слово, воно дописується до цілі — і крок 3
+      повторюється.</p>
+  </div>
+</div>
+
+<p>Порівняй це з енкодером: у нього кроків 3 і 4 просто немає. Замість них —
+маленька голова, яка бере один вектор і видає, скажімо, два числа: «помилка» і
+«не помилка». Порівняй із декодером: у нього немає кроку 2, а в кроці 3 випадає
+перехресна увага, бо дивитись нікуди — джерело й ціль у нього лежать <b>однією</b>
+послідовністю.</p>
+
+<figure>
+  <p class="fig-head">Два стоси й міст між ними</p>
+  <p class="fig-sub">Пересувай повзунок — побачиш, як росте ціль і що на кожному
+    кроці читає декодер.</p>
+  <div class="panel">
+    <canvas id="c2" width="640" height="340" data-lw="640" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="step2">написано слів <output id="step2v">1</output></label>
+        <input type="range" id="step2" min="1" max="5" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>памʼять енкодера</b><i id="k2a">—</i></div>
+        <div class="cellv"><b>перерахунків</b><i id="k2b">—</i></div>
+      </div>
+      <div class="verdict" id="v2"></div>
+    </div>
+  </div>
+  <figcaption>Памʼять енкодера рахується <b>один раз</b> і далі лише читається.
+    Декодер натомість запускається стільки разів, скільки слів пише. Саме звідси
+    береться головна ціна породження — і вона нікуди не дінеться від жодної
+    оптимізації, бо друге слово неможливо написати, доки не написане перше.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">Розділ 4</span>Перехресна увага: міст між стосами</h2>
+
+<p>Перехресна увага — єдина деталь, якої немає ні в енкодері, ні в декодері окремо.
+Розберімо її на числах, бо словами вона звучить туманно.</p>
+
+<p>Звичайна увага бере три таблиці: <b>запити</b> (Q), <b>ключі</b> (K) і
+<b>значення</b> (V). Кожен рядок запиту порівнюється з кожним рядком ключа,
+зі схожості робиться вага, і цією вагою змішуються рядки значень. Формула, яку
+курс уже виводив, така:</p>
+
+<div class="eq">увага(Q, K, V) = softmax( Q·K<span class="sup">⊤</span> / √d ) · V</div>
+
+<p>Розшифруємо кожен символ. <b>Q</b> — таблиця, у якій рядок означає «що я шукаю».
+<b>K</b> — таблиця, у якій рядок означає «що я пропоную». <b>V</b> — таблиця, у якій
+рядок означає «що я віддам, якщо мене оберуть». Крапка між Q і K<span class="sup">⊤</span> —
+скалярний добуток: він великий, коли два вектори дивляться в один бік. Ділення
+на √d, де d — ширина одного вектора, стримує числа від розповзання: без нього
+добутки ростуть разом із розмірністю й softmax перетворюється на «усе одному».
+Softmax перетворює набір балів на набір часток, які додаються в одиницю.</p>
+
+<p><b>Уся різниця між самоувагою й перехресною увагою — звідки беруться ці три
+таблиці.</b></p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>увага</th><th>Q береться з</th><th>K і V беруться з</th><th>маска</th></tr>
+<tr><td>самоувага енкодера</td><td>енкодера</td><td>енкодера</td><td>повністю видима</td></tr>
+<tr><td>самоувага декодера</td><td>декодера</td><td>декодера</td><td>причинна</td></tr>
+<tr><td>перехресна увага</td><td><b>декодера</b></td><td><b>енкодера</b></td><td>повністю видима</td></tr>
+</table></div>
+
+<p>Ось і все. Питає той, хто пише; відповідає той, хто прочитав. Тому таблиця ваг
+у перехресної уваги <b>прямокутна</b>: рядків стільки, скільки слів уже написано,
+стовпців стільки, скільки токенів у джерелі. У самоуваги вона квадратна.</p>
+
+<p>Порахуймо руками найменший можливий приклад. Хай ширина d = 4, джерело має три
+токени, і декодер написав одне слово. Тоді Q — це 1 × 4, K — 3 × 4, V — 3 × 4.
+Добуток Q·K<span class="sup">⊤</span> дає 1 × 3: три бали, по одному на кожен токен
+джерела. Хай вийшло [2.0, 0.0, −2.0]. Ділимо на √4 = 2: [1.0, 0.0, −1.0].
+Беремо softmax: e<span class="sup">1</span> = 2.718, e<span class="sup">0</span> = 1.000,
+e<span class="sup">−1</span> = 0.368, сума 4.086, частки —
+<b>0.665, 0.245, 0.090</b>. Тобто те слово, яке декодер зараз пише, на дві третини
+спирається на перший токен джерела, на чверть — на другий, і майже не дивиться
+на третій. Вихід — це рядок V, змішаний у цих частках.</p>
+
+<div class="note"><b>Чому це вважають «вирішенням вузького горла».</b> Найперші
+енкодер-декодери (до трансформерів) стискали <b>все</b> джерело в один-єдиний
+вектор і передавали декодерові тільки його. Речення на сорок слів і речення на пʼять
+діставали однакову кількість чисел, і довге просто не влазило. Перехресна увага
+цю трубу прибирає: декодер щоразу дивиться на <b>всі</b> позиції джерела окремо
+й сам вирішує, які йому зараз потрібні. Памʼять росте разом із джерелом, а не
+лишається сталою.</div>
+
+<h2 id="s5"><span class="num">Розділ 5</span>Ціна блоку й правило «2P»</h2>
+
+<p>Тепер найнеприємніше — рахунок. Він короткий і чесний.</p>
+
+<p>Блок енкодера містить дві речі: самоувагу й повнозвʼязний шар. Блок декодера
+містить <b>три</b>: самоувагу, перехресну увагу й повнозвʼязний шар. Перехресна
+увага — це ще один повний комплект матриць Q, K, V і вихідної проєкції.</p>
+
+<p>Порахуємо на нашому макеті, у якого ширина d = 128, а внутрішній шар
+повнозвʼязної частини вчетверо ширший, тобто 512.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">увага</span>
+    <p>Чотири квадратні матриці d × d: для запитів, ключів, значень і вихідної
+      проєкції. Разом 4 · 128 · 128 = <b>65 536</b> ваг.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">повнозвʼязна частина</span>
+    <p>Дві матриці: 128 × 512 і 512 × 128. Разом 2 · 128 · 512 = <b>131 072</b> ваги.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">разом</span>
+    <p>Блок енкодера: 65 536 + 131 072 = 196 608, плюс зсуви й нормалізації —
+      <b>198 272</b> ваг. Блок декодера: те саме плюс іще одна увага —
+      <b>264 576</b>. Різниця <b>66 304</b>, тобто блок декодера
+      дорожчий у <b>1.33 раза</b>.</p>
+  </div>
+</div>
+
+<p>А тепер складімо стоси. Два блоки енкодера плюс два блоки декодера дають
+<b>925 696</b> ваг тіла. Два блоки самої лише причинної уваги — <b>396 544</b>.
+Тобто енкодер-декодер «два плюс два» коштує в <b>2.33 раза</b> дорожче
+за декодер тієї самої глибини.</p>
+
+<div class="note warn"><b>Це те місце, де порівняння архітектур зазвичай ламається.</b>
+Якщо поставити поруч енкодер-декодер із двох плюс двох блоків і декодер із двох
+блоків, а потім оголосити переможця, ми виміряємо не архітектуру, а <b>кількість
+ваг</b>. Курс уже наступав на ці граблі: у блоці про трансформер відрив, поданий
+як перевага архітектури, виявився здебільшого недоглянутою базою. Тому далі в цій
+темі всі порівняння йдуть при <b>однаковому тілі</b>, і кількість ваг названа поруч
+із кожним числом.</div>
+
+<p>Автори T5 записали це правило одним рядком. У їхньому позначенні <b>P</b> — це
+кількість ваг у стосі базового розміру, а <b>M</b> — кількість дій, потрібних
+на обробку однієї пари «вхід-вихід». Тоді енкодер-декодер із L шарів у кожному
+стосі має <b>2P ваг і вартість M</b>, а декодер із L шарів — <b>P ваг і вартість
+M</b>. Двічі більше ваг за ту саму роботу.</p>
+
+<p>Чому вартість однакова, якщо ваг удвічі більше? Бо енкодер обробляє лише джерело,
+а декодер — лише ціль, і кожна вага працює на <b>своїй половині</b> послідовності.
+Декодер-одинак пропускає крізь себе джерело й ціль разом. Ваг менше, але кожна
+працює на всій довжині.</p>
+
+<figure>
+  <p class="fig-head">Скільки ваг у стосі</p>
+  <p class="fig-sub">Пересунь глибину — стовпчики й підписи переміряються.
+    Перемикач унизу вирівнює моделі за вагами замість вирівнювання за глибиною.</p>
+  <div class="panel">
+    <canvas id="c3" width="640" height="330" data-lw="640" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="dep3">блоків у стосі <output id="dep3v">2</output></label>
+        <input type="range" id="dep3" min="1" max="6" step="1" value="2">
+      </div>
+      <div class="seg" id="seg3">
+        <button data-i="0" aria-pressed="true">за глибиною</button>
+        <button data-i="1" aria-pressed="false">за вагами</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>енкодер-декодер</b><i id="k3a">—</i></div>
+        <div class="cellv"><b>одностосові</b><i id="k3b">—</i></div>
+      </div>
+      <div class="verdict" id="v3"></div>
+    </div>
+  </div>
+  <figcaption>Перехресна увага займає <b>14.33 %</b> тіла енкодер-декодера
+    «два плюс два» — це та надбавка, за яку доводиться платити. Вирівняти можна
+    двома способами: додати одностосовим глибини або розширити їм внутрішній шар.
+    Ми зробимо друге, бо глибина сама собою впливає на навчання.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">Розділ 6</span>Усе — текст у текст</h2>
+
+<p>Тепер відкладімо схеми й поговорімо про ідею, заради якої ця архітектура стала
+знаменитою. Вона проста настільки, що спершу здається порожньою.</p>
+
+<div class="eq">Будь-яка задача про текст — це «дай текст, отримай текст»</div>
+
+<p>Щоб відчути, наскільки це не порожньо, згадаймо, як задачі виглядали досі.</p>
+
+<p>У темі про класифікацію текстів модель віддавала <b>номер класу</b>: 0 або 1.
+У темі про розмітку токенів — <b>послідовність міток</b> тієї самої довжини, що й
+речення. У задачі про витягання відповіді — <b>дві позиції</b>, початок і кінець
+проміжку. У задачі перекладу — <b>речення</b>. Чотири задачі — чотири різні типи
+виходу, чотири різні голови, чотири різні функції втрат, чотири різні способи
+рахувати якість.</p>
+
+<p>Текстова форма прибирає цю чотирикратність. Дивись:</p>
+
+<figure>
+  <p class="fig-head">Чотири різні задачі однієї форми</p>
+  <p class="fig-sub">Перемикай задачу — міняється лише текст ліворуч і текст
+    праворуч. Модель, голова й функція втрат ті самі.</p>
+  <div class="panel">
+    <canvas id="c4" width="640" height="300" data-lw="640" data-lh="300"></canvas>
+    <div>
+      <div class="seg wrap" id="seg4">
+        <button data-i="0" aria-pressed="true">класифікація</button>
+        <button data-i="1" aria-pressed="false">витягання</button>
+        <button data-i="2" aria-pressed="false">переказ</button>
+        <button data-i="3" aria-pressed="false">переклад</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вхід, токенів</b><i id="k4a">—</i></div>
+        <div class="cellv"><b>вихід, токенів</b><i id="k4b">—</i></div>
+      </div>
+      <div class="verdict" id="v4"></div>
+    </div>
+  </div>
+  <figcaption>Ліворуч — рядок, який подають на енкодер. Праворуч — рядок, який має
+    написати декодер. Перше слово входу — <b>назва задачі</b>: воно й перемикає
+    модель між режимами. Ніякого іншого перемикача немає.</figcaption>
+</figure>
+
+<p>Що з цього випливає практично — три речі, і кожна варта окремого абзацу.</p>
+
+<p><b>Перша: одна функція втрат.</b> Хоч що ми робимо, модель передбачає наступний
+токен цілі, і втрата — звичайна перехресна ентропія по словнику. Класифікація
+перестає бути окремим механізмом: вона стає породженням тексту завдовжки в одне
+слово.</p>
+
+<p><b>Друга: задачі можна змішувати в одному навчанні.</b> Якщо в задач однакова
+форма, ніщо не заважає покласти в один батч приклади класифікації, приклади
+перекладу й приклади переказу. Модель не помітить різниці — для неї це просто
+пари рядків.</p>
+
+<p><b>Третя: нова задача не потребує нової деталі.</b> Щоб навчити модель нового
+вміння, не треба чіпати архітектуру. Треба написати нову назву задачі й дати пари
+«вхід — вихід». Порівняй із підходом «своя голова на кожну задачу», де кожна нова
+задача — це новий шар, який треба спроєктувати, ініціалізувати й навчити.</p>
+
+<div class="note"><b>Чому це стало можливим лише з енкодер-декодером.</b>
+Формально й декодер-одинак уміє «текст у текст»: склей вхід і вихід в одну
+послідовність, і готово. Різниця в тому, що́ бачать позиції входу. У декодера вони
+підпорядковані причинній масці — тобто читають вхід так само однобоко, як пишуть
+вихід. В енкодер-декодера вхід читається <b>повністю видимою</b> маскою: кожне слово
+питання бачить усе питання. Наскільки це важить — заміряно, і буде далі в темі.</div>
+
+<h2 id="s7"><span class="num">Розділ 7</span>Одна задача, переписана словами</h2>
+
+<p>Абстракція перевіряється на конкретиці, тож перепишімо задачу, яку курс уже
+розвʼязував трьома різними способами.</p>
+
+<p>Задача звучить так: <b>чи є це повідомлення повідомленням про помилку?</b>
+Дані — українські переклади, що лежать у системі: кожен запис має англійський
+оригінал і український переклад. Мітку дає регулярний вираз по <b>англійському</b>
+оригіналу — там шукаються слова на кшталт <code>error</code>, <code>failed</code>,
+<code>cannot</code>; сама модель бачить лише український бік, тож підглянути
+у відповідь не може. Прикладів <b>89 497</b>, з них частка «помилка» —
+<b>18.93 %</b>.</p>
+
+<p>Досі ця задача виглядала так:</p>
+
+<div class="eq left">вхід:   «не вдалося встановити контекст безпеки сокета»
+модель: TF-IDF → логістична регресія
+вихід:  1</div>
+
+<p>Одиниця тут — не слово, а <b>номер класу</b>. Щоб її прочитати, треба знати
+домовленість «1 означає помилку». Модель нічого про це не знає: для неї це просто
+індекс виходу.</p>
+
+<p>У текстовій формі та сама задача виглядає так:</p>
+
+<div class="eq left">вхід:   класифікуй : не вдалося встановити контекст безпеки сокета
+вихід:  помилка
+
+вхід:   класифікуй : дивись підказку у вищенаведеному повідомленні
+вихід:  звичайне</div>
+
+<p>Змінилось три речі, і всі три важливі.</p>
+
+<p><b>Перше слово входу стало назвою задачі.</b> Слово <code>класифікуй</code> —
+звичайне слово в тому самому словнику, що й решта. Воно нічим не виділене; модель
+сама вчиться, що після нього треба відповідати одним із двох слів.</p>
+
+<p><b>Відповідь стала словом.</b> Не індексом 0 чи 1, а токеном «помилка» або
+«звичайне» — з того самого словника, з якого модель бере всі інші слова. Вона
+породжує його тим самим механізмом, яким породжувала б будь-яке слово перекладу.</p>
+
+<p><b>Зникла голова класифікації.</b> Її місце зайняла вихідна проєкція на весь
+словник — та сама, що потрібна для будь-якого породження.</p>
+
+<div class="note warn"><b>Мітка тут неідеальна, і це видно на конкретному прикладі.</b>
+Рядок «could not start LDAP TLS session» наша регулярка мітить як <b>звичайне</b>,
+бо в ній немає ані <code>error</code>, ані <code>failed</code>, — хоча це
+очевидне повідомлення про помилку. Такого шуму в мітках чимало, і жодна архітектура
+його не прибере. Тому абсолютні значення якості нижче варто читати як «наскільки
+модель відтворює цю регулярку», а не як «наскільки вона розуміє, що таке помилка».</div>
+
+<h2 id="s8"><span class="num">Розділ 8</span>Коли відповідь — слово, а не номер класу</h2>
+
+<p>За елегантність текстової форми платять, і рахунок варто побачити до того, як
+вона почне подобатись.</p>
+
+<p><b>Плата перша: вихідний шар роздувається до словника.</b> Голова класифікації
+на два класи — це матриця 128 × 2 плюс два зсуви, тобто <b>258</b> ваги.
+Вихідна проєкція на словник із <b>7 902</b> слів — це матриця 128 × 7 902 плюс
+зсуви, тобто <b>1 019 358</b> ваг. Різниця у <b>3 951</b> разів, і це
+на кожному кроці породження.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>що рахуємо</th><th>енкодер + голова</th><th>текст у текст</th></tr>
+<tr><td>тіло</td><td>925 700</td><td>925 696</td></tr>
+<tr><td>ембединги</td><td>1 018 624</td><td>1 018 624</td></tr>
+<tr><td>вихідний шар</td><td>258</td><td>1 019 358</td></tr>
+<tr class="hot"><td>усього</td><td>1 944 582</td><td>2 963 678</td></tr>
+</table></div>
+
+<p>Тобто перехід до текстової форми додає до моделі майже мільйон ваг — не заради
+якості, а заради того, щоб уміти сказати відповідь словом. Ось де ховається справжня
+ціна універсальності, і вона більша за ціну другого стосу.</p>
+
+<p><b>Плата друга: відповідь можна не вгадати «формою».</b> Модель, яка вибирає
+з усього словника, у принципі може відповісти будь-яким словом — «файл», «мережа»,
+чим завгодно. Тоді відповідь просто не читається, бо вона не належить до жодного
+класу.</p>
+
+<p>Це не гіпотетична проблема, її треба заміряти. У нашому замірі після навчання
+вільний вибір із усього словника <b>не вийшов за межі двох дозволених слів <b>жодного разу</b></b> — тобто модель швидко
+розуміє, що відповідь буває тільки двох видів, і сама себе обмежує. На великих
+моделях і довших відповідях так буває не завжди, і тоді породження звужують
+примусово: дозволяють обирати лише з дозволених продовжень.</p>
+
+<div class="note"><b>Як узагалі рахувати якість, коли вихід — текст.</b>
+Для двох слів усе просто: дивимось, який із двох дозволених токенів дістав більший
+бал, і рахуємо звичайні precision, recall і F1. Але щойно відповідь стає фразою,
+питання «правильно чи ні» перестає мати однозначну відповідь: переказ можна
+написати десятьма способами, і всі десять правильні. Саме тому для породження
+рахують не влучність, а міри збігу з еталоном на кшталт ROUGE й BLEU — і саме тому
+жодна з них не буває цілком переконливою.</div>
+
+<h2 id="s9"><span class="num">Розділ 9</span>Псування тексту як проксі-задача</h2>
+
+<p>Архітектура є, форма задачі є. Лишилось найголовніше: <b>що робити з моделлю
+до того</b>, як зʼявились мітки.</p>
+
+<p>Курс уже вводив цю думку в темі про передтренування. Нагадаю її одним абзацом,
+щоб цей розділ читався сам собою. <b>Проксі-задача</b> (proxy task) — це
+задача-замінник, яку розвʼязують <b>замість</b> цільової, бо для неї мітки беруться
+задарма. Ніхто не платить людині за те, щоб вона розмітила мільярд речень. Але
+закрити в реченні слово й попросити його вгадати можна мільярд разів безкоштовно:
+відповідь уже лежить у тексті, її треба лише прибрати. Проксі добра тоді, коли
+розвʼязати її неможливо, не побудувавши всередині рівно того, що потрібне цільовій
+задачі.</p>
+
+<p>Для енкодера курс уже показував таку проксі: <b>маскована мовна модель</b>.
+Беремо речення, закриваємо близько 15 % <b>окремих слів</b> спеціальним токеном
+і просимо модель назвати кожне закрите слово. Вхід і вихід однакової довжини,
+модель відповідає в тій самій позиції, де стоїть дірка.</p>
+
+<p>Для енкодер-декодера цей рецепт не годиться напряму, і причина суто механічна:
+у нього вхід і вихід — <b>різні</b> послідовності різної довжини. Тож він може
+дозволити собі те, чого енкодер не може: <b>прибрати шматок тексту зовсім</b>,
+не лишивши в ньому дірки відомої довжини.</p>
+
+<p>Звідси дві родини рецептів.</p>
+
+<p><b>BART</b> робить це прямолінійно: псує документ <b>будь-яким</b> способом і
+вчить модель відновити <b>весь документ цілком</b>. Автори перелічують пʼять
+перетворень і перевіряють кожне окремо:</p>
+
+<ul>
+<li><b>маскування токенів</b> — випадкові токени замінюються на <code>[MASK]</code>,
+  рівно як у BERT;</li>
+<li><b>викидання токенів</b> — випадкові токени просто зникають, і модель мусить
+  сама здогадатись, <b>де саме</b> чогось бракує;</li>
+<li><b>заповнення проміжків</b> — вирізається шматок із кількох слів і замінюється
+  <b>одним</b> токеном-маскою, тож довжина шматка теж невідома;</li>
+<li><b>перестановка речень</b> — речення документа перемішуються;</li>
+<li><b>прокручування документа</b> — документ починають із випадкового слова,
+  а початок дописують у кінець.</li>
+</ul>
+
+<p><b>T5</b> робить це ощадливіше. Він теж вирізає проміжки й теж ставить замість
+них по одному токену — але кожен такий токен <b>унікальний</b> (їх називають
+сентинелами), і модель мусить написати не весь документ, а <b>лише вирізане</b>,
+розділене тими самими сентинелами.</p>
+
+<figure>
+  <p class="fig-head">Одне речення, пʼять способів його зіпсувати</p>
+  <p class="fig-sub">Перемикай спосіб — угорі те, що бачить енкодер, унизу те,
+    що має написати декодер.</p>
+  <div class="panel">
+    <canvas id="c5" width="640" height="270" data-lw="640" data-lh="270"></canvas>
+    <div>
+      <div class="seg wrap" id="seg5">
+        <button data-i="0" aria-pressed="true">маскування</button>
+        <button data-i="1" aria-pressed="false">викидання</button>
+        <button data-i="2" aria-pressed="false">проміжки, BART</button>
+        <button data-i="3" aria-pressed="false">проміжки, T5</button>
+        <button data-i="4" aria-pressed="false">перестановка</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>вхід, токенів</b><i id="k5a">—</i></div>
+        <div class="cellv"><b>ціль, токенів</b><i id="k5b">—</i></div>
+      </div>
+      <div class="verdict" id="v5"></div>
+    </div>
+  </div>
+  <figcaption>Різниця між двома нижніми рядками — не косметична. Відновлювати
+    <b>весь</b> документ дорожче: ціль довша, отже кроків декодера більше. Рецепт
+    T5 придуманий саме щоб цю ціну збити — писати лише те, що вирізали.</figcaption>
+</figure>
+
+<p>Порівняймо тепер обидва рецепти з маскованою моделлю теми 26 по суті, а не
+по формі.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th></th><th>маскована модель (енкодер)</th><th>псування (енкодер-декодер)</th></tr>
+<tr><td>що ховаємо</td><td>окремі слова</td><td>шматки різної довжини</td></tr>
+<tr><td>чи видно довжину дірки</td><td>так, одна маска — одне слово</td><td>ні, один токен — від одного слова до кількох</td></tr>
+<tr><td>де пишеться відповідь</td><td>у тій самій позиції</td><td>окремою послідовністю</td></tr>
+<tr><td>чи можна відновити порядок</td><td>він і не ламався</td><td>іноді ні, і це частина задачі</td></tr>
+<tr><td>що дістаємо на виході</td><td>подання для голови</td><td>подання <b>і</b> вміння писати</td></tr>
+</table></div>
+
+<p>Останній рядок — головний. Маскована модель учить <b>розуміти</b>: голова MLM
+після передтренування викидається, лишається тіло. Псування з відновленням учить
+розуміти <b>і</b> писати одночасно, і жодна частина моделі не викидається — та сама
+вихідна проєкція, якою модель відновлювала вирізане, потім пише відповіді на
+задачі.</p>
+
+<h2 id="s10"><span class="num">Розділ 10</span>Проміжки проти окремих слів</h2>
+
+<p>Тепер твердження, яке напрошується саме собою — і яке варто перевірити, а не
+переказати: <b>ховати шматок складніше, ніж ховати стільки ж окремих слів</b>.</p>
+
+<p>Ось міркування, через яке в це віриш. Уяви речення з десяти слів, у якому
+закрито три.</p>
+
+<p><b>Варіант «окремі слова».</b> Закриті слова стоять нарізно, і в кожного
+лишились обидва сусіди. Щоб угадати слово в «не вдалося <code>___</code> файл»,
+досить знати, що між «вдалося» і «файл» зазвичай стоїть дієслово на кшталт
+«записати». Це майже граматична вправа, і сім уцілілих слів дають для неї купу
+підказок.</p>
+
+<p><b>Варіант «один проміжок».</b> Ті самі три слова вирізані підряд:
+«не вдалося <code>___ ___ ___</code> індексу». Тепер немає жодного сусіда
+всередині: кожне з трьох слів доводиться відновлювати, спираючись лише на те, що
+<b>за межами</b> дірки. Ба більше, модель не знає, скільки слів там було: сентинел
+один і на одне слово, і на пʼять.</p>
+
+<p>Звучить переконливо. Заміряймо — і заміряймо <b>чисто</b>, тобто так, щоб
+відрізнялась рівно одна річ.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">що зрівняно</span>
+    <p>Ті самі речення (лише довші за девʼять слів, щоб три дірки взагалі влізли),
+      та сама модель, той самий бюджет навчання, той самий крок, і — головне —
+      <b>рівно три закритих слова</b> в обох варіантах. Тобто передбачити треба
+      однакову кількість токенів.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">що відрізняється</span>
+    <p>Лише <b>форма</b> дірки: три слова підряд одним сентинелом — або три слова
+      нарізно трьома сентинелами, без дотику одне до одного.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">що міряємо</span>
+    <p>Середню втрату <b>на закритих словах</b> у натах — тобто наскільки модель
+      здивована правильною відповіддю. Сентинели й кінець послідовності до втрати
+      не рахуються: їх передбачити легко, і вони розмили б результат.</p>
+  </div>
+</div>
+
+<p>І одразу — чим міряти нуль. Найпростіша модель, яка взагалі щось уміє, —
+<b>уніграмна</b>: вона ігнорує контекст і називає слова за їхньою частотою.
+Її втрата на наших дірках — <b>6.9418</b> ната для проміжку і
+<b>6.9945</b> для поодиноких. Числа різні, бо й набори закритих слів різні,
+тож порівнювати дві форми чесно можна лише за <b>запасом під рубежем</b>, а не
+за самою втратою.</p>
+
+<figure>
+  <p class="fig-head">Однакова кількість закритих слів, різна форма дірки</p>
+  <p class="fig-sub">Три зерна на кожен стовпчик; вусики — весь розкид між зернами.
+    Пунктир — уніграмний рубіж саме для цієї форми.</p>
+  <div class="panel">
+    <canvas id="c6" width="640" height="300" data-lw="640" data-lh="300"></canvas>
+    <div>
+      <div class="seg" id="seg6">
+        <button data-i="0" aria-pressed="true">на своїй формі</button>
+        <button data-i="1" aria-pressed="false">на чужій формі</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>проміжок із трьох</b><i class="sm" id="k6a">—</i></div>
+        <div class="cellv"><b>три поодинокі</b><i class="sm" id="k6b">—</i></div>
+      </div>
+      <div class="verdict" id="v6"></div>
+    </div>
+  </div>
+  <figcaption>Обидві моделі навчались однаковий час на однакових реченнях і
+    передбачали однакову кількість слів. Уся різниця — у тому, лежать закриті слова
+    підряд чи нарізно.</figcaption>
+</figure>
+
+<p>Проміжок із трьох слів дає <b>6.5140</b> ната при рубежі 6.9418, три поодинокі — <b>6.6720</b> при рубежі 6.9945. Обидві моделі <b>нижче</b> своїх рубежів, тобто обидві таки чогось навчились. Але запас у них різний: <b>0.4278</b> ната в проміжку проти <b>0.3225</b> у поодиноких, і купи по трьох зернах (6.4968…6.5375 і 6.6600…6.6744) <b>не перетинаються</b>. Тобто легшою виявилась форма «проміжок», а складнішою — «три поодинокі». <b>Це протилежне до того, чого ми чекали.</b></p>
+
+<div class="note warn"><b>Отже інтуїція з початку розділу помилилась — і варто
+розібрати, чому.</b> Ми думали про дірку з боку <b>енкодера</b>: скільки підказок
+лишилось довкола. Але відновлює її <b>декодер</b>, і він пише зліва направо,
+подаючи собі власний вихід на вхід. У проміжку друге закрите слово йде одразу
+за першим <b>у справжньому тексті</b> — тож, написавши перше, декодер має
+нормальний, зв'язний початок фрази й далі просто продовжує її. А в розкиданих
+дірках його власна ліва історія — це «сентинел, слово, сентинел, слово»: сусідні
+елементи не мають між собою нічого спільного, бо взяті з різних місць речення.
+Підказок ззовні там більше, а підказок <b>зсередини</b> — менше. Друге переважило.</div>
+
+<p>Тепер друге питання, і воно важливіше за перше: <b>чи те саме вміє модель,
+навчена на іншій формі?</b> Другий перемикач фігури показує саме це — кожну
+модель питають про <b>чужу</b> форму дірки, ту, якої вона не бачила.</p>
+
+<p>Модель, навчена на <b>проміжках</b>, на поодиноких дірках дає <b>7.2202</b> при рубежі 6.9945 — тобто <b>гірше</b> за просту таблицю частот на 0.2257 ната. Модель, навчена на <b>поодиноких</b>, на проміжку дає <b>10.6932</b> при рубежі 6.9418 — <b>гірше</b> за таблицю частот на 3.7514 ната. Провал другої глибший у <b>16.6 раза</b>: вона взагалі не вміє дописати три слова підряд, тоді як перша з однією діркою бодай справляється абияк.</p>
+
+<div class="note"><b>Ось звідки береться справжній довід на користь проміжків.</b>
+Не з того, що вони складніші — вони не складніші. А з того, що вони вчать
+<b>писати послідовність</b>, а не вгадувати ізольовані слова, — і це вміння
+переноситься. Модель, яка вміє дописати три слова підряд, упорається й з однією
+діркою; модель, яка бачила лише поодинокі дірки, на трьох підряд ламається.
+Саме тому в рецепті T5 стоять проміжки, а не окремі слова, — хоч у нього була
+й друга причина, суто економічна, і про неї наступний розділ.</div>
+
+<div class="note warn"><b>І чесно про те, чого цей замір не доводить.</b> Ми
+порівняли дві форми <b>проксі-задачі</b> між собою, а не їхню користь для
+справжньої задачі з мітками. Із того, що проміжки краще переносяться <b>між
+формами псування</b>, ще не випливає, що модель, навчена на них, краще
+класифікуватиме повідомлення про помилки. Це окреме твердження, і воно потребує
+окремого заміру — він у розділі 12.</div>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Скільки псувати: ручка, яку легко не помітити</h2>
+
+<p>У рецепті псування дві ручки, і обидві дуже легко проґавити, бо в чужих статтях
+вони виглядають як фіксовані числа.</p>
+
+<p><b>Перша ручка — частка зіпсованого.</b> Скільки відсотків тексту ховати.
+Заховаєш замало — модель майже не працює, бо більшість кроків нічого не вчить.
+Заховаєш забагато — контексту не лишається, і задача стає невиконуваною.</p>
+
+<p><b>Друга ручка — середня довжина шматка.</b> При однаковій частці зіпсованого
+можна вирізати багато коротких шматків або мало довгих. Це міняє і складність
+задачі, і — що менш очевидно — <b>довжину цілі</b>, тобто ціну одного кроку
+навчання.</p>
+
+<p>Друге варто пояснити окремо, бо це головна причина, чому рецепт T5 такий,
+який він є. Якщо в реченні зі 100 токенів заховати 15 % окремими словами, то
+у вході буде 15 сентинелів, а ціль складеться з 15 слів плюс 15 сентинелів — тобто
+близько 30 токенів. Якщо ті самі 15 % заховати пʼятьма шматками по три слова, то
+сентинелів буде 5, і ціль — 15 слів плюс 5 сентинелів, тобто 20 токенів. Та сама
+кількість схованих слів, ціль коротша на третину, і кожен крок навчання відповідно
+дешевший.</p>
+
+<figure>
+  <p class="fig-head">Дві ручки псування</p>
+  <p class="fig-sub">Речення зі ста токенів. Крути частку й довжину шматка — рахунок
+    перераховується точно.</p>
+  <div class="panel">
+    <canvas id="c7" width="640" height="290" data-lw="640" data-lh="290"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="rate7">частка зіпсованого <output id="rate7v">15 %</output></label>
+        <input type="range" id="rate7" min="5" max="50" step="5" value="15">
+      </div>
+      <div class="ctl">
+        <label for="len7">середня довжина шматка <output id="len7v">3</output></label>
+        <input type="range" id="len7" min="1" max="10" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>шматків</b><i id="k7a">—</i></div>
+        <div class="cellv"><b>довжина цілі</b><i id="k7b">—</i></div>
+      </div>
+      <div class="verdict" id="v7"></div>
+    </div>
+  </div>
+  <figcaption>Схованих слів завжди стільки, скільки каже частка. А от <b>ціль</b>
+    коротшає разом із подовженням шматка — і саме це, а не якість, було головним
+    доводом на користь довших проміжків.</figcaption>
+</figure>
+
+<p>Автори T5 перебрали середню довжину шматка при незмінній частці 15 % і виклали
+результат таблицею. На наборі GLUE вийшло: базовий варіант із окремими словами
+дає <b>83.28</b>, шматки по два — <b>83.54</b>, по три — <b>83.49</b>, по пʼять —
+<b>83.40</b>, по десять — <b>82.85</b>. Різниця між найкращим і базовим —
+чверть пункту при тому, що розкид самого базового по десятьох повторах становить
+<b>0.235</b>.</p>
+
+<div class="note warn"><b>Читай цю таблицю уважно, бо її часто переказують навпаки.</b>
+З неї <b>не</b> випливає, що проміжки дають кращу якість: різниця з базовим
+варіантом сумірна з розкидом між повторами того самого прогону. З неї випливає
+інше — що проміжки дають <b>таку саму</b> якість <b>дешевше</b>, бо ціль коротша.
+І ще одне: на довжині десять якість уже помітно просідає, тобто ручка має
+оптимум, а не монотонність.</div>
+
+<h2 id="s12"><span class="num">Розділ 12</span>Уніграмний рубіж: коли модель уже є</h2>
+
+<p>Тепер найтонше місце всієї теми, і воно стосується не архітектури, а того, як
+взагалі можна ставити питання «чи допомагає передтренування».</p>
+
+<p>Питання ставлять так: беремо дві однакові моделі, одну спершу годуємо зіпсованим
+текстом без міток, другу не годуємо нічим, потім обом даємо однакову жменю міток
+і порівнюємо. Здається бездоганним. Але тут ховається ручка, яку легко прийняти
+за константу: <b>скільки саме кроків тривало передтренування</b>.</p>
+
+<p>Якщо передтренування коротке, модель не встигла навчитись нічого — і порівняння
+чесно покаже «різниці немає». Це виглядає як результат, хоч це відсутність
+результату: ми порівняли ненавчену модель із ненавченою.</p>
+
+<p>Потрібен поріг, нижче якого порівнювати немає сенсу. Природний поріг —
+<b>уніграмний рубіж</b>: втрата тієї самої задачі для моделі, яка не дивиться
+на контекст узагалі, а називає слова за їхньою частотою. Поки втрата
+передтренування не опустилась нижче за цей рубіж, модель ще не навчилась
+<b>дивитись довкола</b> — вона в найкращому разі вивчила, які слова частіші.
+Порівнювати з нею — те саме, що порівнювати з таблицею частот.</p>
+
+<div class="eq">рубіж = − (1/N) · Σ ln p(слово)</div>
+
+<p>Розшифруємо. Σ — знак суми: додаємо по всіх N закритих словах. p(слово) —
+частота цього слова в навчальному корпусі, поділена на загальну кількість слів.
+ln — натуральний логарифм; він відʼємний для чисел, менших за одиницю, тому перед
+сумою стоїть мінус. Ділення на N дає середнє. Одиниця виміру зветься <b>нат</b>:
+це кількість інформації, яку несе відповідь, якщо міряти логарифмом за основою e.
+Нуль нат означає «модель була впевнена й мала рацію»; чим більше нат, тим більше
+вона здивована.</p>
+
+<p>На нашому корпусі й нашому рецепті псування цей рубіж дорівнює
+<b>6.9643</b> ната. Ось що показує втрата в міру навчання:</p>
+
+<figure>
+  <p class="fig-head">Коли передтренування нарешті почалось</p>
+  <p class="fig-sub">Втрата на закритих словах у натах, три зерна. Горизонталь —
+    уніграмний рубіж. Тягни повзунок по кроках.</p>
+  <div class="panel">
+    <canvas id="c8" width="640" height="320" data-lw="640" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="st8">кроків передтренування <output id="st8v">0</output></label>
+        <input type="range" id="st8" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>втрата, нат</b><i id="k8a">—</i></div>
+        <div class="cellv"><b>до рубежу</b><i id="k8b">—</i></div>
+      </div>
+      <div class="verdict" id="v8"></div>
+    </div>
+  </div>
+  <figcaption>Уніграмний рубіж — <b>6.9643</b> ната. Медіана трьох зерен переходить його між 200 і 400 кроками, а на 800 кроках лежить уже на <b>0.3360</b> ната нижче. Саме тому передтренування в цій темі — 800 кроків, а не менше: нижче рубежу порівнювати немає з чим.</figcaption>
+</figure>
+
+<p>Тепер, коли модель точно нижче за рубіж, порівняння має сенс. Ось воно:
+енкодер-декодер, який спершу 800 кроків відновлював вирізані проміжки,
+проти точнісінько такого самого, який починає з випадкових ваг. Обом дано
+<b>1 000</b> міток і однаковий бюджет донавчання; крок дібрано <b>кожній
+гілці окремо</b> на відкладеній частині, на одній і тій самій сітці — інакше ми
+виміряли б не передтренування, а вдалий крок.</p>
+
+<figure>
+  <p class="fig-head">Що дає передтренування псуванням</p>
+  <p class="fig-sub">F1 класу «помилка» на перевірній вибірці, три зерна. Вусики —
+    увесь розкид.</p>
+  <div class="panel">
+    <canvas id="c9" width="640" height="290" data-lw="640" data-lh="290"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>передтренована</b><i id="k9a">—</i></div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>з випадкових ваг</b><i id="k9b">—</i></div>
+      </div>
+      <div class="verdict" id="v9"></div>
+    </div>
+  </div>
+  <figcaption>Крок дібрано кожній гілці окремо на відкладеній: 0.0003 передтренованій і 0.001 тій, що з випадкових ваг. Однакова сітка, однаковий бюджет, 1000 міток.</figcaption>
+</figure>
+
+<p>Медіана передтренованої — <b>0.6638</b>, купа 0.6536…0.6965. Медіана тієї, що починала з випадкових ваг, — <b>0.6317</b>, купа 0.5783…0.6598. Купи <b>перетинаються</b>, тож на цьому обсязі міток перевага передтренування не доведена — попри те, що модель точно перейшла уніграмний рубіж. Це чесний результат, і він означає рівно одне: наших 800 кроків і нашого корпусу замало, щоб виграш проступив над розкидом.</p>
+
+<div class="note"><b>Так само це виглядає й у великих.</b> Автори T5 заміряли свою
+базову модель із передтренуванням і без нього, за однакової кількості кроків
+донавчання. На наборі GLUE вийшло <b>83.28</b> проти <b>66.22</b> — розрив
+величезний. А от на перекладі з англійської французькою — <b>39.82</b> проти
+<b>39.77</b>, тобто передтренування не дало <b>нічого</b>. Пояснення просте:
+для перекладу в них було досить розмічених пар, і модель усе потрібне вивчила
+з самої задачі. Передтренування рятує там, де міток мало, і майже не помітне там,
+де їх багато.</div>
+
+<h2 id="s13"><span class="num">Розділ 13</span>Три архітектури на нашій задачі</h2>
+
+<p>Тепер головне порівняння теми. Поставимо трьох поруч на одній задачі й подивимось,
+чи справді третій кут трикутника чогось вартий.</p>
+
+<p>Перш ніж дивитись на числа, треба домовитись, що саме зрівняно, — інакше ми
+виміряємо не архітектуру. Ось перелік, і його варто прочитати цілком.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th></th><th>енкодер + голова</th><th>декодер</th><th>енкодер-декодер</th></tr>
+<tr><td>ваг у тілі</td><td>925 700</td><td>925 700</td><td>925 696</td></tr>
+<tr><td>блоків</td><td>4</td><td>4</td><td>2 + 2</td></tr>
+<tr><td>ширина</td><td>128</td><td>128</td><td>128</td></tr>
+<tr><td>внутрішній шар</td><td>641</td><td>641</td><td>512</td></tr>
+<tr><td>крок навчання</td><td>сітка із семи</td><td>сітка із семи</td><td>сітка із семи</td></tr>
+<tr><td>де добирався крок</td><td>відкладена</td><td>відкладена</td><td>відкладена</td></tr>
+<tr><td>кроків навчання</td><td>600</td><td>600</td><td>600</td></tr>
+<tr><td>міток</td><td>8 000</td><td>8 000</td><td>8 000</td></tr>
+<tr><td>зерен</td><td>5</td><td>5</td><td>5</td></tr>
+</table></div>
+
+<p>Пояснімо дві клітинки, які виглядають дивно.</p>
+
+<p><b>Чому внутрішній шар 641, а не 512.</b> Бо блок декодера дорожчий за блок
+енкодера на перехресну увагу. Якщо дати всім трьом однакову ширину й однакову
+глибину, енкодер-декодер дістане на 133.44 % більше ваг — і будь-який
+його виграш можна буде списати на це. Ми зрівняли тіла до <b>чотирьох ваг із
+девʼятисот двадцяти пʼяти тисяч</b>, розширивши одностосовим моделям внутрішній
+шар. Це та сама ручка, якою й регулюють розмір моделі; глибину чіпати не стали,
+бо вона впливає ще й на те, як модель навчається.</p>
+
+<div class="note"><b>Одну нерівність вирівняти неможливо, і її треба назвати.</b>
+При однаковій кількості ваг стос енкодер-декодера <b>коротший</b>: у нього
+два блоки читають вхід, а в одностосових моделей — усі чотири. Це не недогляд
+порівняння, а сама природа архітектури: другий стос доводиться чимось оплатити,
+і оплачується він глибиною першого. Тримай це в голові, читаючи числа нижче.</div>
+
+<p><b>Чому крок добирався кожній окремо.</b> Бо однакова сітка — не те саме, що
+однакове зусилля. Якщо перебрати крок одній моделі й зафіксувати навмання іншій,
+переможе не архітектура, а увага автора. Тому всі три пройшли <b>одну й ту саму</b>
+логарифмічну сітку, на <b>відкладеній</b> частині (не на перевірній — інакше це
+підглядання у відповідь), і тим самим бюджетом, яким потім навчались. Спершу
+сітка була вужча — від 0.0001 до 0.01, — і в енкодер-декодера найкраще значення
+лягло на самий її край. Це ознака, що сітка закоротка, тож її подовжили вниз
+<b>усім трьом одразу</b>: подовжити її лише одній моделі означало б дати їй
+більше уваги, ніж іншим.</p>
+
+<figure>
+  <p class="fig-head">Добір кроку: у всіх трьох мінімум усередині сітки</p>
+  <p class="fig-sub">F1 на відкладеній частині. Якби найкраще значення лежало
+    скраю, сітку треба було б подовжити.</p>
+  <div class="panel">
+    <canvas id="c10" width="640" height="310" data-lw="640" data-lh="310"></canvas>
+    <div>
+      <div class="seg" id="seg10">
+        <button data-i="0" aria-pressed="true">усі три</button>
+        <button data-i="1" aria-pressed="false">енкодер</button>
+        <button data-i="2" aria-pressed="false">декодер</button>
+        <button data-i="3" aria-pressed="false">енкодер-декодер</button>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найкращі кроки</b><i class="sm" id="k10a">—</i></div>
+      </div>
+      <div class="verdict" id="v10"></div>
+    </div>
+  </div>
+  <figcaption>Сітка логарифмічна: сусідні значення відрізняються приблизно втричі.
+    Мінімум усередині діапазону — єдина ознака, за якою можна вважати добір чесним.
+    Якби найкраще значення виявилось на краю, це означало б, що справжній оптимум
+    десь далі, і ми його не бачили. На кожну точку тут <b>одне</b> зерно: сітка
+    потрібна, щоб знайти <b>порядок</b> кроку, а порівнюють моделі вже пʼятьма
+    зернами — на наступній фігурі.</figcaption>
+</figure>
+
+<p>А тепер результат.</p>
+
+<figure>
+  <p class="fig-head">Три архітектури, однакове тіло, одна задача</p>
+  <p class="fig-sub">F1 класу «помилка» на перевірній вибірці, пʼять зерен.
+    Вусики — увесь розкид від найгіршого зерна до найкращого.</p>
+  <div class="panel">
+    <canvas id="c11" width="640" height="330" data-lw="640" data-lh="330"></canvas>
+    <div>
+      <div class="seg" id="seg11">
+        <button data-i="0" aria-pressed="true">вирівняно за вагами</button>
+        <button data-i="1" aria-pressed="false">однакова глибина</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкращий</b><i class="sm" id="k11a">—</i></div>
+        <div class="cellv"><b>розрив</b><i class="sm" id="k11b">—</i></div>
+      </div>
+      <div class="verdict" id="v11"></div>
+    </div>
+  </div>
+  <figcaption>Тіла зрівняні до 4 ваг із 925 696. Крок навчання дібрано кожній моделі окремо на відкладеній частині, на одній сітці: енкодер із головою 0.001, декодер 0.0003, енкодер-декодер 0.0001. Пʼять зерен, 8000 міток, 600 кроків кожній.</figcaption>
+</figure>
+
+<p>Медіани по пʼятьох зернах: енкодер із головою <b>0.7731</b> · декодер <b>0.7662</b> · енкодер-декодер <b>0.7362</b>. Купи <b>перетинаються</b> — енкодер із головою має найбільшу медіану, але його купа 0.7496…0.7884 накладається на купи сусідів. Отже <b>переваги жодної архітектури на цій задачі не доведено</b>. Це не поразка енкодер-декодера: це означає, що при зрівняних вагах малюнок дозволів на нашій задачі не важить настільки, щоб проступити над розкидом між зернами. Задачу тримають дані, а не будова.</p>
+
+<p>І ще один орієнтир, без якого числа висять у порожнечі. На тих самих
+8 000 мітках TF-IDF із логістичною регресією — метод без жодної нейромережі,
+який курс проходив задовго до трансформерів, — дає <b>0.7379</b>.
+Базу теж вичавлено: регуляризацію дібрано на тій самій відкладеній частині,
+на сітці з пʼяти значень, і найкраще лежить усередині діапазону. Вхід у неї
+той самий, що й у мереж, — обрізаний до 24 слів і з <code>&lt;unk&gt;</code>
+замість рідкісних; інакше ми порівнювали б не методи, а доступ до даних.
+Це <b>менше</b> за найкращу з трьох (0.7731), але за час 0.07 с проти десятків секунд у нейромереж — і про цей орієнтир варто памʼятати щоразу, коли архітектура здається головним питанням.</p>
+
+<div class="note warn"><b>Що показує другий перемикач фігури.</b> Це те саме
+порівняння, але <b>без</b> вирівнювання: усім трьом дано по два блоки, тобто
+енкодер-декодер має вдвічі з гаком більше ваг. Медіани там: енкодер із головою <b>0.7369</b> · декодер <b>0.7646</b> · енкодер-декодер <b>0.7423</b> при 925 696 вагах тіла в енкодер-декодера проти 396 544 в одностосових. Порівняй два стани
+перемикача: різниця між ними показує, скільки в результаті від зайвих ваг,
+а скільки від самої будови. Саме тому таблиця «що зрівняно» стоїть <b>перед</b>
+числами, а не після них.</div>
+
+<h2 id="s14"><span class="num">Розділ 14</span>Те саме на великих даних</h2>
+
+<p>Наш корпус — сімсот тисяч слововживань, наші моделі — мільйон ваг. Цього досить,
+щоб побачити механізм, і замало, щоб побачити межу. Тому корисно поставити поруч
+той самий дослід, зроблений на даних у десятки тисяч разів більших.</p>
+
+<p>Автори T5 порівняли пʼять архітектур на одному й тому самому передтренуванні
+й тих самих задачах. Ось найважливіші рядки їхньої таблиці — з кількістю ваг
+у позначенні P і вартістю в позначенні M, про які йшлося в розділі 5.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>архітектура</th><th>ваг</th><th>вартість</th><th>GLUE</th><th>SQuAD</th></tr>
+<tr class="hot"><td>енкодер-декодер</td><td>2P</td><td>M</td><td>83.28</td><td>80.88</td></tr>
+<tr><td>енкодер-декодер зі спільними вагами</td><td>P</td><td>M</td><td>82.81</td><td>80.63</td></tr>
+<tr><td>енкодер-декодер, удвічі мілкіший</td><td>P</td><td>M/2</td><td>80.88</td><td>77.59</td></tr>
+<tr><td>декодер (звичайна мовна модель)</td><td>P</td><td>M</td><td>74.70</td><td>61.14</td></tr>
+<tr><td>декодер із видимим питанням</td><td>P</td><td>M</td><td>81.82</td><td>78.94</td></tr>
+</table></div>
+
+<p>Тут заховано три різні уроки, і кожен вартий уваги.</p>
+
+<p><b>Урок перший: розрив між енкодер-декодером і звичайним декодером великий</b> —
+83.28 проти 74.70 на GLUE і 80.88 проти 61.14 на SQuAD. На витяганні відповіді
+різниця майже у двадцять пунктів.</p>
+
+<p><b>Урок другий, і він важливіший: розрив майже зникає, якщо дати декодерові
+дивитись на питання в обидва боки.</b> Останній рядок — це та сама однопотокова
+модель, тільки з повністю видимою маскою на тій частині послідовності, де лежить
+питання. Вона дає 81.82 і 78.94 — тобто відіграє більшу частину відриву, лишаючись
+із P вагами замість 2P.</p>
+
+<p>Отже перевага енкодер-декодера — це насамперед перевага <b>двонаправленого
+читання входу</b>, а не перевага двох окремих стосів. Це той самий висновок, який
+курс уже робив у темі про BERT, тільки з іншого боку.</p>
+
+<p><b>Урок третій: спільні ваги майже безкоштовні.</b> Якщо змусити енкодер і
+декодер користуватись <b>тими самими</b> вагами, модель худне вдвічі — з 2P до P —
+і втрачає пів пункта GLUE. Тобто «удвічі більше ваг» не так уже й обовʼязково.</p>
+
+<figure>
+  <p class="fig-head">Пʼять архітектур на великих даних</p>
+  <p class="fig-sub">Числа з таблиці порівняння архітектур. Перемикай набір задач.</p>
+  <div class="panel">
+    <canvas id="c12" width="640" height="320" data-lw="640" data-lh="320"></canvas>
+    <div>
+      <div class="seg" id="seg12">
+        <button data-i="0" aria-pressed="true">GLUE</button>
+        <button data-i="1" aria-pressed="false">SQuAD</button>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найкраще</b><i class="sm" id="k12a">—</i></div>
+        <div class="cellv"><b>найгірше</b><i class="sm" id="k12b">—</i></div>
+      </div>
+      <div class="verdict" id="v12"></div>
+    </div>
+  </div>
+  <figcaption>Висота стовпчика показує кількість ваг: подвійна в енкодер-декодера,
+    одинарна в решти. Найдешевша модель, яка майже наздоганяє найдорожчу, —
+    декодер, якому дозволили читати питання в обидва боки.</figcaption>
+</figure>
+
+<p>Автори BART перебрали свої пʼять способів псування на <b>одній і тій самій</b>
+архітектурі. На «заповненні проміжків» їхня модель дала <b>90.8</b> на SQuAD,
+на «прокручуванні документа» — <b>77.2</b>: розрив у <b>13.6</b> пункту, і все це
+всередині однієї моделі, від самої лише зміни рецепта псування. Для порівняння,
+у тій самій таблиці розрив між маскованою мовною моделлю (<b>90.0</b>) і звичайною
+мовною моделлю (<b>76.7</b>) — <b>13.3</b>. Тобто <b>невдало обране псування
+коштує не менше, ніж невдало обрана архітектура</b>. Це варто памʼятати, читаючи
+будь-яке порівняння передтренованих моделей.</p>
+
+<div class="note"><b>І одразу — про «удвічі», щоб воно не стало міфом.</b>
+Правило «2P» вірне для порівняння «L + L блоків проти L блоків». Але BART-base
+має по <b>шість</b> блоків у кожному стосі, тобто дванадцять усього, — рівно
+стільки, скільки в BERT-base, — і коштує лише приблизно на <b>10 %</b> більше
+за BERT того самого розміру. Те саме число «удвічі» й число «на десяту частину»
+описують ту саму архітектуру: усе залежить від того, що з чим порівнювати. Саме
+тому в нашому власному замірі перелік вирівняного стоїть таблицею перед числами,
+а не після них.</div>
+
+<h2 id="s15"><span class="num">Розділ 15</span>Одна модель, багато задач — і рахунок за це</h2>
+
+<p>Повернімось до обіцянки з розділу 6: якщо всі задачі мають однакову форму,
+їх можна вчити разом. Перевірмо, чого це коштує.</p>
+
+<p>Порівняння таке: та сама модель, той самий бюджет кроків. У першому випадку всі
+кроки йдуть на класифікацію. У другому половина кроків іде на класифікацію,
+а половина — на відновлення вирізаних проміжків. Тобто <b>міток модель бачить
+удвічі менше</b>, зате вчиться ще й писати текст.</p>
+
+<figure>
+  <p class="fig-head">Одна задача проти двох на тому самому бюджеті</p>
+  <p class="fig-sub">Ліворуч — якість класифікації, праворуч — уміння відновити
+    вирізане. Три зерна.</p>
+  <div class="panel">
+    <canvas id="c13" width="640" height="300" data-lw="640" data-lh="300"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>лише класифікація</b><i class="sm" id="k13a">—</i></div>
+        <div class="cellv"><b>дві задачі</b><i class="sm" id="k13b">—</i></div>
+      </div>
+      <div class="verdict" id="v13"></div>
+    </div>
+  </div>
+  <figcaption>Однакова кількість кроків в обох. У другій половина кроків витрачена на відновлення проміжків, тобто міток модель побачила вдвічі менше.</figcaption>
+</figure>
+
+<p>Класифікація: <b>0.6330</b> в однозадачної проти <b>0.6459</b> у двозадачної, купи 0.6103…0.6422 і 0.6445…0.6756 <b>не перетинаються</b>. Тобто модель, яка бачила <b>вдвічі менше</b> міток, класифікує <b>краще</b> на 0.0129 — і це не описка. Друга задача тут працює як стримувач: на тисячі міток однозадачна модель встигає підігнатись під них, а половина кроків, витрачена на відновлення тексту, цьому заважає. Відновлення при цьому вміє лише друга: <b>7.40</b> ната проти <b>13.55</b> у першої, яка цієї задачі не бачила зовсім. Тобто друге вміння дісталось не просто задарма, а з доплатою.</p>
+
+<p>Порівняй це з підходом «своя голова на кожну задачу», який курс розбирав
+у темі <a href="../27-bert-in-practice/lecture.html">27 · BERT у роботі</a>. Там тіло одне, а голів стільки, скільки задач, і кожну треба
+навчити окремо; зате кожна голова оптимізується під свою задачу й нічим не заважає
+сусіднім. Тут навпаки: голова одна на всіх, задачі змагаються за ту саму вихідну
+проєкцію, і додати нову коштує рівно нуль конструкторської роботи.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th></th><th>своя голова на задачу</th><th>текст у текст</th></tr>
+<tr><td>додати задачу</td><td>спроєктувати й навчити шар</td><td>написати назву задачі</td></tr>
+<tr><td>формат виходу</td><td>свій у кожної</td><td>однаковий</td></tr>
+<tr><td>функція втрат</td><td>своя в кожної</td><td>одна</td></tr>
+<tr><td>задачі впливають одна на одну</td><td>ні</td><td>так — і в обидва боки</td></tr>
+<tr><td>вихідний шар</td><td>кілька маленьких</td><td>один на весь словник</td></tr>
+<tr><td>оцінити якість</td><td>звичайні метрики</td><td>складно, коли вихід — фраза</td></tr>
+</table></div>
+
+<h2 id="s16"><span class="num">Розділ 16</span>Породження лишається послідовним</h2>
+
+<p>І остання ціна, найупертіша: <b>текст пишеться зліва направо, одне слово за раз,
+і з цим нічого не вдієш</b>.</p>
+
+<p>Під час навчання цієї проблеми немає. Ми знаємо всю правильну відповідь наперед,
+тож подаємо її декодерові цілком і рахуємо всі позиції <b>одним</b> прогоном —
+причинна маска дбає, щоб ніхто не підглянув уперед. Цей прийом курс уже вводив
+під назвою <b>подавання еталона</b> (teacher forcing).</p>
+
+<p>Під час роботи еталона немає. Друге слово залежить від першого, і поки перше
+не обрано, другого не існує. Тож замість одного прогону декодера доводиться
+робити стільки прогонів, скільки слів у відповіді.</p>
+
+<figure>
+  <p class="fig-head">Скільки коштує написати k слів</p>
+  <p class="fig-sub">Той самий батч, той самий енкодер. Міняється лише довжина
+    відповіді.</p>
+  <div class="panel">
+    <canvas id="c14" width="640" height="300" data-lw="640" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="k14">слів у відповіді <output id="k14v">1</output></label>
+        <input type="range" id="k14" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>час, мс</b><i id="k14a">—</i></div>
+        <div class="cellv"><b>проти одного слова</b><i id="k14b">—</i></div>
+      </div>
+      <div class="verdict" id="v14"></div>
+    </div>
+  </div>
+  <figcaption>Батч із 64 прикладів, процесорний час. Пунктир — той самий декодер на 16 позиціях <b>з еталоном</b>, тобто одним прогоном: 70.57 мс. Числа часу не відтворюються точно від прогону до прогону — відтворюється <b>форма</b> кривої, і вона тут не пряма, а загнута вгору.</figcaption>
+</figure>
+
+<p>Написати одне слово коштує <b>27.41 мс</b>, шістнадцять — <b>501.58 мс</b>. Але промовистіше за це відношення — <b>ціна одного дописаного слова</b>. Перехід від одного слова до двох додав 39.96 − 27.41 = <b>12.55 мс</b>. Перехід від восьми до шістнадцяти додав 501.58 − 169.30 = 332.28 мс на вісім слів, тобто <b>41.53 мс</b> на слово. Кожне наступне слово коштує дорожче за попереднє, і під кінець — у <b>3.31 раза</b> дорожче, ніж на початку.<br><br>Причина в тому, як написана наша найпростіша реалізація: на кожному кроці декодер перераховує <b>всю</b> написану досі відповідь із нуля, тож кроки дорожчають у міру того, як відповідь росте. Це лікується <b>кешем ключів і значень</b>: уже пораховані K і V попередніх позицій не міняються, тож їх зберігають і на кожному кроці рахують лише один новий стовпчик. Тоді крива випрямляється в пряму — але <b>не зникає</b>: кроків усе одно стільки, скільки слів. Для порівняння, ті самі 16 позицій одним прогоном, коли відповідь відома наперед, коштують <b>70.57 мс</b> — у <b>7.11 раза</b> дешевше. Уся різниця в тому, що під час навчання відповідь уже є, а під час роботи її треба вигадати по слову.</p>
+
+<div class="note"><b>Ось чому класифікацію в текстовій формі не варто вважати
+безкоштовною.</b> Відповідь «помилка» — одне слово, тож ціна майже така сама,
+як у голови класифікації. А от відповідь на кшталт «повідомлення про помилку
+доступу» — це вже чотири прогони декодера замість одного. Форма задачі впливає
+на швидкість напряму, і при проєктуванні відповіді роблять якомога коротшими:
+одне слово краще за фразу, і не з естетичних міркувань.</div>
+
+<h2 id="s17"><span class="num">Розділ 17</span>Межі й наш макет</h2>
+
+<p>Зберімо разом усе, за що доводиться платити, — бо саме цього немає в переказах.</p>
+
+<p><b>Удвічі більше ваг за ту саму роботу.</b> При однаковій глибині енкодер-декодер
+важчий за декодер: у нашому макеті у 2.33 раза, у позначенні авторів
+T5 — рівно вдвічі. Частину цієї надбавки можна повернути, змусивши стоси ділити
+ваги, — і це коштує менш ніж пункт якості на великих даних.</p>
+
+<p><b>Породження лишається послідовним.</b> Жодна архітектура цього не знімає.
+Енкодер із головою відповідає за один прогін завжди; енкодер-декодер — за стільки
+прогонів, скільки слів у відповіді.</p>
+
+<p><b>Вихідний шар роздутий до словника.</b> 1 019 358 ваг замість 258 —
+і ця різниця не залежить від того, наскільки складна задача.</p>
+
+<p><b>Оцінювати породження важко.</b> Поки відповідь — одне з двох слів, усе просто.
+Щойно вона стає фразою, «правильно чи ні» перестає бути питанням із однією
+відповіддю.</p>
+
+<p><b>І головне: універсальність не додає якості.</b> Текстова форма робить зручним
+те, що раніше було незручним, — вона не робить модель розумнішою. На нашій задачі
+при зрівняних вагах жодна з трьох архітектур не виявилась кращою за інші, а TF-IDF із логістичною регресією дає 0.7379 — порівнянно з ними. Текстова форма дає інше: одну модель, яка вміє кілька задач, і можливість додати нову, не чіпаючи жодного шару.</p>
+
+<div class="note warn"><b>Наш T5 — навчальний макет, і це треба сказати прямо.</b>
+У курсі <b>немає готових ваг</b> і немає мережі в зошитах, тож усе, що тут
+заміряно, ми навчили самі, з нуля, на 4 ядрах без відеокарти. Наша модель має
+925 696 ваг у тілі, 2 963 678 разом із таблицями, і словник на 7 902 слів;
+увесь корпус, який вона бачила, — <b>10.5 мегабайта</b> українського тексту.
+Базова модель T5 має <b>близько 220 мільйонів</b> ваг і навчалась на корпусі
+приблизно <b>750 гігабайтів</b> очищеного тексту з інтернету. Тобто в неї
+приблизно у <b>74 рази</b> більше ваг і в <b>сімдесят тисяч разів</b> більше
+тексту. Це <b>інший клас явища</b>, і чекати від макета того, що вміє справжня
+модель, не варто. Що макет справді показує — це <b>механізм</b>: три маски,
+перехресну увагу, форму задачі, форму псування й те, як усе це рахується.
+Механізм у них однаковий; різні тільки масштаб і те, що з масштабу виростає.</div>
+
+<p>І остання думка, з якою варто вийти. Ця тема замкнула трикутник: енкодер, який
+читає, декодер, який пише, і енкодер-декодер, який робить обидва. Далі курс піде
+не вглиб архітектур, а вшир — до питання, що робити, коли мова не одна. Бо все,
+що ми тут будували, мовчки спиралось на припущення, що словник у нас один
+і текст у ньому однорідний. Українська в цьому курсі вже показала, що вона
+роздуває словник швидше за англійську, — а що станеться, коли в один словник
+доведеться вкласти сотню мов одразу, ще належить зʼясувати.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../28-gpt-family/lecture.html"><span class="dir">попередня</span><span class="ttl">28. GPT-родина</span></a>
+    <a class="next" href="../30-multilingual/lecture.html"><span class="dir">наступна</span><span class="ttl">30. Багатомовність і українська</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id,fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click',function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'),k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function thou(n){
+  var s=String(Math.round(n)),out='',k=0,i;
+  for(i=s.length-1;i>=0;i--){out=s.charAt(i)+out;k++;if(k%3===0&&i>0)out=' '+out;}
+  return out;
+}
+function razd(v){
+  var r=Math.round(v*100)/100;
+  if(Math.abs(r-Math.round(r))<1e-9) return String(Math.round(r))+' '+razy(r);
+  return f2(r)+' раза';
+}
+function razy(n){
+  var t=Math.round(n)%10,h=Math.round(n)%100;
+  if(h>=11&&h<=14) return 'разів';
+  if(t===1) return 'раз';
+  if(t>=2&&t<=4) return 'рази';
+  return 'разів';
+}
+function bar(g,x,y,w,h,fill,alpha){
+  g.globalAlpha=(alpha===undefined?1:alpha); g.fillStyle=fill;
+  g.fillRect(x,y,w,h); g.globalAlpha=1;
+}
+function dash(g,x0,y,x1,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke(); g.restore();
+}
+function dot(g,x,y,r,color){ g.fillStyle=color; g.beginPath(); g.arc(x,y,r,0,6.2832); g.fill(); }
+function rrect(g,x,y,w,h,r){
+  g.beginPath();
+  g.moveTo(x+r,y); g.lineTo(x+w-r,y); g.quadraticCurveTo(x+w,y,x+w,y+r);
+  g.lineTo(x+w,y+h-r); g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  g.lineTo(x+r,y+h); g.quadraticCurveTo(x,y+h,x,y+h-r);
+  g.lineTo(x,y+r); g.quadraticCurveTo(x,y,x+r,y); g.closePath();
+}
+/* замок і іскра — маленькі значки, малюються лініями, а не шрифтом */
+function lock(g,x,y,color){
+  g.strokeStyle=color; g.lineWidth=1.6;
+  g.strokeRect(x-4.5,y-2,9,7.5);
+  g.beginPath(); g.arc(x,y-2,3,Math.PI,0); g.stroke();
+}
+function spark(g,x,y,color){
+  g.strokeStyle=color; g.lineWidth=1.6; g.beginPath();
+  g.moveTo(x,y-6); g.lineTo(x,y+6); g.moveTo(x-5,y-3); g.lineTo(x+5,y+3);
+  g.moveTo(x+5,y-3); g.lineTo(x-5,y+3); g.stroke();
+}
+function span(vals,pad){
+  var lo=Infinity,hi=-Infinity,i;
+  for(i=0;i<vals.length;i++){ if(vals[i]<lo) lo=vals[i]; if(vals[i]>hi) hi=vals[i]; }
+  var m=(hi-lo)*(pad===undefined?0.22:pad)+0.004;
+  return [lo-m,hi+m];
+}
+function lx(v,lo,hi,x0,x1){
+  return x0+(x1-x0)*(Math.log(v)-Math.log(lo))/(Math.log(hi)-Math.log(lo));
+}
+
+
+/* ═══════ числа, заміряні для цієї теми ═══════ */
+/* Усе нижче — з двох прогонів заміру на нашому корпусі: 4 ядра, один потік,
+   процесорний годинник. Числа якості детерміновані за зерном; числа часу — ні.
+   Числа з чужих робіт позначені окремо в тілі сторінки. */
+var D = {"blockEnc":198272,"blockDec":264576,"grid":{"enc":[{"lr":1e-05,"f1":0.5434},{"lr":3e-05,"f1":0.6536},{"lr":0.0001,"f1":0.7532},{"lr":0.0003,"f1":0.75},{"lr":0.001,"f1":0.7794},{"lr":0.003,"f1":0.7237},{"lr":0.01,"f1":0.7078}],"dec":[{"lr":1e-05,"f1":0.0146},{"lr":3e-05,"f1":0.5694},{"lr":0.0001,"f1":0.6942},{"lr":0.0003,"f1":0.7551},{"lr":0.001,"f1":0.7513},{"lr":0.003,"f1":0.732},{"lr":0.01,"f1":0.4477}],"ed":[{"lr":1e-05,"f1":0.0},{"lr":3e-05,"f1":0.6003},{"lr":0.0001,"f1":0.7287},{"lr":0.0003,"f1":0.7187},{"lr":0.001,"f1":0.6306},{"lr":0.003,"f1":0.6827},{"lr":0.01,"f1":0.0}]},"main":{"enc":{"med":0.7731,"lo":0.7496,"hi":0.7884,"f1":[0.7731,0.7496,0.7884,0.7836,0.762],"body":925700,"lr":0.001},"dec":{"med":0.7662,"lo":0.743,"hi":0.7818,"f1":[0.743,0.7818,0.7724,0.7662,0.7445],"body":925700,"lr":0.0003},"ed":{"med":0.7362,"lo":0.7093,"hi":0.747,"f1":[0.7362,0.747,0.7423,0.7207,0.7093],"body":925696,"lr":0.0001}},"naive":{"enc":{"med":0.7369,"lo":0.7344,"hi":0.7479,"f1":[0.7369,0.7344,0.7479],"body":396544},"dec":{"med":0.7646,"lo":0.755,"hi":0.7659,"f1":[0.755,0.7646,0.7659],"body":396544},"ed":{"med":0.7423,"lo":0.7362,"hi":0.747,"f1":[0.7362,0.747,0.7423],"body":925696}},"tfidf":{"f1":0.7379},"proxy":{"span3":{"own":[6.514,6.4968,6.5375],"cross":[7.079,7.2438,7.2202]},"three1":{"own":[6.6744,6.66,6.672],"cross":[10.9409,10.5518,10.6932]}},"proxyBound":{"span3":6.9418,"three1":6.9945},"preSteps":[0,50,100,200,400,800],"preCurve":[[9.448,7.6488,7.3432,7.2073,6.9276,6.5954],[9.3351,7.5871,7.3789,7.1789,6.9178,6.6283],[9.4342,7.6316,7.3491,7.148,6.9404,6.637]],"preBound":6.9643,"preStepsMax":800,"transfer":{"pre":{"lr":0.0003,"f1":[0.6638,0.6536,0.6965],"med":0.6638,"lo":0.6536,"hi":0.6965},"scratch":{"lr":0.001,"f1":[0.6317,0.5783,0.6598],"med":0.6317,"lo":0.5783,"hi":0.6598}},"multi":{"one":{"med":0.633,"lo":0.6103,"hi":0.6422,"f1":[0.6422,0.633,0.6103],"nll":[13.5478,12.6592,14.5656],"nllMed":13.5478},"two":{"med":0.6459,"lo":0.6445,"hi":0.6756,"f1":[0.6459,0.6756,0.6445],"nll":[7.4287,7.3305,7.4046],"nllMed":7.4046}},"gen":{"k":[1,2,4,8,16],"ms":[27.41,39.96,72.34,169.3,501.58],"teacher":70.57,"encode":18.96}};
+
+var C_ROSE, C_TEAL, C_AMBER, C_INK, C_SOFT, C_HAIR, C_PAPER, C_RAISE;
+function palette(){
+  C_ROSE=css('--rose'); C_TEAL=css('--teal'); C_AMBER=css('--amber');
+  C_INK=css('--ink'); C_SOFT=css('--soft'); C_HAIR=css('--hair');
+  C_PAPER=css('--paper'); C_RAISE=css('--raise');
+}
+function alpha(g,a,fn){ g.globalAlpha=a; fn(); g.globalAlpha=1; }
+function slova(n){
+  var t=n%10,h=n%100;
+  if(h>=11&&h<=14) return 'слів';
+  if(t===1) return 'слово';
+  if(t>=2&&t<=4) return 'слова';
+  return 'слів';
+}
+function bloky(n){
+  var t=n%10,h=n%100;
+  if(h>=11&&h<=14) return 'блоків';
+  if(t===1) return 'блок';
+  if(t>=2&&t<=4) return 'блоки';
+  return 'блоків';
+}
+function whisk(g,x,lo,hi,med,color){
+  g.strokeStyle=color; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x,lo); g.lineTo(x,hi);
+  g.moveTo(x-5,lo); g.lineTo(x+5,lo); g.moveTo(x-5,hi); g.lineTo(x+5,hi); g.stroke();
+  g.beginPath(); g.moveTo(x-9,med); g.lineTo(x+9,med); g.lineWidth=2.4; g.stroke();
+}
+
+/* ═══════ 1 · три малюнки дозволів ═══════ */
+var arch1 = 0, pos1 = 3;
+var A1N = ['енкодер','декодер','енкодер-декодер'];
+var A1OUT = ['вектор на кожну позицію;\nтексту не пише',
+             'розподіл по словнику\nу кожній позиції',
+             'вектори джерела + розподіл\nпо словнику на цілі'];
+function grid1(g,x,y,cell,n,m,kind,hl,title){
+  var i,j,ok;
+  capt(g,title,x,y-9,C_SOFT,10,true);
+  for(i=0;i<n;i++) for(j=0;j<m;j++){
+    ok = (kind==='full') ? true : (j<=i);
+    var X=x+j*cell, Y=y+i*cell;
+    g.fillStyle = ok ? (i===hl?C_ROSE:C_TEAL) : C_PAPER;
+    alpha(g, ok ? (i===hl?0.55:0.20) : 1, function(){ g.fillRect(X,Y,cell-2,cell-2); });
+    g.strokeStyle=C_HAIR; g.lineWidth=1; g.strokeRect(X+0.5,Y+0.5,cell-3,cell-3);
+  }
+  g.strokeStyle=C_ROSE; g.lineWidth=1.4;
+  if(hl>=0 && hl<n) g.strokeRect(x-1.5,y+hl*cell-1.5,m*cell,cell+1);
+}
+function draw1(){
+  var cv=I('c1'), g=dpr(cv), W=LW(cv), n=5, cell=26, pairs=0, i;
+  var hl = Math.min(pos1-1, n-1);
+  if(arch1===0){
+    grid1(g,60,52,cell,n,n,'full',hl,'САМОУВАГА ЕНКОДЕРА · ПОВНІСТЮ ВИДИМА');
+    pairs = n*n;
+    capt(g,'кожне слово бачить усе речення —',60,52+n*cell+34,C_INK,13);
+    capt(g,'і ліворуч, і праворуч від себе',60,52+n*cell+54,C_INK,13);
+  } else if(arch1===1){
+    grid1(g,60,52,cell,n,n,'causal',hl,'САМОУВАГА ДЕКОДЕРА · ПРИЧИННА');
+    pairs = n*(n+1)/2;
+    capt(g,'кожна позиція бачить лише те,',60,52+n*cell+34,C_INK,13);
+    capt(g,'що вже написано зліва від неї',60,52+n*cell+54,C_INK,13);
+  } else {
+    grid1(g,40,52,20,n,n,'full',-1,'ЕНКОДЕР · ПОВНІСТЮ ВИДИМА');
+    grid1(g,225,52,20,n,n,'causal',hl,'ДЕКОДЕР · ПРИЧИННА');
+    grid1(g,410,52,20,n,n,'full',hl,'ПЕРЕХРЕСНА · ПОВНІСТЮ ВИДИМА');
+    pairs = n*n + n*(n+1)/2 + n*n;
+    capt(g,'рядок — хто дивиться, стовпець — на кого',40,52+n*20+34,C_INK,13);
+    capt(g,'у перехресній стовпці — це позиції джерела',40,52+n*20+54,C_INK,13);
+  }
+  capt(g,'позиція '+pos1+' виділена рожевим',40,LH(cv)-14,C_SOFT,11);
+  I('k1a').textContent = thou(pairs)+' з '+thou(arch1===2?3*n*n:n*n);
+  I('k1b').textContent = A1OUT[arch1].split('\n').join(' ');
+  var v;
+  if(arch1===0) v='Дозволено все: <b>'+pairs+'</b> пар із '+(n*n)+'. Позиція '+pos1+
+    ' бачить усі пʼять слів. Текст такий стос не пише — на виході вектори, і потрібна голова.';
+  else if(arch1===1) v='Дозволено <b>'+pairs+'</b> пар із '+(n*n)+'. Позиція '+pos1+
+    ' бачить '+pos1+' слів і жодного праворуч — інакше вона побачила б відповідь.';
+  else v='Три маски замість однієї: '+(n*n)+' + '+(n*(n+1)/2)+' + '+(n*n)+' = <b>'+pairs+
+    '</b> пар. Позиція '+pos1+' цілі бачить '+pos1+' написаних слів і <b>всі пʼять</b> слів джерела.';
+  verd('v1', arch1===2?'t-ok':(arch1===0?'t-mid':'t-mid'), A1N[arch1].toUpperCase(), v);
+}
+
+/* ═══════ 2 · два стоси й міст ═══════ */
+var step2 = 1;
+var SRC2 = ['класифікуй','не','вдалося','записати','файл','індексу'];
+var TGT2 = ['помилка','—','—','—','—'];
+function draw2(){
+  var cv=I('c2'), g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var xs=30, ys=44, cw=94, ch=30;
+  capt(g,'ЕНКОДЕР · ПАМʼЯТЬ РАХУЄТЬСЯ ОДИН РАЗ',xs,26,C_SOFT,10,true);
+  for(i=0;i<SRC2.length;i++){
+    var y=ys+i*(ch+6);
+    alpha(g,0.16,function(){ g.fillStyle=C_TEAL; rrect(g,xs,y,cw,ch,7); g.fill(); });
+    g.strokeStyle=C_TEAL; g.lineWidth=1.2; rrect(g,xs+0.5,y+0.5,cw-1,ch-1,7); g.stroke();
+    capt(g,SRC2[i],xs+8,y+20,C_INK,11.5);
+  }
+  var xd=W-30-cw;
+  capt(g,'ДЕКОДЕР · ПО ОДНОМУ ПРОГОНУ НА СЛОВО',xd-190,26,C_SOFT,10,true);
+  for(i=0;i<step2;i++){
+    var y2=ys+i*(ch+6);
+    alpha(g,0.18,function(){ g.fillStyle=C_ROSE; rrect(g,xd,y2,cw,ch,7); g.fill(); });
+    g.strokeStyle=C_ROSE; g.lineWidth=1.2; rrect(g,xd+0.5,y2+0.5,cw-1,ch-1,7); g.stroke();
+    capt(g,i===0?'<початок>':('слово '+i),xd+8,y2+20,C_INK,11.5);
+  }
+  /* міст: від останньої позиції цілі до всіх позицій джерела */
+  var yl=ys+(step2-1)*(ch+6)+ch/2;
+  g.strokeStyle=C_AMBER; g.lineWidth=1;
+  for(i=0;i<SRC2.length;i++){
+    alpha(g,0.45,function(){
+      g.beginPath(); g.moveTo(xs+cw+3, ys+i*(ch+6)+ch/2);
+      g.bezierCurveTo(W/2-40, ys+i*(ch+6)+ch/2, W/2+40, yl, xd-3, yl); g.stroke();
+    });
+  }
+  capt(g,'перехресна увага',W/2-52,H-40,C_AMBER,11,true);
+  capt(g,'усі позиції джерела → позиція, що пишеться',W/2-135,H-22,C_SOFT,10.5);
+  I('k2a').textContent = SRC2.length+' × 128, 1 раз';
+  I('k2b').textContent = step2 + ' декодера';
+  verd('v2', step2===1?'t-ok':(step2<=3?'t-mid':'t-no'), 'НАПИСАНО '+step2,
+    'Енкодер запущено <b>один</b> раз на всі '+SRC2.length+' токенів джерела. Декодер — уже <b>'+
+    step2+'</b> ' + (step2===1?'раз':(step2<5?'рази':'разів')) +
+    '. Кожне наступне слово додає ще один прогін, і паралельно їх не зробити: '+
+    (step2===1?'поки що це найдешевший можливий випадок.':('слово '+step2+' неможливо обрати, доки не обране слово '+(step2-1)+'.')));
+}
+
+/* ═══════ 3 · скільки ваг у стосі ═══════ */
+var dep3 = 2, mode3 = 0;
+function ffWeights(ff){ return 4*128*128 + 4*128 + 2*128*ff + ff + 128 + 4*128; }
+function draw3(){
+  var cv=I('c3'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ed = dep3*D.blockEnc + dep3*D.blockDec;
+  var oneBlocks = mode3===0 ? dep3 : 2*dep3;
+  var ff = mode3===0 ? 512 : Math.round((ed/oneBlocks - 66688)/257);
+  var one = oneBlocks * (mode3===0 ? D.blockEnc : ffWeights(ff));
+  var X0=220, mx = Math.max(ed,one)*1.14, y0=56, bh=44;
+  function bar3(y,val,color,name,sub){
+    var w=(W-X0-95)*val/mx;
+    alpha(g,0.2,function(){ g.fillStyle=color; rrect(g,X0,y,Math.max(w,4),bh,7); g.fill(); });
+    g.strokeStyle=color; g.lineWidth=1.4; rrect(g,X0+0.5,y+0.5,Math.max(w,4)-1,bh-1,7); g.stroke();
+    capt(g,name,20,y+19,C_INK,12,true);
+    capt(g,sub,20,y+35,C_SOFT,10.5);
+    capt(g,thou(val),X0+Math.max(w,4)+10,y+27,color,13,true);
+  }
+  capt(g,'ВАГИ ТІЛА, БЕЗ ЕМБЕДИНГІВ І ВИХІДНОГО ШАРУ',20,30,C_SOFT,10,true);
+  bar3(y0, ed, C_ROSE, 'енкодер-декодер', dep3+'+'+dep3+', шар '+512);
+  bar3(y0+bh+26, one, C_TEAL, 'одностосова', oneBlocks+' '+bloky(oneBlocks)+', шар '+(mode3===0?512:ff));
+  var r = ed/one;
+  capt(g,'блок енкодера '+thou(D.blockEnc)+'   ·   блок декодера '+thou(D.blockDec)+
+        '   ·   перехресна увага '+thou(D.blockDec-D.blockEnc),20,H-18,C_SOFT,10.5);
+  I('k3a').textContent = thou(ed);
+  I('k3b').textContent = thou(one);
+  if(mode3===0)
+    verd('v3','t-no','ЗА ГЛИБИНОЮ',
+      'По '+dep3+' ' + (dep3===1?'блоку':'блоки') + ' в кожному стосі проти '+dep3+
+      ' '+bloky(dep3)+' одностосової: енкодер-декодер важчий у <b>'+f2(r)+
+      ' раза</b> ('+thou(ed)+' проти '+thou(one)+'). Порівнювати їх у такому вигляді — '+
+      'означає міряти кількість ваг, а не будову.');
+  else
+    verd('v3','t-ok','ЗА ВАГАМИ',
+      'Даємо одностосовій стільки ж блоків, скільки їх усього в енкодер-декодера ('+
+      oneBlocks+'), і розширюємо внутрішній шар до <b>'+ff+'</b>: '+thou(one)+' проти '+
+      thou(ed)+', різниця <b>'+thou(Math.abs(ed-one))+'</b> ваг, тобто '+
+      f2(Math.abs(ed-one)/ed*100)+' %. Тепер порівняння вимірює будову.');
+}
+
+/* ═══════ 4 · чотири задачі однієї форми ═══════ */
+var task4 = 0;
+var T4 = [
+ {n:'класифікація',
+  i:['класифікуй : не вдалося встановити','контекст безпеки сокета'],
+  o:['помилка'], ni:8, no:1,
+  v:'Замість номера класу — <b>слово</b> з того самого словника. Голови класифікації немає взагалі.'},
+ {n:'витягання відповіді',
+  i:['питання : який файл не записався','текст : не вдалося записати файл індексу'],
+  o:['файл індексу'], ni:12, no:2,
+  v:'Замість двох чисел «початок і кінець» — <b>сам проміжок</b>, написаний словами.'},
+ {n:'переказ',
+  i:['перекажи : у визначенні маршруту мережі','використано некоректну маску мережі'],
+  o:['некоректна маска мережі'], ni:11, no:3,
+  v:'Вихід довший за одне слово, тож декодер працює <b>тричі</b>. Форма задачі та сама.'},
+ {n:'переклад',
+  i:['переклади : unable to write new index file'], o:['не вдалося записати новий файл індексу'],
+  ni:8, no:6,
+  v:'Та задача, під яку енкодер-декодер колись і придумали. У текстовій формі вона нічим не виділена.'}
+];
+function draw4(){
+  var cv=I('c4'), g=dpr(cv), W=LW(cv), H=LH(cv), t=T4[task4], i;
+  capt(g,'ВХІД ЕНКОДЕРА',24,28,C_SOFT,10,true);
+  var y=44;
+  for(i=0;i<t.i.length;i++){
+    alpha(g,0.14,function(){ g.fillStyle=C_TEAL; rrect(g,24,y,W-48,32,8); g.fill(); });
+    g.strokeStyle=C_TEAL; g.lineWidth=1.2; rrect(g,24.5,y+0.5,W-49,31,8); g.stroke();
+    capt(g,t.i[i],36,y+21,C_INK,13.5);
+    y+=38;
+  }
+  g.strokeStyle=C_SOFT; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(W/2,y+6); g.lineTo(W/2,y+26); g.moveTo(W/2-6,y+19); g.lineTo(W/2,y+26);
+  g.lineTo(W/2+6,y+19); g.stroke();
+  y+=36;
+  capt(g,'ЩО МАЄ НАПИСАТИ ДЕКОДЕР',24,y+16,C_SOFT,10,true);
+  y+=26;
+  for(i=0;i<t.o.length;i++){
+    alpha(g,0.18,function(){ g.fillStyle=C_ROSE; rrect(g,24,y,W-48,32,8); g.fill(); });
+    g.strokeStyle=C_ROSE; g.lineWidth=1.2; rrect(g,24.5,y+0.5,W-49,31,8); g.stroke();
+    capt(g,t.o[i],36,y+21,C_INK,13.5);
+    y+=38;
+  }
+  capt(g,'перше слово входу — назва задачі; більше нічого не міняється',24,H-14,C_SOFT,10.5);
+  I('k4a').textContent = t.ni;
+  I('k4b').textContent = t.no;
+  verd('v4', t.no===1?'t-ok':'t-mid', t.n.toUpperCase(),
+    'Вхід '+t.ni+' токенів, вихід <b>'+t.no+'</b>. '+t.v+
+    ' Декодер запуститься <b>'+t.no+'</b> ' + (t.no===1?'раз':(t.no<5?'рази':'разів'))+'.');
+}
+
+/* ═══════ 5 · пʼять псувань одного речення ═══════ */
+var cor5 = 0;
+var SENT5 = ['не','вдалося','записати','новий','файл','індексу'];
+var C5 = [
+ {n:'маскування токенів',
+  s:['не','[M]','записати','новий','[M]','індексу'],
+  t:['не','вдалося','записати','новий','файл','індексу'],
+  v:'Дірки видно, і видно <b>скільки</b> їх. Ціль — увесь документ, тож декодер працює 6 разів.'},
+ {n:'викидання токенів',
+  s:['не','записати','новий','індексу'],
+  t:['не','вдалося','записати','новий','файл','індексу'],
+  v:'Дірок не видно взагалі: модель мусить сама зрозуміти, <b>де</b> чогось бракує.'},
+ {n:'заповнення проміжків, BART',
+  s:['не','[M]','новий','[M]'],
+  t:['не','вдалося','записати','новий','файл','індексу'],
+  v:'Один токен на цілий шматок: довжина шматка невідома. Відновлюється <b>весь</b> документ.'},
+ {n:'проміжки з сентинелами, T5',
+  s:['не','<s0>','новий','<s1>'],
+  t:['<s0>','вдалося','записати','<s1>','файл','індексу'],
+  v:'Те саме псування, але ціль — <b>лише вирізане</b>. Тут це 6 токенів замість 6, а на довгому тексті — утричі менше.'},
+ {n:'перестановка',
+  s:['файл','індексу','не','вдалося','записати','новий'],
+  t:['не','вдалося','записати','новий','файл','індексу'],
+  v:'Жодне слово не втрачене — зіпсовано лише <b>порядок</b>. Це псування виявилось найслабшим із пʼятьох.'}
+];
+function row5(g,y,arr,color,label){
+  var x=24, i, W=LW(I('c5'));
+  capt(g,label,24,y-9,C_SOFT,10,true);
+  g.font=mono(12.5,false);
+  for(i=0;i<arr.length;i++){
+    var w=g.measureText(arr[i]).width+18;
+    if(x+w>W-24){ x=24; y+=32; }
+    var isM = arr[i].charAt(0)==='[' || arr[i].charAt(0)==='<';
+    alpha(g,isM?0.30:0.13,function(){ g.fillStyle=isM?C_AMBER:color; rrect(g,x,y,w,26,6); g.fill(); });
+    g.strokeStyle=isM?C_AMBER:color; g.lineWidth=1.1; rrect(g,x+0.5,y+0.5,w-1,25,6); g.stroke();
+    capt(g,arr[i],x+9,y+18,C_INK,12.5);
+    x+=w+6;
+  }
+  return y+26;
+}
+function draw5(){
+  var cv=I('c5'), g=dpr(cv), H=LH(cv), c=C5[cor5];
+  var y = row5(g,44,c.s,C_TEAL,'ЩО БАЧИТЬ ЕНКОДЕР');
+  y = row5(g,y+52,c.t,C_ROSE,'ЩО МАЄ НАПИСАТИ ДЕКОДЕР');
+  capt(g,'оригінал: не вдалося записати новий файл індексу',24,H-14,C_SOFT,10.5);
+  I('k5a').textContent = c.s.length;
+  I('k5b').textContent = c.t.length;
+  verd('v5', cor5===3?'t-ok':(cor5===4?'t-no':'t-mid'), c.n.toUpperCase(),
+    'Вхід <b>'+c.s.length+'</b> токенів, ціль <b>'+c.t.length+'</b>. '+c.v);
+}
+
+/* ═══════ 6 · проміжок проти трьох поодиноких ═══════ */
+var view6 = 0;
+function draw6(){
+  var cv=I('c6'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var sp = D.proxy.span3, th = D.proxy.three1;
+  var a = view6===0 ? sp.own : sp.cross, b = view6===0 ? th.own : th.cross;
+  /* на чужій формі кожну модель питають про НЕ свій набір дірок,
+     тож і рубіж треба брати від того набору, а не від рідного */
+  var bnd = view6===0 ? [D.proxyBound.span3, D.proxyBound.three1]
+                      : [D.proxyBound.three1, D.proxyBound.span3];
+  var all = a.concat(b).concat(bnd);
+  var lo=Math.min.apply(null,all), hi=Math.max.apply(null,all);
+  var y0=44, y1=H-76, pad=(hi-lo)*0.25+0.05;
+  lo-=pad; hi+=pad;
+  function fy(v){ return y1-(y1-y0)*(v-lo)/(hi-lo); }
+  var i;
+  for(i=0;i<=4;i++){
+    var v=lo+(hi-lo)*i/4;
+    dash(g,120,fy(v),W-30,C_HAIR);
+    capt(g,f2(v),112,fy(v)+4,C_SOFT,10,false,'right');
+  }
+  capt(g,'ВТРАТА НА ЗАКРИТИХ СЛОВАХ, НАТ',24,26,C_SOFT,10,true);
+  var xs=[240, 470], sets=[a,b],
+      names=['проміжок із трьох','три поодинокі'], cols=[C_ROSE,C_TEAL];
+  var med=[], marg=[];
+  for(i=0;i<2;i++){
+    var s=sets[i].slice().sort(function(p,q){return p-q;});
+    var m=s[1], x=xs[i];
+    med.push(m); marg.push(bnd[i]-m);
+    alpha(g,0.18,function(){ g.fillStyle=cols[i]; g.fillRect(x-42,fy(m),84,y1-fy(m)); });
+    /* рубіж малюємо ПЕРШИМ, щоб число лягло поверх пунктиру, а не під ним */
+    g.save(); g.setLineDash([4,4]); g.strokeStyle=C_AMBER; g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(x-58,fy(bnd[i])); g.lineTo(x+58,fy(bnd[i])); g.stroke(); g.restore();
+    whisk(g,x,fy(s[0]),fy(s[2]),fy(m),cols[i]);
+    capt(g,f4(m),x,Math.min(fy(s[0]),fy(bnd[i]))-19,cols[i],13,true,'center');
+    capt(g,names[i],x,y1+22,C_INK,12,true,'center');
+    capt(g,'рубіж '+f2(bnd[i])+' · три зерна '+f2(s[0])+'…'+f2(s[2]),
+         x,y1+38,C_SOFT,10,false,'center');
+  }
+  capt(g,'пунктир — уніграмний рубіж для відповідного набору дірок',24,H-10,C_AMBER,10.5);
+  I('k6a').textContent = f4(med[0])+'  запас '+(marg[0]>=0?'+':'')+f2(marg[0]);
+  I('k6b').textContent = f4(med[1])+'  запас '+(marg[1]>=0?'+':'')+f2(marg[1]);
+  var overlap = Math.max.apply(null,a) >= Math.min.apply(null,b) &&
+                Math.max.apply(null,b) >= Math.min.apply(null,a);
+  var better = marg[0] > marg[1] ? 0 : 1;
+  if(view6===0)
+    verd('v6', overlap?'t-mid':'t-ok','НА СВОЇЙ ФОРМІ',
+      'Проміжок дає <b>'+f4(med[0])+'</b> при рубежі '+f2(bnd[0])+
+      ' (запас '+f2(marg[0])+'), три поодинокі — <b>'+f4(med[1])+
+      '</b> при рубежі '+f2(bnd[1])+' (запас '+f2(marg[1])+'). '+
+      (overlap ? 'Купи перетинаються, тож різниці не доведено.'
+               : 'Купи не перетинаються, і більший запас має <b>'+names[better]+
+                 '</b> — на '+f2(Math.abs(marg[0]-marg[1]))+' ната. '+
+                 'Тобто складнішою виявилась форма «'+names[1-better]+'», а не та, на яку думалось.'));
+  else
+    verd('v6', 't-no','НА ЧУЖІЙ ФОРМІ',
+      'Модель, навчена на проміжках, на поодиноких дірках дає <b>'+f4(med[0])+
+      '</b> — це '+(marg[0]<0?'<b>гірше</b> за уніграмний рубіж на '+f2(-marg[0]):
+                    'краще за рубіж на '+f2(marg[0]))+
+      ' ната. Навчена на поодиноких, на проміжках дає <b>'+f4(med[1])+
+      '</b> — '+(marg[1]<0?'<b>гірше</b> за рубіж на '+f2(-marg[1]):
+                 'краще за рубіж на '+f2(marg[1]))+
+      '. Провал у другому випадку '+f2(Math.abs(marg[1])/Math.max(Math.abs(marg[0]),0.0001))+
+      ' раза глибший: рецепт псування — це не дрібниця налаштування, а частина того, чого модель навчилась.');
+}
+
+/* ═══════ 7 · дві ручки псування ═══════ */
+var rate7 = 15, len7 = 3;
+function draw7(){
+  var cv=I('c7'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var N=100, hid=Math.round(N*rate7/100), spans=Math.max(1,Math.round(hid/len7));
+  var srcLen = N - hid + spans;
+  var tgtT5 = hid + spans + 1, tgtBart = N;
+  capt(g,'РЕЧЕННЯ ЗІ СТА ТОКЕНІВ',24,26,C_SOFT,10,true);
+  var x0=24, wtot=W-48, cw=wtot/N, i, k=0;
+  /* смуга: які токени сховані */
+  var hidden = {}, s;
+  for(s=0;s<spans;s++){
+    var st = Math.round((s+0.5)*N/spans) - Math.floor(len7/2);
+    for(i=0;i<Math.round(hid/spans);i++){ if(st+i>=0 && st+i<N) hidden[st+i]=1; }
+  }
+  for(i=0;i<N;i++){
+    g.fillStyle = hidden[i] ? C_ROSE : C_TEAL;
+    alpha(g, hidden[i]?0.75:0.22, function(){ g.fillRect(x0+i*cw, 44, cw-0.6, 30); });
+  }
+  capt(g,'рожеве — сховане, бірюзове — лишилось',24,92,C_SOFT,10.5);
+  /* три смуги довжин */
+  var rows=[['вхід енкодера', srcLen, C_TEAL],
+            ['ціль T5 · лише вирізане', tgtT5, C_ROSE],
+            ['ціль BART · весь текст', tgtBart, C_AMBER]];
+  var X0=210, y=124, mx=Math.max(srcLen,tgtT5,tgtBart,N);
+  for(i=0;i<rows.length;i++){
+    var w=(W-X0-80)*rows[i][1]/mx;
+    alpha(g,0.2,function(){ g.fillStyle=rows[i][2]; rrect(g,X0,y,Math.max(w,3),30,6); g.fill(); });
+    g.strokeStyle=rows[i][2]; g.lineWidth=1.3; rrect(g,X0+0.5,y+0.5,Math.max(w,3)-1,29,6); g.stroke();
+    capt(g,rows[i][0],24,y+20,C_INK,11.5);
+    capt(g,String(rows[i][1]),X0+Math.max(w,3)+9,y+20,rows[i][2],12,true);
+    y+=44;
+  }
+  capt(g,'довжина в токенах',24,y+16,C_SOFT,10.5);
+  I('k7a').textContent = spans;
+  I('k7b').textContent = tgtT5 + ' проти ' + tgtBart;
+  var ratio = tgtBart/tgtT5;
+  verd('v7', rate7<=25 ? (len7>=2?'t-ok':'t-mid') : 't-no',
+    rate7+' % · ШМАТКИ ПО '+len7,
+    'Сховано <b>'+hid+'</b> '+slova(hid)+' у <b>'+spans+'</b> '+(spans===1?'шматку':'шматках')+
+    '. Ціль T5 — <b>'+tgtT5+'</b> токенів проти <b>'+tgtBart+'</b> у BART, тобто у <b>'+f2(ratio)+
+    ' раза</b> коротша. ' +
+    (rate7>25 ? 'Але при такій частці контексту вже майже не лишається: '+(N-hid)+
+     ' уцілілих слів на '+hid+' схованих.' :
+     (len7===1 ? 'При шматках по одному слову ціль найдовша: сентинелів стільки ж, скільки схованих слів.'
+               : 'Схованих слів стільки ж, скільки при коротших шматках, а ціль коротша.')));
+}
+
+/* ═══════ 8 · уніграмний рубіж ═══════ */
+var st8 = 0;
+function draw8(){
+  var cv=I('c8'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var xs=D.preSteps, cur=D.preCurve, bnd=D.preBound, i, j;
+  var vals=[]; for(i=0;i<cur.length;i++) for(j=0;j<cur[i].length;j++) vals.push(cur[i][j]);
+  vals.push(bnd);
+  var lo=Math.min.apply(null,vals)-0.25, hi=Math.max.apply(null,vals)+0.25;
+  var x0=76, x1=W-30, y0=40, y1=H-52;
+  function fx(i){ return x0+(x1-x0)*i/(xs.length-1); }
+  function fy(v){ return y1-(y1-y0)*(v-lo)/(hi-lo); }
+  for(i=0;i<=4;i++){
+    var v=lo+(hi-lo)*i/4;
+    dash(g,x0,fy(v),x1,C_HAIR); capt(g,f2(v),x0-8,fy(v)+4,C_SOFT,10,false,'right');
+  }
+  /* рубіж */
+  g.save(); g.setLineDash([6,4]); g.strokeStyle=C_AMBER; g.lineWidth=1.8;
+  g.beginPath(); g.moveTo(x0,fy(bnd)); g.lineTo(x1,fy(bnd)); g.stroke(); g.restore();
+  capt(g,'уніграмний рубіж '+f4(bnd),x0+6,fy(bnd)-8,C_AMBER,11,true);
+  /* три зерна */
+  for(j=0;j<cur.length;j++){
+    g.strokeStyle=C_TEAL; g.lineWidth=1.2;
+    alpha(g,0.45,function(){
+      g.beginPath();
+      for(i=0;i<xs.length;i++){ if(i===0) g.moveTo(fx(i),fy(cur[j][i])); else g.lineTo(fx(i),fy(cur[j][i])); }
+      g.stroke();
+    });
+  }
+  /* медіана */
+  var med=[];
+  for(i=0;i<xs.length;i++){
+    var col=[]; for(j=0;j<cur.length;j++) col.push(cur[j][i]);
+    col.sort(function(p,q){return p-q;}); med.push(col[1]);
+  }
+  g.strokeStyle=C_ROSE; g.lineWidth=2.2; g.beginPath();
+  for(i=0;i<xs.length;i++){ if(i===0) g.moveTo(fx(i),fy(med[i])); else g.lineTo(fx(i),fy(med[i])); }
+  g.stroke();
+  for(i=0;i<xs.length;i++){
+    dot(g,fx(i),fy(med[i]), i===st8?5.5:3.2, i===st8?C_ROSE:C_SOFT);
+    capt(g,String(xs[i]),fx(i),y1+18,i===st8?C_ROSE:C_SOFT,10.5,i===st8,'center');
+  }
+  capt(g,'кроків передтренування',(x0+x1)/2,H-14,C_SOFT,10.5,false,'center');
+  capt(g,'ВТРАТА, НАТ',24,26,C_SOFT,10,true);
+  I('st8v').textContent = xs[st8];
+  I('k8a').textContent = f4(med[st8]);
+  I('k8b').textContent = (med[st8]>bnd?'+':'') + f4(med[st8]-bnd);
+  var below = med[st8] < bnd;
+  verd('v8', below ? (med[st8]<bnd-0.2?'t-ok':'t-mid') : 't-no',
+    xs[st8]+' КРОКІВ',
+    'Втрата <b>'+f4(med[st8])+'</b> ната проти рубежу <b>'+f4(bnd)+'</b>. ' +
+    (below ? 'Модель уже <b>нижче</b> рубежу на '+f4(bnd-med[st8])+
+             ' — тобто вона щось дізналась із контексту, а не лише вивчила частоти. '+
+             (med[st8]<bnd-0.2?'Запас достатній, порівнювати з нею можна.':'Запас маленький, висновки хиткі.')
+           : 'Модель <b>вище</b> рубежу: проста таблиця частот поки що вгадує краще за неї. '+
+             'Порівнювати передтреновану гілку з нуленавченою на цьому місці немає сенсу.'));
+}
+
+/* ═══════ 9 · що дає передтренування ═══════ */
+function draw9(){
+  var cv=I('c9'), g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var p=D.transfer.pre, s=D.transfer.scratch;
+  var all=p.f1.concat(s.f1);
+  var lo=Math.min.apply(null,all)-0.06, hi=Math.max.apply(null,all)+0.06;
+  var y0=42, y1=H-56;
+  function fy(v){ return y1-(y1-y0)*(v-lo)/(hi-lo); }
+  for(i=0;i<=4;i++){
+    var v=lo+(hi-lo)*i/4;
+    dash(g,110,fy(v),W-30,C_HAIR); capt(g,f2(v),102,fy(v)+4,C_SOFT,10,false,'right');
+  }
+  capt(g,'F1 КЛАСУ «ПОМИЛКА»',24,26,C_SOFT,10,true);
+  var sets=[p,s], xs=[250,470], cols=[C_ROSE,C_TEAL],
+      nm=['передтренована','з випадкових ваг'],
+      sub=[D.preStepsMax+' кроків псування','нічого не бачила'];
+  for(i=0;i<2;i++){
+    var d=sets[i], x=xs[i];
+    alpha(g,0.18,function(){ g.fillStyle=cols[i]; g.fillRect(x-42,fy(d.med),84,y1-fy(d.med)); });
+    whisk(g,x,fy(d.lo),fy(d.hi),fy(d.med),cols[i]);
+    capt(g,f4(d.med),x,fy(d.hi)-11,cols[i],13,true,'center');
+    capt(g,nm[i],x,y1+20,C_INK,12,true,'center');
+    capt(g,sub[i]+', крок '+d.lr,x,y1+36,C_SOFT,10,false,'center');
+  }
+  I('k9a').textContent = f4(p.med)+'  ('+f2(p.lo)+'…'+f2(p.hi)+')';
+  I('k9b').textContent = f4(s.med)+'  ('+f2(s.lo)+'…'+f2(s.hi)+')';
+  var ov = p.lo<=s.hi && s.lo<=p.hi;
+  verd('v9', ov?'t-mid':'t-ok','ТРИ ЗЕРНА',
+    'Передтренована <b>'+f4(p.med)+'</b> (купа '+f4(p.lo)+'…'+f4(p.hi)+
+    '), з випадкових ваг <b>'+f4(s.med)+'</b> (купа '+f4(s.lo)+'…'+f4(s.hi)+
+    '). Купи '+(ov?'<b>перетинаються</b> — на цьому обсязі міток різниця не доведена.'
+                  :'<b>не перетинаються</b>: виграш передтренування становить '+f4(p.med-s.med)+'.'));
+}
+
+/* ═══════ 10 · добір кроку ═══════ */
+var sel10 = 0;
+function draw10(){
+  var cv=I('c10'), g=dpr(cv), W=LW(cv), H=LH(cv), i, j;
+  var keys=['enc','dec','ed'], nm=['енкодер','декодер','енкодер-декодер'],
+      cols=[C_TEAL,C_AMBER,C_ROSE];
+  var lrs=D.grid.enc.map(function(r){return r.lr;});
+  var vals=[]; for(j=0;j<3;j++) for(i=0;i<D.grid[keys[j]].length;i++) vals.push(D.grid[keys[j]][i].f1);
+  var lo=Math.min.apply(null,vals)-0.04, hi=Math.max.apply(null,vals)+0.04;
+  var x0=70, x1=W-40, y0=46, y1=H-76;
+  function fx(i){ return x0+(x1-x0)*i/(lrs.length-1); }
+  function fy(v){ return y1-(y1-y0)*(v-lo)/(hi-lo); }
+  for(i=0;i<=4;i++){
+    var v=lo+(hi-lo)*i/4;
+    dash(g,x0,fy(v),x1,C_HAIR); capt(g,f2(v),x0-8,fy(v)+4,C_SOFT,10,false,'right');
+  }
+  var best=[];
+  for(j=0;j<3;j++){
+    var d=D.grid[keys[j]], on = (sel10===0 || sel10===j+1);
+    var bi=0; for(i=1;i<d.length;i++) if(d[i].f1>d[bi].f1) bi=i;
+    best.push(bi);
+    g.strokeStyle=cols[j]; g.lineWidth=on?2.2:1;
+    alpha(g,on?1:0.22,function(){
+      g.beginPath();
+      for(i=0;i<d.length;i++){ if(i===0) g.moveTo(fx(i),fy(d[i].f1)); else g.lineTo(fx(i),fy(d[i].f1)); }
+      g.stroke();
+      for(i=0;i<d.length;i++) dot(g,fx(i),fy(d[i].f1), i===bi?5.5:3, cols[j]);
+    });
+  }
+  var lx0=x0+4;
+  for(j=0;j<3;j++){
+    var onj = (sel10===0 || sel10===j+1);
+    alpha(g,onj?1:0.3,function(){
+      dot(g,lx0+6,y1+34,4,cols[j]);
+      capt(g,nm[j],lx0+16,y1+38,onj?C_INK:C_SOFT,11,onj);
+    });
+    lx0 += 22 + nm[j].length*7.2;
+  }
+  for(i=0;i<lrs.length;i++) capt(g,String(lrs[i]),fx(i),y1+18,C_SOFT,10.5,false,'center');
+  capt(g,'швидкість навчання (логарифмічна сітка)',(x0+x1)/2,H-10,C_SOFT,10.5,false,'center');
+  capt(g,'F1 НА ВІДКЛАДЕНІЙ',24,26,C_SOFT,10,true);
+  var txt=[];
+  for(j=0;j<3;j++) txt.push(nm[j]+' '+D.grid[keys[j]][best[j]].lr);
+  I('k10a').textContent = txt.join(' · ');
+  var edge = best.some(function(b){ return b===0 || b===lrs.length-1; });
+  verd('v10', edge?'t-no':'t-ok', sel10===0?'УСІ ТРИ':nm[sel10-1].toUpperCase(),
+    (sel10===0
+      ? 'Найкращі кроки: '+txt.join(', ')+'. '
+      : 'У «'+nm[sel10-1]+'» найкраще значення — <b>'+D.grid[keys[sel10-1]][best[sel10-1]].lr+
+        '</b>, F1 '+f4(D.grid[keys[sel10-1]][best[sel10-1]].f1)+'. ') +
+    (edge ? 'Але хоча б в однієї моделі мінімум лежить <b>на краю</b> сітки — таку сітку треба подовжувати.'
+          : 'У всіх трьох найкраще значення лежить <b>усередині</b> сітки, а не на краю — отже сітка досить широка, і добір чесний.'));
+}
+
+/* ═══════ 11 · три архітектури на нашій задачі ═══════ */
+var mode11 = 0;
+function draw11(){
+  var cv=I('c11'), g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var src = mode11===0 ? D.main : D.naive;
+  var keys=['enc','dec','ed'], nm=['енкодер\n+ голова','декодер','енкодер-\nдекодер'],
+      cols=[C_TEAL,C_AMBER,C_ROSE];
+  var all=[]; for(i=0;i<3;i++) all=all.concat(src[keys[i]].f1);
+  all.push(D.tfidf.f1);
+  var lo=Math.min.apply(null,all)-0.05, hi=Math.max.apply(null,all)+0.05;
+  var y0=42, y1=H-72;
+  function fy(v){ return y1-(y1-y0)*(v-lo)/(hi-lo); }
+  for(i=0;i<=4;i++){
+    var v=lo+(hi-lo)*i/4;
+    dash(g,110,fy(v),W-30,C_HAIR); capt(g,f2(v),102,fy(v)+4,C_SOFT,10,false,'right');
+  }
+  capt(g,'F1 КЛАСУ «ПОМИЛКА» НА ПЕРЕВІРНІЙ',24,26,C_SOFT,10,true);
+  /* орієнтир TF-IDF */
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=C_SOFT; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(150,fy(D.tfidf.f1)); g.lineTo(W-30,fy(D.tfidf.f1)); g.stroke(); g.restore();
+  capt(g,'TF-IDF '+f4(D.tfidf.f1),152,fy(D.tfidf.f1)+15,C_SOFT,10.5,true);
+  var xs=[230,380,530], bi=0;
+  for(i=0;i<3;i++) if(src[keys[i]].med>src[keys[bi]].med) bi=i;
+  for(i=0;i<3;i++){
+    var d=src[keys[i]], x=xs[i];
+    alpha(g,i===bi?0.26:0.15,function(){ g.fillStyle=cols[i]; g.fillRect(x-40,fy(d.med),80,y1-fy(d.med)); });
+    whisk(g,x,fy(d.lo),fy(d.hi),fy(d.med),cols[i]);
+    capt(g,f4(d.med),x,fy(d.hi)-11,cols[i],13,true,'center');
+    var parts=nm[i].split('\n');
+    capt(g,parts[0],x,y1+20,C_INK,11.5,true,'center');
+    if(parts[1]) capt(g,parts[1],x,y1+34,C_INK,11.5,true,'center');
+    capt(g,thou(d.body)+' ваг',x,y1+52,C_SOFT,10,false,'center');
+  }
+  I('k11a').textContent = nm[bi].split('\n').join('') + ' ' + f4(src[keys[bi]].med);
+  var others=[0,1,2].filter(function(k){return k!==bi;});
+  var ovAny = others.some(function(k){ return src[keys[k]].hi>=src[keys[bi]].lo; });
+  I('k11b').textContent = f4(src[keys[bi]].med - Math.min(src.enc.med,src.dec.med,src.ed.med));
+  if(mode11===0)
+    verd('v11', ovAny?'t-mid':'t-ok','ВИРІВНЯНО ЗА ВАГАМИ',
+      'Медіани: енкодер <b>'+f4(src.enc.med)+'</b>, декодер <b>'+f4(src.dec.med)+
+      '</b>, енкодер-декодер <b>'+f4(src.ed.med)+'</b> при однаковому тілі. Купи '+
+      (ovAny?'<b>перетинаються</b>, тож переваги жодної архітектури тут не доведено.'
+            :'<b>не перетинаються</b>, тож перевага реальна.') +
+      ' Орієнтир без нейромережі — '+f4(D.tfidf.f1)+'.');
+  else
+    verd('v11','t-no','ОДНАКОВА ГЛИБИНА',
+      'Тут енкодер-декодер має '+thou(src.ed.body)+' ваг проти '+thou(src.enc.body)+
+      ' в одностосових — у '+f2(src.ed.body/src.enc.body)+' раза більше. Медіани: '+
+      f4(src.enc.med)+' · '+f4(src.dec.med)+' · '+f4(src.ed.med)+
+      '. Будь-який висновок звідси вимірює кількість ваг, а не будову.');
+}
+
+/* ═══════ 12 · пʼять архітектур на великих даних ═══════ */
+var bench12 = 0;
+var T5T = [
+ {n:'енкодер-декодер',        p:2, glue:83.28, sq:80.88},
+ {n:'той самий, спільні ваги',p:1, glue:82.81, sq:80.63},
+ {n:'той самий, удвічі мілкіший', p:1, glue:80.88, sq:77.59},
+ {n:'декодер',                p:1, glue:74.70, sq:61.14},
+ {n:'декодер із видимим питанням', p:1, glue:81.82, sq:78.94}
+];
+function draw12(){
+  var cv=I('c12'), g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var key = bench12===0 ? 'glue' : 'sq';
+  var vals=T5T.map(function(r){return r[key];});
+  var lo=Math.min.apply(null,vals)-4, hi=Math.max.apply(null,vals)+3;
+  var x0=250, x1=W-70, y0=44, bh=34, gap=12;
+  function fx(v){ return x0+(x1-x0)*(v-lo)/(hi-lo); }
+  capt(g, bench12===0 ? 'СЕРЕДНІЙ БАЛ GLUE' : 'ТОЧНИЙ ЗБІГ НА SQUAD', 24,26,C_SOFT,10,true);
+  var bi=0, wi=0;
+  for(i=1;i<T5T.length;i++){ if(vals[i]>vals[bi]) bi=i; if(vals[i]<vals[wi]) wi=i; }
+  for(i=0;i<T5T.length;i++){
+    var y=y0+i*(bh+gap), r=T5T[i];
+    var col = i===bi?C_ROSE:(i===wi?C_AMBER:C_TEAL);
+    var h = r.p===2 ? bh : bh*0.55, yy = y + (bh-h)/2;
+    alpha(g,0.2,function(){ g.fillStyle=col; rrect(g,x0,yy,Math.max(fx(r[key])-x0,4),h,6); g.fill(); });
+    g.strokeStyle=col; g.lineWidth=1.3; rrect(g,x0+0.5,yy+0.5,Math.max(fx(r[key])-x0,4)-1,h-1,6); g.stroke();
+    capt(g,r.n,20,y+17,C_INK,11.5);
+    capt(g,r.p===2?'2P ваг':'P ваг',20,y+31,C_SOFT,10);
+    capt(g,f2(r[key]),fx(r[key])+9,y+bh/2+5,col,12.5,true);
+  }
+  capt(g,'висота стовпчика — кількість ваг: висока 2P, низька P',24,H-14,C_SOFT,10.5);
+  I('k12a').textContent = T5T[bi].n+' '+f2(vals[bi]);
+  I('k12b').textContent = T5T[wi].n+' '+f2(vals[wi]);
+  verd('v12','t-ok', bench12===0?'GLUE':'SQUAD',
+    'Найкращий — <b>'+T5T[bi].n+'</b> ('+f2(vals[bi])+'), найгірший — <b>'+T5T[wi].n+
+    '</b> ('+f2(vals[wi])+'), розрив <b>'+f2(vals[bi]-vals[wi])+
+    '</b>. Але «декодер із видимим питанням» дає '+f2(T5T[4][key])+
+    ' при вдвічі меншій кількості ваг — тобто відіграє '+
+    f2((T5T[4][key]-vals[3])/(vals[0]-vals[3])*100)+' % відриву самою лише зміною маски.');
+}
+
+/* ═══════ 13 · одна задача проти двох ═══════ */
+function draw13(){
+  var cv=I('c13'), g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var one=D.multi.one, two=D.multi.two;
+  var y0=52, y1=H-58;
+  /* ліва половина — F1, права — втрата відновлення */
+  function half(x0,x1,a,b,lo,hi,label,fmt,better){
+    var i;
+    function fy(v){ return y1-(y1-y0)*(v-lo)/(hi-lo); }
+    capt(g,label,x0,32,C_SOFT,10,true);
+    for(i=0;i<=3;i++){ var v=lo+(hi-lo)*i/3; dash(g,x0,fy(v),x1,C_HAIR);
+      capt(g,fmt(v),x0-6,fy(v)+4,C_SOFT,9.5,false,'right'); }
+    var xs=[x0+(x1-x0)*0.32, x0+(x1-x0)*0.72], sets=[a,b], cols=[C_TEAL,C_ROSE];
+    for(i=0;i<2;i++){
+      var d=sets[i], x=xs[i];
+      alpha(g,0.18,function(){ g.fillStyle=cols[i]; g.fillRect(x-30,fy(d.med),60,y1-fy(d.med)); });
+      whisk(g,x,fy(d.lo),fy(d.hi),fy(d.med),cols[i]);
+      capt(g,fmt(d.med),x,fy(d.hi)-11,cols[i],12,true,'center');
+      capt(g,i===0?'одна':'дві',x,y1+18,C_INK,11,true,'center');
+    }
+  }
+  var f1all=one.f1.concat(two.f1);
+  half(84, W/2-24,
+       {med:one.med,lo:one.lo,hi:one.hi}, {med:two.med,lo:two.lo,hi:two.hi},
+       Math.min.apply(null,f1all)-0.05, Math.max.apply(null,f1all)+0.05,
+       'F1 КЛАСИФІКАЦІЇ', f2);
+  var nall=one.nll.concat(two.nll);
+  half(W/2+64, W-30,
+       {med:one.nllMed,lo:Math.min.apply(null,one.nll),hi:Math.max.apply(null,one.nll)},
+       {med:two.nllMed,lo:Math.min.apply(null,two.nll),hi:Math.max.apply(null,two.nll)},
+       Math.min.apply(null,nall)-0.4, Math.max.apply(null,nall)+0.4,
+       'ВТРАТА ВІДНОВЛЕННЯ, НАТ', f2);
+  capt(g,'ліворуч — вище краще · праворуч — нижче краще',24,H-14,C_SOFT,10.5);
+  I('k13a').textContent = 'F1 '+f4(one.med)+' · втрата '+f2(one.nllMed);
+  I('k13b').textContent = 'F1 '+f4(two.med)+' · втрата '+f2(two.nllMed);
+  var ov = one.lo<=two.hi && two.lo<=one.hi;
+  var better = two.med > one.med;
+  verd('v13', ov?'t-ok':(better?'t-ok':'t-mid'),'ТРИ ЗЕРНА',
+    'Класифікація: <b>'+f4(one.med)+'</b> в однозадачної проти <b>'+f4(two.med)+
+    '</b> у двозадачної — купи '+
+    (ov ? 'перетинаються, тобто половина кроків, віддана другій задачі, майже нічого не коштувала.'
+        : (better ? 'не перетинаються, і краща — <b>двозадачна</b>, дарма що бачила вдвічі менше міток.'
+                  : 'не перетинаються, тобто друга задача таки забрала якість.'))+
+    ' Відновлення: <b>'+f2(one.nllMed)+'</b> проти <b>'+f2(two.nllMed)+
+    '</b> ната — друге вміння є лише в тієї, що вчила обидві.');
+}
+
+/* ═══════ 14 · ціна породження ═══════ */
+var ki14 = 0;
+function draw14(){
+  var cv=I('c14'), g=dpr(cv), W=LW(cv), H=LH(cv), i;
+  var ks=D.gen.k, ms=D.gen.ms;
+  var lo=0, hi=Math.max.apply(null,ms)*1.15;
+  var x0=76, x1=W-40, y0=44, y1=H-56;
+  function fx(i){ return x0+(x1-x0)*i/(ks.length-1); }
+  function fy(v){ return y1-(y1-y0)*(v-lo)/(hi-lo); }
+  for(i=0;i<=4;i++){ var v=lo+(hi-lo)*i/4; dash(g,x0,fy(v),x1,C_HAIR);
+    capt(g,f2(v),x0-8,fy(v)+4,C_SOFT,10,false,'right'); }
+  g.strokeStyle=C_ROSE; g.lineWidth=2.2; g.beginPath();
+  for(i=0;i<ks.length;i++){ if(i===0) g.moveTo(fx(i),fy(ms[i])); else g.lineTo(fx(i),fy(ms[i])); }
+  g.stroke();
+  for(i=0;i<ks.length;i++){
+    dot(g,fx(i),fy(ms[i]), i===ki14?5.5:3.2, i===ki14?C_ROSE:C_SOFT);
+    capt(g,String(ks[i]),fx(i),y1+18,i===ki14?C_ROSE:C_SOFT,10.5,i===ki14,'center');
+  }
+  /* лінія «один прогін з еталоном» */
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=C_TEAL; g.lineWidth=1.6;
+  g.beginPath(); g.moveTo(x0,fy(D.gen.teacher)); g.lineTo(x1,fy(D.gen.teacher)); g.stroke(); g.restore();
+  capt(g,'один прогін з еталоном на 16 позицій: '+f2(D.gen.teacher)+' мс',x1,fy(D.gen.teacher)+16,C_TEAL,10.5,true,'right');
+  capt(g,'слів у відповіді',(x0+x1)/2,H-14,C_SOFT,10.5,false,'center');
+  capt(g,'ПРОЦЕСОРНИЙ ЧАС НА БАТЧ ІЗ 64, МС',24,26,C_SOFT,10,true);
+  I('k14v').textContent = ks[ki14];
+  I('k14a').textContent = f2(ms[ki14]);
+  I('k14b').textContent = f2(ms[ki14]/ms[0])+'×';
+  verd('v14', ki14===0?'t-ok':(ki14<=2?'t-mid':'t-no'), (ks[ki14]+' '+slova(ks[ki14])).toUpperCase(),
+    'Написати '+ks[ki14]+' ' + slova(ks[ki14]) +
+    ' коштує <b>'+f2(ms[ki14])+' мс</b>' +
+    (ki14===0 ? ' — це найдешевший можливий випадок, один прогін декодера.'
+              : ' — у <b>'+f2(ms[ki14]/ms[0])+' раза</b> більше за одне слово.') +
+    ' Для порівняння, той самий декодер на 16 позиціях '+
+    '<b>з еталоном</b>, тобто одним прогоном, коштує '+f2(D.gen.teacher)+
+    ' мс — у '+f2(ms[ks.length-1]/D.gen.teacher)+' раза дешевше за 16 послідовних кроків. '+
+    'Уся різниця — у тому, що під час навчання відповідь уже відома, а під час роботи ні.');
+}
+
+/* ═══════ керування ═══════ */
+segment('seg1', function(i){ arch1=i; draw1(); });
+on('pos1','input', function(){ pos1=+I('pos1').value; I('pos1v').textContent=pos1; draw1(); });
+on('step2','input', function(){ step2=+I('step2').value; I('step2v').textContent=step2; draw2(); });
+on('dep3','input', function(){ dep3=+I('dep3').value; I('dep3v').textContent=dep3; draw3(); });
+segment('seg3', function(i){ mode3=i; draw3(); });
+segment('seg4', function(i){ task4=i; draw4(); });
+segment('seg5', function(i){ cor5=i; draw5(); });
+segment('seg6', function(i){ view6=i; draw6(); });
+on('rate7','input', function(){ rate7=+I('rate7').value; I('rate7v').textContent=rate7+' %'; draw7(); });
+on('len7','input', function(){ len7=+I('len7').value; I('len7v').textContent=len7; draw7(); });
+on('st8','input', function(){ st8=+I('st8').value; draw8(); });
+segment('seg10', function(i){ sel10=i; draw10(); });
+segment('seg11', function(i){ mode11=i; draw11(); });
+segment('seg12', function(i){ bench12=i; draw12(); });
+on('k14','input', function(){ ki14=+I('k14').value; draw14(); });
+
+function drawAll(){
+  palette();
+  draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7();
+  draw8(); draw9(); draw10(); draw11(); draw12(); draw13(); draw14();
+}
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+})();
+</script>

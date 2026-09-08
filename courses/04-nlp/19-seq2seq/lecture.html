@@ -1,0 +1,1765 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>seq2seq і машинний переклад</title>
+<meta name="description" content="Енкодер-декодер із двох GRU на паралельному корпусі з 58 132 пар «англійський оригінал → український переклад». При поданому еталоні модель угадує 0.3847 токенів, у справжній генерації — лише 0.2112, тобто у 1.82 раза менше; цілий рядок збігається з людським перекладом у 0.0116 випадків, BLEU 0.0843. Якість падає з довжиною джерела: горб на 3 словах, від 4 до 8 слів втрачається 0.0764 при розкиді 0.0032 по трьох зернах. Утричі коротший вектор контексту (64 чисел замість 192) опускає криву всюди, але її нахил міняє лише на 0.0052 при сумі розкидів 0.0065 — тож розмір вектора наш дослід причиною спаду не назвав. Ширший beam search робить гірше (0.2498 проти 0.2094), поки не ввімкнути нормалізацію довжини.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* сегменти цієї теми переносяться по два в рядок */
+.seg.wrap button{flex:1 1 46%}
+
+/* довгі рядки прикладів не мусять розпирати сторінку */
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 4 · Тема 19</p>
+    <h1>seq2seq і машинний переклад</h1>
+    <p class="stand">Наш корпус увесь час був паралельним: у кожному записі англійський
+      рядок лежить поруч зі своїм українським перекладом. Тут ми нарешті цим скористаємось —
+      і збудуємо перекладач, у якого все речення стискається в <b>192 числа</b>.
+      А потім чесно подивимось, що з нього вийшло.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Коли вихід — теж послідовність</a></li>
+        <li><a href="#s2">Корпус, який уже паралельний</a></li>
+        <li><a href="#s3">Енкодер: одне речення — один вектор</a></li>
+        <li><a href="#s4">Декодер: слово за словом</a></li>
+        <li><a href="#s5">Подавання еталона</a></li>
+        <li><a href="#s6">Перше число — і що воно означає</a></li>
+        <li><a href="#s7">Крива за довжиною джерела</a></li>
+        <li><a href="#s8">Скільки місця припадає на слово</a></li>
+        <li><a href="#s9">Справжня генерація без еталона</a></li>
+        <li><a href="#s10">Промінь замість жадібності</a></li>
+        <li><a href="#s11">BLEU і чому він тут мовчить</a></li>
+        <li><a href="#s12">Що ми справді знаємо</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../18-lstm-gru/lecture.html">← 18. LSTM і GRU</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../20-rnn-limits/lecture.html">20. Межі RNN →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+<p class="lead">Усі моделі, які ми досі будували, віддавали на виході <b>одну</b> річ:
+мітку класу, номер теми, наступне слово. Навіть мовна модель із теми 16 відповідає на
+питання «яке слово далі», а не «як звучить це речення іншою мовою». Машинний переклад
+ставить задачу інакше: на вході послідовність, на виході теж послідовність — іншої
+довжини, іншою мовою, і без жодної підказки, яке слово якому відповідає. Ця тема
+показує найпростішу конструкцію, яка це вміє, і чесно міряє, наскільки в неї виходить.</p>
+
+<h2 id="s1"><span class="num">01 / Постановка</span>Коли вихід — теж послідовність</h2>
+
+<p>Порівняймо три задачі, які ми вже бачили, з тією, що починається зараз.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>задача</th><th>вхід</th><th>вихід</th></tr></thead>
+  <tbody>
+  <tr><td><a href="../06-text-classification/lecture.html">класифікація текстів (тема 06)</a></td><td>речення</td><td>одна мітка з кількох</td></tr>
+  <tr><td><a href="../08-topic-modeling/lecture.html">тематичне моделювання (тема 08)</a></td><td>документ</td><td>розподіл по темах</td></tr>
+  <tr><td>мовна модель (тема 16)</td><td>початок речення</td><td>одне наступне слово</td></tr>
+  <tr><td><b>машинний переклад</b></td><td>речення однією мовою</td><td><b>речення іншою мовою</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Різниця не в розмірі, а в трьох властивостях виходу одразу.</p>
+
+<p><b>Довжина виходу заздалегідь невідома.</b> Англійське речення з пʼятьох слів може
+дати український переклад із трьох або з семи. Модель мусить сама вирішити, коли
+спинитись, — і це рішення теж треба чимось виражати.</p>
+
+<p><b>Вихід має свій словник.</b> Досі вхід і вихід моделі жили в одному просторі:
+вектор слова заходив, вектор слова виходив. Тут заходить англійське слово, а виходить
+українське, і ці два словники не перетинаються навіть частково.</p>
+
+<p><b>Ніхто не каже, яке слово якому відповідає.</b> У нас є пари «речення — переклад»,
+але не «слово — слово». Порядок теж не збігається: там, де англійська ставить дієслово
+другим, українська може поставити його останнім. Вирівнювати слова доведеться самій
+моделі, і ніхто не перевірить, чи вона це зробила правильно.</p>
+
+<p>Загальна схема, яка розвʼязує всі три задачі одразу, зветься <b>seq2seq</b>
+(sequence to sequence, послідовність у послідовність). Вона складається з двох частин:
+<b>енкодер</b> читає вхід і перетворює його на внутрішнє подання, <b>декодер</b> із
+цього подання породжує вихід. Переклад тут — лише найзручніша ілюстрація: так само
+влаштовані сумаризація, відповідь на питання й переписування тексту.</p>
+
+<h2 id="s2"><span class="num">02 / Дані</span>Корпус, який уже паралельний</h2>
+
+<p>Досі ми брали з файлів української локалі тільки переклади й забували про оригінали.
+Насправді там лежить дещо цінніше: <b>кожен запис — це пара</b>. Англійський рядок
+інтерфейсу і його український переклад, вирівняні за побудовою, бо їх зіставила людина,
+яка ту програму перекладала. Це і є <b>паралельний корпус</b> — і машинний переклад
+навчають саме на такому матеріалі. Ту саму його властивість ми вже використали в <a href="../02-tokenization/lecture.html">темі 02</a>, коли міряли, у скільки разів дорожче обходиться українська в токенах.</p>
+
+<p>Записів у корпусі <b>93 392</b>. Ми беремо ті пари, де <b>обидва</b> боки мають від
+двох до восьми слів; таких — <b>58 132</b>. Верхня межа потрібна через час: довші
+речення дорожчі, а їх у нас усе одно мало. Нижня прибирає підписи з одного слова,
+з яких вчитися нема чого.</p>
+
+<figure>
+  <p class="fig-head">Скільки пар лишається після фільтра довжини</p>
+  <p class="fig-sub">Стовпчик — скільки пар (або слововживань) припадає на таку довжину
+    англійського боку. Повзунок пересуває верхню межу; підсумок під ним рахується з тих
+    самих чисел.</p>
+  <div class="panel">
+    <canvas id="c1" width="640" height="330" data-lw="640" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="maxlen1">верхня межа, слів <output id="maxlen1v">8</output></label>
+        <input type="range" id="maxlen1" min="2" max="8" step="1" value="8">
+      </div>
+      <div class="ctl">
+        <span class="cap">що показувати</span>
+        <div class="seg" id="seg1">
+          <button data-i="0" aria-pressed="true">пари</button>
+          <button data-i="1" aria-pressed="false">слова</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b id="k1aL">пар у межах</b><i id="k1a">—</i></div>
+        <div class="cellv"><b id="k1bL">частка пар</b><i id="k1b">—</i></div>
+        <div class="cellv"><b>медіана довжини</b><i id="k1c">—</i></div>
+        <div class="cellv"><b>найгустіша довжина</b><i id="k1d">—</i></div>
+      </div>
+      <div class="verdict" id="v1"></div>
+    </div>
+  </div>
+  <figcaption id="cap1"></figcaption>
+</figure>
+
+<p>Про цей текст треба сказати чесно одразу. Це <b>переклади інтерфейсів</b>: короткі
+речення, наказовий спосіб, повідомлення про помилки, технічна лексика. Ще й із
+підстановками на кшталт <code>%s</code>, від яких після токенізації лишається самотня
+літера <code>s</code> — чистий шум, з яким моделі доведеться жити. Висновків про
+переклад узагалі з такого корпусу робити не можна. Зате він офлайн, детермінований
+і справді паралельний.</p>
+
+<p>Поділ — той самий, що в усьому блоці: 90 на 10 із зерном 0. Навчальних пар ми беремо
+<b>18 000</b> — це вимога бюджету часу, а не властивість даних; перевірних лишається
+<b>5 814</b>. Словників тут <b>два</b>: англійський на <b>3 509</b> слів і український
+на <b>4 015</b>. Обидва зібрані лише за навчальною частиною й лише зі слів, що
+трапились принаймні тричі; усе інше стає <code>&lt;unk&gt;</code>. Частка таких слів
+серед українських токенів перевірної частини — <b>0.1243</b>, тобто майже кожне сьоме.
+Це число варто памʼятати до самого кінця теми: сьоме слово еталона моделі просто
+невідоме, і вгадати його вона не може за жодних обставин.</p>
+
+<h2 id="s3"><span class="num">03 / Енкодер</span>Енкодер: одне речення — один вектор</h2>
+
+<p>Енкодер — це знайома з теми 18 <b>GRU</b>. Вона читає англійське речення по одному
+слову й на кожному кроці оновлює свій стан: бере попередній стан, бере вектор нового
+слова й видає новий стан. Довжина стану стала — у нас це <b>192 числа</b>.</p>
+
+<div class="eq">h<span class="sub">t</span> = GRU(h<span class="sub">t−1</span>, e(x<span class="sub">t</span>))</div>
+
+<p>Читається так: стан після <span class="raw">t</span>-го слова виходить із
+попереднього стану <span class="raw">h<span class="sub">t−1</span></span> і вектора
+<span class="raw">e(x<span class="sub">t</span>)</span> цього слова. Що саме робить
+всередині GRU — три брами й тангенс — розібрано в темі 18; тут важлива лише одна
+властивість: <b>стан не росте</b>. Скільки б слів не прийшло, чисел у ньому лишається
+192.</p>
+
+<p>Коли слова скінчились, ми беремо <b>останній стан</b> і оголошуємо його поданням
+усього речення. Це і є <b>вектор контексту</b>. Далі енкодер більше не потрібен:
+англійського тексту декодер не побачить ніколи, він працюватиме тільки з цими
+192 числами.</p>
+
+<div class="note"><b>Чому це і є головна думка теми.</b> Речення з двох слів і речення
+з восьми стискаються в однакову кількість чисел. Ніхто не обіцяв, що восьми словам там
+буде так само зручно, як двом. Ми цю обіцянку перевіримо числом у розділі 7.</div>
+
+<figure>
+  <p class="fig-head">Одне речення, два ланцюги й один вектор між ними</p>
+  <p class="fig-sub">Три пари підряд із перевірної частини — не вибрані, а перші.
+    Повзунок веде крок за кроком: спершу енкодер читає, потім декодер пише.</p>
+  <div class="panel">
+    <canvas id="c2" width="640" height="330" data-lw="640" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">пара з перевірної частини</span>
+        <div class="seg" id="seg2">
+          <button data-i="0" aria-pressed="true">1</button>
+          <button data-i="1" aria-pressed="false">2</button>
+          <button data-i="2" aria-pressed="false">3</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="step2">крок <output id="step2v">0</output></label>
+        <input type="range" id="step2" min="0" max="14" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>прочитано слів</b><i id="k2a">—</i></div>
+        <div class="cellv"><b>чисел у стані</b><i id="k2b">—</i></div>
+        <div class="cellv"><b>написано слів</b><i id="k2c">—</i></div>
+        <div class="cellv"><b>фаза</b><i id="k2d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v2"></div>
+    </div>
+  </div>
+  <figcaption id="cap2"></figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Декодер</span>Декодер: слово за словом</h2>
+
+<p>Декодер — теж GRU, але українська. Відмінностей від енкодера рівно дві.</p>
+
+<p><b>Перша: він починає не з нуля.</b> Стартовим станом декодера стає вектор контексту.
+Саме через це — і тільки через це — англійське речення взагалі впливає на переклад.</p>
+
+<p><b>Друга: він не лише оновлює стан, а й говорить.</b> Після кожного кроку стан
+проходить через лінійний шар, який перетворює 192 числа на 4 015 балів — по одному
+на кожне слово українського словника. Функція <code>softmax</code> робить із балів
+імовірності, і найімовірніше слово стає відповіддю.</p>
+
+<p>Щоб цей цикл мав початок і кінець, потрібні два службові слова. <code>&lt;bos&gt;</code>
+подають декодерові першим — це сигнал «починай». <code>&lt;eos&gt;</code> декодер має
+<b>сам</b> поставити тоді, коли вважає переклад закінченим. Без нього модель не знає,
+де спинитись, і пише, доки не впреться в запобіжник.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1</span>
+    <p>Стан декодера дорівнює вектору контексту, на вході — <code>&lt;bos&gt;</code>.</p>
+    <div class="eq left">s₀ = c            вхід: &lt;bos&gt;</div>
+  </div>
+  <div class="step"><span class="lbl">крок 2</span>
+    <p>GRU оновлює стан, лінійний шар дає бали для всіх 4 015 слів, softmax — імовірності.</p>
+    <div class="eq left">s₁ = GRU(s₀, e(&lt;bos&gt;))
+p₁ = softmax(W · s₁ + b)</div>
+  </div>
+  <div class="step"><span class="lbl">крок 3</span>
+    <p>Обране слово стає входом наступного кроку. І так, доки не зʼявиться <code>&lt;eos&gt;</code>.</p>
+    <div class="eq left">y₁ = argmax p₁   →   вхід кроку 2</div>
+  </div>
+</div>
+
+<p>Уся модель разом важить <b>2 108 911</b> параметрів — і розподілені вони зовсім не
+там, де очікуєш. На кожен рекурентний блок припадає лише <b>8.8 %</b>, тобто на
+обидва разом менше за пʼяту частину. Найдорожчий — <b>вихідний лінійний шар</b>,
+<b>36.7 %</b>: у нього 192 входи і 4 015 виходів, і кожне слово словника
+вимагає власного рядка ваг. Ще <b>21.3 %</b> і <b>24.4 %</b> займають дві
+таблиці ембедингів.</p>
+
+<p>Тобто майже вся вага моделі — це <b>словники</b>, а не сама рекурентність. Наслідок
+практичний: кожна секунда навчання коштує тим більше, чим більший словник, і в бідних
+на час умовах ріжуть саме його. Ми так і зробили — і за це заплатили тим, що кожне
+сьоме слово перевірної частини стало <code>&lt;unk&gt;</code>.</p>
+
+<h2 id="s5"><span class="num">05 / Навчання</span>Подавання еталона</h2>
+
+<p>Тепер найтонше місце. Декодер має вчитися писати переклад по слову, спираючись на
+те, що вже написав. Але на початку навчання він пише дурниці. Якщо на другому кроці
+подати йому власне перше слово, а воно неправильне, то третій крок робиться з
+неправильного місця, четвертий — із ще гіршого, і майже все навчання йде на
+розбирання власного сміття.</p>
+
+<p>Тому декодерові подають <b>еталон</b>: на кожному кроці на вхід іде правильне
+попереднє слово з людського перекладу, а не власне передбачення. Англійською це
+<code>teacher forcing</code>, українською — <b>подавання еталона</b>.</p>
+
+<p>Технічно це один зсув. Вхід декодера — еталонний переклад із <code>&lt;bos&gt;</code>
+спереду; те, що він має вгадати, — той самий переклад, зсунутий на одну позицію, з
+<code>&lt;eos&gt;</code> у кінці.</p>
+
+<div class="eq left">вхід декодера : &lt;bos&gt;  не      вдалося  відкрити  файл
+має вгадати   : не      вдалося відкрити  файл      &lt;eos&gt;</div>
+
+<p>Тобто всі кроки можна порахувати <b>одночасно</b>, одним проходом GRU по всій
+послідовності: жоден крок не чекає на результат попереднього, бо його вхід уже відомий.
+Навчання від цього прискорюється в рази — і саме тому подавання еталона є стандартом,
+а не хитрощами.</p>
+
+<div class="note warn"><b>Ціна, яку за це платять.</b> Модель ніколи не тренувалась
+працювати з власними помилками, бо під час навчання їх просто не бачила. У бою еталона
+немає, і перша ж помилка виводить її в стан, якого вона не зустрічала. Наскільки це
+дорого коштує, ми заміряємо в розділі 9 — і число там неприємне.</div>
+
+<h2 id="s6"><span class="num">06 / Перше число</span>Перше число — і що воно означає</h2>
+
+<p>Навчаємо три моделі — по одній на зерно. Зерно міняє ініціалізацію ваг і порядок
+батчів, але не дані: поділ зафіксовано окремим зерном. Дві епохи, батч 128,
+<code>Adam</code> зі швидкістю навчання 0.002. Навчання одного зерна коштує
+<b>43.7 ± 0.9</b> процесорних секунд.</p>
+
+<p>Мірка найдешевша з можливих: скільки токенів декодер угадав правильно <b>при
+поданому еталоні</b>. Виходить <b>0.3847</b> при розкиді по трьох зернах <b>±0.0049</b>.</p>
+
+<div class="note warn"><b>Це не якість перекладу.</b> Число вище відповідає на питання
+«наскільки легко продовжити правильний початок», а зовсім не на питання «чи вийшов
+переклад». Модель отримує безкоштовно весь префікс людського перекладу й мусить назвати
+лише одне наступне слово. Мірка зручна, дешева й придатна для порівняння моделей між
+собою — але видавати її за оцінку перекладу не можна. Справжню генерацію ми запустимо
+в розділі 9, і різниця виявиться майже вдвічі.</div>
+
+<p>Одну деталь варто назвати одразу: <code>&lt;eos&gt;</code> ми теж рахуємо як токен.
+Уміння спинитись — частина задачі, а не технічна дрібниця, і викидати його з підрахунку
+означало б приховати частину роботи декодера.</p>
+
+<h2 id="s7"><span class="num">07 / Довжина</span>Крива за довжиною джерела</h2>
+
+<p>Тепер найцікавіше. Розкладемо ту саму частку правильних за довжиною <b>англійського</b>
+речення — окремо для двох слів, трьох, і так до восьми.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>слів у джерелі</th><th>перевірних пар</th><th>частка правильних</th><th>розкид</th></tr></thead>
+<tbody>
+<tr><td>2</td><td>30</td><td>0.3846</td><td>±0.0140</td></tr>
+<tr class="hot"><td>3</td><td>289</td><td>0.4458</td><td>±0.0055</td></tr>
+<tr><td>4</td><td>761</td><td>0.4213</td><td>±0.0026</td></tr>
+<tr><td>5</td><td>1 170</td><td>0.4118</td><td>±0.0076</td></tr>
+<tr><td>6</td><td>1 392</td><td>0.3876</td><td>±0.0057</td></tr>
+<tr><td>7</td><td>1 210</td><td>0.3647</td><td>±0.0055</td></tr>
+<tr><td>8</td><td>962</td><td>0.3449</td><td>±0.0031</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Крива не спадає рівно, як можна було б очікувати. Вона має <b>горб</b>: найкраще
+модель почувається на 3 словах, а далі якість повільно, але неухильно падає.
+Від чотирьох слів до восьми втрачається <b>0.0764</b> при розкиді по зернах
+<b>±0.0032</b> — тобто це справжня різниця, а не шум.</p>
+
+<p>Лівий край кривої падає з іншої причини, і її варто назвати окремо. Пар із двома
+словами в корпусі всього <b>404</b> — менше за відсоток. Модель майже не бачила
+таких прикладів, а самі вони найнеоднозначніші: коротка англійська фраза без контексту
+може перекладатися десятком способів, і всі однаково правильні. Це не властивість
+seq2seq, а властивість наших даних.</p>
+
+<figure>
+  <p class="fig-head">Частка правильних токенів за довжиною джерела</p>
+  <p class="fig-sub">Стовпчик — середнє по трьох зернах, вусик — межі купи.
+    Перемикач міняє і модель, і спосіб міряти.</p>
+  <div class="panel">
+    <canvas id="c3" width="640" height="340" data-lw="640" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">що міряємо</span>
+        <div class="seg wrap" id="seg3">
+          <button data-i="0" aria-pressed="true">еталон, H=192</button>
+          <button data-i="1" aria-pressed="false">еталон, H=64</button>
+          <button data-i="2" aria-pressed="false">без еталона</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="len3">довжина джерела <output id="len3v">4</output></label>
+        <input type="range" id="len3" min="2" max="8" step="1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>на цій довжині</b><i id="k3a">—</i></div>
+        <div class="cellv"><b>розкид по зернах</b><i id="k3b">—</i></div>
+        <div class="cellv"><b>горб на</b><i id="k3c">—</i></div>
+        <div class="cellv"><b>падіння 4 → 8</b><i id="k3d">—</i></div>
+      </div>
+      <div class="verdict" id="v3"></div>
+    </div>
+  </div>
+  <figcaption id="cap3"></figcaption>
+</figure>
+
+<p>А от правий бік кривої — це вже про модель. Що довше речення, то гірше, і падіння
+рівне й монотонне. Найпростіше пояснення напрошується саме собою: вектор контексту має
+сталу довжину, і восьми словам у ньому тісніше, ніж чотирьом. Перевіримо це
+припущення — бо припущення, яке напрошується, найчастіше й виявляється неперевіреним.</p>
+
+<h2 id="s8"><span class="num">08 / Вузьке горло</span>Скільки місця припадає на слово</h2>
+
+<p>Спершу арифметика, яку можна зробити в голові. Вектор контексту має 192 числа
+завжди. Якщо в реченні чотири слова, то на слово припадає 48 чисел; якщо вісім — уже
+24. Удвічі менше місця на ту саму роботу.</p>
+
+<div class="eq">чисел на слово = H ÷ L</div>
+
+<p>Тут <span class="raw">H</span> — довжина вектора контексту (у нас 192), а
+<span class="raw">L</span> — кількість слів у джерелі. Ділення тут, звісно, умовне:
+слова не займають окремих ділянок вектора, вони змішані в ньому всі разом. Але
+співвідношення «стала місткість проти змінного обсягу» від цього не зникає.</p>
+
+<p>Найпряміший спосіб перевірити, чи справа справді в місткості, — <b>зменшити її</b>.
+Навчимо ті самі три зерна на тих самих даних, але з вектором на <b>64 числа</b>
+замість 192. Якщо винен розмір, довгі речення мають постраждати помітно сильніше
+за короткі.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>слів</th><th>H = 192</th><th>розкид</th><th>H = 64</th><th>розкид</th><th>різниця</th></tr></thead>
+<tbody>
+<tr><td>2</td><td>0.3846</td><td>±0.0140</td><td>0.3683</td><td>±0.0140</td><td>0.0163</td></tr>
+<tr><td>3</td><td>0.4458</td><td>±0.0055</td><td>0.3878</td><td>±0.0055</td><td>0.0579</td></tr>
+<tr><td>4</td><td>0.4213</td><td>±0.0026</td><td>0.3479</td><td>±0.0014</td><td>0.0733</td></tr>
+<tr><td>5</td><td>0.4118</td><td>±0.0076</td><td>0.3393</td><td>±0.0018</td><td>0.0725</td></tr>
+<tr><td>6</td><td>0.3876</td><td>±0.0057</td><td>0.3052</td><td>±0.0012</td><td>0.0824</td></tr>
+<tr><td>7</td><td>0.3647</td><td>±0.0055</td><td>0.2862</td><td>±0.0014</td><td>0.0785</td></tr>
+<tr><td>8</td><td>0.3449</td><td>±0.0031</td><td>0.2663</td><td>±0.0021</td><td>0.0785</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Результат подвійний, і другу його половину приємною не назвеш.</p>
+
+<p><b>Що підтвердилось:</b> коротший вектор гірший скрізь. Модель із 64 числами
+програє на кожній довжині, і на всіх довжинах, крім найкоротшої, різниця в кілька разів
+більша за розкид по зернах. На двох словах — ні, але там і пар усього 404, тож
+цій точці взагалі не варто вірити. Місткість вектора справді впливає на якість, і це
+не здогад.</p>
+
+<p><b>Що не підтвердилось:</b> нахил кривої майже не змінився. Падіння від чотирьох
+слів до восьми становить <b>0.0764</b> у великої моделі й <b>0.0816</b> у малої;
+різниця між ними <b>+0.0052</b> при сумі розкидів <b>0.0065</b>.
+Різниця <b>менша</b> за суму розкидів, тобто дослід її не розділив. Утричі коротший вектор псує переклад усюди однаково, а не карає окремо довгі речення. Отже, назвати розмір вектора причиною саме <b>спаду з довжиною</b> ми не маємо права: наш замір цього не показав.</p>
+
+<figure>
+  <p class="fig-head">Скільки чисел вектора припадає на одне слово</p>
+  <p class="fig-sub">Ліворуч — арифметика: сталий вектор ділиться на різну кількість слів.
+    Праворуч — виміряна частка правильних проти цієї самої величини.</p>
+  <div class="panel">
+    <canvas id="c4" width="640" height="330" data-lw="640" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="len4">слів у джерелі <output id="len4v">4</output></label>
+        <input type="range" id="len4" min="2" max="8" step="1" value="4">
+      </div>
+      <div class="ctl">
+        <span class="cap">довжина вектора <span class="raw">H</span></span>
+        <div class="seg" id="seg4">
+          <button data-i="0" aria-pressed="true">192</button>
+          <button data-i="1" aria-pressed="false">64</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>чисел на слово</b><i id="k4a">—</i></div>
+        <div class="cellv"><b>правильних</b><i id="k4b">—</i></div>
+        <div class="cellv"><b>падіння 4 → 8</b><i id="k4c">—</i></div>
+        <div class="cellv"><b>розкид падіння</b><i id="k4d">—</i></div>
+      </div>
+      <div class="verdict" id="v4"></div>
+    </div>
+  </div>
+  <figcaption id="cap4"></figcaption>
+</figure>
+
+<div class="note warn"><b>Чого ми з цього не маємо права сказати.</b> Спокуса написати
+«ось доказ, що потрібна увага» дуже велика — і піддатись їй не можна. Увагу ми в цій
+темі не міряли жодного разу, тож порівнювати нема з чим. Чесне формулювання коротше:
+<b>якість падає з довжиною джерела, і причина структурна</b> — усе речення проходить
+через один вектор сталого розміру. Наш власний дослід із утричі коротшим вектором цю причину <b>не виділив</b>
+з-поміж інших. Що з цим роблять насправді —
+предмет наступного блоку, і там це буде виміряно, а не проголошено.</div>
+
+<h2 id="s9"><span class="num">09 / Без еталона</span>Справжня генерація без еталона</h2>
+
+<p>Час прибрати милиці. Тепер декодер починає з <code>&lt;bos&gt;</code> і далі годує
+себе тим, що написав сам. Найпростіша стратегія — <b>жадібне декодування</b>: на
+кожному кроці беремо найімовірніше слово й ідемо далі.</p>
+
+<p>Три мірки поруч, усі три на тих самих трьох зернах:</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>мірка</th><th>значення</th><th>розкид по трьох зернах</th></tr></thead>
+<tbody>
+<tr class="hot"><td>токенів угадано при поданому еталоні</td><td>0.3847</td><td>±0.0049</td></tr>
+<tr class="hot"><td>токенів угадано у справжній генерації</td><td>0.2112</td><td>±0.0097</td></tr>
+<tr><td>рядок збігся цілком</td><td>0.0116</td><td>±0.0015</td></tr>
+<tr><td>BLEU жадібного декодування</td><td>0.0843</td><td>±0.0065</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Читається це так. При поданому еталоні модель угадує <b>0.3847</b> токенів; без
+еталона — <b>0.2112</b>, тобто <b>у 1.82 раза менше</b>. А цілий рядок, слово в
+слово, збігається з людським перекладом у <b>0.0116</b> випадків — приблизно один
+переклад із 86.</p>
+
+<p>Ось десять перекладів підряд із перевірної частини. Не найкращих: просто перших
+десяти. Добір прикладів — найдешевший спосіб збрехати, не сказавши жодної неправди.</p>
+
+<div class="scroll-x">
+<table class="plain">
+<thead><tr><th>англійське джерело</th><th>переклад людини</th><th>переклад моделі</th></tr></thead>
+<tbody>
+<tr><td>display only the function key strings</td><td>вивести лише рядки &lt;unk> клавіш</td><td>показувати лише у &lt;unk> &lt;unk></td></tr>
+<tr><td>no valid &lt;unk> given</td><td>не вказано коректних &lt;unk></td><td>не знайдено &lt;unk> &lt;unk></td></tr>
+<tr><td>warning could not retrieve tty information</td><td>попередження не вдалося отримати інформацію про</td><td>не вдалося отримати дані щодо &lt;unk></td></tr>
+<tr><td>sasl mechanism s not supported by server</td><td>підтримки &lt;unk> не передбачено на сервері</td><td>підтримки не підтримується</td></tr>
+<tr><td>must be after s to use s</td><td>має бути розташовано після щоб можна було користуватися</td><td>має бути &lt;unk> &lt;unk></td></tr>
+<tr><td>unable to get cpu account</td><td>не вдалося отримати обліковий запис процесора</td><td>не вдалося отримати дані щодо &lt;unk></td></tr>
+<tr><td>pragma gcc &lt;unk> requires a string parameter</td><td>вимагає рядковий параметр</td><td>&lt;unk> &lt;unk> &lt;unk></td></tr>
+<tr><td>&lt;unk> z axis &lt;unk></td><td>&lt;unk> &lt;unk> &lt;unk></td><td>&lt;unk> &lt;unk> &lt;unk> &lt;unk></td></tr>
+<tr><td>s is not a symbolic link</td><td>не є &lt;unk> посиланням</td><td>не є &lt;unk> &lt;unk></td></tr>
+<tr><td>dpi photo black color cartridge photo paper</td><td>&lt;unk> чорний кольоровий картридж фотопапір</td><td>&lt;unk> &lt;unk> &lt;unk> &lt;unk> &lt;unk> &lt;unk></td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Виглядає це погано, і прикрашати тут нічого. Причина не в конструкції, а в масштабі:
+на <b>18 000</b> навчальних парах і словнику з 4 015 слів, де кожне сьоме слово
+перевірної частини моделі взагалі невідоме, іншого результату й не буде. Робочі системи
+перекладу вчаться на корпусах, більших за наш на кілька порядків. Наша модель показує
+<b>механізм</b>, а не якість, і саме тому всі числа тут подано разом із конфігурацією —
+вирваними зі своєї конфігурації вони не означають нічого.</p>
+
+<h3>Де саме вона ламається</h3>
+
+<p>Порівняємо два режими не в цілому, а покроково: наскільки часто вгадано перше слово
+перекладу, друге, третє. При поданому еталоні кожен крок починається з правильного
+місця. У вільній генерації помилка лишається у вході й тягне за собою наступну.</p>
+
+<p>Найпоказовіше тут <b>перше число</b>: на першій позиції обидва режими дають рівно
+<b>0.3568</b>. І це не збіг, а тотожність — на першому кроці подавати ще нічого,
+історії немає, тож обидва режими роблять буквально те саме обчислення. Уся різниця,
+яка зʼявляється далі, — це накопичена вартість власних помилок.</p>
+
+<figure>
+  <p class="fig-head">З еталоном і без нього: та сама модель, різні криві</p>
+  <p class="fig-sub">Угорі — що бачить декодер на кожному кроці у двох режимах.
+    Унизу — частка правильних окремо для кожної позиції перекладу.</p>
+  <div class="panel">
+    <canvas id="c5" width="640" height="360" data-lw="640" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="pos5">позиція в перекладі <output id="pos5v">1</output></label>
+        <input type="range" id="pos5" min="1" max="6" step="1" value="1">
+      </div>
+      <div class="ctl">
+        <span class="cap">режим</span>
+        <div class="seg" id="seg5">
+          <button data-i="0" aria-pressed="true">подавання еталона</button>
+          <button data-i="1" aria-pressed="false">вільна генерація</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>з еталоном</b><i id="k5a">—</i></div>
+        <div class="cellv"><b>без еталона</b><i id="k5b">—</i></div>
+        <div class="cellv"><b>різниця</b><i id="k5c">—</i></div>
+        <div class="cellv"><b>що на вході</b><i id="k5d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v5"></div>
+    </div>
+  </div>
+  <figcaption id="cap5"></figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Декодування</span>Промінь замість жадібності</h2>
+
+<p>Жадібне декодування бере найімовірніше слово й ніколи до нього не повертається.
+Але найімовірніше слово <b>зараз</b> може закрити дорогу до кращого продовження
+потім — а модель цього не бачить, бо дивиться лише на один крок уперед.</p>
+
+<p><b>beam search</b> тримає одразу <span class="raw">k</span> найкращих незавершених
+версій відповіді. На кожному кроці кожну з них продовжують усіма кандидатами, а з
+усього, що вийшло, лишають знову <span class="raw">k</span> найкращих. Кількість
+версій, які тримають, звуть <b>шириною пошуку</b>. При ширині 1 це рівно жадібний
+вибір — тому жадібне декодування є окремим випадком, а не окремим методом.</p>
+
+<p>Версії порівнюють за сумою логарифмів імовірностей їхніх слів:</p>
+
+<div class="eq">оцінка = log p₁ + log p₂ + … + log p<span class="sub">m</span></div>
+
+<p>Логарифми додають замість того, щоб перемножувати самі ймовірності, з дуже
+приземленої причини: добуток вісьмох чисел, менших за одиницю, швидко стає таким
+малим, що компʼютерна арифметика перестає його розрізняти. Логарифм перетворює
+множення на додавання й прибирає цю проблему.</p>
+
+<figure>
+  <p class="fig-head">Промінь: скільки версій тримати одночасно</p>
+  <p class="fig-sub">Те саме речення, той самий декодер. Ширина 1 — це рівно жадібний вибір.
+    Число біля версії — сума логарифмів імовірностей її слів.</p>
+  <div class="panel">
+    <canvas id="c6" width="640" height="270" data-lw="640" data-lh="270"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="w6">ширина променя <output id="w6v">1</output></label>
+        <input type="range" id="w6" min="1" max="4" step="1" value="1">
+      </div>
+      <div class="ctl">
+        <label for="step6">крок <output id="step6v">1</output></label>
+        <input type="range" id="step6" min="1" max="6" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>версій живих</b><i id="k6a">—</i></div>
+        <div class="cellv"><b>найкраща сума</b><i id="k6b">—</i></div>
+        <div class="cellv"><b>слів у виході</b><i id="k6c">—</i></div>
+        <div class="cellv"><b>правильних на 250</b><i id="k6d">—</i></div>
+      </div>
+      <div class="verdict" id="v6"></div>
+    </div>
+  </div>
+  <figcaption id="cap6"></figcaption>
+</figure>
+
+<p>А тепер замір, який зазвичай у підручниках не показують. Промінь дорогий, тому
+рахуємо його на однаковому для всіх ширин зразку з <b>250</b> перевірних речень —
+і саме тому числа в цій таблиці не збігаються з <b>0.2112</b> вище: там була вся
+перевірна частина, тут її частина. Порівнювати їх між собою можна, з попереднім
+розділом — ні.</p>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>ширина пошуку</th><th>токенів угадано</th><th>точний збіг</th><th>слів у виході</th><th>час, с</th></tr></thead>
+<tbody>
+<tr class="hot"><td>1</td><td>0.2498</td><td>0.0120</td><td>4.39</td><td>0.9</td></tr>
+<tr><td>2</td><td>0.2350</td><td>0.0200</td><td>3.91</td><td>1.5</td></tr>
+<tr><td>4</td><td>0.2215</td><td>0.0240</td><td>3.73</td><td>2.7</td></tr>
+<tr><td>8</td><td>0.2094</td><td>0.0240</td><td>3.52</td><td>5.0</td></tr>
+<tr><td>переклад людини</td><td>—</td><td>—</td><td>4.94</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Ширший промінь зробив <b>гірше</b>. І механізм цього видно просто з формули:
+логарифм числа, меншого за одиницю, відʼємний, тож сума <b>завжди спадає</b> з кожним
+новим словом. З двох версій — короткої й довгої — проста сума майже завжди обирає
+коротку. Що ширший промінь, то більше в нього нагод знайти коротку версію з високою
+оцінкою, і тим коротшим стає вихід: від <b>4.39</b> слова при жадібному виборі до <b>3.52</b> при ширині 8, тоді як у перекладі людини їх <b>4.94</b>.</p>
+
+<p>Лікується це просто: оцінку <b>ділять на довжину</b> в степені
+<span class="raw">alpha</span>. Перевіримо на тому самому зразку.</p>
+
+<div class="note"><b>Одне слово — два різні поняття.</b> Англійською цей поділ теж
+зветься <code>length normalization</code>, як і нормалізація довжини з
+<a href="../04-bag-of-words/lecture.html">теми 04</a>. Але там на довжину ділили
+<b>вектор документа</b>, щоб довгий текст не вигравав просто тому, що довгий, а тут
+ділиться <b>оцінка гіпотези</b>, щоб короткий переклад не вигравав просто тому, що
+короткий. Спільна в них лише назва й спільна причина — довжина не мусить сама по собі
+щось вирішувати.</div>
+
+<div class="scroll-x">
+<table class="nums">
+<thead><tr><th>alpha</th><th>слів у виході</th><th>токенів угадано</th><th>точний збіг</th></tr></thead>
+<tbody>
+<tr><td>0.0</td><td>3.73</td><td>0.2215</td><td>0.0240</td></tr>
+<tr><td>0.7</td><td>4.91</td><td>0.2579</td><td>0.0160</td></tr>
+<tr><td>1.0</td><td>5.76</td><td>0.2552</td><td>0.0200</td></tr>
+<tr><td>переклад людини</td><td>4.94</td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Ділення працює: при <code>alpha = 0.7</code> довжина виходу піднімається з <b>3.73</b> до <b>4.91</b> слова — майже рівно стільки, скільки в еталона (<b>4.94</b>), — а частка правильних росте з <b>0.2215</b> до <b>0.2579</b>, тобто обганяє жадібне декодування (<b>0.2498</b>). При <code>alpha = 1.0</code> вихід уже задовгий (<b>5.76</b> слова), і виграш зникає. Мораль ширша за цей замір: <b>beam search — це не «краще декодування»,
+а окремий метод із власним параметром</b>, і без цього параметра він може працювати
+проти вас. Тут спрацювала та сама закономірність, що в блоці 3: деталь реалізації
+зсуває результат не менше, ніж вибір самого методу.</p>
+
+<h3>Третій спосіб, якого ми тут не міряли</h3>
+
+<p>Жадібний вибір і промінь — обидва <b>детерміновані</b>: та сама модель на тому
+самому реченні щоразу дає ту саму відповідь. Є й третій спосіб — <b>семплювання</b>:
+наступне слово тягнуть навмання, згідно з імовірностями, які дала модель. Керують ним
+трьома ручками: <b>температура</b> (наскільки сміливо відхилятись від найімовірнішого),
+<code>top-k</code> (з якої кількості найкращих варіантів тягнути) і <code>top-p</code>
+(тягнути з тих варіантів, що разом набирають задану частку ймовірності).</p>
+
+<p>Для перекладу семплювання зазвичай зайве: правильна відповідь тут одна, і
+різноманітність нікому не потрібна. Воно стає важливим там, де відповідей багато й
+однаково добрих, — у продовженні тексту, діалозі, генерації ідей. Ми його не міряли,
+тож і чисел про нього тут немає; згадуємо лише щоб ти знав, що вибір із трьох, а не
+з двох, і що всі три працюють на <b>одній і тій самій</b> навченій моделі. Декодування —
+не частина моделі, а спосіб її читати.</p>
+
+<h2 id="s11"><span class="num">11 / Оцінка</span>BLEU і чому він тут мовчить</h2>
+
+<p>Частка правильних токенів — мірка внутрішня: вона знає лише, чи збіглося слово на
+своїй позиції. Стандартна зовнішня мірка машинного перекладу зветься <b>BLEU</b>
+(bilingual evaluation understudy). Ідея в неї така: узяти всі
+<b>n-грами</b> машинного перекладу й порахувати, яка їхня частка трапляється в
+людському. Не на тій самій позиції — просто трапляється.</p>
+
+<p>Рахують чотири точності: за одинарними словами, парами, трійками й четвірками.
+Беруть їхнє <b>середнє геометричне</b> — тобто перемножують і беруть корінь четвертого
+степеня. І множать на <b>штраф за стислість</b>: інакше найвигіднішою стратегією було б
+видавати одне-єдине дуже ймовірне слово, у якого точність буде близька до одиниці.</p>
+
+<div class="eq">BLEU = штраф × ⁴√(p₁ · p₂ · p₃ · p₄)</div>
+
+<p>Тут <span class="raw">p<span class="sub">n</span></span> — частка n-грам кандидата,
+що знайшлися в еталоні; штраф дорівнює одиниці, коли переклад не коротший за еталон, і
+стає меншим за одиницю, коли коротший. Середнє геометричне має неприємну властивість:
+<b>нуль в одному множнику обертає на нуль усе</b>. Це не помилка, а рішення авторів
+метрики — переклад, у якому не збіглася жодна четвірка слів, вони вважають нульовим.</p>
+
+<p>Бібліотеки <code>sacrebleu</code> в нашому середовищі немає, тож у зошиті BLEU
+написано власноруч і звірено з реалізацією <code>nltk</code>. І одразу знайшлась
+повчальна дрібниця. Речення, коротше за чотири слова, не має жодної четвірки, тобто
+в знаменнику точності стоїть нуль; <code>nltk</code>, щоб не ділити на нуль, кладе туди
+одиницю. У нашому корпусі коротких речень багато, і ця суто технічна обережність зсуває
+підсумок: <b>0.084186</b> проти <b>0.081133</b> на тих самих даних. Різниця
+в третьому знаку, але вона є — і це рівно та сама історія, що в блоці 3: деталь
+реалізації рухає метрику мовчки.</p>
+
+<p>Сам BLEU нашої моделі — <b>0.0843</b> при розкиді <b>±0.0065</b>. Це дуже
+мало, і воно чесне. Ось із чого воно складається (розклад для першого зерна): точність
+за одинарними словами <b>0.3550</b>, за парами <b>0.1472</b>, за трійками <b>0.0642</b>, за
+четвірками <b>0.0255</b>, штраф за стислість <b>0.8754</b>. Тобто окремі слова модель
+угадує непогано, а звʼязних шматків тексту в неї майже не виходить — і саме це
+середнє геометричне й ловить.</p>
+
+<h3>Чому BLEU суворий саме до української</h3>
+
+<p>Візьмемо один еталонний переклад і зіпсуємо його трьома різними способами:
+поставимо слово в інший відмінок, переставимо два слова місцями, замінимо слово
+синонімом. Людина назве всі три варіанти правильними.</p>
+
+<figure>
+  <p class="fig-head">BLEU під тиском української морфології</p>
+  <p class="fig-sub">Один еталон і чотири зіпсовані копії. Людина зарахує три з них.
+    Стовпчики — точності за n-грамами, з яких складається оцінка.</p>
+  <div class="panel">
+    <canvas id="c7" width="640" height="340" data-lw="640" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">варіант перекладу</span>
+        <div class="seg wrap" id="seg7">
+          <button data-i="0" aria-pressed="true">точна копія</button>
+          <button data-i="1" aria-pressed="false">інший відмінок</button>
+          <button data-i="2" aria-pressed="false">переставлені слова</button>
+          <button data-i="3" aria-pressed="false">синонім</button>
+          <button data-i="4" aria-pressed="false">утричі коротше</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="n7">порядок n-грами <output id="n7v">1</output></label>
+        <input type="range" id="n7" min="1" max="4" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>точність за n</b><i id="k7a">—</i></div>
+        <div class="cellv"><b>штраф за стислість</b><i id="k7b">—</i></div>
+        <div class="cellv"><b>BLEU</b><i id="k7c">—</i></div>
+        <div class="cellv"><b>слів</b><i id="k7d">—</i></div>
+      </div>
+      <div class="verdict" id="v7"></div>
+    </div>
+  </div>
+  <figcaption id="cap7"></figcaption>
+</figure>
+
+<p>Зміна одного закінчення розриває всі n-грами, що містять це слово: не лише
+одинарне слово, а й пару, трійку й четвірку, у які воно входило. Флективна мова платить
+за це щоразу — і саме звідси відома вада метрик на збіг слів: для мов із багатою
+морфологією вони занижують оцінку. Ми цього не міряли й не називаємо числом; наш
+приклад показує лише <b>механізм</b>, через який це стається. Практичний висновок
+простий: числа BLEU не порівнюють між мовами. Звідки береться сама флективність,
+розібрано в <a href="../03-morphology/lecture.html">темі 03</a>.</p>
+
+<h2 id="s12"><span class="num">12 / Підсумок</span>Що ми справді знаємо</h2>
+
+<p>Зберемо докупи те, що заміряно, і відокремимо це від того, що лише правдоподібне.</p>
+
+<p><b>Заміряно.</b> Енкодер-декодер із двох GRU, навчений подаванням еталона на
+18 000 парах, угадує <b>0.3847</b> токенів при поданому еталоні й лише <b>0.2112</b>
+у справжній генерації. Цілий рядок збігається з людським перекладом у 0.0116 випадків.
+Якість падає з довжиною джерела: від чотирьох слів до восьми — на 0.0764 при розкиді
+±0.0032. Утричі коротший вектор контексту опускає всю криву, але її нахил змінює
+на +0.0052 при сумі розкидів 0.0065. Ширший промінь без поділу оцінки
+на довжину робить гірше, а не краще.</p>
+
+<p><b>Не заміряно й не стверджується.</b> Що спад на довгих реченнях спричинений саме
+розміром вектора — наш дослід цього не показав. Що увага це виправляє — ми уваги не
+міряли. Що наш перекладач узагалі придатний до вжитку — ні, і числа вище кажуть це
+прямо.</p>
+
+<p>І одна річ, яку варто забрати з собою незалежно від seq2seq. Ми бачили <b>дві мірки
+однієї й тієї самої моделі</b>, що відрізняються майже вдвічі, і обидві правильні —
+просто вони міряють різне. Щоразу, коли модель показує гарне число, варто спитати:
+а що саме їй при цьому подавали на вхід? Відповідь на це питання пояснює більше
+розбіжностей, ніж вибір архітектури.</p>
+
+<p>Наступна тема — <a href="../20-rnn-limits/lecture.html">межі RNN</a> — доводить блок до кінця: вона міряє, де саме рекурентні мережі впираються, і чи справді вони повільні, як заведено казати.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../18-lstm-gru/lecture.html"><span class="dir">попередня</span><span class="ttl">18. LSTM і GRU</span></a>
+    <a class="next" href="../20-rnn-limits/lecture.html"><span class="dir">наступна</span><span class="ttl">20. Межі RNN</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn4(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thou(n){
+  var s=String(n), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function cut(g,txt,max,px,bold){
+  g.font=mono(px||11,!!bold);
+  if(g.measureText(txt).width<=max) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+function box(g,x,y,w,h,fill,stroke,r){
+  var rad=r===undefined?6:r;
+  g.beginPath();
+  if(g.roundRect) g.roundRect(x,y,w,h,rad); else g.rect(x,y,w,h);
+  if(fill){g.fillStyle=fill; g.fill();}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=1.2; g.stroke();}
+}
+function plural(n,one,few,many){
+  var a=Math.abs(n)%100, b=a%10;
+  if(a>10 && a<20) return many;
+  if(b===1) return one;
+  if(b>1 && b<5) return few;
+  return many;
+}
+function nWords(n){return n+' '+plural(n,'слово','слова','слів');}
+function nWordsIn(n){return n+' '+(n===1?'слові':'словах');}
+function nNums(n){return n+' '+plural(n,'число','числа','чисел');}
+function nCont(n){return n+' '+plural(n,'продовження','продовження','продовжень');}
+function nPairs(n){return thou(n)+' '+plural(n,'пара','пари','пар');}
+function arrow(g,x1,y1,x2,y2,color){
+  g.strokeStyle=color; g.lineWidth=1.4;
+  g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke();
+  var a=Math.atan2(y2-y1,x2-x1);
+  g.beginPath(); g.moveTo(x2,y2);
+  g.lineTo(x2-6*Math.cos(a-0.4), y2-6*Math.sin(a-0.4));
+  g.lineTo(x2-6*Math.cos(a+0.4), y2-6*Math.sin(a+0.4));
+  g.closePath(); g.fillStyle=color; g.fill();
+}
+
+/* ═══════ числа з зошита ═══════ */
+/* Конфігурація: 18 000 навчальних пар, EMB=128, HID=192, батч 128, дві епохи,
+   три зерна. Усі числа нижче друкує practice.ipynb. */
+var LEN=[2,3,4,5,6,7,8];
+var PAIRS_BY_LEN=[404, 3083, 7890, 11776, 13272, 12297, 9410];
+var TOTAL_PAIRS=58132;
+var HID_BIG=192, HID_SMALL=64;
+var TF192_M=[0.3846,0.4458,0.4213,0.4118,0.3876,0.3647,0.3449], TF192_S=[0.0140,0.0055,0.0026,0.0076,0.0057,0.0055,0.0031];
+var TF64_M=[0.3683,0.3878,0.3479,0.3393,0.3052,0.2862,0.2663], TF64_S=[0.0140,0.0055,0.0014,0.0018,0.0012,0.0014,0.0021];
+var FREE_M=[0.2051,0.2997,0.2591,0.2392,0.2137,0.1903,0.1603], FREE_S=[0.0105,0.0114,0.0049,0.0154,0.0104,0.0094,0.0064];
+var DROP_SPREAD=[0.0032,0.0033];
+var HID_DIFF=[0.0163,0.0579,0.0733,0.0725,0.0824,0.0785,0.0785];
+var PAIRS3=[{src:["display","only","the","function","key","strings"],ref:["вивести","лише","рядки","<unk>","клавіш"],out:["показувати","лише","у","<unk>","<unk>"]},{src:["no","valid","<unk>","given"],ref:["не","вказано","коректних","<unk>"],out:["не","знайдено","<unk>","<unk>"]},{src:["warning","could","not","retrieve","tty","information"],ref:["попередження","не","вдалося","отримати","інформацію","про"],out:["не","вдалося","отримати","дані","щодо","<unk>"]}];
+var POS_FORCED=[0.3568,0.3719,0.2963,0.2346,0.1837,0.1337], POS_FREE=[0.3568,0.2896,0.2007,0.1363,0.0743,0.0485];
+var POSEX_REF=["вивести","лише","рядки","<unk>","клавіш"];
+var POSEX_OUT=["показувати","лише","у","<unk>","<unk>"];
+var BEAM=[[[["показувати", -3.201, false]], [["показувати лише", -3.773, false]], [["показувати лише у", -6.35, false]], [["показувати лише у <unk>", -8.282, false]], [["показувати лише у <unk> <unk>", -10.576, false]], [["показувати лише у <unk> <unk>", -12.097, true]]], [[["показувати", -3.201, false], ["<unk>", -3.296, false]], [["показувати лише", -3.773, false], ["<unk> лише", -4.549, false]], [["показувати лише у", -6.35, false], ["<unk> лише у", -6.654, false]], [["показувати лише у <unk>", -8.282, false], ["<unk> лише у <unk>", -8.683, false]], [["показувати лише у <unk> <unk>", -10.576, false], ["<unk> лише у <unk> <unk>", -10.972, false]], [["показувати лише у <unk> <unk>", -12.097, true], ["<unk> лише у <unk> <unk>", -12.484, true]]], [[["показувати", -3.201, false], ["<unk>", -3.296, false], ["підтримку", -3.342, false]], [["показувати лише", -3.773, false], ["підтримку лише", -4.208, false], ["<unk> лише", -4.549, false]], [["показувати лише у", -6.35, false], ["<unk> лише у", -6.654, false], ["підтримку лише у", -6.868, false]], [["показувати лише у <unk>", -8.282, false], ["<unk> лише у <unk>", -8.683, false], ["підтримку лише у <unk>", -8.865, false]], [["показувати лише у <unk> <unk>", -10.576, false], ["<unk> лише у <unk> <unk>", -10.972, false], ["підтримку лише у <unk> <unk>", -11.178, false]], [["показувати лише у <unk> <unk>", -12.097, true], ["<unk> лише у <unk> <unk>", -12.484, true], ["підтримку лише у <unk> <unk>", -12.742, true]]], [[["показувати", -3.201, false], ["<unk>", -3.296, false], ["підтримку", -3.342, false], ["можна", -3.362, false]], [["показувати лише", -3.773, false], ["підтримку лише", -4.208, false], ["<unk> лише", -4.549, false], ["можна використовувати", -5.003, false]], [["можна використовувати лише", -5.505, false], ["показувати лише у", -6.35, false], ["<unk> лише у", -6.654, false], ["підтримку лише у", -6.868, false]], [["можна використовувати лише у", -7.372, false], ["показувати лише у <unk>", -8.282, false], ["можна використовувати лише для", -8.5, false], ["<unk> лише у <unk>", -8.683, false]], [["можна використовувати лише у <unk>", -9.302, false], ["показувати лише у <unk> <unk>", -10.576, false], ["можна використовувати лише у режимі", -10.716, false], ["можна використовувати лише у", -10.795, true]], [["можна використовувати лише у", -10.795, true], ["можна використовувати лише у <unk>", -11.02, true], ["можна використовувати лише у <unk> <unk>", -11.644, false], ["можна використовувати лише у режимі", -12.028, true]]]];
+var BEAM_TOK=[0.2498,0.2350,0.2215], BEAM_LEN=[4.39,3.91,3.73];
+var BEAM_N=250, REF_LEN=4.94;
+var BLEU_REF=["не","вдалося","зберегти","поточний","документ"];
+var BLEU_VAR=[{name:"точна копія",cand:["не","вдалося","зберегти","поточний","документ"],p:[1.0000,1.0000,1.0000,1.0000],bp:1.0000,bleu:1.0000},{name:"інший відмінок",cand:["не","вдалося","зберегти","поточного","документа"],p:[0.6000,0.5000,0.3333,0.0000],bp:1.0000,bleu:0.0000},{name:"переставлені слова",cand:["не","вдалося","поточний","документ","зберегти"],p:[1.0000,0.5000,0.0000,0.0000],bp:1.0000,bleu:0.0000},{name:"синонім",cand:["не","вдалося","записати","поточний","документ"],p:[0.8000,0.5000,0.0000,0.0000],bp:1.0000,bleu:0.0000},{name:"утричі коротше",cand:["не","вдалося"],p:[1.0000,1.0000,0.0000,0.0000],bp:0.2231,bleu:0.0000}];
+
+/* ─────────────── фігура 1 · фільтр довжини ─────────────── */
+(function(){
+  var cv=I('c1'); if(!cv) return;
+  var mode=0;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var lim=+I('maxlen1').value; I('maxlen1v').textContent=lim;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+    var vals=[], i;
+    for(i=0;i<LEN.length;i++) vals.push(mode===0?PAIRS_BY_LEN[i]:PAIRS_BY_LEN[i]*LEN[i]);
+    var top=0; for(i=0;i<vals.length;i++) if(vals[i]>top) top=vals[i];
+    var x0=52, x1=W-18, y0=48, y1=H-46;
+    capt(g, mode===0?'пар у корпусі':'слововживань у джерелі', x0, 28, soft, 11.5, true);
+    /* сітка */
+    var t;
+    for(t=0;t<=4;t++){
+      var y=y1-(y1-y0)*t/4;
+      g.strokeStyle=hair; g.lineWidth=1;
+      g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+      capt(g, thou(Math.round(top*t/4)), x0-6, y+4, soft, 9.5, false, 'right');
+    }
+    var bw=(x1-x0)/LEN.length;
+    var kept=0, keptAll=0;
+    for(i=0;i<LEN.length;i++){
+      var h=(y1-y0)*vals[i]/top;
+      var bx=x0+bw*i+7, bwid=bw-14;
+      var inside=LEN[i]<=lim;
+      box(g,bx,y1-h,bwid,h, inside?rose:hair, null, 4);
+      if(inside) kept+=PAIRS_BY_LEN[i];
+      keptAll+=PAIRS_BY_LEN[i];
+      capt(g, String(LEN[i]), bx+bwid/2, y1+16, inside?ink:soft, 11.5, inside, 'center');
+      capt(g, thou(vals[i]), bx+bwid/2, y1-h-6, inside?ink:soft, 9.5, false, 'center');
+    }
+    g.strokeStyle=soft; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+    capt(g,'слів в англійському реченні', (x0+x1)/2, H-10, soft, 10.5, false, 'center');
+    /* межа */
+    var cutX=x0+bw*(lim-1);
+    g.strokeStyle=teal; g.lineWidth=1.6; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(cutX,y0-10); g.lineTo(cutX,y1); g.stroke();
+    g.setLineDash([]);
+    /* числа */
+    var keptVal=0, allVal=0, j;
+    for(j=0;j<LEN.length;j++){ allVal+=vals[j]; if(LEN[j]<=lim) keptVal+=vals[j]; }
+    var share=keptVal/allVal;
+    I('k1aL').textContent = mode===0 ? 'пар у межах' : 'слововживань';
+    I('k1bL').textContent = mode===0 ? 'частка пар' : 'частка слововживань';
+    I('k1a').textContent=thou(keptVal);
+    I('k1b').textContent=f4(share);
+    /* медіана серед лишених */
+    var need=kept/2, run=0, med=LEN[0];
+    for(i=0;i<LEN.length;i++){ if(LEN[i]>lim) break; run+=PAIRS_BY_LEN[i]; if(run>=need){med=LEN[i]; break;} }
+    I('k1c').textContent=nWords(med);
+    var bi=0, bv=-1;
+    for(i=0;i<LEN.length;i++) if(LEN[i]<=lim && PAIRS_BY_LEN[i]>bv){bv=PAIRS_BY_LEN[i]; bi=i;}
+    I('k1d').textContent=nWords(LEN[bi]);
+    var tag = share<=0.4 ? 't-no' : (share<=0.85 ? 't-mid' : 't-ok');
+    var cap = share<=0.4 ? 'мало даних' : (share<=0.85 ? 'частина корпусу' : 'майже весь корпус');
+    verd('v1', tag, cap,
+      'Якщо взяти пари, не довші за <b>'+nWords(lim)+'</b>, лишається <b>'+
+      (mode===0?nPairs(keptVal):thou(keptVal)+' слововживань')+'</b> — це <b>'+f4(share)+
+      '</b> відібраного корпусу. Медіана довжини серед них — <b>'+nWords(med)+
+      '</b>, найгустіша довжина — <b>'+nWords(LEN[bi])+'</b>.');
+    I('cap1').innerHTML='Пар з обома боками 2-8 слів — <b>'+thou(TOTAL_PAIRS)+
+      '</b>. Розподіл несиметричний: коротких речень мало (<b>'+thou(PAIRS_BY_LEN[0])+
+      '</b> пар на двох словах), густо в середині. Це вирішує, де в моделі буде найбільше досвіду.';
+  }
+  on('maxlen1','input',draw);
+  segment('seg1', function(i){mode=i; draw();});
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ─────────────── фігура 2 · схема seq2seq ─────────────── */
+(function(){
+  var cv=I('c2'); if(!cv) return;
+  var pick=0;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var p=PAIRS3[pick], L=p.src.length, M=p.out.length, R=p.ref.length;
+    var sl=I('step2'); sl.max=String(L+M);
+    var step=Math.min(+sl.value, L+M); I('step2v').textContent=step;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber'),
+        raise=css('--raise'), rw=css('--rose-w'), tw=css('--teal-w'), aw=css('--amber-w');
+    var LX=16, BX=104, x1=W-16, span=x1-BX;
+    var i;
+    function row(txt, y){ capt(g, txt, BX-12, y, soft, 10.5, true, 'right'); }
+    /* ---- джерело ---- */
+    var bw=Math.min(74, span/Math.max(L,1));
+    row('джерело', 42);
+    for(i=0;i<L;i++){
+      var on1=i<step;
+      box(g, BX+bw*i+2, 24, bw-4, 26, on1?rw:raise, on1?rose:hair, 5);
+      capt(g, cut(g,p.src[i],bw-10,10), BX+bw*i+bw/2, 42, on1?ink:soft, 10, false, 'center');
+    }
+    /* ---- енкодер ---- */
+    row('енкодер', 94);
+    for(i=0;i<L;i++){
+      var on2=i<step;
+      arrow(g, BX+bw*i+bw/2, 54, BX+bw*i+bw/2, 74, on2?teal:hair);
+      box(g, BX+bw*i+6, 78, bw-12, 22, on2?teal:hair, null, 11);
+      capt(g, 'h'+(i+1), BX+bw*i+bw/2, 93, on2?raise:soft, 10, true, 'center');
+      if(i>0) arrow(g, BX+bw*(i-1)+bw-6, 89, BX+bw*i+6, 89, on2?teal:hair);
+    }
+    /* ---- вектор контексту ---- */
+    var ready=step>=L;
+    row('контекст', 144);
+    var cellN=22, cw=span/cellN;
+    arrow(g, BX+span/2, 102, BX+span/2, 126, ready?rose:hair);
+    for(i=0;i<cellN;i++){
+      box(g, BX+cw*i+1, 128, cw-2, 24, null, ready?rose:hair, 3);
+      if(ready){
+        g.globalAlpha=0.20+0.55*Math.abs(Math.sin((i+1)*1.7+pick*0.9));
+        g.fillStyle=rose; g.fillRect(BX+cw*i+1.5, 128.5, cw-3, 23); g.globalAlpha=1;
+      }
+    }
+    capt(g, nNums(HID_BIG)+' — незалежно від довжини речення', x1, 168, ready?rose:soft, 10, false, 'right');
+    /* ---- декодер ---- */
+    var written=Math.max(0, step-L);
+    var dw=Math.min(74, span/Math.max(M,1));
+    row('декодер', 196);
+    arrow(g, BX+dw/2, 156, BX+dw/2, 176, ready?rose:hair);
+    for(i=0;i<M;i++){
+      var on3=i<written;
+      box(g, BX+dw*i+6, 180, dw-12, 22, on3?amber:hair, null, 11);
+      capt(g, 's'+(i+1), BX+dw*i+dw/2, 195, on3?raise:soft, 10, true, 'center');
+      if(i>0) arrow(g, BX+dw*(i-1)+dw-6, 191, BX+dw*i+6, 191, on3?amber:hair);
+    }
+    /* ---- вихід моделі ---- */
+    row('машина', 248);
+    for(i=0;i<M;i++){
+      var on4=i<written;
+      arrow(g, BX+dw*i+dw/2, 204, BX+dw*i+dw/2, 226, on4?amber:hair);
+      box(g, BX+dw*i+2, 230, dw-4, 26, on4?aw:raise, on4?amber:hair, 5);
+      capt(g, cut(g,p.out[i],dw-10,10), BX+dw*i+dw/2, 248, on4?ink:soft, 10, false, 'center');
+    }
+    /* ---- переклад людини ---- */
+    row('людина', 304);
+    var rwd=Math.min(74, span/Math.max(R,1));
+    for(i=0;i<R;i++){
+      box(g, BX+rwd*i+2, 286, rwd-4, 26, tw, teal, 5);
+      capt(g, cut(g,p.ref[i],rwd-10,10), BX+rwd*i+rwd/2, 304, ink, 10, false, 'center');
+    }
+    /* ---- числа ---- */
+    var read=Math.min(step,L);
+    I('k2a').textContent=read+' / '+L;
+    I('k2b').textContent=String(HID_BIG);
+    I('k2c').textContent=written+' / '+M;
+    var phase = step===0 ? 'нічого не прочитано'
+              : (step<L ? 'енкодер читає'
+              : (step===L ? 'вектор готовий' : 'декодер пише'));
+    I('k2d').textContent=phase;
+    var tag = step===0?'t-no':(step<L?'t-mid':(step===L?'t-mid':'t-ok'));
+    var txt;
+    if(step===0) txt='Ще нічого не сталося. Унизу вже лежить переклад людини — саме з ним ми потім порівнюватимемо.';
+    else if(step<L) txt='Енкодер прочитав <b>'+nWords(read)+'</b> із <b>'+L+'</b>. Стан оновлюється, але його довжина не змінюється: <b>'+nNums(HID_BIG)+'</b> і на першому слові, і на останньому.';
+    else if(step===L) txt='Усі <b>'+nWords(L)+'</b> прочитано. Все, що з них лишилось, — <b>'+nNums(HID_BIG)+'</b>. Англійського речення декодер більше не побачить ніколи.';
+    else txt='Декодер написав <b>'+nWords(written)+'</b> із <b>'+M+'</b>. Кожне наступне спирається на попереднє й на той самий вектор — інших джерел у нього немає.';
+    verd('v2', tag, phase, txt);
+    I('cap2').innerHTML='Пара № '+(pick+1)+' з перевірної частини (перші три підряд, без добору). '+
+      'Джерело — <b>'+L+'</b> слів, переклад людини — <b>'+R+'</b>, машина написала <b>'+M+'</b>. '+
+      'Між двома ланцюгами немає жодного каналу, крім вектора на <b>'+nNums(HID_BIG)+'</b>.';
+  }
+  on('step2','input',draw);
+  segment('seg2', function(i){pick=i; I('step2').value='0'; draw();});
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ─────────────── фігура 3 · крива за довжиною ─────────────── */
+(function(){
+  var cv=I('c3'); if(!cv) return;
+  var mode=0;
+  var SERIES=[
+    {m:TF192_M, s:TF192_S, name:'подавання еталона, H='+HID_BIG},
+    {m:TF64_M,  s:TF64_S,  name:'подавання еталона, H='+HID_SMALL},
+    {m:FREE_M,  s:FREE_S,  name:'вільна генерація, H='+HID_BIG}
+  ];
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var sel=+I('len3').value; I('len3v').textContent=sel;
+    var S=SERIES[mode], i;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+    var col = mode===2 ? amber : (mode===1 ? teal : rose);
+    var x0=54, x1=W-16, y0=44, y1=H-46, top=0.60;
+    capt(g, 'частка правильних токенів · '+S.name, x0-38, 26, soft, 11.5, true);
+    var t;
+    for(t=0;t<=6;t++){
+      var y=y1-(y1-y0)*t/6;
+      g.strokeStyle=hair; g.lineWidth=1;
+      g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+      capt(g, (top*t/6).toFixed(2), x0-6, y+4, soft, 9.5, false, 'right');
+    }
+    var bw=(x1-x0)/LEN.length;
+    for(i=0;i<LEN.length;i++){
+      var v=S.m[i], sp=S.s[i];
+      var h=(y1-y0)*v/top;
+      var bx=x0+bw*i+11, bwid=bw-22;
+      var hot=LEN[i]===sel;
+      g.globalAlpha=hot?1:0.55;
+      box(g,bx,y1-h,bwid,h, col, null, 4);
+      g.globalAlpha=1;
+      /* вусик розкиду */
+      var yh=y1-(y1-y0)*(v+sp)/top, yl=y1-(y1-y0)*(v-sp)/top;
+      g.strokeStyle=ink; g.lineWidth=1.2;
+      g.beginPath(); g.moveTo(bx+bwid/2, yh); g.lineTo(bx+bwid/2, yl); g.stroke();
+      g.beginPath(); g.moveTo(bx+bwid/2-6, yh); g.lineTo(bx+bwid/2+6, yh); g.stroke();
+      g.beginPath(); g.moveTo(bx+bwid/2-6, yl); g.lineTo(bx+bwid/2+6, yl); g.stroke();
+      capt(g, f4(v), bx+bwid/2, yh-7, hot?ink:soft, hot?10.5:9.5, hot, 'center');
+      capt(g, String(LEN[i]), bx+bwid/2, y1+16, hot?ink:soft, 11.5, hot, 'center');
+    }
+    g.strokeStyle=soft; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+    capt(g,'слів в англійському реченні', (x0+x1)/2, H-10, soft, 10.5, false, 'center');
+    /* числа */
+    var k=sel-2;
+    var peak=0; for(i=1;i<S.m.length;i++) if(S.m[i]>S.m[peak]) peak=i;
+    var drop=S.m[2]-S.m[6];
+    I('k3a').textContent=f4(S.m[k]);
+    I('k3b').textContent='±'+f4(S.s[k]);
+    I('k3c').textContent=LEN[peak]+' словах';
+    I('k3d').textContent=f4(drop);
+    var big=drop > 4*Math.max(S.s[2],S.s[6]);
+    var gapPeak=S.m[peak]-S.m[k], noise=S.s[peak]+S.s[k];
+    var tag, cap;
+    if(k===peak){ tag='t-ok'; cap='вершина кривої'; }
+    else if(gapPeak<=noise){ tag='t-mid'; cap='нарівні з вершиною'; }
+    else { tag='t-no'; cap='нижче за вершину'; }
+    verd('v3', tag, cap,
+      'На <b>'+nWordsIn(sel)+'</b> модель угадує <b>'+f4(S.m[k])+'</b> токенів при розкиді <b>±'+
+      f4(S.s[k])+'</b>. Це '+(k===peak?'найкраще значення кривої':
+      ('на <b>'+f4(gapPeak)+'</b> нижче за вершину на '+nWordsIn(LEN[peak])+
+       ' при сумі розкидів <b>'+f4(noise)+'</b>'))+
+      '. Від 4 до 8 слів якість падає на <b>'+f4(drop)+'</b> — '+
+      (big?'у '+f1(drop/Math.max(S.s[2],S.s[6],1e-9))+' раза більше за розкид по зернах':
+      'не більше за сам розкид')+'.');
+    I('cap3').innerHTML='Три зерна, вусик — межі купи. Крива не спадає з першого кроку: на двох словах пар лише <b>'+
+      thou(PAIRS_BY_LEN[0])+'</b>, і вони найнеоднозначніші. Горб і подальший спад тримаються в усіх трьох режимах.';
+  }
+  on('len3','input',draw);
+  segment('seg3', function(i){mode=i; draw();});
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ─────────────── фігура 4 · чисел на слово ─────────────── */
+(function(){
+  var cv=I('c4'); if(!cv) return;
+  var which=0;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var L=+I('len4').value; I('len4v').textContent=L;
+    var Hv = which===0?HID_BIG:HID_SMALL;
+    var M = which===0?TF192_M:TF64_M, S = which===0?TF192_S:TF64_S;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), raise=css('--raise');
+    var col = which===0?rose:teal;
+    /* ліворуч: вектор, поділений на L часток */
+    var lx=16, lw=W*0.44, ly=60, lh=44;
+    capt(g,'вектор контексту · '+nNums(Hv), lx, 30, soft, 11, true);
+    box(g, lx, ly, lw, lh, raise, hair, 6);
+    var i;
+    for(i=0;i<L;i++){
+      var cw=lw/L;
+      box(g, lx+cw*i+1.5, ly+2, cw-3, lh-4, i%2?css('--rose-w'):css('--teal-w'), col, 4);
+      if(cw>26) capt(g, f1(Hv/L), lx+cw*i+cw/2, ly+lh/2+4, ink, cw>40?10.5:9, true, 'center');
+    }
+    capt(g, nWords(L)+' джерела ділять його порівну', lx, ly+lh+20, soft, 10.5);
+    capt(g, 'на кожне слово припадає '+f1(Hv/L)+' числа', lx, ly+lh+38, ink, 11, true);
+    /* пояснювальний рядок */
+    capt(g, 'вектор не росте разом із реченням —', lx, ly+lh+66, soft, 10.5);
+    capt(g, 'росте лише кількість того, що в нього', lx, ly+lh+82, soft, 10.5);
+    capt(g, 'треба вмістити', lx, ly+lh+98, soft, 10.5);
+    /* праворуч: виміряна крива проти чисел на слово */
+    var x0=W*0.55, x1=W-18, y0=54, y1=H-46, top=0.60;
+    capt(g,'виміряна частка правильних', x0, 30, soft, 11, true);
+    var t;
+    for(t=0;t<=4;t++){
+      var y=y1-(y1-y0)*t/4;
+      g.strokeStyle=hair; g.lineWidth=1;
+      g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+      capt(g, (top*t/4).toFixed(2), x0-5, y+4, soft, 9, false, 'right');
+    }
+    function px(i){return x0+(x1-x0)*i/(LEN.length-1);}
+    function py(v){return y1-(y1-y0)*v/top;}
+    var series=[{m:TF192_M,c:rose,n:'H='+HID_BIG},{m:TF64_M,c:teal,n:'H='+HID_SMALL}];
+    var q;
+    for(q=0;q<2;q++){
+      g.strokeStyle=series[q].c; g.lineWidth=(q===which)?2.2:1.2;
+      g.globalAlpha=(q===which)?1:0.45;
+      g.beginPath();
+      for(i=0;i<LEN.length;i++){ if(i===0) g.moveTo(px(i),py(series[q].m[i])); else g.lineTo(px(i),py(series[q].m[i])); }
+      g.stroke(); g.globalAlpha=1;
+    }
+    for(i=0;i<LEN.length;i++){
+      capt(g, String(LEN[i]), px(i), y1+15, LEN[i]===L?ink:soft, 10, LEN[i]===L, 'center');
+    }
+    g.fillStyle=col;
+    g.beginPath(); g.arc(px(L-2), py(M[L-2]), 4.5, 0, 6.2832); g.fill();
+    capt(g, f4(M[L-2]), px(L-2), py(M[L-2])-10, ink, 10.5, true, 'center');
+    capt(g,'слів у джерелі', (x0+x1)/2, H-10, soft, 10.5, false, 'center');
+    /* легенда: яка лінія якому вектору належить */
+    capt(g,'H='+HID_BIG, x1, py(TF192_M[6])-9, rose, 10, true, 'right');
+    capt(g,'H='+HID_SMALL, x1, py(TF64_M[6])+16, teal, 10, true, 'right');
+    /* числа */
+    var dropBig=TF192_M[2]-TF192_M[6], dropSmall=TF64_M[2]-TF64_M[6];
+    var drop = which===0?dropBig:dropSmall;
+    var sp = Math.max(S[2],S[6]);
+    I('k4a').textContent=f1(Hv/L);
+    I('k4b').textContent=f4(M[L-2]);
+    I('k4c').textContent=f4(drop);
+    I('k4d').textContent='±'+f4(DROP_SPREAD[which]);
+    var gapDrop=dropSmall-dropBig;
+    var decisive=Math.abs(gapDrop) > (DROP_SPREAD[0]+DROP_SPREAD[1]);
+    var here=HID_DIFF[L-2], noiseHere=TF192_S[L-2]+TF64_S[L-2];
+    var seen=here>noiseHere;
+    verd('v4', seen?'t-ok':'t-mid', seen?'вектор тут важить':'тут у межах розкиду',
+      'При <b>H='+Hv+'</b> і <b>'+nWordsIn(L)+'</b> на слово припадає <b>'+f1(Hv/L)+
+      '</b> числа, а модель угадує <b>'+f4(M[L-2])+'</b>. Втричі коротший вектор коштує на цій '+
+      'довжині <b>'+f4(here)+'</b> при сумі розкидів <b>'+f4(noiseHere)+'</b> — '+
+      (seen?'різниця видна':'різниця тоне в шумі')+
+      '. А от <b>нахил</b> кривої від 4 до 8 слів міняється лише на <b>'+sgn4(gapDrop)+
+      '</b> при сумі розкидів <b>'+f4(DROP_SPREAD[0]+DROP_SPREAD[1])+'</b>, тобто '+
+      (decisive?'більше за шум':'менше за шум: самим лише розміром вектора спад із довжиною не пояснюється')+'.');
+    I('cap4').innerHTML='Ліворуч — чиста арифметика, праворуч — замір. Утричі коротший вектор опускає криву всюди, '+
+      'але нахил від 4 до 8 слів міняє на <b>'+sgn4(gapDrop)+'</b> при сумарному розкиді <b>'+
+      f4(DROP_SPREAD[0]+DROP_SPREAD[1])+'</b>.';
+  }
+  on('len4','input',draw);
+  segment('seg4', function(i){which=i; draw();});
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ─────────────── фігура 5 · еталон проти вільної генерації ─────────────── */
+(function(){
+  var cv=I('c5'); if(!cv) return;
+  var mode=0;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var pos=+I('pos5').value; I('pos5v').textContent=pos;
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), amber=css('--amber'),
+        raise=css('--raise'), tw=css('--teal-w'), aw=css('--amber-w');
+    var N=6, x0=16, x1=W-16, bw=(x1-x0)/N;
+    /* верх: стрічка входів */
+    capt(g, mode===0?'що подають декодерові: правильне слово з еталона'
+                    :'що подають декодерові: те, що він написав сам', x0, 20, soft, 11, true);
+    var i;
+    for(i=0;i<N;i++){
+      var word = i===0 ? '<bos>' : (mode===0 ? (POSEX_REF[i-1]||'—') : (POSEX_OUT[i-1]||'—'));
+      var act=i<pos;
+      var good = mode===0 || i===0 || (POSEX_OUT[i-1]===POSEX_REF[i-1]);
+      box(g, x0+bw*i+3, 30, bw-6, 28, act?(good?tw:css('--rose-w')):raise,
+          act?(good?teal:rose):hair, 5);
+      capt(g, cut(g,word,bw-12,10.5), x0+bw*i+bw/2, 49, act?ink:soft, 10.5, false, 'center');
+    }
+    capt(g,'еталон людини', x0, 80, soft, 10.5, true);
+    for(i=0;i<N;i++){
+      box(g, x0+bw*i+3, 88, bw-6, 28, tw, teal, 5);
+      capt(g, cut(g,POSEX_REF[i]||'—',bw-12,10.5), x0+bw*i+bw/2, 107, ink, 10.5, false, 'center');
+    }
+    capt(g,'що видала модель без еталона', x0, 138, soft, 10.5, true);
+    for(i=0;i<N;i++){
+      var same=!!POSEX_OUT[i] && POSEX_OUT[i]===POSEX_REF[i];
+      box(g, x0+bw*i+3, 146, bw-6, 28, same?aw:raise, same?amber:hair, 5);
+      capt(g, cut(g,POSEX_OUT[i]||'—',bw-12,10.5), x0+bw*i+bw/2, 165, POSEX_OUT[i]?ink:soft, 10.5, false, 'center');
+    }
+    /* низ: криві за позицією */
+    var y0=210, y1=H-42, top=0.7;
+    capt(g,'частка правильних на цій позиції', x0, 198, soft, 11, true);
+    var t;
+    for(t=0;t<=3;t++){
+      var y=y1-(y1-y0)*t/3;
+      g.strokeStyle=hair; g.lineWidth=1;
+      g.beginPath(); g.moveTo(x0+34,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+      capt(g,(top*t/3).toFixed(2), x0+30, y+4, soft, 9, false, 'right');
+    }
+    function px(i){return x0+34+(x1-x0-34)*(i+0.5)/N;}
+    function py(v){return y1-(y1-y0)*v/top;}
+    var lines=[{d:POS_FORCED,c:teal},{d:POS_FREE,c:amber}];
+    var q;
+    for(q=0;q<2;q++){
+      g.strokeStyle=lines[q].c; g.lineWidth=(q===mode)?2.4:1.3;
+      g.globalAlpha=(q===mode)?1:0.5;
+      g.beginPath();
+      for(i=0;i<N;i++){ if(i===0) g.moveTo(px(i),py(lines[q].d[i])); else g.lineTo(px(i),py(lines[q].d[i])); }
+      g.stroke();
+      for(i=0;i<N;i++){ g.fillStyle=lines[q].c; g.beginPath(); g.arc(px(i),py(lines[q].d[i]),3,0,6.2832); g.fill(); }
+      g.globalAlpha=1;
+    }
+    g.strokeStyle=rose; g.lineWidth=1.4; g.setLineDash([4,4]);
+    g.beginPath(); g.moveTo(px(pos-1), y0-8); g.lineTo(px(pos-1), y1); g.stroke();
+    g.setLineDash([]);
+    for(i=0;i<N;i++) capt(g, String(i+1), px(i), y1+15, (i+1)===pos?ink:soft, 10, (i+1)===pos, 'center');
+    capt(g,'позиція в перекладі', (x0+x1)/2, H-8, soft, 10.5, false, 'center');
+    capt(g,'з еталоном', x1, py(POS_FORCED[N-1])-9, teal, 10, true, 'right');
+    capt(g,'без еталона', x1, py(POS_FREE[N-1])-9, amber, 10, true, 'right');
+    /* числа */
+    var a=POS_FORCED[pos-1], b=POS_FREE[pos-1];
+    I('k5a').textContent=f4(a);
+    I('k5b').textContent=f4(b);
+    I('k5c').textContent=sgn4(b-a);
+    I('k5d').textContent = pos===1 ? '<bos>' : (mode===0?'еталон':'власне слово');
+    var tag = (a-b)<0.01 ? 't-ok' : ((a-b)<0.10 ? 't-mid' : 't-no');
+    var cap = pos===1 ? 'перший крок однаковий' : ((a-b)<0.10?'розрив помірний':'розрив великий');
+    var mine = mode===0 ? a : b;
+    verd('v5', tag, cap,
+      'Обраний режим — <b>'+(mode===0?'подавання еталона':'вільна генерація')+
+      '</b>: на позиції <b>'+pos+'</b> він угадує <b>'+f4(mine)+'</b>. Другий режим дає <b>'+
+      f4(mode===0?b:a)+'</b>, різниця <b>'+sgn4(b-a)+'</b>. '+
+      (pos===1 ? 'На першому кроці подавати нічого: історії ще немає, тож обидва числа збігаються.'
+               : 'Кожна попередня помилка лишається у вході й тягне за собою наступну.'));
+    I('cap5').innerHTML='Перша пара перевірної частини. Угорі видно, чим саме відрізняються два режими: '+
+      'у першому на вхід іде еталон, у другому — власний вихід. '+
+      'На першій позиції обидві криві дають однакове число, бо подавати ще нічого.';
+  }
+  on('pos5','input',draw);
+  segment('seg5', function(i){mode=i; draw();});
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ─────────────── фігура 6 · beam search ─────────────── */
+(function(){
+  var cv=I('c6'); if(!cv) return;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var w=+I('w6').value; I('w6v').textContent=w;
+    var trace=BEAM[w-1];
+    var sl=I('step6'); sl.max=String(trace.length);
+    var step=Math.min(+sl.value, trace.length); I('step6v').textContent=step;
+    var level=trace[step-1];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), raise=css('--raise'), rw=css('--rose-w');
+    var lx=16, lwid=W*0.60;
+    capt(g,'версії, які лишились після кроку '+step, lx, 22, soft, 11.5, true);
+    var i, rowh=Math.min(40,(H-90)/Math.max(level.length,1));
+    var lo=0, hi=0;
+    for(i=0;i<level.length;i++){ if(level[i][1]<lo) lo=level[i][1]; }
+    for(i=0;i<level.length;i++){
+      var y=36+rowh*i;
+      var best=i===0;
+      box(g, lx, y, lwid, rowh-6, best?rw:raise, best?rose:hair, 6);
+      capt(g, cut(g, level[i][0], lwid-96, 11), lx+10, y+rowh/2+2, ink, 11, best);
+      capt(g, f3(level[i][1]), lx+lwid-10, y+rowh/2+2, best?rose:soft, 11, true, 'right');
+      if(level[i][2]) capt(g,'завершена', lx+lwid-70, y+rowh/2+2, teal, 9, false, 'right');
+    }
+    capt(g, 'на цьому кроці перебрано '+nCont(w*w)+', лишилось '+w,
+         lx, 36+rowh*level.length+16, soft, 10.5);
+    /* праворуч: як падає сума логарифмів із кроками */
+    var x0=W*0.66, x1=W-16, y0=52, y1=H-44;
+    capt(g,'сума логарифмів', x0, 34, soft, 10.5, true);
+    var minv=0;
+    for(i=0;i<trace.length;i++) if(trace[i][0][1]<minv) minv=trace[i][0][1];
+    minv=Math.min(minv,-1);
+    function px(i){return x0+(x1-x0)*i/Math.max(trace.length-1,1);}
+    function py(v){return y0+(y1-y0)*(v/minv);}
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y0+0.5); g.lineTo(x1,y0+0.5); g.stroke();
+    g.beginPath(); g.moveTo(x0,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+    capt(g,'0', x0-4, y0+4, soft, 9, false, 'right');
+    capt(g, f1(minv), x0-4, y1+4, soft, 9, false, 'right');
+    g.strokeStyle=rose; g.lineWidth=2;
+    g.beginPath();
+    for(i=0;i<trace.length;i++){ if(i===0) g.moveTo(px(i),py(trace[i][0][1])); else g.lineTo(px(i),py(trace[i][0][1])); }
+    g.stroke();
+    for(i=0;i<trace.length;i++){
+      g.fillStyle=(i===step-1)?ink:rose;
+      g.beginPath(); g.arc(px(i),py(trace[i][0][1]), (i===step-1)?4.5:3, 0, 6.2832); g.fill();
+    }
+    capt(g,'крок', (x0+x1)/2, H-8, soft, 10, false, 'center');
+    /* числа */
+    var live=0;
+    for(i=0;i<level.length;i++) if(!level[i][2]) live++;
+    var wi = w===1?0:(w===2?1:(w===4?2:-1));
+    I('k6a').textContent=live+' / '+level.length;
+    I('k6b').textContent=f3(level[0][1]);
+    I('k6c').textContent = wi>=0 ? f2(BEAM_LEN[wi]) : '—';
+    I('k6d').textContent = wi>=0 ? f4(BEAM_TOK[wi]) : '—';
+    var better = wi>0 && BEAM_TOK[wi] >= BEAM_TOK[0];
+    var tag, cap, extra;
+    if(w===1){
+      tag='t-mid'; cap='це жадібний вибір';
+      extra='Ширина 1 — це і є жадібне декодування: <b>'+f4(BEAM_TOK[0])+
+            '</b> правильних токенів на '+BEAM_N+' реченнях і <b>'+f2(BEAM_LEN[0])+
+            '</b> слова у виході проти <b>'+f2(REF_LEN)+'</b> в еталона.';
+    } else if(wi<0){
+      tag='t-mid'; cap='заміру немає';
+      extra='Ширину 3 ми на корпусі не міряли — там рахувалися 1, 2, 4 і 8. '+
+            'Дивись сюди лише на те, як промінь тримає версії.';
+    } else {
+      tag=better?'t-ok':'t-no'; cap=better?'промінь допоміг':'промінь зашкодив';
+      extra='На <b>'+BEAM_N+'</b> реченнях ширина <b>'+w+'</b> дає <b>'+f4(BEAM_TOK[wi])+
+            '</b> правильних токенів проти <b>'+f4(BEAM_TOK[0])+
+            '</b> у жадібного, а довжина виходу — <b>'+f2(BEAM_LEN[wi])+'</b> слова проти <b>'+
+            f2(REF_LEN)+'</b> в еталона.';
+    }
+    verd('v6', tag, cap,
+      'Після кроку <b>'+step+'</b> живих версій <b>'+live+'</b>, найкраща сума логарифмів <b>'+
+      f3(level[0][1])+'</b>. '+extra);
+    I('cap6').innerHTML='Те саме перше речення перевірної частини. Сума логарифмів завжди спадає, '+
+      'бо логарифм числа, меншого за одиницю, відʼємний. Саме тому широкий промінь тягне до коротких '+
+      'відповідей: коротка версія просто встигає відняти менше.';
+  }
+  on('w6','input',draw);
+  on('step6','input',draw);
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ─────────────── фігура 7 · BLEU під тиском ─────────────── */
+(function(){
+  var cv=I('c7'); if(!cv) return;
+  var pick=0;
+  function draw(){
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var n=+I('n7').value; I('n7v').textContent=n;
+    var V=BLEU_VAR[pick];
+    var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+        rose=css('--rose'), teal=css('--teal'), raise=css('--raise'),
+        tw=css('--teal-w'), rw=css('--rose-w');
+    var x0=16, x1=W-16;
+    /* еталон */
+    capt(g,'переклад людини', x0, 20, soft, 10.5, true);
+    var i, N=BLEU_REF.length, bw=(x1-x0)/Math.max(N,1);
+    for(i=0;i<N;i++){
+      box(g, x0+bw*i+3, 28, bw-6, 28, tw, teal, 5);
+      capt(g, cut(g,BLEU_REF[i],bw-12,11), x0+bw*i+bw/2, 47, ink, 11, false, 'center');
+    }
+    /* кандидат */
+    capt(g,'варіант: '+V.name, x0, 78, soft, 10.5, true);
+    var M=V.cand.length, cw=(x1-x0)/Math.max(M,1);
+    for(i=0;i<M;i++){
+      var hit=BLEU_REF.indexOf(V.cand[i])>=0;
+      box(g, x0+cw*i+3, 86, cw-6, 28, hit?tw:rw, hit?teal:rose, 5);
+      capt(g, cut(g,V.cand[i],cw-12,11), x0+cw*i+cw/2, 105, ink, 11, false, 'center');
+    }
+    /* стовпчики точностей */
+    var y0=162, y1=H-46;
+    capt(g,'точність за n-грамами', x0, 138, soft, 10.5, true);
+    var gx0=x0+40, gx1=x1-160;
+    var t;
+    for(t=0;t<=2;t++){
+      var y=y1-(y1-y0)*t/2;
+      g.strokeStyle=hair; g.lineWidth=1;
+      g.beginPath(); g.moveTo(gx0,y+0.5); g.lineTo(gx1,y+0.5); g.stroke();
+      capt(g,(t/2).toFixed(1), gx0-5, y+4, soft, 9, false, 'right');
+    }
+    var pbw=(gx1-gx0)/4;
+    for(i=0;i<4;i++){
+      var p=V.p[i], h=(y1-y0)*p;
+      var hot=(i+1)===n;
+      g.globalAlpha=hot?1:0.5;
+      box(g, gx0+pbw*i+14, y1-h, pbw-28, Math.max(h,1), p>0?teal:rose, null, 4);
+      g.globalAlpha=1;
+      capt(g, f4(p), gx0+pbw*i+pbw/2, y1-h-7, hot?ink:soft, hot?10.5:9.5, hot, 'center');
+      capt(g, (i+1)+'-грами', gx0+pbw*i+pbw/2, y1+16, hot?ink:soft, 10, hot, 'center');
+    }
+    /* підсумок праворуч */
+    var rx=gx1+16;
+    capt(g,'штраф за стислість', rx, y0+6, soft, 10);
+    capt(g, f4(V.bp), rx, y0+26, ink, 15, true);
+    capt(g,'BLEU', rx, y0+56, soft, 10);
+    capt(g, f4(V.bleu), rx, y0+78, V.bleu>0?teal:rose, 19, true);
+    capt(g, V.bleu>0?'зараховано':'нуль', rx, y0+98, soft, 10);
+    /* числа */
+    I('k7a').textContent=f4(V.p[n-1]);
+    I('k7b').textContent=f4(V.bp);
+    I('k7c').textContent=f4(V.bleu);
+    I('k7d').textContent=M+' / '+N;
+    var tag = V.bleu>0.5 ? 't-ok' : (V.bleu>0 ? 't-mid' : 't-no');
+    var human = pick===4 ? 'Людина теж забракує: половини змісту немає.'
+                          : (pick===0 ? 'Людина зарахує: це той самий рядок.'
+                          : 'Людина зарахує цей переклад як правильний.');
+    verd('v7', tag, V.bleu>0?'BLEU більший за нуль':'BLEU дорівнює нулю',
+      human+' BLEU дає <b>'+f4(V.bleu)+'</b>: точність за <b>'+n+'</b>-грамами тут <b>'+
+      f4(V.p[n-1])+'</b>, штраф за стислість <b>'+f4(V.bp)+'</b>. '+
+      (V.bleu===0 ? 'Нуль хоча б в одній із чотирьох точностей обертає на нуль усе середнє геометричне.' : ''));
+    I('cap7').innerHTML='Приклад зроблено руками — він показує механізм метрики, а не якість нашої моделі. '+
+      'Зміна одного закінчення лишає від трійок слів лише третину, а четвірок не лишає зовсім — '+
+      'хоча зміст той самий. Це й є відома вада метрик на збіг слів для мов із багатою морфологією.';
+  }
+  on('n7','input',draw);
+  segment('seg7', function(i){pick=i; draw();});
+  window.addEventListener('resize',draw); draw();
+})();
+
+})();
+</script>
+
+</body>
+</html>

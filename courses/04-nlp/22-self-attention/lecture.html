@@ -1,0 +1,2100 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Self-attention покроково</title>
+<meta name="description" content="Механізм уваги, розібраний на числах: справжнє пʼятислівне речення з корпусу, справжні навчені ваги й шість арифметичних дій від першого множення до останнього додавання. Показано, звідки беруться три матриці (асиметрія карти уваги сягає 0.2786 при вагах від 0.0678 до 0.4682), навіщо ділити на корінь із розміру вектора (без ділення сила градієнта падає в 14.43 раза при переході від чотирьох вимірів до тисячі двадцяти чотирьох) і що це дає: статичний вектор слова «розділу» в двох реченнях має косинус 1.0000, а після одного шару self-attention — мінус 0.8499. Окремо заміряно звірку власної реалізації з nn.MultiheadAttention: найменша різниця 5.960e-08 при машинному епсилоні float32 1.192e-07, побітово результати не збігаються ніколи.">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono, .roles b, .roles i, .keyline{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code,
+.roles code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw, th .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+
+/* три ролі одного слова — картки в один рядок */
+.roles{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:12px; margin:24px 0}
+.roles > div{border:1px solid var(--hair); border-radius:11px; padding:14px 16px;
+  background:var(--raise)}
+.roles b{display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  letter-spacing:.08em; color:var(--rose); margin-bottom:6px}
+.roles i{font-style:normal; font-size:15px; line-height:1.5}
+
+/* рядок-ключ: підпис із моноширинним початком у прозі */
+.keyline{font-family:"JetBrains Mono",monospace; font-size:13.5px; color:var(--soft)}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 5 · Тема 22</p>
+    <h1>Self-attention покроково</h1>
+    <p class="stand">Одне слово, одна формула, шість арифметичних дій. Ми беремо
+      справжнє речення з нашого корпусу, справжні навчені ваги — і проходимо
+      механізм уваги від першого множення до останнього додавання, не пропускаючи
+      жодного кроку. Наприкінці стане зрозуміло, звідки в ньому взялися три різні
+      матриці, навіщо там ділення на корінь і чому власна реалізація ніколи не
+      збіжиться з бібліотечною побітово.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Слово, у якого немає одного значення</a></li>
+        <li><a href="#s2">Що саме має зробити шар</a></li>
+        <li><a href="#s3">Три ролі одного слова</a></li>
+        <li><a href="#s4">Крок 1 · Три проєкції</a></li>
+        <li><a href="#s5">Крок 2 · Скалярний добуток</a></li>
+        <li><a href="#s6">Крок 3 · Таблиця оцінок</a></li>
+        <li><a href="#s7">Крок 4 · Ділення на корінь</a></li>
+        <li><a href="#s8">Крок 5 · Softmax</a></li>
+        <li><a href="#s9">Крок 6 · Зважена сума</a></li>
+        <li><a href="#s10">Формула цілком</a></li>
+        <li><a href="#s11">Навіщо три матриці, а не одна</a></li>
+        <li><a href="#s12">Той самий вектор в іншому контексті</a></li>
+        <li><a href="#s13">Чого self-attention не вміє</a></li>
+        <li><a href="#s14">Скільки це коштує</a></li>
+        <li><a href="#s15">Як звіряти свою реалізацію</a></li>
+        <li><a href="#s16">Що лишається в руках</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../21-transformer-architecture/lecture.html">← 21. Архітектура і чому витіснила RNN</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../23-multihead-masking/lecture.html">23. Multi-head, позиційне кодування, маскування →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+<p class="lead">У нашому корпусі є слово <b>розділ</b>. Воно трапляється в програмі
+<code>elfutils</code>, і там це шматок обʼєктного файлу — те, що англійською зветься
+<i>section</i>. Воно ж трапляється в програмі <code>parted</code>, і там це шматок
+диска — <i>partition</i>. Пишеться однаково, читається однаково, у словнику стоїть
+одним рядком. Дві різні речі, одне слово. Усе, що ми будували в блоці про ембединги,
+дає цьому слову <b>один</b> вектор на обидва значення — і жодного способу їх
+розрізнити. Ця тема про механізм, який розрізняє: він читає речення довкола слова
+й перебудовує вектор слова під контекст. Механізм зветься <b>self-attention</b>, і
+ми пройдемо його на числах, крок за кроком.</p>
+
+<h2 id="s1"><span class="num">Розділ 1</span>Слово, у якого немає одного значення</h2>
+
+<p>Почнемо з того, що вже вміємо, — і побачимо, де воно ламається.</p>
+
+<p>Тема <code>11-distributional-semantics</code> дала першу ідею: значення слова
+можна дістати з того, з якими словами воно стоїть поруч. Теми
+<code>12-word2vec</code> і <code>13-glove-fasttext</code> перетворили цю ідею на
+таблицю: кожному слову словника відповідає рядок чисел, і цей рядок один. Слово
+«розділ» отримало свій рядок — один на всі випадки життя.</p>
+
+<p>Такий вектор називають <b>статичним ембедингом</b>: статичний, бо він не
+змінюється залежно від речення. Це не дрібний недолік, а межа самої конструкції.
+Таблиця має рівно стільки рядків, скільки слів у словнику; звідки б у ній узятись
+двом рядкам для одного слова?</p>
+
+<div class="note"><b>Термін.</b><br>
+<b>Ембединг</b> (embedding) — рядок чисел, яким модель представляє слово.
+<b>Статичний</b> ембединг береться з таблиці за номером слова й не залежить від
+речення. <b>Контекстний</b> (contextual) ембединг рахується для кожного входження
+слова окремо й у різних реченнях різний. Ця тема — про те, як зробити другий із
+першого.</div>
+
+<p>Порівняйте два справжні рядки з нашого корпусу:</p>
+
+<div class="eq left">не вдалося отримати заголовок розділу        (elfutils — розділ обʼєктного файлу)
+розмір розділу який слід створити            (gnome-disk-utility — розділ диска)</div>
+
+<p>Людина розводить ці значення миттєво, і робить це не за самим словом «розділу»,
+а за сусідами: «заголовок» тягне в бік обʼєктних файлів, «створити» і «розмір» —
+у бік диска. Тобто інформація, якої бракує, лежить <b>у тому самому реченні</b>,
+за кілька слів. Її просто треба донести до потрібної позиції.</p>
+
+<p>Зверніть увагу, що завдання «донести» — не таке саме, як «усереднити». Якщо ми
+просто складемо всі вектори речення й поділимо на пʼять, ми дістанемо вектор
+речення, а не вектор слова: у ньому «розділу» розчиниться разом із «не» і «слід».
+Нам потрібно, щоб <b>кожна позиція</b> дістала свій новий вектор, і щоб кожна
+збирала з речення саме те, що потрібно їй.</p>
+
+<h2 id="s2"><span class="num">Розділ 2</span>Що саме має зробити шар</h2>
+
+<p>Сформулюймо вимогу точно, бо з неї виводиться вся конструкція.</p>
+
+<p>На вхід шар дістає <b>послідовність векторів</b>: речення з <span class="raw">n</span>
+слів дає <span class="raw">n</span> рядків по <span class="raw">d</span> чисел. Це
+матриця, яку далі всюди звемо <span class="raw">X</span>. На виході шар мусить
+віддати <b>стільки ж</b> векторів такої самої довжини — по одному на кожну позицію.
+Різниця в тому, що вихідний вектор позиції <span class="raw">i</span> має право
+дивитись на всі вхідні вектори, а не лише на свій.</p>
+
+<div class="note"><b>Позначення, які будуть усюди.</b><br>
+<span class="raw">n</span> — скільки слів у реченні (у нас 5).
+<span class="raw">d</span> — скільки чисел у векторі одного слова (у нас 4).
+<span class="raw">X</span> — вхідна матриця <span class="raw">n×d</span>: рядок на
+слово. <span class="raw">Y</span> — вихідна матриця того самого розміру.
+Індекс <span class="raw">i</span> завжди означає <b>позицію, яка питає</b>, індекс
+<span class="raw">j</span> — <b>позицію, яку питають</b>.</div>
+
+<p>Найпростіший спосіб «зібрати з усіх» — зважена сума. Новий вектор позиції
+<span class="raw">i</span> — це сума всіх вхідних векторів із якимись вагами:</p>
+
+<div class="eq">y<span class="sub">i</span> = a<span class="sub">i1</span>·x<span class="sub">1</span> + a<span class="sub">i2</span>·x<span class="sub">2</span> + … + a<span class="sub">in</span>·x<span class="sub">n</span></div>
+
+<p>Словами: <b>вихід позиції — це суміш усіх слів речення, і питання лише в тому,
+у якій пропорції змішувати</b>. Ваги <span class="raw">a</span> невідʼємні й у сумі
+дають одиницю, тобто це справді пропорції, а не довільні множники.</p>
+
+<p>Тепер видно, у чому вся задача. Зважена сума — річ тривіальна; складне тут одне:
+<b>звідки взяти ваги</b>. Причому ваги мусять бути різні для кожної позиції (слову
+«розділу» треба дивитись на «заголовок», а слову «не» — кудись інде) і мусять
+залежати від самого речення, а не бути сталими числами. Самі ваги — теж результат
+обчислення, і його ми зараз побудуємо.</p>
+
+<div class="note warn"><b>Дві речі, яких у цій темі свідомо немає.</b><br>
+Ми беремо <b>одну голову</b> уваги й <b>жодного маскування</b>: у нас кожна позиція
+бачить усі, включно з собою. Кілька голів паралельно, причинна маска й позиційне
+кодування — предмет теми <code>23-multihead-masking</code>. Вони нічого не міняють
+у механіці, яку ми зараз розберемо: це той самий розрахунок, або повторений кілька
+разів, або з частиною оцінок, викинутих до softmax.</div>
+
+<h2 id="s3"><span class="num">Розділ 3</span>Три ролі одного слова</h2>
+
+<p>Ось ідея, з якої виростає все інше. Кожне слово в реченні бере участь у розрахунку
+<b>тричі, у трьох різних ролях</b>, і для кожної ролі йому потрібен свій вектор.</p>
+
+<p>Аналогія, яка тут працює найкраще, — картотека. Уявіть шухляду з картками. Ви
+приходите з <b>запитом</b> («мені потрібне щось про заголовки»). На кожній картці
+зверху написаний <b>ключ</b> — короткий підпис, за яким ви вирішуєте, підходить вона
+чи ні. А всередині картки лежить <b>значення</b> — власне вміст, який ви заберете,
+якщо картка підійшла.</p>
+
+<div class="roles">
+  <div><b>Q · запит</b><i>Чого шукає ця позиція. Питання, з яким слово звертається
+    до всього речення.</i></div>
+  <div><b>K · ключ</b><i>Чим ця позиція себе рекламує. Підпис, за яким її знаходять
+    інші.</i></div>
+  <div><b>V · значення</b><i>Що ця позиція віддає тому, хто її вибрав. Її внесок у
+    чужу суму.</i></div>
+</div>
+
+<p>Три англійські слова — <b>query</b>, <b>key</b>, <b>value</b> — так і лишились у
+назвах змінних скрізь, тому й ми триматимемо їх поруч з українськими: запит
+<span class="raw">Q</span>, ключ <span class="raw">K</span>, значення
+<span class="raw">V</span>.</p>
+
+<p>Ключове тут — що <b>ролі не однакові</b> і плутати їх не можна. «Чого я шукаю» і
+«чим я корисний іншим» — різні речі навіть для однієї людини. Слово «розділу» шукає
+уточнення значення, а пропонує іншим словам відомості про те, що в реченні йдеться
+про якийсь фрагмент. Це два різні описи того самого слова, і механізм дає слову
+право мати обидва.</p>
+
+<p>Слово «self» у назві <code>self-attention</code> означає рівно те, що всі три ролі
+розігрує <b>та сама послідовність</b>. Запити беруться з речення, ключі беруться з
+того самого речення, значення — теж. Речення дивиться саме на себе. Коли запити
+беруть з однієї послідовності, а ключі й значення — з іншої (наприклад, декодер
+дивиться на енкодер), це зветься просто увагою, без «self»; таку ми бачили в темі
+<code>19-seq2seq</code>.</p>
+<h2 id="s4"><span class="num">Розділ 4</span>Крок 1 · Три проєкції</h2>
+
+<p>Далі ми йдемо на числах. Речення взяте з корпусу як є:</p>
+
+<div class="eq">не · вдалося · отримати · заголовок · розділу</div>
+
+<p>Пʼять слів, отже <span class="raw">n</span> = 5. Вектор кожного слова має чотири
+числа, отже <span class="raw">d</span> = 4. Чотири — це смішно мало для справжньої
+моделі (там беруть 128, 512, 768), але саме тому все влазить на екран і рахується
+руками. Механіка від розміру не залежить: усе, що ми зробимо з чотирма числами,
+робиться з сімсот шістдесятьма вісьмома дослівно так само.</p>
+
+<div class="note"><b>Звідки числа.</b><br>
+Ваги, які ви бачите далі, не вигадані й не випадкові: це <b>навчена модель</b>. Ми
+взяли з корпусу всі речення зі словом «розділ» у будь-якій формі, поділили їх за
+значенням (шматок обʼєктного файлу проти шматка диска) і навчили маленьку модель із
+одним шаром self-attention це значення розрізняти. Числа нижче — ваги тієї моделі
+після навчання. Модель навчалась пʼять разів із різними зернами; для розбору взято
+один прогін — зерно 2, збалансована влучність 0.7927. Механіка від вибору прогону
+не залежить: будь-який інший дав би інші числа й ті самі шість кроків.</div>
+
+<figure>
+  <div class="fig-head">Фігура 1 · Вхід: пʼять слів — пʼять рядків чисел</div>
+  <p class="fig-sub">Матриця <span class="raw">X</span>: рядок на слово, чотири
+    числа в рядку. Це все, що шар отримує на вхід.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="row1">підсвітити слово <output id="row1o">усі</output></label>
+        <input id="row1" type="range" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>довжина вектора</b><i id="v1a" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>Порядок слів у матриці є, але для самого шару він не значить нічого —
+    це ми доведемо в розділі 13. Найдовший вектор тут у слова «заголовок», найкоротший
+    у «вдалося»; довжина вектора нічого не каже про важливість слова, це просто
+    результат навчання.</figcaption>
+</figure>
+
+<p>Тепер перший крок обчислення. З кожного рядка <span class="raw">X</span> ми робимо
+<b>три</b> нові рядки — запит, ключ і значення. Робиться це множенням на три різні
+матриці ваг, і ці матриці — усе, що шар вивчає:</p>
+
+<div class="eq">Q = X · W<span class="sub">Q</span>&nbsp;&nbsp;&nbsp;&nbsp;
+K = X · W<span class="sub">K</span>&nbsp;&nbsp;&nbsp;&nbsp;
+V = X · W<span class="sub">V</span></div>
+
+<p>Кожна з трьох матриць має розмір <span class="raw">d×d</span>, у нас 4×4, тобто
+шістнадцять чисел. Три матриці — сорок вісім чисел, і це <b>весь</b> набір параметрів
+одноголового self-attention. Більше він нічого не памʼятає.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">що означає множення на матрицю</span>
+    <p>Це найпростіша операція, яку варто розписати, бо на ній усе тримається. Щоб
+      дістати перше число запиту для слова «не», ми беремо його вектор
+      <span class="raw">x₁</span> = (1.2426, −0.7328, −0.5741, 0.9104) і
+      <b>перший стовпець</b> матриці <span class="raw">W<span class="sub">Q</span></span>
+      = (0.7952, −0.4120, −0.1302, −0.3165). Множимо попарно й додаємо:</p>
+    <div class="eq">1.2426·0.7952 + (−0.7328)·(−0.4120) + (−0.5741)·(−0.1302) + 0.9104·(−0.3165) = 1.0767</div>
+    <p>Те саме з другим стовпцем дає друге число, і так далі. Чотири стовпці — чотири
+      числа запиту. Потім те саме для решти слів і те саме з двома іншими матрицями.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">навіщо це взагалі</span>
+    <p>Множення на матрицю — це спосіб <b>перемішати</b> числа вектора в новій
+      пропорції. Вхідний вектор слова один; після трьох різних перемішувань виходять
+      три різні описи того самого слова. Модель під час навчання добирає ці
+      перемішування так, щоб запити знаходили потрібні ключі.</p>
+  </div>
+</div>
+
+<figure>
+  <div class="fig-head">Фігура 2 · Одне слово, три різні вектори</div>
+  <p class="fig-sub">Перемикач показує, що виходить із <span class="raw">X</span>
+    після множення на кожну з трьох матриць.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">показати</span>
+        <div class="seg" id="seg2">
+          <button data-i="0" aria-pressed="true"><span class="raw">X</span></button>
+          <button data-i="1" aria-pressed="false"><span class="raw">Q</span></button>
+          <button data-i="2" aria-pressed="false"><span class="raw">K</span></button>
+          <button data-i="3" aria-pressed="false"><span class="raw">V</span></button>
+        </div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>роль</b><i id="v2a" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>Три матриці навчені окремо й дають три несхожі картини. Це і є вся
+    робота першого кроку: одне слово дістає три різні описи — чого воно шукає, чим
+    себе рекламує і що віддає.</figcaption>
+</figure>
+
+<h2 id="s5"><span class="num">Розділ 5</span>Крок 2 · Скалярний добуток</h2>
+
+<p>Тепер треба виміряти, наскільки запит однієї позиції підходить до ключа іншої.
+Мірка тут найпростіша з можливих — <b>скалярний добуток</b>.</p>
+
+<div class="note"><b>Скалярний добуток (dot product).</b><br>
+Беремо два вектори однакової довжини, множимо перше число на перше, друге на друге
+і так далі, а тоді все складаємо. Вийде одне число. Якщо вектори «дивляться в один
+бік», добуток великий і додатний; якщо в різні — відʼємний; якщо вони перпендикулярні,
+добуток близький до нуля. Тобто це готова мірка підхожості, і за неї не треба
+платити нічим, крім <span class="raw">d</span> множень.</div>
+
+<p>Порахуймо одну клітинку руками. Візьмімо запит слова «не» (перший рядок
+<span class="raw">Q</span>) і ключ слова «вдалося» (другий рядок
+<span class="raw">K</span>):</p>
+
+<div class="eq left">q₁ = ( 1.0767, −0.4380,  1.2980, −0.4275)
+k₂ = ( 0.3553, −0.2101,  0.2892,  0.2476)
+
+1.0767·0.3553 = 0.3826
+−0.4380·(−0.2101) = 0.0920
+1.2980·0.2892 = 0.3754
+−0.4275·0.2476 = −0.1058
+                 ─────────
+сума              0.7442</div>
+
+<p>Число 0.7442 і є <b>оцінка</b> (score) пари «не» → «вдалося». Вона додатна й
+найбільша в першому рядку — тобто з погляду позиції «не» найпідхожіший ключ у
+реченні належить слову «вдалося». Для порівняння, та сама позиція проти ключа слова
+«заголовок» дає −2.9504: сильно відʼємне число, тобто «не підходить зовсім».</p>
+
+<div class="note"><b>Якщо додаси чотири числа вище на папері, вийде 0.7441.</b>
+Це не помилка й не описка: кожен доданок тут показано округленим до чотирьох знаків,
+а модель складає повні числа й округлює вже суму. Розбіжність в одиницю останнього
+розряду — звичайна ціна округлення, і вона зустрінеться ще раз наприкінці розділу 9.
+Запамʼятай цей ефект: він пояснює половину випадків, коли перевірка «на папері» не
+сходиться з тим, що надрукувала програма.</div>
+
+<figure>
+  <div class="fig-head">Фігура 3 · Один скалярний добуток на пальцях</div>
+  <p class="fig-sub">Оберіть, хто питає і кого питають, — і побачите всі чотири
+    добутки та їхню суму.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="qi3">питає <span class="raw">q</span><output id="qi3o">не</output></label>
+        <input id="qi3" type="range" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <label for="kj3">кого <span class="raw">k</span><output id="kj3o">вдалося</output></label>
+        <input id="kj3" type="range" min="0" max="4" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>оцінка</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>найбільша в рядку</b><i id="v3b">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Чотири множення й три додавання — уся мірка підхожості. Знак кожного
+    доданка видно окремо: зелений тягне оцінку вгору, рожевий униз. Порахуйте будь-яку
+    пару на папері й звірте.</figcaption>
+</figure>
+<h2 id="s6"><span class="num">Розділ 6</span>Крок 3 · Таблиця оцінок</h2>
+
+<p>Одну оцінку ми порахували. Тепер треба порахувати їх усі: кожен запит проти кожного
+ключа. Пʼять запитів на пʼять ключів дають <b>двадцять пʼять</b> чисел — квадратну
+таблицю пʼять на пʼять.</p>
+
+<p>У матричному записі це один рядок:</p>
+
+<div class="eq">S = Q · K<span class="sup">⊤</span></div>
+
+<p>Значок <span class="raw">⊤</span> означає <b>транспонування</b> — матрицю
+перевертають, міняючи рядки зі стовпцями. Він тут потрібен суто технічно: щоб
+множення матриць дало саме попарні скалярні добутки рядків
+<span class="raw">Q</span> з рядками <span class="raw">K</span>. Ніякої окремої ідеї
+за ним не стоїть.</p>
+
+<div class="note"><b>Читати таблицю треба по рядках.</b><br>
+Рядок <span class="raw">i</span> — це «як позиція <span class="raw">i</span> оцінює
+всіх». Стовпець <span class="raw">j</span> — «як усі оцінюють позицію
+<span class="raw">j</span>». Далі нас цікавитимуть саме рядки, бо кожна позиція
+будує свою суміш незалежно від сусідів.</div>
+
+<figure>
+  <div class="fig-head">Фігура 4 · Уся таблиця оцінок 5×5</div>
+  <p class="fig-sub">Двадцять пʼять скалярних добутків. Повзунок підсвічує один
+    рядок — тобто одну позицію, яка питає.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="row4">рядок <output id="row4o">усі</output></label>
+        <input id="row4" type="range" min="0" max="5" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найбільша</b><i id="v4a" class="sm">—</i></div>
+        <div class="cellv"><b>найменша</b><i id="v4b" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Оцінки в цій моделі лежать від −2.9504 до 0.7442, стандартне
+    відхилення 1.0239. Таблиця несиметрична: «не» оцінює «вдалося» на 0.7442,
+    а «вдалося» оцінює «не» на −0.1508. Чому так має бути — розділ 11.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">Розділ 7</span>Крок 4 · Ділення на корінь</h2>
+
+<p>Цей крок виглядає як дрібна технічна деталь, і саме тому його найчастіше
+переказують без пояснення: «оцінки ділять на корінь із
+<span class="raw">d</span>». Пояснення є, воно коротке, і його можна показати
+числом.</p>
+
+<p>Почнімо з питання: <b>наскільки великі бувають скалярні добутки?</b> Якщо
+вектори мають чотири числа, добуток складається з чотирьох доданків. Якщо чисел
+1024 — з тисячі двадцяти чотирьох доданків. Доданки різних знаків частково гасять
+одне одного, але не повністю, і сума все одно росте.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · що росте</span>
+    <p>Візьмімо вектори, у яких кожне число незалежне, у середньому нуль, а типове
+      відхилення від нуля — одиниця. Скалярний добуток двох таких векторів у
+      середньому теж нуль: додатні й відʼємні доданки однаково ймовірні. А от
+      <b>розкид</b> цієї суми росте — і росте як корінь із кількості доданків.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · чому саме корінь</span>
+    <p>Це загальне правило додавання незалежних випадкових величин: складаючи
+      <span class="raw">d</span> штук, ми множимо їхній типовий розкид не на
+      <span class="raw">d</span>, а на <span class="raw">√d</span>. Побутова
+      аналогія: якщо кинути монету чотири рази, відхилення від рівного рахунку
+      буде близько двох, а не чотирьох; якщо сто разів — близько десяти, а не ста.
+      Помилки частково гасять одна одну.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · що з цим робити</span>
+    <p>Отже, оцінки при великому <span class="raw">d</span> самі собою виходять
+      великими за модулем — не тому, що модель у чомусь дуже впевнена, а тому, що
+      доданків багато. Щоб прибрати цей паразитний ріст, оцінку ділять на
+      <span class="raw">√d</span>: розкид повертається до одиниці незалежно від
+      розміру вектора.</p>
+  </div>
+</div>
+
+<p>Це не гіпотеза, це перевіряється прямим заміром. Ми взяли пари випадкових векторів
+різної довжини й подивились на розкид їхніх скалярних добутків, по пʼять зерен на
+кожен розмір:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th><span class="raw">d</span></th><th>розкид <span class="raw">q·k</span></th><th><span class="raw">√d</span></th></tr>
+<tr><td>4</td><td>2.0293 ±0.0267</td><td>2</td></tr>
+<tr><td>16</td><td>4.0642 ±0.0579</td><td>4</td></tr>
+<tr><td>64</td><td>7.9439 ±0.0786</td><td>8</td></tr>
+<tr><td>256</td><td>16.0777 ±0.1311</td><td>16</td></tr>
+<tr class="hot"><td>1024</td><td>31.8674 ±0.6249</td><td>32</td></tr>
+</table></div>
+
+<p class="keyline">Тут вектори штучні, з нормального розподілу: нам потрібна відома
+істина, з якою можна звіряти.</p>
+
+<p>Відхилення від <span class="raw">√d</span> ніде не перевищує <b>1.60 %</b> від
+самого значення: найгірше воно при <span class="raw">d</span> = 16, де заміряні
+4.0642 стоять проти рівно чотирьох. Тобто множник, на який треба ділити, не вгаданий
+і не підібраний: він випливає з арифметики.</p>
+
+<figure>
+  <div class="fig-head">Фігура 5 · Розкид оцінок росте як корінь із розміру вектора</div>
+  <p class="fig-sub">Заміряний розкид скалярного добутку проти
+    <span class="raw">√d</span>. Пʼять зерен, вусики — розкид по зернах.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">шкала</span>
+        <div class="seg" id="seg5">
+          <button data-i="0" aria-pressed="true">лінійна</button>
+          <button data-i="1" aria-pressed="false">логарифмічна</button>
+        </div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найбільше відхилення від <span class="raw">√d</span></b><i id="v5a" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>Виміряні точки лягають на пунктир <span class="raw">√d</span>. На
+    логарифмічній шкалі обидві криві стають прямими з однаковим нахилом — це
+    найпростіший спосіб побачити, що залежність саме коренева, а не якась інша.</figcaption>
+</figure>
+
+<h3>Що станеться, якщо не поділити</h3>
+
+<p>Великі оцінки самі собою не страшні. Страшне те, що з ними робить наступний крок.
+Softmax перетворює числа на ваги так, що <b>найбільше число забирає майже все</b>, і
+що більший розрив між числами, то жорсткіше це «майже все».</p>
+
+<p>Ми поміряли, у що це виливається. На пʼятьох випадкових ключах, пʼять зерен:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th><span class="raw">d</span></th><th>макс. вага без ділення</th><th>з діленням</th><th>сила градієнта без</th><th>з</th></tr>
+<tr><td>4</td><td>0.6075</td><td>0.4403</td><td>0.5121</td><td>0.6782</td></tr>
+<tr><td>16</td><td>0.7971</td><td>0.4569</td><td>0.2838</td><td>0.6701</td></tr>
+<tr><td>64</td><td>0.8980</td><td>0.4610</td><td>0.1449</td><td>0.6677</td></tr>
+<tr><td>256</td><td>0.9493</td><td>0.4631</td><td>0.0724</td><td>0.6661</td></tr>
+<tr class="hot"><td>1024</td><td>0.9758</td><td>0.4604</td><td>0.0355</td><td>0.6684</td></tr>
+</table></div>
+
+<div class="note"><b>«Сила градієнта» — що це за число.</b><br>
+Це сума <span class="raw">p·(1−p)</span> по всіх вагах рядка. Величина показує,
+наскільки ваги взагалі здатні зрушити, якщо трохи змінити оцінки. Якщо одна вага
+дорівнює 1, а решта 0, то <span class="raw">p·(1−p)</span> усюди нуль — ваги
+застигли, і ніяка зміна оцінок їх не поворухне. Для рівномірного розподілу на пʼятьох
+ключах ця сума дорівнює 0.8000, і це стеля.</div>
+
+<p>Читайте таблицю так. Без ділення при <span class="raw">d</span> = 1024 одна вага
+забирає 0.9758 — тобто <b>97.58 % уваги йде на один ключ</b>, а решта чотирьох разом
+дістають 2.42 %. Сила градієнта падає з 0.5121 до 0.0355, тобто в
+<b>14.43 раза</b>. Це і є «softmax насичується»: ваги приліпились до крайніх значень,
+і навчання в цьому місці зупиняється, бо стрілка, яка каже, куди рухати ваги, майже
+нульова.</p>
+
+<p>З діленням картина зовсім інша: максимальна вага тримається між 0.4403 і 0.4631
+для всіх розмірів від 4 до 1024, а сила градієнта — між 0.6661 і 0.6782. <b>Розмір вектора перестає
+впливати на різкість уваги.</b> Саме цього ділення й досягає, і саме тому воно
+входить у формулу як обовʼязкова частина, а не як гіперпараметр.</p>
+
+<figure>
+  <div class="fig-head">Фігура 6 · Один повзунок: на що ділимо</div>
+  <p class="fig-sub">Ті самі оцінки нашого речення, поділені на різне число.
+    Дивіться, як міняється рядок ваг і сила градієнта.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="div6">дільник <output id="div6o">2.00</output></label>
+        <input id="div6" type="range" min="0" max="24" step="1" value="16">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>макс. вага</b><i id="v6a">—</i></div>
+        <div class="cellv"><b>сила градієнта</b><i id="v6b">—</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>Дільник 1 — це «не ділили взагалі», 2 — це <span class="raw">√d</span>
+    для нашого <span class="raw">d</span> = 4, 4 — це <span class="raw">d</span>.
+    Зменшуючи дільник нижче одиниці, ми штучно роздуваємо оцінки й бачимо
+    насичення на власні очі.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">Розділ 8</span>Крок 5 · Softmax</h2>
+
+<p>У нас є рядок із пʼяти оцінок. Треба перетворити його на пʼять ваг, які невідʼємні
+й у сумі дають одиницю. Робить це <b>softmax</b>.</p>
+
+<div class="note"><b>Softmax, у двох діях.</b><br>
+<b>Перша:</b> кожне число замінюємо на <span class="raw">e</span> в його степені.
+Число <span class="raw">e</span> ≈ 2.71828 — стала, для якої така операція
+математично найзручніша; важливо лише те, що результат <b>завжди додатний</b> і
+росте тим швидше, чим більший показник. <b>Друга:</b> ділимо кожне на суму всіх.
+Після цього вони гарантовано дають у сумі одиницю. Детальніше про softmax —
+у глосарії курсу «Машинне навчання».</div>
+
+<p>Порахуймо перший рядок нашої таблиці руками. Оцінки, вже поділені на
+<span class="raw">√d</span> = 2:</p>
+
+<div class="eq left">                  не      вдалося  отримати заголовок  розділу
+оцінка ÷ 2      −0.7263   0.3721   −1.3239  −1.4752   −0.4013
+e у цьому степені 0.4837   1.4508    0.2661   0.2287    0.6694
+                                                       ───────
+                                          сума          3.0987
+
+поділили на суму: 0.1561   0.4682    0.0859   0.0738    0.2160</div>
+
+<p>Пʼять чисел, у сумі рівно одиниця. Це і є <b>ваги уваги</b> для позиції «не».
+Слово «не» бере 46.82 % свого нового вектора від слова «вдалося», 21.60 % — від
+«розділу», 15.61 % — від самого себе, і зовсім мало від «отримати» й «заголовок».</p>
+
+<div class="note warn"><b>Обережно з тлумаченням.</b><br>
+Спокуса сказати «модель зрозуміла, що „не“ стосується „вдалося“», велика — і
+безпідставна. Ваги уваги показують, <b>як</b> порахований вихід, а не <b>чому</b>
+модель відповіла так, як відповіла. Вони не є поясненням: той самий вихід можна
+дістати різними комбінаціями ваг і значень. Тримайте їх за те, чим вони є, — за
+проміжний результат обчислення.</div>
+
+<figure>
+  <div class="fig-head">Фігура 7 · Softmax на одному рядку</div>
+  <p class="fig-sub">Три стовпчики: оцінка, її експонента, і частка від суми.
+    Повзунок перемикає рядок.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="row7">позиція, яка питає <output id="row7o">не</output></label>
+        <input id="row7" type="range" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сума ваг</b><i id="v7a">—</i></div>
+        <div class="cellv"><b>ентропія, нат</b><i id="v7b">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>Ентропія міряє, наскільки увага «розмазана»: нуль — уся вага на одному
+    ключі, ln 5 = 1.6094 — рівномірно на всіх пʼятьох. У нашій моделі рядки лежать від
+    1.3794 до 1.6083, тобто увага тут ближча до рівномірної, ніж до гострої.</figcaption>
+</figure>
+
+<h2 id="s9"><span class="num">Розділ 9</span>Крок 6 · Зважена сума</h2>
+
+<p>Лишилось найлегше. Ваги є, беремо ту саму зважену суму, з якої ми починали, —
+тільки складаємо не вхідні вектори <span class="raw">X</span>, а вектори
+<b>значень</b> <span class="raw">V</span>:</p>
+
+<div class="eq">y<span class="sub">i</span> = a<span class="sub">i1</span>·v<span class="sub">1</span> + a<span class="sub">i2</span>·v<span class="sub">2</span> + a<span class="sub">i3</span>·v<span class="sub">3</span> + a<span class="sub">i4</span>·v<span class="sub">4</span> + a<span class="sub">i5</span>·v<span class="sub">5</span></div>
+
+<p>Розпишімо перше число вихідного вектора для позиції «не». Перші числа векторів
+значень — це 1.1911, −0.0005, 1.5127, 3.5334, 2.8682. Ваги ми щойно порахували:</p>
+
+<div class="eq left">0.1561·1.1911 + 0.4682·(−0.0005) + 0.0859·1.5127 + 0.0738·3.5334 + 0.2160·2.8682
+= 0.1859 + (−0.0002) + 0.1299 + 0.2608 + 0.6195
+= 1.1959</div>
+
+<p>Те саме з другим, третім і четвертим числом — і вихідний вектор позиції «не»
+готовий: (1.1960, −1.3627, 1.0188, 0.9278). Складаючи округлені доданки, ми
+дістали 1.1959, а модель друкує 1.1960: різниця в останньому знаку — це наше
+округлення на кожному кроці, а не інша відповідь. Далі те саме для решти чотирьох позицій,
+і матриця <span class="raw">Y</span> зібрана. На цьому шар закінчився.</p>
+
+<div class="note"><b>Зверніть увагу, що складаємо ми <span class="raw">V</span>, а не <span class="raw">X</span>.</b><br>
+Вага порахована з запитів і ключів, а сумуються <b>значення</b>. Це навмисне:
+модель дістає право вирішувати окремо, <i>кого слухати</i>, і окремо, <i>що саме
+брати в того, кого слухаєш</i>. Якби ми складали самі <span class="raw">X</span>,
+другого рішення в моделі просто не було б.</div>
+
+<figure>
+  <div class="fig-head">Фігура 8 · Зважена сума: з чого складається вихід</div>
+  <p class="fig-sub">Внесок кожного слова у вихідний вектор обраної позиції.
+    Ширина смуги — вага, висота — саме число.</p>
+  <div class="panel">
+    <canvas id="c8" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="row8">позиція <output id="row8o">не</output></label>
+        <input id="row8" type="range" min="0" max="4" step="1" value="0">
+      </div>
+      <div class="ctl">
+        <label for="col8">число вектора <output id="col8o">1</output></label>
+        <input id="col8" type="range" min="0" max="3" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>сума</b><i id="v8a">—</i></div>
+        <div class="cellv"><b>найбільший внесок</b><i id="v8b" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v8v"></div>
+    </div>
+  </div>
+  <figcaption>Внесок слова — це його вага, помножена на його значення. Слово з
+    великою вагою й майже нульовим значенням не дає нічого; слово з малою вагою й
+    великим значенням може дати більше за нього.</figcaption>
+</figure>
+<h2 id="s10"><span class="num">Розділ 10</span>Формула цілком</h2>
+
+<p>Тепер, коли кожен крок пройдено на числах, можна записати всю операцію одним
+рядком — і цей рядок більше не буде загадкою:</p>
+
+<div class="eq">Attention(Q, K, V) = softmax( Q·K<span class="sup">⊤</span> ⁄ √d ) · V</div>
+
+<p>Розберімо його зліва направо, символ за символом.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>символ</th><th>що це</th><th>у нас</th></tr>
+<tr><td>Q</td><td>матриця запитів: рядок на позицію, «чого я шукаю»</td><td>5×4</td></tr>
+<tr><td>K</td><td>матриця ключів: рядок на позицію, «чим я себе рекламую»</td><td>5×4</td></tr>
+<tr><td>V</td><td>матриця значень: рядок на позицію, «що я віддаю»</td><td>5×4</td></tr>
+<tr><td>K<span class="sup">⊤</span></td><td>та сама <span class="raw">K</span>, перевернута: рядки стали стовпцями</td><td>4×5</td></tr>
+<tr><td>Q·K<span class="sup">⊤</span></td><td>таблиця оцінок: у клітинці <span class="raw">(i, j)</span> — скалярний добуток запиту <span class="raw">i</span> на ключ <span class="raw">j</span></td><td>5×5</td></tr>
+<tr><td>√d</td><td>корінь із довжини вектора; ділення на нього прибирає ріст оцінок із розміром</td><td>2</td></tr>
+<tr><td>softmax</td><td>перетворює рядок чисел на пропорції: невідʼємні, у сумі одиниця</td><td>по рядках</td></tr>
+<tr><td>результат</td><td>матриця виходів: рядок на позицію, того самого розміру, що й вхід</td><td>5×4</td></tr>
+</table></div>
+
+<p>І те саме звичайними словами, одним реченням: <b>кожна позиція питає в усіх
+позицій речення, наскільки вони їй підходять; відповіді перетворюються на пропорції;
+у цих пропорціях змішуються внески всіх позицій.</b></p>
+
+<div class="note"><b>Чому softmax береться по рядках, а не по всій таблиці.</b><br>
+Бо кожна позиція будує <b>свою</b> суміш, і в кожної суміші свої пропорції мусять
+давати одиницю окремо. Якби ми нормували всю таблицю разом, позиції почали б
+конкурувати між собою за спільний бюджет уваги — а вони не мають конкурувати.</div>
+
+<p>Тепер порахуймо, скільки в цьому всього параметрів. Три матриці
+<span class="raw">d×d</span> — це <span class="raw">3d²</span> чисел. У нашій
+іграшковій моделі <span class="raw">d</span> = 4, отже 48. У справжньому шарі з
+<span class="raw">d</span> = 512 це 786 432 числа, і до них додається ще одна
+матриця <span class="raw">d×d</span> на виході, про яку — у темі
+<code>23-multihead-masking</code>, бо без кількох голів вона не має сенсу.</p>
+
+<div class="note warn"><b>Що <span class="raw">не</span> залежить від довжини речення.</b><br>
+Кількість параметрів — <span class="raw">3d²</span> — не містить
+<span class="raw">n</span> взагалі. Той самий шар працює з реченням із трьох слів і
+з реченням із трьохсот, не змінюючи жодної ваги. Це не дрібниця: у рекурентної
+мережі з теми <code>17-rnn</code> було так само, а от у звичайного повнозвʼязного
+шару — ні, там розмір входу зашитий у розмір матриці.</div>
+
+<h2 id="s11"><span class="num">Розділ 11</span>Навіщо три матриці, а не одна</h2>
+
+<p>Питання законне: якщо всі три вектори роблять з одного й того самого
+<span class="raw">x</span>, чому не обійтись одним? Відповідей дві, і вони різного
+калібру.</p>
+
+<h3>Перша: таблиця оцінок мусить бути несиметричною</h3>
+
+<p>Уявімо, що ми зекономили й узяли для запитів і ключів одну матрицю, тобто
+<span class="raw">W<span class="sub">Q</span></span> =
+<span class="raw">W<span class="sub">K</span></span>. Тоді оцінка пари
+<span class="raw">(i, j)</span> дорівнювала б оцінці пари
+<span class="raw">(j, i)</span> завжди: скалярний добуток не залежить від порядку
+множників. Таблиця стала б дзеркально симетричною.</p>
+
+<p>А чи має вона бути симетричною? Ні, і це видно з мови. Прикметник хоче знати, до
+якого іменника він відноситься; іменникові знати про прикметник настільки ж
+пильно не треба. «Не» шукає дієслово; дієслово не шукає заперечення з такою самою
+силою. Відношення «мені потрібен саме ти» природно однобічне.</p>
+
+<p>У нашій навченій моделі так і виходить. Найбільша розбіжність між клітинкою й
+її дзеркальним відображенням — <b>0.2786</b> при тому, що самі ваги лежать від
+0.0678 до 0.4682. Тобто асиметрія не мікроскопічна: вона того ж порядку, що й самі
+ваги.</p>
+
+<figure>
+  <div class="fig-head">Фігура 9 · Карта уваги і її дзеркало</div>
+  <p class="fig-sub">Ліворуч — хто на кого дивиться. Перемикач показує ту саму
+    карту, перевернуту, і різницю між ними.</p>
+  <div class="panel">
+    <canvas id="c9" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">показати</span>
+        <div class="seg" id="seg9">
+          <button data-i="0" aria-pressed="true">карта</button>
+          <button data-i="1" aria-pressed="false">дзеркало</button>
+          <button data-i="2" aria-pressed="false">різниця</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найбільша різниця</b><i id="v9a">—</i></div>
+        <div class="cellv"><b>де саме</b><i id="v9b" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v9v"></div>
+    </div>
+  </div>
+  <figcaption>Рядки карти сумуються в одиницю, стовпці — ні, і це нормально:
+    нормування йде по рядках. Діагональ (позиція дивиться на себе) у цій моделі
+    дає в середньому 0.1488 при рівномірних 0.2000 — тобто слова тут дивляться на
+    себе <b>менше</b>, ніж на сусідів.</figcaption>
+</figure>
+
+<h3>Друга: значення й ключ відповідають на різні питання</h3>
+
+<p>Ключ потрібен, щоб тебе <b>знайшли</b>; значення — щоб від тебе <b>взяли
+користь</b>. Це очевидно різні описи, щойно подумати про пошук у бібліотеці:
+на корінці книжки написано не те, що всередині. Окрема матриця
+<span class="raw">W<span class="sub">V</span></span> дає моделі право оптимізувати
+ці дві речі незалежно.</p>
+
+<div class="note warn"><b>А тепер чесно: на нашій задачі це не окупилось.</b><br>
+Ми поставили три абляції — прибирали по одній деталі й дивились, що станеться зі
+збалансованою влучністю на перевірній вибірці, <b>пʼять зерен</b> на кожну.
+Повний self-attention дав <b>0.7482 ±0.0454</b> (купа 0.7073…0.8018); варіант із
+<span class="raw">W<span class="sub">Q</span></span> =
+<span class="raw">W<span class="sub">K</span></span> — <b>0.7591 ±0.0373</b>
+(0.7104…0.8049); варіант геть без проєкцій, де <span class="raw">Q</span> =
+<span class="raw">K</span> = <span class="raw">V</span> = <span class="raw">X</span>,
+— <b>0.7841 ±0.0347</b> (0.7500…0.8232). Купи перетинаються всі з усіма, тобто
+<b>різниці немає</b>. Наша задача
+надто мала й надто легка, щоб окупити зайві сорок вісім чисел. Аргументи вище —
+про те, чому конструкція <b>здатна</b> виражати несиметричні відношення, а не про
+те, що вона на будь-яких даних виграє. Різницю між «здатна» і «виграє» варто
+тримати в голові щоразу, коли читаєте про архітектури.</div>
+
+<h2 id="s12"><span class="num">Розділ 12</span>Той самий вектор в іншому контексті</h2>
+
+<p>Повернімось до слова, з якого починалась тема. Візьмімо друге справжнє речення
+з корпусу, у якому «розділу» означає зовсім інше:</p>
+
+<div class="eq left">речення 1  не вдалося отримати заголовок розділу     (розділ обʼєктного файлу)
+речення 2  розмір розділу який слід створити         (розділ диска)</div>
+
+<p>Проженімо обидва крізь той самий шар із тими самими вагами й порівняймо, що
+вийшло на позиції слова «розділу».</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>вектор слова «розділу»</th><th>косинус між двома реченнями</th></tr>
+<tr><td>статичний ембединг (вхід шару)</td><td>1.0000</td></tr>
+<tr class="hot"><td>після self-attention (вихід шару)</td><td>−0.8499</td></tr>
+</table></div>
+
+<div class="note"><b>Косинус — нагадування.</b><br>
+Косинус між двома векторами дорівнює 1, якщо вони дивляться точно в один бік, 0 —
+якщо перпендикулярні, і −1 — якщо в протилежні. Це та сама мірка, якою ми міряли
+схожість слів у темі <code>14-vector-arithmetic</code>.</div>
+
+<p>Одиниця в першому рядку — не результат, а тавтологія: статичний ембединг береться
+з таблиці за номером слова, а слово те саме, отже вектор той самий, отже косинус
+рівно 1.0000. У цьому й полягала проблема, з якої почалась тема.</p>
+
+<p>Мінус 0.8499 у другому рядку — уже результат. Один шар self-attention розвів два
+входження одного слова <b>у майже протилежні боки</b>. Контекст справді потрапив
+усередину вектора.</p>
+
+<p>Той самий замір на всій перевірній вибірці, а не на двох реченнях: середній
+косинус між контекстними векторами «розділу» <b>в межах одного значення</b> —
+0.6235; <b>між різними значеннями</b> — −0.1786. Розрив <b>0.8020</b>. Для
+статичних векторів обидва числа дорівнювали б одиниці, і розрив був би нульовим.</p>
+
+<figure>
+  <div class="fig-head">Фігура 10 · Одне слово, два контексти</div>
+  <p class="fig-sub">Рядок уваги слова «розділу» в кожному з двох речень і
+    вектор, який із нього виходить.</p>
+  <div class="panel">
+    <canvas id="c10" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">речення</span>
+        <div class="seg wrap" id="seg10">
+          <button data-i="0" aria-pressed="true">обидва</button>
+          <button data-i="1" aria-pressed="false">лише 1</button>
+          <button data-i="2" aria-pressed="false">лише 2</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>косинус входів</b><i id="v10a">—</i></div>
+        <div class="cellv"><b>косинус виходів</b><i id="v10b">—</i></div>
+      </div>
+      <div class="verdict" id="v10v"></div>
+    </div>
+  </div>
+  <figcaption>Вхідний вектор «розділу» однаковий в обох реченнях — це та сама
+    точка. Вихідні розійшлися, бо зважена сума збирала різні значення з різними
+    вагами. Оце й є контекстний ембединг.</figcaption>
+</figure>
+
+<h2 id="s13"><span class="num">Розділ 13</span>Чого self-attention не вміє</h2>
+
+<p>Тепер, коли механізм зібраний, у ньому легко побачити діру — і вона велика.</p>
+
+<p>Перечитайте формулу. Де в ній сказано, що слово «не» стоїть <b>першим</b>, а
+«розділу» — <b>пʼятим</b>? Ніде. Скалярний добуток <span class="raw">q₁·k₅</span>
+не залежить від того, на яких місцях у реченні стоять ці слова. Softmax по рядку —
+теж. Зважена сума — теж.</p>
+
+<p>Наслідок точний і перевіряється числом. Переставмо слова речення в довільному
+порядку, проженімо крізь шар — і розставмо результат назад. Вийде рівно те саме,
+що й без перестановки: найбільша розбіжність <b>2.384·10⁻⁷</b>, тобто чистий шум
+округлення float32.</p>
+
+<div class="note"><b>Термін.</b><br>
+Цю властивість звуть <b>еквіваріантністю щодо перестановки</b> (permutation
+equivariance). Не «інваріантністю»: вихід не лишається тим самим, він
+<b>переставляється разом із входом</b>. Для шару, який мав би розуміти мову, це
+катастрофа: «розділ диска» і «диска розділ» для нього одне й те саме, а
+«собака вкусив листоношу» дорівнює «листоноша вкусив собаку».</div>
+
+<figure>
+  <div class="fig-head">Фігура 11 · Переставили слова — вийшло те саме</div>
+  <p class="fig-sub">Кнопки міняють порядок слів на вході. Праворуч — вихідні
+    вектори, розставлені назад у початковий порядок.</p>
+  <div class="panel">
+    <canvas id="c11" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">порядок слів</span>
+        <div class="seg wrap" id="seg11">
+          <button data-i="0" aria-pressed="true">як є</button>
+          <button data-i="1" aria-pressed="false">навпаки</button>
+          <button data-i="2" aria-pressed="false">мішанка</button>
+          <button data-i="3" aria-pressed="false">циклічно</button>
+        </div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найбільша розбіжність із початковим виходом</b><i id="v11a" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v11v"></div>
+    </div>
+  </div>
+  <figcaption>Ця сторінка рахує в float64, і там розбіжність падає до 10⁻¹⁶ —
+    тобто до останнього розряду типу. Той самий дослід у float32 дав
+    2.384·10⁻⁷, теж останній розряд. В обох випадках це не «майже те саме», це
+    <b>те саме</b>: порядок слів для шару не існує.</figcaption>
+</figure>
+
+<p>Лікується це не переробкою self-attention, а <b>додаванням</b> до векторів
+відомостей про позицію ще до входу в шар. Такий додаток зветься позиційним
+кодуванням, і йому присвячена тема <code>23-multihead-masking</code> — разом із
+маскуванням, яке з тієї самої формули викидає частину оцінок ще до softmax.</p>
+<h2 id="s14"><span class="num">Розділ 14</span>Скільки це коштує</h2>
+
+<p>Ціна self-attention видна прямо з форми таблиці оцінок, і назвати її треба чесно,
+бо саме вона обмежує довжину тексту, з якою працюють великі моделі.</p>
+
+<p>Таблиця оцінок має <span class="raw">n</span> рядків і <span class="raw">n</span>
+стовпців: кожна позиція проти кожної. Це <span class="raw">n²</span> чисел. Для
+речення з пʼяти слів — 25 чисел, дрібниця. Для сторінки тексту в 1 000 слів — мільйон.
+Для книжки в 100 000 слів — десять мільярдів чисел, і це лише <b>одна</b> голова
+<b>одного</b> шару.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>довжина <span class="raw">n</span></th><th>клітинок у таблиці оцінок</th><th>памʼять, float32</th></tr>
+<tr><td>5</td><td>25</td><td>100 Б</td></tr>
+<tr><td>100</td><td>10 000</td><td>39 КБ</td></tr>
+<tr><td>1 000</td><td>1 000 000</td><td>3.8 МБ</td></tr>
+<tr class="hot"><td>10 000</td><td>100 000 000</td><td>381 МБ</td></tr>
+<tr><td>100 000</td><td>10 000 000 000</td><td>37 ГБ</td></tr>
+</table></div>
+
+<p class="keyline">Порахуйте самі: n² клітинок × 4 байти на число float32.</p>
+
+<p>Порівняйте це з рекурентною мережею з теми <code>17-rnn</code>. Там вартість
+росла <b>лінійно</b>: кожен крок робить фіксовану роботу, кроків
+<span class="raw">n</span>, разом <span class="raw">n</span> одиниць роботи. Тут
+<span class="raw">n²</span>. На коротких реченнях це не має значення — наші пʼять
+слів дають 25 клітинок проти 5 кроків, і 25 множень сучасний процесор робить швидше,
+ніж 5 кроків із залежністю один від одного. На довгих текстах квадрат перемагає, і
+перемагає катастрофічно.</p>
+
+<p>Але в цієї ціни є зворотний бік, і саме він зробив трансформер тим, чим він став.
+Усі <span class="raw">n²</span> оцінок можна порахувати <b>одночасно</b>: жодна з них
+не потребує іншої. У рекурентній мережі крок <span class="raw">t</span> не можна
+почати, доки не порахований крок <span class="raw">t−1</span>, — це послідовна
+черга, яку ніяк не розпаралелити. Тут черги немає взагалі: одне множення матриць, і
+вся таблиця готова. Квадратична робота, зроблена паралельно, на реальному залізі
+часто виявляється дешевшою за лінійну роботу, зроблену по черзі.</p>
+
+<div class="note"><b>Це компроміс, а не перевага.</b><br>
+Кажучи «трансформер швидший», зазвичай мають на увазі саме це: не менше дій, а
+менше <b>черг</b>. Дій якраз більше. Що з цього виходить на практиці й де
+проходить межа, за якою квадрат перемагає, міряє тема
+<code>24-transformer-training</code>.</div>
+<h2 id="s15"><span class="num">Розділ 15</span>Як звіряти свою реалізацію</h2>
+
+<p>Формула коротка, і написати її самостійно — питання пʼятьох рядків. Далі виникає
+природне бажання перевірити себе: порівняти з тим, що дає бібліотека. І тут
+починається пастка, у яку потрапляють усі.</p>
+
+<p>Ми зробили цей замір. Одна голова, пʼять позицій, довжина вектора 16, жодних
+зсувів, ті самі ваги в обох реалізаціях, пʼять різних зерен для ваг:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>зерно</th><th>найбільша різниця</th><th>у епсилонах</th><th>побітово однакові</th></tr>
+<tr><td>0</td><td>5.960·10⁻⁸</td><td>0.50 ε</td><td>ні</td></tr>
+<tr><td>1</td><td>1.192·10⁻⁷</td><td>1.00 ε</td><td>ні</td></tr>
+<tr><td>2</td><td>8.941·10⁻⁸</td><td>0.75 ε</td><td>ні</td></tr>
+<tr><td>3</td><td>5.960·10⁻⁸</td><td>0.50 ε</td><td>ні</td></tr>
+<tr><td>4</td><td>4.657·10⁻⁸</td><td>0.39 ε</td><td>ні</td></tr>
+<tr class="hot"><td>машинний епсилон float32 (ε)</td><td>1.192·10⁻⁷</td><td>1.00 ε</td><td>—</td></tr>
+</table></div>
+
+<p>Тобто найбільша різниця, яку ми взагалі побачили, дорівнює <b>одному машинному
+епсилону</b>, найменша — 0.39 епсилона, а типова — приблизно половині. І <b>жодного
+разу</b> результати не збіглися побітово.</p>
+
+<div class="note"><b>Машинний епсилон — що це.</b><br>
+Число <span class="raw">float32</span> зберігає близько семи значущих десяткових
+цифр. Машинний епсилон — найменше число, яке ще можна додати до одиниці так, щоб
+результат відрізнявся від одиниці. Для <span class="raw">float32</span> це
+1.192·10⁻⁷. Простіше: це <b>крок останнього розряду</b>. Різниця в один епсилон
+означає, що два числа — сусіди на числовій осі, і між ними немає нічого.</div>
+
+<p>Чому побітово не збігається ніколи? Бо додавання чисел з рухомою комою
+<b>не є асоціативним</b>: <span class="raw">(a + b) + c</span> і
+<span class="raw">a + (b + c)</span> можуть дати різні останні розряди, бо на
+кожному додаванні результат округлюється. Бібліотека складає доданки в тому порядку,
+який швидший для процесора — блоками, зі зміненою послідовністю, іноді паралельно.
+Ваш цикл складає їх зліва направо. Обидві суми правильні; збігтися до останнього
+біта вони не зобовʼязані.</p>
+
+<div class="note warn"><b>Правильний критерій звірки — і це наскрізний сюжет курсу.</b><br>
+Питати «чи однакові результати» — неправильно, відповідь завжди буде «ні».
+Питати треба: <b>чи різниця не більша за одиницю останнього розряду</b>. Тема
+<code>17-rnn</code> дійшла того самого висновку, звіряючи власний крок рекурентності
+з <code>nn.RNN</code>, і замір там дав число того ж порядку. Це не збіг: так поводиться
+будь-яка арифметика з рухомою комою.</div>
+
+<p>Практично це означає одне: не пишіть <code>==</code>. Пишіть перевірку на
+близькість із допуском, і допуск беріть від машинного епсилона того типу, у якому
+рахуєте. У <span class="raw">float64</span> епсилон — 2.22·10⁻¹⁶, тобто на девʼять
+порядків менший, і там допуск має бути відповідно жорсткішим.</p>
+
+<figure>
+  <div class="fig-head">Фігура 12 · Одна одиниця останнього розряду</div>
+  <p class="fig-sub">Пʼять заміряних різниць проти машинного епсилона того типу,
+    у якому рахуємо.</p>
+  <div class="panel">
+    <canvas id="c12" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">тип числа</span>
+        <div class="seg" id="seg12">
+          <button data-i="0" aria-pressed="true">float32</button>
+          <button data-i="1" aria-pressed="false">float64</button>
+        </div>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>найгірше з пʼятьох зерен, у епсилонах</b><i id="v12a" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v12v"></div>
+    </div>
+  </div>
+  <figcaption>Смуга — заміряні різниці, пунктир — машинний епсилон. У float32 наші
+    різниці впритул до нього, тобто збіг ідеальний. Той самий розрахунок у float64
+    мав би збігатися на девʼять порядків точніше — і не збігався б побітово так само.</figcaption>
+</figure>
+
+<p>І ще одна перевірка, яку варто робити разом із цією, бо вона ловить інший клас
+помилок: <b>рядки таблиці ваг мусять сумуватись в одиницю</b>. Це не залежить від
+жодних ваг і жодних даних — це властивість softmax. Якщо сума поїхала, помилка не
+в точності, а в тому, що softmax узяли не по тій осі: по стовпцях замість рядків.
+Такий дефект дає скінченні правдоподібні числа й жодної помилки в консолі.</p>
+
+<h2 id="s16"><span class="num">Розділ 16</span>Що лишається в руках</h2>
+
+<p>Проглянемо весь шлях ще раз — тепер уже як список дій, які можна виконати з
+олівцем.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th>крок</th><th>що робимо</th><th>що виходить</th></tr>
+<tr><td>1</td><td>множимо <span class="raw">X</span> на три навчені матриці</td><td>три матриці <span class="raw">n×d</span>: <span class="raw">Q</span>, <span class="raw">K</span>, <span class="raw">V</span></td></tr>
+<tr><td>2</td><td>кожен запит скалярно множимо на кожен ключ</td><td>таблиця оцінок <span class="raw">n×n</span></td></tr>
+<tr><td>3</td><td>ділимо всю таблицю на <span class="raw">√d</span></td><td>та сама таблиця, приборкана</td></tr>
+<tr><td>4</td><td>softmax по кожному рядку окремо</td><td>таблиця ваг: рядки сумуються в 1</td></tr>
+<tr><td>5</td><td>множимо таблицю ваг на <span class="raw">V</span></td><td>вихід <span class="raw">n×d</span></td></tr>
+</table></div>
+
+<p>Пʼять дій, три з них — множення матриць. Жодної рекурсії, жодної черги, жодного
+стану, який тягнеться з кроку на крок. Саме через це один шар self-attention
+рахується одним махом на всю послідовність, і саме через це його вартість
+квадратична.</p>
+
+<p>Три речі, які варто винести з теми, якщо забути решту:</p>
+
+<ul>
+  <li><b>Увага — це зважена сума, у якій ваги рахуються з даних.</b> Уся складність
+    сидить у тому, як дістати ваги; сама суміш тривіальна.</li>
+  <li><b>Три ролі — три матриці.</b> Запит, ключ і значення описують те саме слово
+    з трьох різних боків, і саме розділення ролей дає механізмові несиметричність.</li>
+  <li><b>Ділення на <span class="raw">√d</span> — не косметика.</b> Без нього
+    softmax насичується тим сильніше, чим більший вектор, і навчання зупиняється:
+    у нашому замірі сила градієнта впала в 14.43 раза при переході від
+    <span class="raw">d</span> = 4 до <span class="raw">d</span> = 1024.</li>
+</ul>
+
+<p>І одна річ, якої тут свідомо немає: порядок слів. Шар, який ми зібрали, читає
+речення як мішок — щоправда, мішок, у якому кожне слово має власний погляд на всі
+інші. Щоб він почав відрізняти «розділ диска» від «диска розділ», йому доведеться
+дати відомості про позицію ззовні, а щоб він міг дивитись на речення кількома
+різними способами одночасно — розмножити голови. Це наступна тема.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../21-transformer-architecture/lecture.html"><span class="dir">попередня</span><span class="ttl">21. Архітектура і чому витіснила RNN</span></a>
+    <a class="next" href="../23-multihead-masking/lecture.html"><span class="dir">наступна</span><span class="ttl">23. Multi-head, позиційне кодування, маскування</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn4(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function cut(g,txt,max,px,bold){
+  g.font=mono(px||11,!!bold);
+  if(g.measureText(txt).width<=max) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+/* показує число в науковому вигляді з українським мінусом */
+function sci(v){
+  if(v===0) return '0';
+  var e=Math.floor(Math.log10(Math.abs(v)));
+  var m=v/Math.pow(10,e);
+  return (Math.round(m*1000)/1000).toFixed(3)+'·10'+supers(e);
+}
+function supers(n){
+  var map={'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹','-':'⁻'};
+  return String(n).split('').map(function(c){return map[c]||c;}).join('');
+}
+
+/* ═══════ лінійна алгебра, яку рахує сама сторінка ═══════ */
+function mm(A,B){
+  var n=A.length, k=B.length, m=B[0].length, R=[], i, j, t, s;
+  for(i=0;i<n;i++){ var r=[];
+    for(j=0;j<m;j++){ s=0; for(t=0;t<k;t++) s+=A[i][t]*B[t][j]; r.push(s); }
+    R.push(r);
+  }
+  return R;
+}
+function tr(A){
+  var R=[], i, j;
+  for(j=0;j<A[0].length;j++){ var r=[]; for(i=0;i<A.length;i++) r.push(A[i][j]); R.push(r); }
+  return R;
+}
+function softmax(v){
+  var mx=-Infinity, i, e=[], s=0;
+  for(i=0;i<v.length;i++) if(v[i]>mx) mx=v[i];
+  for(i=0;i<v.length;i++){ e.push(Math.exp(v[i]-mx)); s+=e[i]; }
+  for(i=0;i<e.length;i++) e[i]/=s;
+  return e;
+}
+function rowsSoftmax(M,div){
+  var R=[], i;
+  for(i=0;i<M.length;i++) R.push(softmax(M[i].map(function(x){return x/div;})));
+  return R;
+}
+function maxAbsDiff(A,B){
+  var m=0,i,j;
+  for(i=0;i<A.length;i++) for(j=0;j<A[0].length;j++) m=Math.max(m,Math.abs(A[i][j]-B[i][j]));
+  return m;
+}
+function entropy(p){
+  var s=0,i;
+  for(i=0;i<p.length;i++) if(p[i]>1e-12) s-=p[i]*Math.log(p[i]);
+  return s;
+}
+function gradPower(p){
+  var s=0,i;
+  for(i=0;i<p.length;i++) s+=p[i]*(1-p[i]);
+  return s;
+}
+function norm(v){var s=0,i; for(i=0;i<v.length;i++) s+=v[i]*v[i]; return Math.sqrt(s);}
+function cosine(a,b){
+  var s=0,i; for(i=0;i<a.length;i++) s+=a[i]*b[i];
+  return s/(norm(a)*norm(b));
+}
+
+/* ═══════ спільне малювання таблиць чисел ═══════ */
+/* Одна таблиця чисел із заливкою за величиною. Підписи горизонтальні —
+   повернутих у цій темі немає навмисно (грабля №27). */
+function heat(g, M, opt){
+  var x0=opt.x, y0=opt.y, cw=opt.cw, ch=opt.ch;
+  var rows=M.length, cols=M[0].length, i, j;
+  var lim=opt.lim;
+  if(!lim){ lim=0; for(i=0;i<rows;i++) for(j=0;j<cols;j++) lim=Math.max(lim,Math.abs(M[i][j])); }
+  if(lim<=0) lim=1;
+  var teal=css('--teal'), rose=css('--rose'), hair=css('--hair'), ink=css('--ink'), soft=css('--soft');
+  for(i=0;i<rows;i++){
+    for(j=0;j<cols;j++){
+      var v=M[i][j], a=Math.min(1,Math.abs(v)/lim);
+      var dim = opt.hi!=null && opt.hi!==i;
+      g.globalAlpha = dim ? 0.18 : 1;
+      g.fillStyle = v>=0 ? teal : rose;
+      g.globalAlpha *= 0.10+0.55*a;
+      g.fillRect(x0+j*cw, y0+i*ch, cw-3, ch-3);
+      g.globalAlpha = dim ? 0.3 : 1;
+      g.strokeStyle=hair; g.lineWidth=1;
+      g.strokeRect(x0+j*cw+0.5, y0+i*ch+0.5, cw-4, ch-4);
+      capt(g, (opt.digits===2?f2(v):f4(v)), x0+j*cw+(cw-3)/2, y0+i*ch+ch/2+3, ink, opt.px||11, false, 'center');
+      g.globalAlpha=1;
+    }
+    if(opt.rowLabels){
+      g.globalAlpha = (opt.hi!=null && opt.hi!==i) ? 0.4 : 1;
+      capt(g, cut(g,opt.rowLabels[i],x0-8,opt.lpx||11,false), x0-8, y0+i*ch+ch/2+3,
+           (opt.hi===i? css('--rose') : soft), opt.lpx||11, opt.hi===i, 'right');
+      g.globalAlpha=1;
+    }
+  }
+  if(opt.colLabels){
+    for(j=0;j<cols;j++)
+      capt(g, cut(g,opt.colLabels[j],cw-4,opt.lpx||10,false), x0+j*cw+(cw-3)/2, y0-8, soft, opt.lpx||10, false, 'center');
+  }
+}
+
+var D = {
+  X: [[1.2425947,-0.7328453,-0.5741121,0.9103679],
+   [0.2246596,0.1741027,0.4518715,0.5843239],
+   [0.399426,0.1414342,-1.5532222,0.107445],
+   [-0.7228436,-1.5544878,-2.1197908,0.1205224],
+   [-0.3735355,-1.1154119,-0.8036491,1.087666]],
+  WQ: [[0.79522,0.2253556,0.5973914,-0.224772],
+   [-0.4119685,0.2589153,-0.5022014,0.1335293],
+   [-0.1302258,0.4841253,-0.0488135,-0.1867655],
+   [-0.316479,-0.2749865,0.1753461,-0.1730317]],
+  WK: [[-0.6479496,-0.6088936,-0.0515567,0.2605655],
+   [0.3633906,0.1021775,-0.2022237,0.0596375],
+   [0.4200143,-0.3456242,0.696488,-0.1512247],
+   [0.4241509,0.1113399,0.036457,0.4227069]],
+  WV: [[-0.6592983,0.9390684,-0.6680368,-0.6068728],
+   [-0.380276,1.2055849,-0.7169639,-1.0035111],
+   [-1.0942568,0.8840429,-0.4877085,-1.2272334],
+   [1.2120733,-1.1875082,1.0698926,0.3767484]],
+  Q: [[1.0766971,-0.4380002,1.2980051,-0.427455],
+   [-0.1368426,0.1537874,0.1271766,-0.21275],
+   [0.4276307,-0.6548676,0.2622434,0.2006028],
+   [0.3034891,-1.624764,0.4734528,0.329955],
+   [-0.0770959,-1.0611358,0.5669614,-0.1030866]],
+  K: [[-0.9264497,-0.5317009,-0.2825383,0.751711],
+   [0.3553332,-0.2101236,0.2892354,0.2475852],
+   [-0.8142146,0.3200376,-1.1270778,0.3928148],
+   [-0.9357428,1.0273712,-1.120393,0.0904566],
+   [-0.0395077,0.5123346,-0.2752578,0.4174448]],
+  V: [[1.1911017,-1.3052349,0.94932,1.0288706],
+   [-0.0005448,0.1264507,0.129876,-0.6454626],
+   [1.5127302,-0.9551076,0.5042399,1.5623143],
+   [3.5333815,-4.5699739,2.7601838,4.6455045],
+   [2.868165,-3.6975718,2.6048779,2.7420578]],
+  S: [[-1.4526794,0.7442179,-2.6477025,-2.9504423,-0.8026654],
+   [-0.1508499,-0.0968288,-0.0662723,0.1243137,-0.0396208],
+   [0.0287169,0.4150709,-0.7745345,-1.3486143,-0.3408501],
+   [0.6969833,0.6678723,-1.1710978,-2.45383,-0.8369966],
+   [0.3979527,0.3340375,-0.9563342,-1.6625829,-0.7397042]],
+  A: [[0.1560885,0.4681887,0.0858766,0.0738135,0.2160327],
+   [0.1895641,0.1947541,0.1977525,0.217524,0.2004053],
+   [0.2371996,0.2877462,0.1587414,0.1191325,0.1971803],
+   [0.3278855,0.3231475,0.1288468,0.0678472,0.1522729],
+   [0.2941424,0.2848909,0.1494438,0.1049828,0.16654]],
+  Y: [[1.1959989,-1.3626728,1.0187644,0.9278378],
+   [1.8682209,-2.1467657,1.4274032,1.9383136],
+   [1.508991,-1.6983513,1.1850516,1.4004325],
+   [1.2617533,-1.3832679,1.0021303,1.0627968],
+   [1.424875,-1.5861975,1.1151795,1.2965866]],
+  X2: [[-0.3982241,-1.9604601,-1.5135527,-0.8840416],
+   [-0.3735355,-1.1154119,-0.8036491,1.087666],
+   [1.4877926,0.0665892,-1.1688588,0.4937581],
+   [1.615502,-0.2799191,-0.0649471,-1.3654237],
+   [0.983062,-0.7969557,0.8983871,-0.8244181]],
+  A2: [[0.0775224,0.1905622,0.1544349,0.1990451,0.3784354],
+   [0.1060459,0.1052323,0.1507063,0.2910243,0.3469912],
+   [0.103602,0.263735,0.1122643,0.1496902,0.3707084],
+   [0.1186501,0.4998766,0.0928583,0.0680937,0.2205213],
+   [0.1614297,0.4086113,0.1037429,0.0937937,0.2324224]],
+  Y2: [[-0.5822594,0.241768,-0.372602,0.2288023],
+   [-0.9454987,0.669292,-0.7213958,0.0326088],
+   [-0.2241194,-0.2505269,-0.0214501,0.5646985],
+   [1.0172429,-1.6509812,1.0139915,1.5300349],
+   [0.7400569,-1.3533404,0.7634652,1.4030285]],
+  words: ["не", "вдалося", "отримати", "заголовок", "розділу"],
+  words2: ["розмір", "розділу", "який", "слід", "створити"]
+};
+
+/* ═══════ числа заміру (походження названо в лекції) ═══════ */
+/* Розкид скалярного добутку двох випадкових векторів N(0,1) за розміром,
+   три зерна: середнє й розкид. Заміряно окремим прогоном. */
+var SCALE = [
+  {d:4,    sd:2.0293,  err:0.0267, raw:[0.6075,0.9809,0.5121], sc:[0.4403,1.3328,0.6782]},
+  {d:16,   sd:4.0642,  err:0.0579, raw:[0.7971,0.5180,0.2838], sc:[0.4569,1.3135,0.6701]},
+  {d:64,   sd:7.9439,  err:0.0786, raw:[0.8980,0.2519,0.1449], sc:[0.4610,1.3078,0.6677]},
+  {d:256,  sd:16.0777, err:0.1311, raw:[0.9493,0.1225,0.0724], sc:[0.4631,1.3040,0.6661]},
+  {d:1024, sd:31.8674, err:0.6249, raw:[0.9758,0.0599,0.0355], sc:[0.4604,1.3085,0.6684]}
+];
+/* Найбільша різниця «руками проти nn.MultiheadAttention», d=16, пʼять зерен. */
+var LIBDIFF = [5.960e-8, 1.192e-7, 8.941e-8, 5.960e-8, 4.657e-8];
+var EPS32 = 1.192092896e-7, EPS64 = 2.220446049e-16;
+
+var WORDS = D.words, WORDS2 = D.words2;
+var ROLE = ['вхідний вектор слова','запит: чого шукаю','ключ: чим себе рекламую','значення: що віддаю'];
+var MATS = [D.X, D.Q, D.K, D.V];
+var MNAME = ['X','Q','K','V'];
+
+/* ── Фігура 1 · вхідна матриця X ─────────────────────────────── */
+function draw1(){
+  var cv=I('c1'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var hi = +I('row1').value - 1;
+  I('row1o').textContent = hi<0 ? 'усі' : WORDS[hi];
+  var x0=118, cw=(W-x0-16)/4, ch=44, y0=52;
+  capt(g,'X · вхід шару, 5 рядків × 4 числа',16,24,css('--ink'),12,true);
+  heat(g, D.X, {x:x0,y:y0,cw:cw,ch:ch,rowLabels:WORDS,
+                colLabels:['число 1','число 2','число 3','число 4'],
+                hi: hi<0?null:hi, lpx:11});
+  if(hi>=0){
+    I('v1a').textContent = f4(norm(D.X[hi]));
+    verd('v1v','t-mid','ОДИН РЯДОК',
+      'Вектор слова «'+WORDS[hi]+'» має довжину '+f4(norm(D.X[hi]))+
+      '. Це просто чотири числа з таблиці ембедингів — контексту в них поки що немає.');
+  }else{
+    I('v1a').textContent='—';
+    var mn=1e9,mx=-1e9,i;
+    for(i=0;i<5;i++){var n=norm(D.X[i]); if(n<mn)mn=n; if(n>mx)mx=n;}
+    verd('v1v','t-ok','ВЕСЬ ВХІД',
+      'Пʼять векторів, довжини від '+f4(mn)+' до '+f4(mx)+
+      '. Зелене — додатні числа, рожеве — відʼємні; насиченість показує величину.');
+  }
+}
+
+/* ── Фігура 2 · три проєкції ─────────────────────────────────── */
+var st2=0;
+function draw2(){
+  var cv=I('c2'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var M=MATS[st2];
+  var x0=118, cw=(W-x0-16)/4, ch=44, y0=64;
+  capt(g, MNAME[st2]+' · '+ROLE[st2], 16, 24, css('--ink'), 12, true);
+  capt(g, st2===0 ? 'це те, що прийшло на вхід' : (MNAME[st2]+' = X · W'+MNAME[st2]+'  — множення на навчену матрицю 4×4'),
+       16, 42, css('--soft'), 11, false);
+  heat(g, M, {x:x0,y:y0,cw:cw,ch:ch,rowLabels:WORDS,
+              colLabels:['число 1','число 2','число 3','число 4'], lpx:11});
+  I('v2a').textContent = ROLE[st2];
+  if(st2===0){
+    verd('v2v','t-mid','ВХІД',
+      'Одна матриця на вході. Наступні три кнопки показують, що з неї роблять три різні множення.');
+  }else{
+    var same=maxAbsDiff(M,D.X);
+    verd('v2v','t-ok','ПРОЄКЦІЯ '+MNAME[st2],
+      'Та сама пʼятірка слів, але числа інші: найбільша розбіжність із входом '+f4(same)+
+      '. Матриця W'+MNAME[st2]+' — це 16 навчених чисел, і вони перемішують вхід по-своєму.');
+  }
+}
+
+/* ── Фігура 3 · один скалярний добуток ───────────────────────── */
+function draw3(){
+  var cv=I('c3'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var i=+I('qi3').value, j=+I('kj3').value;
+  I('qi3o').textContent=WORDS[i]; I('kj3o').textContent=WORDS[j];
+  var q=D.Q[i], k=D.K[j], t, prod=[], sum=0;
+  for(t=0;t<4;t++){ prod.push(q[t]*k[t]); sum+=prod[t]; }
+  capt(g,'q('+WORDS[i]+')  ·  k('+WORDS[j]+')',16,24,css('--ink'),12,true);
+  var x0=150, cw=(W-x0-150)/4, y0=44;
+  var lab=['число 1','число 2','число 3','число 4'], m;
+  for(m=0;m<4;m++) capt(g,lab[m],x0+m*cw+cw/2-2,y0+10,css('--soft'),10,false,'center');
+  capt(g,'запит q',x0-12,y0+40,css('--soft'),11,false,'right');
+  capt(g,'ключ k',x0-12,y0+68,css('--soft'),11,false,'right');
+  capt(g,'добуток',x0-12,y0+96,css('--soft'),11,false,'right');
+  for(m=0;m<4;m++){
+    capt(g,f4(q[m]),x0+m*cw+cw/2-2,y0+40,css('--ink'),12,false,'center');
+    capt(g,f4(k[m]),x0+m*cw+cw/2-2,y0+68,css('--ink'),12,false,'center');
+    capt(g,f4(prod[m]),x0+m*cw+cw/2-2,y0+96,prod[m]>=0?css('--teal'):css('--rose'),12,true,'center');
+  }
+  /* стовпчики доданків */
+  var by=y0+118, bh=H-by-58, mid=by+bh/2;
+  var lim=0; for(m=0;m<4;m++) lim=Math.max(lim,Math.abs(prod[m]));
+  if(lim<0.05) lim=0.05;
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0-6,mid+0.5); g.lineTo(x0+4*cw,mid+0.5); g.stroke();
+  for(m=0;m<4;m++){
+    var h=(Math.abs(prod[m])/lim)*(bh/2-10);
+    g.fillStyle = prod[m]>=0?css('--teal'):css('--rose');
+    g.globalAlpha=0.75;
+    if(prod[m]>=0) g.fillRect(x0+m*cw+cw*0.18, mid-h, cw*0.62, h);
+    else g.fillRect(x0+m*cw+cw*0.18, mid, cw*0.62, h);
+    g.globalAlpha=1;
+  }
+  capt(g,'сума всіх чотирьох = оцінка '+f4(sum), x0, H-30, css('--ink'), 13, true);
+  capt(g,'зелений тягне оцінку вгору, рожевий униз', x0, H-12, css('--soft'), 10, false);
+  /* праворуч — весь рядок оцінок */
+  var rx=x0+4*cw+18, best=-1e9, bj=0;
+  for(m=0;m<5;m++){ if(D.S[i][m]>best){best=D.S[i][m]; bj=m;} }
+  capt(g,'рядок «'+WORDS[i]+'»',rx,y0+10,css('--soft'),10,false);
+  for(m=0;m<5;m++){
+    capt(g,cut(g,WORDS[m],78,10,false),rx,y0+30+m*18,m===j?css('--rose'):css('--soft'),10,m===j);
+    capt(g,f4(D.S[i][m]),rx+130,y0+30+m*18,m===j?css('--rose'):css('--ink'),11,m===j,'right');
+  }
+  I('v3a').textContent=f4(sum);
+  I('v3b').textContent = (bj===j? 'так' : 'ні, «'+WORDS[bj]+'»');
+  if(bj===j)
+    verd('v3v','t-ok','НАЙПІДХОЖІШИЙ',
+      'Оцінка '+f4(sum)+' — найбільша в рядку «'+WORDS[i]+'». Після softmax саме цей ключ дістане найбільшу вагу.');
+  else if(sum>=0)
+    verd('v3v','t-mid','ПІДХОДИТЬ, АЛЕ НЕ НАЙКРАЩЕ',
+      'Оцінка '+f4(sum)+' додатна, але в рядку є більша: «'+WORDS[bj]+'» дає '+f4(best)+'.');
+  else
+    verd('v3v','t-no','НЕ ПІДХОДИТЬ',
+      'Оцінка '+f4(sum)+' відʼємна: запит «'+WORDS[i]+'» і ключ «'+WORDS[j]+
+      '» дивляться в різні боки. Найкращий у цьому рядку — «'+WORDS[bj]+'» із '+f4(best)+'.');
+}
+
+/* ── Фігура 4 · уся таблиця оцінок ───────────────────────────── */
+function draw4(){
+  var cv=I('c4'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var hi=+I('row4').value-1;
+  I('row4o').textContent = hi<0?'усі':WORDS[hi];
+  var x0=118, cw=(W-x0-16)/5, ch=48, y0=64;
+  capt(g,'S · оцінка кожної пари: кожен запит проти кожного ключа',16,24,css('--ink'),12,true);
+  capt(g,'рядок — хто питає, стовпець — кого питають',16,42,css('--soft'),11,false);
+  heat(g, D.S, {x:x0,y:y0,cw:cw,ch:ch,rowLabels:WORDS,colLabels:WORDS,
+                hi:hi<0?null:hi, lpx:10});
+  var i,j,mx=-1e9,mn=1e9,mxs='',mns='';
+  var lo = hi<0?0:hi, up = hi<0?4:hi;
+  for(i=lo;i<=up;i++) for(j=0;j<5;j++){
+    if(D.S[i][j]>mx){mx=D.S[i][j]; mxs=WORDS[i]+'→'+WORDS[j];}
+    if(D.S[i][j]<mn){mn=D.S[i][j]; mns=WORDS[i]+'→'+WORDS[j];}
+  }
+  I('v4a').textContent=f4(mx)+'  '+mxs;
+  I('v4b').textContent=f4(mn)+'  '+mns;
+  if(hi<0)
+    verd('v4v','t-ok','ВСЯ ТАБЛИЦЯ',
+      'Двадцять пʼять чисел від '+f4(mn)+' до '+f4(mx)+'. Симетрії немає: клітинка (i,j) не дорівнює клітинці (j,i).');
+  else
+    verd('v4v','t-mid','РЯДОК «'+WORDS[hi].toUpperCase()+'»',
+      'Позиція «'+WORDS[hi]+'» найвище оцінює «'+mxs.split('→')[1]+'» ('+f4(mx)+
+      ') і найнижче «'+mns.split('→')[1]+'» ('+f4(mn)+'). Саме цей рядок піде в softmax.');
+}
+
+/* ── Фігура 5 · розкид росте як √d ───────────────────────────── */
+var st5=0;
+function draw5(){
+  var cv=I('c5'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var log = st5===1;
+  var x0=64, x1=W-24, y0=66, y1=H-46;
+  var maxv = log ? Math.log10(40) : 34, minv = log ? Math.log10(1.5) : 0;
+  function ypos(v){
+    var t = log ? (Math.log10(v)-minv)/(maxv-minv) : (v-minv)/(maxv-minv);
+    return y1-t*(y1-y0);
+  }
+  capt(g,'розкид скалярного добутку проти √d',16,24,css('--ink'),12,true);
+  capt(g, log?'вісь висоти логарифмічна':'вісь висоти лінійна', W-24, 24, css('--soft'),10,false,'right');
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+  var n=SCALE.length, i, step=(x1-x0)/n;
+  /* пунктир √d */
+  g.strokeStyle=css('--amber'); g.setLineDash([5,4]); g.lineWidth=1.5;
+  g.beginPath();
+  for(i=0;i<n;i++){
+    var xx=x0+step*(i+0.5), yy=ypos(Math.sqrt(SCALE[i].d));
+    if(i===0) g.moveTo(xx,yy); else g.lineTo(xx,yy);
+  }
+  g.stroke(); g.setLineDash([]);
+  var worst=0, worstD=0;
+  for(i=0;i<n;i++){
+    var x=x0+step*(i+0.5), s=SCALE[i], y=ypos(s.sd), yr=ypos(Math.sqrt(s.d));
+    /* вусики розкиду по зернах */
+    g.strokeStyle=css('--teal'); g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(x, ypos(Math.max(0.01,s.sd-s.err))); g.lineTo(x, ypos(s.sd+s.err)); g.stroke();
+    g.beginPath(); g.moveTo(x-5, ypos(s.sd+s.err)); g.lineTo(x+5, ypos(s.sd+s.err)); g.stroke();
+    g.beginPath(); g.moveTo(x-5, ypos(Math.max(0.01,s.sd-s.err))); g.lineTo(x+5, ypos(Math.max(0.01,s.sd-s.err))); g.stroke();
+    g.fillStyle=css('--teal'); g.beginPath(); g.arc(x,y,5,0,7); g.fill();
+    capt(g,'d='+s.d,x,y1+18,css('--soft'),11,false,'center');
+    capt(g,f2(s.sd),x,y-13,css('--teal'),11,true,'center');
+    if(i===n-1) capt(g,'√d='+Math.round(Math.sqrt(s.d)),x-11,yr+4,css('--amber'),10,false,'right');
+    else capt(g,'√d='+Math.round(Math.sqrt(s.d)),x+22,yr+4,css('--amber'),10,false,'left');
+    var dv=Math.abs(s.sd-Math.sqrt(s.d))/Math.sqrt(s.d);
+    if(dv>worst){worst=dv; worstD=s.d;}
+  }
+  capt(g,'заміряний розкид',16,44,css('--teal'),10,true);
+  capt(g,'пунктир — √d',160,44,css('--amber'),10,true);
+  I('v5a').textContent=f2(worst*100)+' % (d='+worstD+')';
+  verd('v5v','t-ok','ЗБІГ',
+    'Найбільше відхилення заміряного розкиду від √d — '+f2(worst*100)+' % при d='+worstD+
+    '. Відхилення ніде не сягає й двох відсотків, тобто коренева залежність підтверджена.');
+}
+
+/* ── Фігура 6 · на що ділимо ─────────────────────────────────── */
+var DIVS=[];
+(function(){ var k; for(k=0;k<25;k++) DIVS.push(Math.round(Math.pow(2,(k-8)/8)*100)/100); })();
+function draw6(){
+  var cv=I('c6'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var di=+I('div6').value, dv=DIVS[di];
+  I('div6o').textContent=f2(dv);
+  var A=rowsSoftmax(D.S, dv);
+  var x0=118, cw=(W-x0-16)/5, ch=42, y0=68;
+  capt(g,'ваги уваги, якщо ділити оцінки на '+f2(dv),16,24,css('--ink'),12,true);
+  capt(g,'√d для нашого d=4 дорівнює 2.00',16,42,css('--soft'),11,false);
+  heat(g, A, {x:x0,y:y0,cw:cw,ch:ch,rowLabels:WORDS,colLabels:WORDS,lim:1,lpx:10});
+  var i, mw=0, gp=0;
+  for(i=0;i<5;i++){ mw+=Math.max.apply(null,A[i]); gp+=gradPower(A[i]); }
+  mw/=5; gp/=5;
+  I('v6a').textContent=f4(mw);
+  I('v6b').textContent=f4(gp);
+  if(dv>=1.9 && dv<=2.1)
+    verd('v6v','t-ok','√d — ЦЕ ТУТ',
+      'Дільник '+f2(dv)+' — саме той, що у формулі. Найбільша вага в середньому '+f4(mw)+
+      ', сила градієнта '+f4(gp)+' при стелі 0.8000.');
+  else if(dv<1)
+    verd('v6v','t-no','ОЦІНКИ РОЗДУТО',
+      'Дільник '+f2(dv)+' менший за одиницю, тобто ми оцінки не зменшили, а збільшили. '+
+      'Максимальна вага виросла до '+f4(mw)+', сила градієнта впала до '+f4(gp)+
+      ' — саме так виглядає насичення softmax.');
+  else if(dv<1.9)
+    verd('v6v','t-mid','ЗАМАЛО',
+      'Дільник '+f2(dv)+' менший за √d = 2.00: ваги гостріші, ніж треба. Максимальна '+f4(mw)+
+      ', сила градієнта '+f4(gp)+'.');
+  else
+    verd('v6v','t-mid','ЗАБАГАТО',
+      'Дільник '+f2(dv)+' більший за √d = 2.00: увага розмазується до майже рівномірної. '+
+      'Максимальна вага '+f4(mw)+', сила градієнта '+f4(gp)+' — близько до стелі 0.8000, '+
+      'але й розрізняльної здатності майже не лишилось.');
+}
+
+/* ── Фігура 7 · softmax на одному рядку ──────────────────────── */
+function draw7(){
+  var cv=I('c7'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var i=+I('row7').value;
+  I('row7o').textContent=WORDS[i];
+  var sd=D.S[i].map(function(x){return x/2;});
+  var ex=sd.map(Math.exp), sum=0, j;
+  for(j=0;j<5;j++) sum+=ex[j];
+  var w=ex.map(function(x){return x/sum;});
+  capt(g,'рядок «'+WORDS[i]+'»: з оцінок у ваги',16,24,css('--ink'),12,true);
+  var x0=118, cw=(W-x0-16)/5, y0=48;
+  for(j=0;j<5;j++) capt(g,cut(g,WORDS[j],cw-6,10,false),x0+j*cw+cw/2-2,y0,css('--soft'),10,false,'center');
+  var rows=[['оцінка ÷ 2', sd, css('--ink')],
+            ['e у цьому степені', ex, css('--amber')],
+            ['частка від суми', w, css('--teal')]];
+  var r;
+  for(r=0;r<3;r++){
+    var yy=y0+30+r*34;
+    capt(g,rows[r][0],x0-10,yy,css('--soft'),10,false,'right');
+    for(j=0;j<5;j++) capt(g,f4(rows[r][1][j]),x0+j*cw+cw/2-2,yy,rows[r][2],12,r===2,'center');
+  }
+  capt(g,'сума експонент '+f4(sum),16,y0+30+2*34+22,css('--soft'),10,false,'left');
+  /* стовпчики ваг */
+  var by=y0+150, bh=H-by-34;
+  g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(x0-6,by+bh+0.5); g.lineTo(x0+5*cw,by+bh+0.5); g.stroke();
+  for(j=0;j<5;j++){
+    var h=w[j]*bh;
+    g.fillStyle=css('--teal'); g.globalAlpha=0.75;
+    g.fillRect(x0+j*cw+cw*0.16, by+bh-h, cw*0.66, h);
+    g.globalAlpha=1;
+    capt(g,(Math.round(w[j]*1000)/10).toFixed(1)+' %',x0+j*cw+cw/2-2,by+bh-h-6,css('--teal'),11,true,'center');
+  }
+  capt(g,'висота стовпчика — вага; усі разом дають 100 %',x0,H-12,css('--soft'),10,false);
+  I('v7a').textContent=f4(w.reduce(function(a,b){return a+b;},0));
+  var H7=entropy(w);
+  I('v7b').textContent=f4(H7);
+  var uni=Math.log(5);
+  if(H7>uni-0.05)
+    verd('v7v','t-no','МАЙЖЕ РІВНОМІРНО',
+      'Ентропія '+f4(H7)+' при стелі ln 5 = '+f4(uni)+
+      ' — ця позиція дивиться на всі пʼять слів майже однаково, тобто вибору майже не робить.');
+  else if(H7>uni-0.3)
+    verd('v7v','t-mid','РОЗМАЗАНО',
+      'Ентропія '+f4(H7)+' при стелі '+f4(uni)+'. Найбільша вага — '+
+      (Math.round(Math.max.apply(null,w)*1000)/10).toFixed(1)+' %, вибір слабкий.');
+  else
+    verd('v7v','t-ok','ВИБІР Є',
+      'Ентропія '+f4(H7)+' помітно нижча за рівномірні '+f4(uni)+
+      ': найбільша вага '+(Math.round(Math.max.apply(null,w)*1000)/10).toFixed(1)+' % справді виділяється.');
+}
+
+/* ── Фігура 8 · зважена сума ─────────────────────────────────── */
+function draw8(){
+  var cv=I('c8'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var i=+I('row8').value, c=+I('col8').value;
+  I('row8o').textContent=WORDS[i]; I('col8o').textContent=String(c+1);
+  var j, contrib=[], sum=0, r4=function(v){return Math.round(v*10000)/10000;};
+  /* множимо саме ті числа, що показані в таблиці, — щоб суму можна було
+     перевірити на папері (грабля №39) */
+  for(j=0;j<5;j++){ contrib.push(r4(D.A[i][j])*r4(D.V[j][c])); sum+=contrib[j]; }
+  capt(g,'вихід «'+WORDS[i]+'», число '+(c+1)+' з чотирьох',16,24,css('--ink'),12,true);
+  var x0=118, cw=(W-x0-16)/5, y0=48;
+  for(j=0;j<5;j++) capt(g,cut(g,WORDS[j],cw-6,10,false),x0+j*cw+cw/2-2,y0,css('--soft'),10,false,'center');
+  var rows=[['вага a',D.A[i],css('--rose')],
+            ['значення v',D.V.map(function(r){return r[c];}),css('--ink')],
+            ['внесок = вага × значення',contrib,css('--teal')]];
+  var r;
+  for(r=0;r<3;r++){
+    var yy=y0+30+r*32;
+    capt(g,rows[r][0],x0-10,yy,css('--soft'),10,false,'right');
+    for(j=0;j<5;j++) capt(g,f4(rows[r][1][j]),x0+j*cw+cw/2-2,yy,rows[r][2],12,r===2,'center');
+  }
+  var by=y0+146, bh=H-by-40, mid=by+bh/2, lim=0;
+  for(j=0;j<5;j++) lim=Math.max(lim,Math.abs(contrib[j]));
+  if(lim<0.05) lim=0.05;
+  g.strokeStyle=css('--hair'); g.beginPath(); g.moveTo(x0-6,mid+0.5); g.lineTo(x0+5*cw,mid+0.5); g.stroke();
+  var big=0;
+  for(j=0;j<5;j++){
+    if(Math.abs(contrib[j])>Math.abs(contrib[big])) big=j;
+    var h=(Math.abs(contrib[j])/lim)*(bh/2-8);
+    g.fillStyle=contrib[j]>=0?css('--teal'):css('--rose'); g.globalAlpha=0.75;
+    if(contrib[j]>=0) g.fillRect(x0+j*cw+cw*0.16, mid-h, cw*0.66, h);
+    else g.fillRect(x0+j*cw+cw*0.16, mid, cw*0.66, h);
+    g.globalAlpha=1;
+  }
+  capt(g,'сума внесків = '+f4(sum)+'   (у матриці Y стоїть '+f4(D.Y[i][c])+')',x0,H-16,css('--ink'),12,true);
+  if(f4(sum)!==f4(D.Y[i][c]))
+    capt(g,'різниця в останньому знаку — це наше округлення на кожному кроці',x0,H-2,css('--soft'),10,false);
+  I('v8a').textContent=f4(sum);
+  I('v8b').textContent=WORDS[big]+'  '+f4(contrib[big]);
+  var share=Math.abs(contrib[big])/(Math.abs(contrib[0])+Math.abs(contrib[1])+Math.abs(contrib[2])+Math.abs(contrib[3])+Math.abs(contrib[4]));
+  if(big===i)
+    verd('v8v','t-mid','НАЙБІЛЬШЕ ВІД СЕБЕ',
+      'Найбільший внесок дає саме слово «'+WORDS[i]+'» — '+f4(contrib[big])+
+      ', це '+(Math.round(share*1000)/10).toFixed(1)+' % усієї величини суми.');
+  else
+    verd('v8v','t-ok','КОНТЕКСТ ПЕРЕВАЖАЄ',
+      'Найбільший внесок у вихід «'+WORDS[i]+'» дає інше слово — «'+WORDS[big]+'» ('+f4(contrib[big])+
+      ', '+(Math.round(share*1000)/10).toFixed(1)+' % величини). Саме так контекст потрапляє у вектор.');
+}
+
+/* ── Фігура 9 · карта уваги і її дзеркало ────────────────────── */
+var st9=0;
+function draw9(){
+  var cv=I('c9'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var At=tr(D.A), Dm=[], i, j, best=0, bi=0, bj=0;
+  for(i=0;i<5;i++){ var r=[]; for(j=0;j<5;j++){
+      var v=D.A[i][j]-At[i][j]; r.push(v);
+      if(Math.abs(v)>best){best=Math.abs(v); bi=i; bj=j;}
+    } Dm.push(r); }
+  var M = st9===0 ? D.A : (st9===1 ? At : Dm);
+  var ttl = st9===0 ? 'карта уваги: хто на кого дивиться (рядки сумуються в 1)'
+          : st9===1 ? 'дзеркало: та сама карта, рядки й стовпці помінялись місцями'
+                    : 'різниця карти й дзеркала: наскільки погляд однобічний';
+  var x0=118, cw=(W-x0-16)/5, ch=48, y0=70;
+  capt(g,ttl,16,24,css('--ink'),12,true);
+  capt(g, st9===2 ? 'нуль означав би: «я дивлюсь на тебе рівно стільки ж, скільки ти на мене»'
+                  : 'рядок — хто дивиться, стовпець — на кого',16,42,css('--soft'),11,false);
+  heat(g,M,{x:x0,y:y0,cw:cw,ch:ch,rowLabels:WORDS,colLabels:WORDS,
+            lim: st9===2 ? 0.3 : 0.5, lpx:10});
+  I('v9a').textContent=f4(best);
+  I('v9b').textContent=WORDS[bi]+' / '+WORDS[bj];
+  var dia=0; for(i=0;i<5;i++) dia+=D.A[i][i]; dia/=5;
+  if(st9===0)
+    verd('v9v','t-ok','КАРТА УВАГИ',
+      'Кожен рядок сумується рівно в 1. Діагональ — увага до себе — у середньому '+f4(dia)+
+      ' при рівномірних 0.2000, тобто слова дивляться на себе менше, ніж на сусідів.');
+  else if(st9===1)
+    verd('v9v','t-mid','ПЕРЕВЕРНУТА',
+      'Тепер у одиницю сумуються стовпці, а не рядки. Якби карта була симетрична, ця '+
+      'картинка не відрізнялась би від попередньої — а вона відрізняється.');
+  else
+    verd('v9v','t-no','СИМЕТРІЇ НЕМАЄ',
+      'Найбільша розбіжність '+f4(best)+' — між парою «'+WORDS[bi]+'» і «'+WORDS[bj]+
+      '». Це того ж порядку, що й самі ваги, тобто однобічність тут суттєва, а не залишкова.');
+}
+
+/* ── Фігура 10 · одне слово, два контексти ───────────────────── */
+var st10=0;
+function draw10(){
+  var cv=I('c10'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var i1=WORDS.indexOf('розділу'), i2=WORDS2.indexOf('розділу');
+  var cin=cosine(D.X[i1], D.X2[i2]), cout=cosine(D.Y[i1], D.Y2[i2]);
+  capt(g,'рядок уваги слова «розділу» і вектор, який із нього виходить',16,24,css('--ink'),12,true);
+  var x0=150, cw=(W-x0-190)/5, ch=40;
+  function block(y, words, arow, yrow, title, tag){
+    capt(g,title,16,y-14,css('--soft'),11,true);
+    var j;
+    for(j=0;j<5;j++){
+      var a=arow[j];
+      g.fillStyle=css('--teal'); g.globalAlpha=0.12+0.6*Math.min(1,a/0.5);
+      g.fillRect(x0+j*cw, y, cw-3, ch-3); g.globalAlpha=1;
+      g.strokeStyle=css('--hair'); g.strokeRect(x0+j*cw+0.5,y+0.5,cw-4,ch-4);
+      capt(g,f4(a),x0+j*cw+(cw-3)/2,y+ch/2-2,css('--ink'),11,false,'center');
+      capt(g,cut(g,words[j],cw-6,9,false),x0+j*cw+(cw-3)/2,y+ch/2+12,css('--soft'),9,false,'center');
+    }
+    capt(g,tag,x0-10,y+ch/2+3,css('--rose'),10,true,'right');
+    var vx=x0+5*cw+14, j2;
+    capt(g,'вихід',vx,y-2,css('--soft'),9,false);
+    for(j2=0;j2<4;j2++) capt(g,f4(yrow[j2]),vx,y+12+j2*11,css('--ink'),9,false);
+  }
+  var show1 = st10!==2, show2 = st10!==1;
+  if(show1) block(74, WORDS, D.A[i1], D.Y[i1], 'речення 1 · не вдалося отримати заголовок розділу', 'розділ файлу');
+  if(show2) block(74+(show1?120:0), WORDS2, D.A2[i2], D.Y2[i2], 'речення 2 · розмір розділу який слід створити', 'розділ диска');
+  var by = 74 + (show1?120:0) + (show2?120:0) + 16;
+  capt(g,'косинус між вхідними векторами «розділу»:  '+f4(cin),16,by,css('--soft'),12,false);
+  capt(g,'косинус між вихідними векторами «розділу»: '+f4(cout),16,by+20,css('--rose'),12,true);
+  I('v10a').textContent=f4(cin);
+  I('v10b').textContent=f4(cout);
+  if(st10===0)
+    verd('v10v','t-ok','КОНТЕКСТ УВІЙШОВ У ВЕКТОР',
+      'На вході косинус рівно '+f4(cin)+' — це той самий вектор із таблиці. На виході '+f4(cout)+
+      ': один шар розвів два входження одного слова майже в протилежні боки.');
+  else
+    verd('v10v','t-mid','ОДНЕ РЕЧЕННЯ',
+      'Показано лише речення '+(st10===1?'1':'2')+'. Рядок уваги тут свій, і вихідний вектор теж свій — '+
+      'хоч вхідний вектор слова «розділу» в обох реченнях однаковий.');
+}
+
+/* ── Фігура 11 · перестановка ────────────────────────────────── */
+var PERMS=[[0,1,2,3,4],[4,3,2,1,0],[3,0,4,1,2],[1,2,3,4,0]];
+var PNAME=['як є','навпаки','мішанка','циклічно'];
+var st11=0;
+function attend(X){
+  var Q=mm(X,D.WQ), K=mm(X,D.WK), V=mm(X,D.WV);
+  var A=rowsSoftmax(mm(Q,tr(K)),2);
+  return {A:A, Y:mm(A,V)};
+}
+var BASE11=attend(D.X);
+function draw11(){
+  var cv=I('c11'); if(!cv) return; var g=dpr(cv), W=LW(cv);
+  var p=PERMS[st11], i, j;
+  var Xp=[]; for(i=0;i<5;i++) Xp.push(D.X[p[i]]);
+  var res=attend(Xp);
+  var back=[]; for(i=0;i<5;i++) back[p[i]]=res.Y[i];
+  var diff=maxAbsDiff(back, BASE11.Y);
+  capt(g,'порядок на вході: '+PNAME[st11],16,24,css('--ink'),12,true);
+  capt(g,'ліворуч — як подали, праворуч — вихід, розставлений у початковий порядок',16,42,css('--soft'),11,false);
+  var y0=70, ch=44, lx=16, lw=190, rx=lx+lw+24, cw=(W-rx-16)/4;
+  for(j=0;j<4;j++) capt(g,'число '+(j+1),rx+j*cw+(cw-3)/2,y0-8,css('--soft'),10,false,'center');
+  for(i=0;i<5;i++){
+    capt(g,(i+1)+'. '+WORDS[p[i]],lx,y0+i*ch+ch/2+3,css('--soft'),11,false);
+    capt(g,'→ '+WORDS[i],lx+120,y0+i*ch+ch/2+3,css('--rose'),10,false);
+    for(j=0;j<4;j++){
+      var v=back[i][j], a=Math.min(1,Math.abs(v)/4);
+      g.fillStyle=v>=0?css('--teal'):css('--rose'); g.globalAlpha=0.10+0.5*a;
+      g.fillRect(rx+j*cw, y0+i*ch, cw-3, ch-3); g.globalAlpha=1;
+      g.strokeStyle=css('--hair'); g.strokeRect(rx+j*cw+0.5,y0+i*ch+0.5,cw-4,ch-4);
+      capt(g,f4(v),rx+j*cw+(cw-3)/2,y0+i*ch+ch/2+3,css('--ink'),11,false,'center');
+    }
+  }
+  I('v11a').textContent = diff===0 ? '0 (точний нуль)' : sci(diff);
+  if(st11===0)
+    verd('v11v','t-mid','ПОЧАТКОВИЙ ПОРЯДОК',
+      'Це те, з чим порівнюємо: слова подані як у реченні, розбіжність рівно нуль. '+
+      'Перемкніть порядок — і подивіться, чи щось зміниться.');
+  else if(diff < 1e-12)
+    verd('v11v','t-no','ТЕ САМЕ',
+      'Розбіжність '+(diff===0?'рівно нуль':sci(diff))+
+      ' — це нуль у межах точності float64, у якій рахує ця сторінка. Порядок слів шар не бачить.');
+  else
+    verd('v11v','t-no','ТЕ САМЕ',
+      'Розбіжність '+sci(diff)+' — шум округлення, а не змістовна різниця.');
+}
+
+/* ── Фігура 12 · одна одиниця останнього розряду ─────────────── */
+var st12=0;
+function draw12(){
+  var cv=I('c12'); if(!cv) return; var g=dpr(cv), W=LW(cv), H=LH(cv);
+  var eps = st12===0 ? EPS32 : EPS64;
+  var name = st12===0 ? 'float32' : 'float64';
+  var x0=54, x1=W-130, y0=56, y1=H-52;
+  var lo=-18, hi=-5;
+  function xp(v){ return x0 + (Math.log10(v)-lo)/(hi-lo)*(x1-x0); }
+  capt(g,'заміряні різниці на шкалі точності '+name,16,24,css('--ink'),12,true);
+  capt(g,'вісь логарифмічна: кожна поділка — десять разів',16,42,css('--soft'),11,false);
+  g.strokeStyle=css('--hair'); g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+  var k;
+  for(k=lo;k<=hi;k+=2){
+    var x=xp(Math.pow(10,k));
+    g.beginPath(); g.moveTo(x+0.5,y1); g.lineTo(x+0.5,y1+5); g.stroke();
+    capt(g,'10'+supers(k),x,y1+18,css('--soft'),10,false,'center');
+  }
+  /* епсилон */
+  var xe=xp(eps);
+  g.strokeStyle=css('--amber'); g.setLineDash([5,4]); g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(xe+0.5,y0-8); g.lineTo(xe+0.5,y1); g.stroke(); g.setLineDash([]);
+  capt(g,'епсилон '+name,xe+6,y0-12,css('--amber'),10,true);
+  var i, worst=0;
+  for(i=0;i<LIBDIFF.length;i++){
+    var d=LIBDIFF[i], x=xp(d), y=y0+22+i*30;
+    if(d/eps>worst) worst=d/eps;
+    g.fillStyle=css('--teal'); g.globalAlpha=0.8;
+    g.fillRect(x0, y-8, Math.max(2,x-x0), 16); g.globalAlpha=1;
+    capt(g,'зерно '+i,x0-8,y+4,css('--soft'),10,false,'right');
+    capt(g,sci(d),x+8,y+4,css('--teal'),11,true);
+  }
+  capt(g,'смуга — заміряна різниця «руками проти бібліотеки», d=16, 5 позицій',x0,y1-16,css('--soft'),10,false);
+  I('v12a').textContent=f2(worst)+' ε';
+  if(st12===0)
+    verd('v12v','t-ok','ЗБІГ ІДЕАЛЬНИЙ',
+      'Найгірша з пʼятьох різниць — '+f2(worst)+' машинного епсилона float32. Це сусідні числа '+
+      'на осі: ближче зійтись у цьому типі неможливо. Побітово результати не збіглися жодного разу.');
+  else
+    verd('v12v','t-no','ІНШИЙ ТИП — ІНШИЙ ДОПУСК',
+      'Той самий замір на шкалі float64 виглядав би провалом: навіть найменша з трьох '+
+      'різниць, 5.960·10⁻⁸, — це '+Math.round(LIBDIFF[0]/EPS64/1e6)+
+      ' мільйонів епсилонів float64, а найгірша — '+Math.round(Math.max.apply(null,LIBDIFF)/EPS64/1e6)+
+      '. Допуск завжди береться від типу, у якому рахуєш, а не з памʼяті.');
+}
+
+/* ═══════ звʼязування керувань ═══════ */
+function bind(id, fn){ on(id,'input',fn); }
+
+bind('row1', draw1);
+segment('seg2', function(i){ st2=i; draw2(); });
+bind('qi3', draw3); bind('kj3', draw3);
+bind('row4', draw4);
+segment('seg5', function(i){ st5=i; draw5(); });
+bind('div6', draw6);
+bind('row7', draw7);
+bind('row8', draw8); bind('col8', draw8);
+segment('seg9', function(i){ st9=i; draw9(); });
+segment('seg10', function(i){ st10=i; draw10(); });
+segment('seg11', function(i){ st11=i; draw11(); });
+segment('seg12', function(i){ st12=i; draw12(); });
+
+function drawAll(){
+  draw1(); draw2(); draw3(); draw4(); draw5(); draw6();
+  draw7(); draw8(); draw9(); draw10(); draw11(); draw12();
+}
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+
+})();
+</script>

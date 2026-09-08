@@ -1,0 +1,1844 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Word2Vec</title>
+<meta name="description" content="Word2Vec не рахує слова, а вчиться їх передбачати — і векторами стають ваги цієї задачі. Заміряно на 93 392 українських перекладах інтерфейсів: словник моделі 6 074 слова покриває 92.09 % тексту, вікно ±5 дає 3 588 918 пар «слово — сусід», хоча заповнене повністю лише у 13.0 % позицій. Повний softmax коштував би 1012.3 раза дорожче за негативне семплювання. Три зерна: skip-gram навчається 37.0 ±0.6 с процесорних, CBOW — 10.3 ±0.1 с. Головне число блоку — не косинус синонімів, а розрив: у TF-IDF він 0.2101 ±0.0019, у центральній матриці skip-gram 0.3093 ±0.0035, а в сумі двох матриць 0.5390 ±0.0048, тобто в 2.566 раза більший за TF-IDF. Причина видима: у центральній матриці середній косинус між усіма словами 0.1576, у сумі — 0.0246.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .plain td:first-child, .wide td, .wide th, .nums td:first-child,
+td:first-child, code, pre, kbd, samp, .mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+.nums tr.hot td:first-child{font-weight:700}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw, th .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+
+/* сегмент із пʼятьма подання ми ставимо у два рядки */
+.seg.five button{flex:1 1 30%}
+</style>
+
+<body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 3 · Тема 12</p>
+    <h1>Word2Vec</h1>
+    <p class="stand">Попередня тема рахувала, з ким слово стоїть поруч, і складала
+      величезну таблицю. Ця тема не рахує нічого: вона ставить моделі задачу
+      <b>вгадати сусіда</b> — і забирає собі ваги, які модель для цього вивчила.
+      Дорогою зʼясується, що головне число тут не те, яке хочеться цитувати.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Замість рахувати — передбачати</a></li>
+        <li><a href="#s2">Два напрямки одного передбачення</a></li>
+        <li><a href="#s3">Скільки прикладів дає наш текст</a></li>
+        <li><a href="#s4">Чому softmax тут не живе</a></li>
+        <li><a href="#s5">Негативне семплювання</a></li>
+        <li><a href="#s6">Звідки беруться неправильні слова</a></li>
+        <li><a href="#s7">Один крок навчання</a></li>
+        <li><a href="#s8">Замір: час і три зерна</a></li>
+        <li><a href="#s9">Що модель вивчила</a></li>
+        <li><a href="#s10">Головне число: розрив</a></li>
+        <li><a href="#s11">Дві матриці й спільний напрямок</a></li>
+        <li><a href="#s12">Межі й що з ними роблять далі</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../11-distributional-semantics/lecture.html">← 11. Дистрибутивна семантика</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../13-glove-fasttext/lecture.html">13. GloVe і FastText →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+
+<p class="lead">У попередній темі ми зробили головний крок: домовились, що зміст
+слова видно з <a href="../11-distributional-semantics/lecture.html">його оточення</a>. Далі ми чесно порахували це оточення — склали
+величезну таблицю «скільки разів слово A стояло поруч зі словом B», зважили її
+через PPMI і стиснули розкладом на 64 виміри. Спрацювало. Але шлях був такий:
+спершу побудувати матрицю розміром зі словник у квадраті, потім її стиснути.</p>
+
+<p>Word2Vec заходить із іншого боку. Вона <b>ніколи не будує цю матрицю</b>. Замість
+цього вона ставить собі навчальну задачу — вгадати, які слова стоять поруч, — і
+вчить під неї маленьку модель. Вектори слів у ній не результат обчислення, а
+<b>побічний продукт</b>: це просто ваги, які модель мусила підібрати, щоб добре
+вгадувати.</p>
+
+<p>Ідея звучить як хитрість, і вона нею і є. Але саме на цій хитрості тримається
+все, що сталося в обробці мови після 2013 року, тож розібрати її треба до
+останнього гвинтика — включно з тим, чому очевидна реалізація не працює й що
+роблять замість неї.</p>
+
+<h2 id="s1"><span class="num">01 / Ідея</span>Замість рахувати — передбачати</h2>
+
+<p>Уявімо гру. Я закриваю в реченні одне слово й показую тобі сусідів: «не вдалося
+відкрити ⬛ для читання». Ти кажеш «файл». Ти вгадав не тому, що знаєш це речення,
+а тому, що знаєш, у якому оточенні живе слово «файл».</p>
+
+<p>Тепер уяви, що в цю гру грає програма, у якої на початку немає <b>жодного</b>
+уявлення про мову. Кожному слову вона видає короткий список чисел — скажімо, 64
+числа — і ці числа спочатку випадкові. Далі мільйони разів поспіль вона грає в гру,
+щоразу трохи підправляючи числа так, щоб наступного разу вгадати краще.</p>
+
+<div class="note"><b>Ключове речення теми.</b> Числа, які модель підбирає, щоб
+вигравати в цю гру, і є векторами слів. Ніхто не казав моделі, що «файл» і «каталог»
+схожі. Але щоб добре вгадувати обидва, їй вигідно дати їм схожі числа — бо в текстах
+вони стоять в однакових місцях. Схожість зʼявляється сама, як наслідок задачі.</div>
+
+<p>Задача, у якій правильна відповідь береться із самого тексту, а не з чужої
+розмітки, зветься <b>самокерованим навчанням</b> (self-supervised learning). Нам не
+треба нікого наймати, щоб розмітити корпус: текст сам собі розмітка. Це і є причина,
+чому Word2Vec стала масовою — сировини для неї стільки ж, скільки текстів у світі.</p>
+
+<h2 id="s2"><span class="num">02 / Напрямок</span>Два напрямки одного передбачення</h2>
+
+<p>Гру можна грати у двох напрямках, і Word2Vec — це насправді дві моделі.</p>
+
+<p><b>Skip-gram.</b> Даємо слово посередині й просимо назвати сусідів. Одне
+центральне слово породжує стільки навчальних прикладів, скільки в нього сусідів:
+«файл» окремо з «відкрити», окремо з «для», окремо з «читання».</p>
+
+<p><b>CBOW</b> (continuous bag of words, «неперервний мішок слів»). Навпаки: даємо
+всіх сусідів одразу й просимо назвати те, що посередині. Сусіди складаються в один
+усереднений вектор, і з нього передбачається центр. Ціле вікно дає <b>один</b>
+приклад.</p>
+
+<p>Слово «мішок» у назві означає рівно те саме, що в <a href="../04-bag-of-words/lecture.html">темі 04</a>: порядок сусідів
+викидається. «Відкрити файл для читання» і «читання для файл відкрити» дадуть той
+самий усереднений контекст. Word2Vec порядку не знає — і це її принципова межа, а
+не недогляд.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 1 · Одне речення, два напрямки</p>
+  <p class="fig-sub">Справжній рядок нашого корпусу: «Не вдається записати файл
+    збереженого стану на диск». Пересунь центр, зміни ширину вікна — і подивись,
+    скільки навчальних прикладів дасть це речення в кожному з режимів.</p>
+  <div class="panel">
+    <div><canvas id="cWin" width="940" height="250" aria-label="Речення з підсвіченим центральним словом і стрілками до слів контексту"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">напрямок</span>
+        <div class="seg" id="segWin">
+          <button data-i="0" aria-pressed="true">skip-gram</button>
+          <button data-i="1" aria-pressed="false">CBOW</button>
+        </div>
+      </div>
+      <div class="ctl"><label for="pos1">центр <output id="pos1v">4</output></label>
+        <input type="range" id="pos1" min="0" max="7" step="1" value="3"></div>
+      <div class="ctl"><label for="win1">вікно <span class="raw">±</span><output id="win1v">5</output></label>
+        <input type="range" id="win1" min="1" max="5" step="1" value="5"></div>
+      <div class="readout">
+        <div class="cellv"><b>сусідів у центра</b><i id="w1a">7</i></div>
+        <div class="cellv"><b>прикладів з речення</b><i id="w1b">50</i></div>
+        <div class="cellv"><b>пар у корпусі</b><i id="w1c">3 588 918</i></div>
+        <div class="cellv"><b>вікно заповнене</b><i id="w1d">ні</i></div>
+      </div>
+      <div class="verdict" id="v1"></div>
+    </div>
+  </div>
+  <figcaption><b>Що тут видно.</b> У skip-gram кожна стрілка — окремий навчальний
+    приклад, тож одне речення дає їх десятки. У CBOW усі стрілки сходяться в один
+    приклад, і речення дає рівно стільки прикладів, скільки в ньому слів. Це і є
+    вся різниця в ціні навчання.</figcaption>
+</figure>
+
+<p>Далі ми розбираємо skip-gram, бо в ній усе видно чіткіше: один приклад — це рівно
+одна пара слів. Наприкінці ми повернемось до CBOW і заміряємо обидві.</p>
+
+<h2 id="s3"><span class="num">03 / Дані</span>Скільки прикладів дає наш текст</h2>
+
+<p>Корпус той самий, що в усьому курсі: <b>93 392</b> українські переклади
+інтерфейсів із 266 програм. Канонічний токенізатор блоку дає з них <b>674 948</b>
+слововживань і <b>27 078</b> різних словоформ.</p>
+
+<p>Перше рішення, яке треба ухвалити, — кому взагалі давати вектор. Слову, що
+трапилось у корпусі двічі, вектор дати можна, але вивести з двох прикладів нема
+чого: він лишиться майже таким, яким його випадково створили. Тому ставимо поріг
+<code>min_count=10</code>.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>що рахуємо</th><th>значення</th><th>що це означає</th></tr></thead>
+  <tbody>
+    <tr><td>словоформ у корпусі</td><td>27 078</td><td>усі різні слова</td></tr>
+    <tr class="hot"><td>словник моделі</td><td>6 074</td><td>ті, що трапились ≥ 10 разів</td></tr>
+    <tr><td>покриття тексту</td><td>92.0874 %</td><td>стільки слововживань лишається</td></tr>
+    <tr><td>слів поза словником</td><td>21 004</td><td>77.6 % словоформ — але 7.91 % слововживань</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ці два відсотки поруч — уже знайомий закон Ципфа з <a href="../01-text-is-hard/lecture.html">теми 01</a>: <b>більш ніж три
+чверті різних слів забезпечують менш ніж тринадцяту частину тексту</b>. Викинувши
+їх, ми втратили небагато тексту, а словник моделі зменшили в чотири з половиною
+рази.</p>
+
+<p>Тепер вікно. Беремо кожну позицію в тексті за центр і кожного сусіда в межах
+пʼяти слів ліворуч і праворуч — окремою парою.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>вікно</th><th>пар (слово, сусід)</th><th>приріст</th></tr></thead>
+  <tbody>
+    <tr><td>±1</td><td>1 057 126</td><td>—</td></tr>
+    <tr><td>±2</td><td>1 930 950</td><td>+82.7 %</td></tr>
+    <tr><td>±3</td><td>2 629 588</td><td>+36.2 %</td></tr>
+    <tr><td>±4</td><td>3 171 828</td><td>+20.6 %</td></tr>
+    <tr class="hot"><td>±5</td><td>3 588 918</td><td>+13.1 %</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note warn"><b>Наш корпус коротший, ніж здається.</b> Вікно виросло
+впʼятеро, а пар побільшало лише втричі. Причина проста: документи в корпусі
+короткі, і в середньому в центра всього <b>5.79</b> сусіда замість можливих десяти.
+Повне вікно ±5 має лише <b>13.0 %</b> позицій. Тобто «вікно ±5» у нас — це радше
+«скільки знайдеться», ніж стала величина, і будь-який висновок про вплив ширини
+вікна треба міряти, а не переносити з чужої статті.</div>
+
+<h2 id="s4"><span class="num">04 / Ціна</span>Чому softmax тут не живе</h2>
+
+<p>Тепер найцікавіше. Як саме модель «вгадує сусіда»?</p>
+
+<p>Очевидна постановка: це задача класифікації, де класів рівно стільки, скільки
+слів у словнику. Модель має видати ймовірність для кожного з 6 074 слів, і сума
+ймовірностей має дорівнювати одиниці. Функція, яка перетворює набір довільних чисел
+на такий набір ймовірностей, зветься <b>softmax</b>.</p>
+
+<div class="eq">P(сусід = o | центр = c) = exp(u<span class="sub">o</span> · v<span class="sub">c</span>) ÷ Σ<span class="sub">w</span> exp(u<span class="sub">w</span> · v<span class="sub">c</span>)</div>
+
+<p>Розберімо запис по частинах, бо далі він знадобиться цілком.</p>
+
+<ul>
+<li><b>v<span class="sub">c</span></b> — вектор центрального слова, ті самі 64 числа.</li>
+<li><b>u<span class="sub">o</span></b> — вектор слова-сусіда. Він <b>інший</b>: у кожного
+  слова буде два вектори, і чому — розберемо в розділі 11.</li>
+<li><b>u · v</b> — скалярний добуток: перемножили відповідні числа й додали. Одне
+  число, яке тим більше, чим більше два вектори «дивляться в один бік».</li>
+<li><b>exp</b> — піднесення числа e ≈ 2.718 до степеня. Потрібне лише для того, щоб
+  зробити всі числа додатними: ймовірності відʼємними не бувають.</li>
+<li><b>Σ<span class="sub">w</span></b> — велика грецька «сигма», знак суми: перебрати
+  <b>всі</b> слова словника w і скласти. Саме тут і ховається катастрофа.</li>
+</ul>
+
+<p>Знаменник вимагає перебрати весь словник. І не один раз, а на <b>кожному</b> з
+3.6 мільйона прикладів, і так у кожній епосі. Порахуймо.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 2 · Скільки коштує один навчальний приклад</p>
+  <p class="fig-sub">Ліворуч — множення, які треба зробити з повним softmax:
+    скалярний добуток центрального вектора з кожним словом словника. Праворуч — те
+    саме з негативним семплюванням: лише з правильним сусідом і кількома
+    випадковими.</p>
+  <div class="panel">
+    <div><canvas id="cCost" width="940" height="300" aria-label="Порівняння кількості множень на один приклад для softmax і для негативного семплювання"></canvas></div>
+    <div>
+      <div class="ctl"><label for="voc2">словник <output id="voc2v">6 074</output></label>
+        <input type="range" id="voc2" min="0" max="6" step="1" value="1"></div>
+      <div class="ctl"><label for="neg2">негативних <output id="neg2v">5</output></label>
+        <input type="range" id="neg2" min="1" max="20" step="1" value="5"></div>
+      <div class="ctl"><label for="dim2">вимірів <output id="dim2v">64</output></label>
+        <input type="range" id="dim2" min="16" max="300" step="4" value="64"></div>
+      <div class="readout">
+        <div class="cellv"><b>softmax</b><i id="c2a">388 736</i></div>
+        <div class="cellv"><b>семплювання</b><i id="c2b">384</i></div>
+        <div class="cellv"><b>дешевше у</b><i id="c2c">1012.3x</i></div>
+        <div class="cellv"><b>на 7.2 млн прикладів</b><i id="c2d" class="sm">2.79 трлн</i></div>
+      </div>
+      <div class="verdict" id="v2"></div>
+    </div>
+  </div>
+  <figcaption><b>Головне тут — форма залежності.</b> Стовпчик softmax росте разом зі
+    словником, а стовпчик семплювання не росте взагалі: він залежить лише від того,
+    скільки негативних ми взяли. Саме тому реальні моделі зі словником на сотні тисяч
+    слів узагалі не мають альтернативи.</figcaption>
+</figure>
+
+<p>На нашому маленькому словнику в 6 074 слова повний softmax уже в <b>1012 разів</b>
+дорожчий. Два навчальні проходи по всіх парах коштували б <b>2.79 трлн</b> множень
+замість <b>2.8 млрд</b>. Різниця між «півхвилини» і «півдня».</p>
+
+<h2 id="s5"><span class="num">05 / Прийом</span>Негативне семплювання</h2>
+
+<p>Вихід із цієї безвиході на диво простий, і його варто сформулювати одним реченням:
+<b>замість питати «яке з шести тисяч слів тут стоїть», спитаймо «чи справжня ця
+пара»</b>.</p>
+
+<p>Тобто перетворюємо задачу з шістьма тисячами варіантів на задачу з двома
+відповідями — так і ні. Для одного навчального прикладу беремо:</p>
+
+<ul>
+<li><b>одну справжню пару</b>: «файл» і його дійсний сусід «вхідний» — відповідь «так»;</li>
+<li><b>кілька вигаданих пар</b>: «файл» і випадкове слово зі словника — відповідь «ні».</li>
+</ul>
+
+<p>Вигадані пари й звуться <b>негативними прикладами</b>, а сам прийом —
+<b>негативним семплюванням</b> (negative sampling). Слово «семплювання» тут означає
+просто «випадковий добір»: ми не перебираємо весь словник, а тягнемо з нього
+навмання пʼять слів.</p>
+
+<p>Щоб відповісти «так» чи «ні», треба перетворити скалярний добуток — довільне
+число від мінус нескінченності до плюс нескінченності — на ймовірність від нуля до
+одиниці. Це робить <b>логістична функція</b>, вона ж сигмоїда:</p>
+
+<div class="eq">σ(s) = 1 ÷ (1 + e<span class="sup">−s</span>)</div>
+
+<p>Читається так: чим більше s, тим ближче σ(s) до одиниці; при s = 0 виходить рівно
+0.5; при дуже відʼємному s значення тисне до нуля. Літера σ — грецька «сигма» в
+малому написанні, вона тут просто імʼя функції.</p>
+
+<p>Функція втрат для одного прикладу тоді така:</p>
+
+<div class="eq">L = −log σ(u<span class="sub">o</span> · v<span class="sub">c</span>) − Σ<span class="sub">k=1..K</span> log σ(−u<span class="sub">k</span> · v<span class="sub">c</span>)</div>
+
+<p>Перший доданок каже: ймовірність справжньої пари має бути велика. Логарифм від
+числа, близького до одиниці, дорівнює майже нулю, тож і втрата майже нульова; а якщо
+модель дала справжній парі ймовірність 0.01, логарифм дасть −4.6, і зі знаком мінус
+втрата буде 4.6. Другий доданок — те саме для K вигаданих пар, тільки з <b>мінусом
+перед добутком</b>: σ(−s) велике тоді, коли s мале, тобто коли модель <b>не</b>
+вірить у вигадану пару.</p>
+
+<div class="note"><b>Дві частини тягнуть у різні боки, і це навмисно.</b> Без
+негативних прикладів у моделі лишається тривіальний спосіб виграти: просто
+<b>подовжити всі вектори</b>. Скалярний добуток росте разом із довжиною, сигмоїда
+підходить до одиниці, втрата падає до нуля — а взаємне розташування слів при цьому
+не покращується ні на крапельку. Негативні приклади саме це й забороняють: вони
+вимагають, щоб для випадкових пар добуток був <b>малим</b>, а зробити його малим
+довжиною неможливо.</div>
+
+<p>Ось той самий розрахунок на справжніх числах уже навченої моделі. Скалярний
+добуток вектора слова «файл» із контекстним вектором «вхідний» дорівнює
+<b>1.6603</b>; сигмоїда від нього — <b>0.8403</b>; втрата на цій парі — <b>0.1740</b>.
+А з випадковим словом «звук» добуток становить <b>−3.6203</b>, сигмоїда —
+<b>0.0261</b>, і втрата на цьому негативному прикладі — <b>0.0264</b>. Обидві близькі
+до нуля: модель тут уже нічого не вчить, бо вона вже права.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 3 · Що функція втрат каже про одну пару</p>
+  <p class="fig-sub">Крива — це сигмоїда. Точка на ній — поточне значення скалярного
+    добутку. Праворуч видно, яку втрату дає ця пара й наскільки сильно вона тягне
+    вектори. Перемкни тип пари: та сама точка означає протилежні речі.</p>
+  <div class="panel">
+    <div><canvas id="cSig" width="940" height="330" aria-label="Сигмоїда з позначеною точкою, стовпчик втрати й стовпчик сили притягання"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">пара</span>
+        <div class="seg" id="segSig">
+          <button data-i="0" aria-pressed="true">справжня</button>
+          <button data-i="1" aria-pressed="false">вигадана</button>
+        </div>
+      </div>
+      <div class="ctl"><label for="dot3">добуток <span class="raw">s</span> <output id="dot3v">1.66</output></label>
+        <input type="range" id="dot3" min="-800" max="800" step="2" value="166"></div>
+      <div class="readout">
+        <div class="cellv"><b>сигмоїда</b><i id="s3a">0.8403</i></div>
+        <div class="cellv"><b>втрата</b><i id="s3b">0.1740</i></div>
+        <div class="cellv"><b>сила тяги</b><i id="s3c">0.1597</i></div>
+        <div class="cellv"><b>напрямок</b><i id="s3d" class="sm">зближує</i></div>
+      </div>
+      <div class="verdict" id="v3"></div>
+    </div>
+  </div>
+  <figcaption><b>Головне спостереження.</b> Сила тяги — це відстань сигмоїди до
+    потрібної відповіді. Коли модель уже права, вона майже нульова, і приклад
+    проходить крізь навчання без наслідків. Уся робота йде на тих парах, де модель
+    ще помиляється, — і саме тому мільйони «легких» прикладів не заважають.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Негативні</span>Звідки беруться неправильні слова</h2>
+
+<p>Лишилось питання, яке виглядає дрібним, а насправді визначає якість: <b>як саме
+тягнути випадкові слова</b>?</p>
+
+<p>Найпростіше — рівномірно: кожне слово словника з однаковою ймовірністю. Тоді
+негативними майже завжди ставатимуть рідкісні слова, бо їх у словнику більшість. Але
+модель і так ніколи не сплутає «файл» із рідкісним «переспрямовування» — легкі
+негативні приклади не вчать нічого.</p>
+
+<p>Друга крайність — тягнути за самою частотою. Тоді негативним майже завжди буде
+«не» або «для», і модель витратить усе навчання на те, щоб відштовхувати від усього
+службові слова.</p>
+
+<p>Word2Vec бере середнє між цими крайнощами: імовірність узяти слово пропорційна
+його частоті, <b>піднесеній до степеня 0.75</b>.</p>
+
+<div class="eq">P(w) = f(w)<span class="sup">0.75</span> ÷ Σ<span class="sub">w'</span> f(w')<span class="sup">0.75</span></div>
+
+<p>Тут f(w) — скільки разів слово трапилось, а сума в знаменнику потрібна лише для
+того, щоб імовірності разом дали одиницю. Степінь 0.75 не виведена з жодної теорії:
+її дібрали експериментально автори методу — Mikolov та співавтори перебрали кілька
+варіантів розподілу й лишили той, що виявився помітно кращим на всіх їхніх задачах
+<i>(це число цитоване з літератури 2013 року, а не заміряне нами)</i>. Зате те,
+<b>що</b> вона робить, ми заміряли самі.</p>
+
+<p>Звідти ж походить і наша пʼятірка негативних. Автори методу радять брати від
+пʼяти до двадцяти на малих корпусах і від двох до пʼяти на великих <i>(теж цитата,
+не наш замір)</i>. Наші 675 тисяч слововживань — це маленький корпус за будь-якою
+міркою, тож пʼять негативних стоять біля нижньої межі рекомендованого. Скільки їх
+треба насправді саме тут, ти заміряєш у домашньому завданні.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>степінь</th><th>«не»</th><th>«для»</th><th>найрідкісніше</th><th>перекіс</th></tr></thead>
+  <tbody>
+    <tr><td>0.0 — рівномірно</td><td>0.016 %</td><td>0.016 %</td><td>0.01646 %</td><td>1.0x</td></tr>
+    <tr><td>0.5</td><td>0.379 %</td><td>0.283 %</td><td>0.00718 %</td><td>52.8x</td></tr>
+    <tr class="hot"><td>0.75 — Word2Vec</td><td>1.461 %</td><td>0.944 %</td><td>0.00380 %</td><td>384.2x</td></tr>
+    <tr><td>1.0 — за частотою</td><td>4.503 %</td><td>2.515 %</td><td>0.00161 %</td><td>2792.6x</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Останній стовпчик і є суттю. У нашому корпусі найчастіше слово «не» трапляється
+<b>27 926</b> разів, а найрідкісніше зі словника, «сервісів», — рівно <b>10</b>:
+різниця у <b>2792.6</b> раза. Тягнули б негативні прямо за частотою — саме такий
+перекіс і дістали б. Степінь 0.75 стискає його до <b>384.2</b> раза, тобто в
+<b>7.3</b> раза, а половинна степінь — аж до 52.8.</p>
+
+<p>Крайні рядки таблиці показують, чому обидві межі погані. При α = 0 кожне слово
+дістає рівно <b>0.016 %</b> — і найчастіше «не», і те, що трапилось десять разів.
+Негативним тоді майже завжди буде рідкісне слово, яке модель і так ні з чим не
+сплутає. При α = 1 самі лише «не» і «для» забирають <b>4.503 %</b> і <b>2.515 %</b>,
+тобто понад сім відсотків добору на два слова. Значення 0.75 дає тим самим двом
+<b>1.461 %</b> і <b>0.944 %</b> — досить, щоб модель училася відрізняти справді
+схожі слова, і не настільки, щоб решта словника перестала траплятись.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 4 · Що степінь робить із розподілом</p>
+  <p class="fig-sub">Стовпчики — імовірність стати негативним прикладом для
+    двадцяти слів нашого словника: десять найчастіших і десять з різних місць хвоста.
+    Справжні частоти корпусу, справжня формула.</p>
+  <div class="panel">
+    <div><canvas id="cAlp" width="940" height="360" aria-label="Стовпчики ймовірності добору для двадцяти слів при різній степені згладжування частоти"></canvas></div>
+    <div>
+      <div class="ctl"><label for="alp4">степінь <span class="raw">α</span> <output id="alp4v">0.75</output></label>
+        <input type="range" id="alp4" min="0" max="100" step="5" value="75"></div>
+      <div class="ctl"><span class="cap">шкала</span>
+        <div class="seg" id="segAlp">
+          <button data-i="0" aria-pressed="true">звичайна</button>
+          <button data-i="1" aria-pressed="false">логарифмічна</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>«не»</b><i id="a4a">1.461 %</i></div>
+        <div class="cellv"><b>найрідкісніше</b><i id="a4b" class="sm">0.00380 %</i></div>
+        <div class="cellv"><b>перекіс</b><i id="a4c">384.2x</i></div>
+        <div class="cellv"><b>частка топ-10</b><i id="a4d">6.9 %</i></div>
+      </div>
+      <div class="verdict" id="v4"></div>
+    </div>
+  </div>
+  <figcaption><b>На що дивитись.</b> При α = 1 перші два стовпчики зʼїдають майже
+    всю ймовірність, і хвіст на звичайній шкалі просто не видно. При α = 0 усі
+    стовпчики однакові. Ані те, ані те не корисне — потрібне проміжне значення, і
+    0.75 стоїть саме там.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Крок</span>Один крок навчання</h2>
+
+<p>Тепер зберімо все докупи й подивімось, що саме відбувається з числами за один
+крок. Виведення коротке, і його варто пройти повністю — воно пояснює всю поведінку
+моделі.</p>
+
+<div class="derive">
+  <div class="step">
+    <span class="lbl">крок 1 · що ми мінімізуємо</span>
+    <p>Для справжньої пари втрата дорівнює <span class="eq" style="display:inline-block;padding:2px 8px;margin:0">L = −log σ(s)</span>, де s — скалярний добуток
+      двох векторів. Ми хочемо, щоб L була якомога меншою.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 2 · похідна по оцінці</span>
+    <p>Похідна показує, як зміниться L, якщо трошки збільшити s. Для цієї функції
+      вона дорівнює <b>σ(s) − 1</b>. Число завжди відʼємне: збільшення s завжди
+      зменшує втрату — очікувано.</p>
+    <div class="eq">∂L ÷ ∂s = σ(s) − 1</div>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 3 · похідна по вектору</span>
+    <p>Оскільки s — це u · v, похідна s по v дорівнює просто u. Множимо одне на
+      друге:</p>
+    <div class="eq">∂L ÷ ∂v = (σ(s) − 1) · u</div>
+    <p>Градієнтний спуск робить крок <b>проти</b> похідної, тобто додає до v вектор
+      <b>(1 − σ(s)) · u</b>. Це і є «притягнути v до u», а множник каже, <b>наскільки
+      сильно</b>.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 4 · для вигаданої пари</span>
+    <p>Там втрата −log σ(−s), і те саме викладення дає <b>∂L ÷ ∂v = σ(s) · u</b>. Крок
+      проти похідної тепер <b>віднімає</b> u від v — тобто відштовхує.</p>
+  </div>
+  <div class="step">
+    <span class="lbl">крок 5 · що з цього випливає</span>
+    <p>Множник у першому випадку — 1 − σ(s), у другому — σ(s). Обидва це «наскільки
+      модель помилилась». Якщо для справжньої пари сигмоїда вже дає майже
+      одиницю, множник виходить майже нульовий, і вектори не рухаються. Уся сила витрачається там, де модель ще не має
+      рації.</p>
+  </div>
+</div>
+
+<p>У практиці ми виводимо цю похідну руками в <code>numpy</code> й порівнюємо з тим,
+що дає автоматичне диференціювання <code>torch</code>. Вони збігаються — різниця
+не перевищує 10<span class="sup">−9</span>. Це найдешевший спосіб переконатись, що
+всередині бібліотеки немає жодної магії, крім цих чотирьох рядків.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 5 · Навчання просто тут, у браузері</p>
+  <p class="fig-sub">Крихітний корпус: три теми по пʼять слів, речення склеєні лише
+    зі слів однієї теми. Вектори двовимірні, щоб їх можна було намалювати. Тисни
+    «100 кроків» і дивись, як однотемні слова сходяться.</p>
+  <div class="panel">
+    <div><canvas id="cTrain" width="940" height="360" aria-label="Двовимірні вектори пʼятнадцяти слів під час навчання і крива втрати"></canvas></div>
+    <div>
+      <div class="ctl"><label for="lr5">швидкість навчання <output id="lr5v">0.20</output></label>
+        <input type="range" id="lr5" min="1" max="60" step="1" value="20"></div>
+      <div class="ctl"><label for="ng5">негативних <output id="ng5v">3</output></label>
+        <input type="range" id="ng5" min="0" max="8" step="1" value="3"></div>
+      <button id="go5">100 кроків</button>
+      <button id="rst5">почати спочатку</button>
+      <div class="readout">
+        <div class="cellv"><b>кроків</b><i id="t5a">0</i></div>
+        <div class="cellv"><b>втрата</b><i id="t5b">2.7726</i></div>
+        <div class="cellv"><b>свої</b><i id="t5c">0.00</i></div>
+        <div class="cellv"><b>чужі</b><i id="t5d">0.00</i></div>
+      </div>
+      <div class="verdict" id="v5"></div>
+    </div>
+  </div>
+  <figcaption><b>Спробуй поставити нуль негативних.</b> Втрата впаде майже до нуля —
+    нижче, ніж за будь-якого іншого положення. А косинус між словами <b>різних</b> тем
+    так і лишиться близько +0.3 замість відʼємного: розсувати їх нікому. Це та сама
+    тривіальна перемога, про яку йшлося вище, тільки видима на екрані. Друге
+    спостереження менш очевидне: чим більше негативних, тим гірший тут результат —
+    у двох вимірах вектори штовхаються всі одразу, і місця для трьох окремих
+    напрямків просто не лишається. У справжній моделі вимірів 64, і там простору
+    незрівнянно більше — а скільки негативних потрібно насправді, ти заміряєш у
+    домашньому завданні.</figcaption>
+</figure>
+
+<h2 id="s8"><span class="num">08 / Замір</span>Час і три зерна</h2>
+
+<p>Тепер навчімо модель по-справжньому. Налаштування такі: 64 виміри, вікно ±5,
+пʼять негативних прикладів, дві епохи по всіх 3 588 918 парах, оптимізатор Adam зі
+швидкістю навчання 0.01, батч 4096. Кожну модель ми навчаємо <b>тричі</b>, із
+зернами 0, 1 і 2, бо число без розкиду поруч нічого не варте.</p>
+
+<div class="note warn"><b>Час треба міряти правильно, інакше він бреше.</b> Машина,
+на якій усе рахувалось, зайнята чужою роботою, тож стінний годинник показує що
+завгодно. Ми міряємо <b>процесорний час</b> — скільки процесор справді працював над
+нашою задачею. І ще одне: без явного обмеження OpenMP одним потоком навіть
+процесорний час роздувається в десятки разів, бо потоки, які крутяться в очікуванні,
+теж рахуються як робота. Тому змінна <code>OMP_NUM_THREADS=1</code> стоїть у зошиті
+<b>першим рядком</b>, до імпорту <code>numpy</code>.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>модель</th><th>прикладів</th><th>кроків</th><th>процесорних, с</th><th>втрата в кінці</th></tr></thead>
+  <tbody>
+    <tr class="hot"><td>skip-gram</td><td>3 588 918</td><td>1 754</td><td>37.0 ±0.6</td><td>3.1770 → 2.1796</td></tr>
+    <tr><td>CBOW</td><td>620 214</td><td>304</td><td>10.3 ±0.1</td><td>1.9383</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Скільки коштує напрямок передбачення, видно одразу. Skip-gram працює з
+<b>5.79</b> раза більшою кількістю прикладів, бо кожна пара для неї окремий приклад,
+— і платить за це <b>3.6</b> раза довшим навчанням. Різниця між 5.79 і 3.6 не
+помилка: один пакет CBOW важчий за пакет skip-gram, бо в кожному прикладі там до
+десяти векторів контексту замість одного, і частину переваги це зʼїдає.</p>
+
+<p>І окремо про те, чому годинник тут саме такий. На тому самому прогоні, де
+процесор працював над першою моделлю <b>37.3</b> секунди, стінний годинник показав
+<b>54.6</b> — на половину більше. Модель не стала повільнішою: просто поруч на тій
+самій машині рахувалось щось іще. Стінний час у такій ситуації міряє не задачу, а
+завантаженість машини, і саме тому в курсі ми його не цитуємо.</p>
+
+<p>Тут доречно назвати те, чого три зерна <b>не</b> перевіряють. Зерно міняє
+початкові ваги й добір негативних, тобто показує розкид по даних. Але воно нічого не
+скаже, якщо недетермінована сама бібліотека. Тому в зошиті стоїть окрема перевірка:
+два прогони з тим самим зерном на тих самих даних мають дати <b>побітово</b> однакові
+ваги. Вони дають — і лише після цього розкид між зернами можна тлумачити.</p>
+
+<h2 id="s9"><span class="num">09 / Результат</span>Що модель вивчила</h2>
+
+<p>Найпростіший спосіб подивитись, що вийшло, — узяти слово й спитати, які вектори
+до нього найближчі. Близькість міряємо <b>косинусом</b>: ділимо обидва вектори на
+їхню довжину й перемножуємо. Виходить число від −1 до 1, і воно не залежить від
+того, які вектори довгі, а лише від того, куди вони дивляться.</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <thead><tr><th>слово</th><th>чотири найближчі сусіди за skip-gram</th></tr></thead>
+  <tbody>
+    <tr><td>файл</td><td>вхідний 0.714 · тимчасовий 0.701 · стиснутий 0.667 · об’єктний 0.637</td></tr>
+    <tr><td>помилка</td><td>сталася 0.750 · спроби 0.685 · критична 0.663 · внутрішня 0.637</td></tr>
+    <tr><td>вікно</td><td>діалогове 0.717 · нагадування 0.656 · віджету 0.648 · панель 0.633</td></tr>
+    <tr><td>мережі</td><td>переспрямовування 0.717 · містка 0.690 · мережевого 0.677 · інтерфейсу 0.653</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Це не підібрані приклади: чотири слова взято першими, які спадають на думку для
+корпусу про програми, і жодного добору серед сусідів не робилося. Порівняй із <a href="../05-tfidf/lecture.html">темою
+05</a>: там «регулярний» і «формальний» були двома незалежними колонками без
+жодного звʼязку. Тут звʼязок є, і він виник сам.</p>
+
+<div class="note warn"><b>І одразу неприємна правда про такі списки.</b> Ми
+порахували, наскільки вони стійкі: узяли 500 найчастіших слів, для кожного взяли
+десять найближчих сусідів у кожної з трьох моделей і подивились, наскільки списки
+збігаються. Збіг — <b>0.4820</b>, тобто <b>половина списку змінюється від зерна до
+зерна</b>. Список сусідів — це ілюстрація, а не замір. Цитувати можна лише те, що
+усереднене по багатьох словах, і саме таке число ми рахуємо в наступному розділі.</div>
+
+<figure>
+  <p class="fig-head">Інтерактив 6 · Карта слів</p>
+  <p class="fig-sub">Понад сотня слів нашого словника, спроєктованих із 64 вимірів
+    на площину. Вибери слово — і побачиш його найближчих сусідів із косинусами.
+    Перемкни модель: та сама карта, навчена у зворотному напрямку.</p>
+  <div class="panel">
+    <div><canvas id="cMap" width="940" height="420" aria-label="Двовимірна проєкція векторів слів із підсвіченими найближчими сусідами вибраного слова"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">модель</span>
+        <div class="seg" id="segMap">
+          <button data-i="0" aria-pressed="true">skip-gram</button>
+          <button data-i="1" aria-pressed="false">CBOW</button>
+        </div>
+      </div>
+      <div class="ctl"><span class="cap">слово</span>
+        <div class="seg wrap" id="segWord">
+          <button data-i="0" aria-pressed="true">файл</button>
+          <button data-i="1" aria-pressed="false">помилка</button>
+          <button data-i="2" aria-pressed="false">вікно</button>
+          <button data-i="3" aria-pressed="false">мережі</button>
+          <button data-i="4" aria-pressed="false">пароль</button>
+          <button data-i="5" aria-pressed="false">кнопка</button>
+          <button data-i="6" aria-pressed="false">колір</button>
+          <button data-i="7" aria-pressed="false">звук</button>
+        </div>
+      </div>
+      <div class="ctl"><label for="nb6">сусідів <output id="nb6v">4</output></label>
+        <input type="range" id="nb6" min="1" max="8" step="1" value="4"></div>
+      <div class="readout one">
+        <div class="cellv"><b>найближчі</b><i id="m6a" class="sm">вхідний 0.714 · тимчасовий 0.701 · стиснутий 0.667 · об’єктний 0.637</i></div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>найближчий</b><i id="m6b">0.714</i></div>
+        <div class="cellv"><b>найдальший з них</b><i id="m6c">0.637</i></div>
+      </div>
+      <div class="verdict" id="v6"></div>
+    </div>
+  </div>
+  <figcaption><b>Обережно з площиною.</b> 64 виміри не вміщаються у два, тож
+    сусідство на картинці неточне: два слова можуть виглядати поруч, маючи низький
+    косинус. Числа праворуч рахуються в повних 64 вимірах — вір їм, а не оку.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Головне</span>Розрив, а не косинус</h2>
+
+<p>Настав час на головне число блоку. Нагадаю стіну, на яку ми відповідаємо: у нашому
+корпусі є 209 пар документів, про які <b>точно</b> відомо, що вони означають одне й
+те саме — це два різні українські переклади того самого англійського рядка. У <a href="../05-tfidf/lecture.html">темі 05</a>
+TF-IDF дала таким парам середній косинус <b>0.2198</b>, а кожній пʼятій — рівно нуль.</p>
+
+<p>Тепер порахуймо те саме на векторах. Вектор документа беремо найпростіший:
+середнє векторів його слів. Ніякого навчання поверх — саме тому це чесна перевірка
+самих векторів.</p>
+
+<div class="note warn"><b>Пастка, у яку легко впасти.</b> Косинус синонімів
+підстрибує з 0.2198 до 0.7054, і дуже хочеться поставити це в заголовок. Не можна:
+ембединги завищують <b>усе</b>. Косинус двох <b>випадкових</b> документів у них теж
+підстрибує — з 0.0098 до 0.3961. Метод, який усьому підряд ставить 0.9, виглядав би
+найкращим у світі. Чесна міра — <b>розрив</b> між синонімами й випадковістю.</div>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>подання</th><th>синоніми</th><th>випадкові</th><th>розрив</th><th>розрив ÷ TF-IDF</th></tr></thead>
+  <tbody>
+    <tr><td>TF-IDF (тема 05)</td><td>0.2198</td><td>0.0098</td><td>0.2101 ±0.0019</td><td>1.000x</td></tr>
+    <tr><td>skip-gram, центральна</td><td>0.7054</td><td>0.3961</td><td>0.3093 ±0.0035</td><td>1.472x</td></tr>
+    <tr class="hot"><td>skip-gram, сума двох</td><td>0.5628</td><td>0.0238</td><td>0.5390 ±0.0048</td><td>2.566x</td></tr>
+    <tr><td>CBOW, центральна</td><td>0.7418</td><td>0.3690</td><td>0.3728 ±0.0033</td><td>1.774x</td></tr>
+    <tr><td>CBOW, сума двох</td><td>0.6220</td><td>0.0116</td><td>0.6104 ±0.0021</td><td>2.906x</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Стіна пробита, і це видно навіть у найскромнішому рядку: розрив виріс у півтора
+раза, а в найкращому — майже втричі. Але сама таблиця вчить іще двох речей, і
+кожна важливіша за перемогу.</p>
+
+<p><b>Перше.</b> Різниця між двома рядками <b>однієї й тієї самої моделі</b>
+(0.3093 і 0.5390) більша, ніж різниця між TF-IDF і скромнішим із них (0.2101 і
+0.3093). Тобто дрібна деталь реалізації — яку саме матрицю взяти — зсунула метрику
+сильніше, ніж заміна цілого методу. Це не курйоз, а правило, яке варто винести з
+теми.</p>
+
+<p><b>Друге.</b> Порівнювати середні косинуси — не єдиний спосіб. Можна спитати
+інакше: якщо навмання взяти одну пару синонімів і одну випадкову пару, як часто
+синоніми наберуть більше? Це запитання не залежить від жодного порогу.</p>
+
+<figure>
+  <p class="fig-head">Інтерактив 7 · Два розподіли й поріг між ними</p>
+  <p class="fig-sub">Угорі — 209 пар синонімів, унизу — 209 випадкових пар; висота
+    стовпчика показує, скільки пар потрапило в цей інтервал косинуса. Пересунь поріг
+    і подивись, скільки пар кожного роду лишиться праворуч від нього.</p>
+  <div class="panel">
+    <div><canvas id="cGap" width="940" height="380" aria-label="Два розподіли косинусів — для пар синонімів і для випадкових пар — з рухомим порогом"></canvas></div>
+    <div>
+      <div class="ctl"><span class="cap">подання</span>
+        <div class="seg wrap five" id="segGap">
+          <button data-i="0" aria-pressed="true">TF-IDF</button>
+          <button data-i="1" aria-pressed="false">SG центр.</button>
+          <button data-i="2" aria-pressed="false">SG сума</button>
+          <button data-i="3" aria-pressed="false">CBOW центр.</button>
+          <button data-i="4" aria-pressed="false">CBOW сума</button>
+        </div>
+      </div>
+      <div class="ctl"><label for="thr7">поріг <output id="thr7v">0.10</output></label>
+        <input type="range" id="thr7" min="-20" max="100" step="1" value="10"></div>
+      <div class="readout">
+        <div class="cellv"><b>синоніми вище</b><i id="g7a">140 з 209</i></div>
+        <div class="cellv"><b>випадкові вище</b><i id="g7b">5 з 209</i></div>
+        <div class="cellv"><b>розрив середніх</b><i id="g7c">0.2101</i></div>
+        <div class="cellv"><b>розділяє</b><i id="g7d">0.8586</i></div>
+      </div>
+      <div class="verdict" id="v7"></div>
+    </div>
+  </div>
+  <figcaption><b>Що дає цей погляд.</b> «Розділяє» — це частка випадків, коли пара
+    синонімів набирає більше за випадкову пару; порогу тут немає взагалі. У TF-IDF
+    вона 0.8586, у сумі skip-gram — 0.9642. І саме тут CBOW програє, попри більший
+    розрив середніх: у нього 0.9325.</figcaption>
+</figure>
+
+<p>Два числа показують на різних переможців, і це не суперечність. Розрив середніх
+чутливий до того, наскільки далеко відсунувся <b>весь</b> розподіл; «розділяє»
+питає лише про порядок. У CBOW випадкові пари відсунулись далі, а от найгірші пари
+синонімів лишились переплетеними з випадковими — і саме їх ловить друга метрика.
+Чесний висновок такий: <b>на нашому корпусі два напрямки передбачення дають
+приблизно однакову якість, а CBOW при цьому вчиться у три з половиною раза швидше</b>.</p>
+
+<h2 id="s11"><span class="num">11 / Матриці</span>Дві матриці й спільний напрямок</h2>
+
+<p>Лишилось пояснити, звідки взялася найбільша різниця в таблиці. Нагадаю: у кожного
+слова <b>два</b> вектори — центральний v і контекстний u. Word2Vec після навчання
+віддає центральні, а контекстні викидає.</p>
+
+<p>Чому їх узагалі два? Бо без цього модель мала б передбачати слово поруч із самим
+собою. Скалярний добуток вектора на себе завжди великий і завжди додатний, тож пара
+«файл — файл» діставала б найвищу оцінку автоматично, хоча слово поруч із собою
+стоїть рідко. Дві матриці цю проблему знімають.</p>
+
+<p>Тепер замір, який усе пояснює. Порахуймо <b>середній косинус між усіма парами
+слів словника</b> — тобто наскільки взагалі схожі між собою випадкові слова. Числа
+нижче стосуються рівно тієї конфігурації, яку ми навчали в розділі 08: 64 виміри,
+дві епохи, Adam зі швидкістю 0.01. Ця величина сильно залежить і від оптимізатора,
+і від того, скільки епох модель провчилась, тож цитувати її окремо від
+конфігурації не можна.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <thead><tr><th>що беремо</th><th>середній косинус</th><th>розрив на синонімах</th></tr></thead>
+  <tbody>
+    <tr><td>центральна v</td><td>0.1576</td><td>0.3093</td></tr>
+    <tr><td>контекстна u</td><td>0.3650</td><td>—</td></tr>
+    <tr class="hot"><td>сума v + u</td><td>0.0246</td><td>0.5390</td></tr>
+    <tr><td>v без першої компоненти</td><td>0.0002</td><td>0.4581</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ось і причина. У центральній матриці всі вектори мають <b>спільний напрямок</b> —
+є один бік, у який вони дивляться всі одразу. Він і завищує косинус будь-якої пари,
+зокрема випадкової: 0.3961 замість нуля. Контекстна матриця має той самий дефект,
+тільки сильніший.</p>
+
+<p>А от у сумі спільні напрямки двох матриць гасять один одного, і середній косинус
+падає з 0.1576 до 0.0246. Перевірити це можна ще прямішим способом: прибрати з
+центральної матриці першу головну компоненту, тобто саме той спільний напрямок. Це
+дає розрив <b>0.4581</b> при середньому косинусі 0.0002 — майже те саме, що сума.
+Отже, обидва прийоми роблять одну й ту саму роботу, просто різними інструментами.</p>
+
+<div class="note"><b>Що це означає на практиці.</b> Бібліотечна реалізація Word2Vec
+за замовчуванням повертає <b>лише центральну матрицю</b>. Тобто читач, який візьме
+готову бібліотеку й порівняє свої числа з нашими, дістане рядок «1.472x», а не
+«2.566x», — і причина буде не в його корпусі, а в тому, який обʼєкт йому віддали.
+Контекстні вектори в популярних бібліотеках зазвичай доступні окремим полем; якщо
+метрика в тебе не сходиться, це перше, що варто перевірити.</div>
+
+<p>Наш замір тут не новий — але порядок важливий: спершу число, потім чужа згода.
+Той самий висновок оприлюднили Levy, Goldberg і Dagan у статті «Improving
+Distributional Similarity with Lessons Learned from Word Embeddings» (2015), де
+прийомові присвячено окремий підрозділ «Adding Context Vectors». Головна теза тієї
+роботи звучить майже дослівно як наша таблиця: значна частина переваги ембедингів
+пояснюється не самим алгоритмом, а вибором дрібних деталей реалізації. Ідею
+додавання контекстних векторів вони, своєю чергою, приписують авторам GloVe. А
+прибирання спільного напрямку окремо дослідили Mu, Bhat і Viswanath у роботі
+«All-but-the-Top» (2018).</p>
+
+<h2 id="s12"><span class="num">12 / Межі</span>Де це ламається і що далі</h2>
+
+<p>Метод працює. Тепер про те, чого він не вміє, — і кожну межу варто побачити
+числом.</p>
+
+<p><b>Одне слово — один вектор.</b> Слово «час» у нашому корпусі означає і проміжок,
+і момент, і «час очікування». Усі значення злилися в одну точку простору, і жодним
+налаштуванням їх не розділити. Це не дефект реалізації, а властивість самої
+постановки: вектор приписано <b>рядку символів</b>, а не значенню. Виправлять це
+контекстні моделі шостого блоку, де вектор слова залежатиме від речення, у якому
+воно стоїть.</p>
+
+<p><b>Порядок слів не існує.</b> Ані skip-gram, ані CBOW не знають, стояв сусід
+ліворуч чи праворуч і на якій відстані. «Не вдалося зберегти» і «вдалося не
+зберегти» для них тотожні. Для мішка слів це було очевидною вадою; тут вона просто
+переїхала на рівень нижче.</p>
+
+<p><b>Частота псує геометрію.</b> Ми заміряли звʼязок частоти слова з довжиною його
+вектора: кореляція <b>−0.4642</b>. Частотні слова дістають короткі вектори
+(«не» — 2.0006), рідкісні — довгі («пароль» — 3.6417). На косинус це прямо не впливає,
+бо він довжину ігнорує, але щойно ти почнеш складати вектори документа, частотні
+слова тягнутимуть менше, ніж мали б.</p>
+
+<p><b>І головне — слів поза словником просто немає.</b> Двадцять одна тисяча
+словоформ нашого корпусу не має вектора взагалі: <b>77.6 %</b> усіх різних слів.
+Для української це не дрібниця, а вирок: «конфігурація» модель знає, а
+«конфігурацією» — ні, хоча це те саме слово. Порогом це не лікується — опустивши
+<code>min_count</code>, ми дістанемо вектори, виведені з двох прикладів.</p>
+
+<p>Саме звідси починається <b>наступна тема</b>. GloVe спробує повернутись до
+підрахунку співвіднесеності, але вже з правильною цільовою функцією, а FastText
+складе вектор слова з векторів його символьних шматків — і тоді «конфігурацією»
+дістане вектор, навіть якщо модель ніколи цього слова не бачила. Наскільки чесно
+працює цей фокус на українській морфології, вимірює <a href="../13-glove-fasttext/lecture.html">тема 13</a>.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../11-distributional-semantics/lecture.html"><span class="dir">попередня</span><span class="ttl">11. Дистрибутивна семантика</span></a>
+    <a class="next" href="../13-glove-fasttext/lecture.html"><span class="dir">наступна</span><span class="ttl">13. GloVe і FastText</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thin(n){
+  /* розділювач тисяч вузьким пробілом — 3 588 918 читається, 3588918 ні */
+  var s=String(n), out='', k;
+  for(k=0;k<s.length;k++){
+    if(k>0 && (s.length-k)%3===0) out+=' ';
+    out+=s[k];
+  }
+  return out;
+}
+/* лічильниковий генератор із хеш-перемішуванням: рівномірний і без смуг */
+function LCG(seed){
+  var s=(seed>>>0)||1;
+  if(!isFinite(s)) s=1;
+  var n=0;
+  return function(){
+    n=(n+1)>>>0;
+    var x=(s^(n*0x9E3779B1))>>>0;
+    x^=x>>>16; x=Math.imul(x,0x85EBCA6B)>>>0;
+    x^=x>>>13; x=Math.imul(x,0xC2B2AE35)>>>0;
+    x^=x>>>16;
+    return (x>>>0)/4294967296;
+  };
+}
+function sigmoid(x){return 1/(1+Math.exp(-x));}
+
+/* ═══════ дані з зошита ═══════ */
+var GAP={"tfidf":{"syn":[0.0544,0.3298,0.1989,0.4915,0.2429,0.0,0.1054,0.1075,0.284,0.1813,0.2292,0.4095,0.2914,0.3065,0.1183,0.4708,0.5237,0.1361,0.1478,0.3499,0.0,0.483,0.2737,0.0,0.1527,0.3593,0.1062,0.1561,0.1099,0.0,0.0,0.0,0.4262,0.0245,0.0387,0.0334,0.0,0.0,0.0,0.0,0.0,0.0,0.3295,0.0,0.0,0.458,0.0,0.4516,0.0,0.5092,0.0,0.0,0.0,0.0,0.0,0.0215,0.1311,0.0,0.4615,0.474,0.1043,0.5059,0.2085,0.177,0.0,0.4671,0.3747,0.4998,0.0,0.4865,0.0,0.1945,0.0,0.0,0.2586,0.2184,0.1697,0.0534,0.418,0.0,0.0947,0.1193,0.0909,0.127,0.1219,0.1989,0.023,0.0786,0.0279,0.0953,0.4276,0.2805,0.2947,0.2324,0.0168,0.0,0.5732,0.0,0.1858,0.1211,0.3491,0.0577,0.5961,0.0751,0.4404,0.4692,0.1421,0.1428,0.1522,0.0,0.3362,0.0,0.4838,0.0,0.265,0.635,0.1709,0.2629,0.5473,0.2499,0.2538,0.2042,0.0,0.0,0.082,0.0,0.2086,0.2808,0.2339,0.242,0.1554,0.3393,0.4381,0.0709,0.4026,0.6006,0.3115,0.1802,0.027,0.5578,0.1997,0.3171,0.0594,0.7147,0.3002,0.356,0.4254,0.0,0.3286,0.0,0.4614,0.1218,0.1932,0.2743,0.647,0.4936,0.6282,0.5009,0.2759,0.3978,0.3499,0.0,0.1453,0.2084,0.4871,0.4607,0.0,0.3017,0.41,0.3499,0.3651,0.1947,0.0941,0.5664,0.172,0.0,0.0,0.1233,0.2266,0.5979,0.3412,0.3647,0.3555,0.5081,0.3872,0.0498,0.4295,0.0502,0.0502,0.283,0.1244,0.2297,0.4297,0.5327,0.0,0.4758,0.1979,0.1956,0.2742,0.4439,0.0,0.0,0.2948,0.0,0.3074,0.4238,0.3789,0.2928,0.2523],"rnd":[0.0,0.0,0.0078,0.0,0.0,0.0674,0.0,0.0,0.0,0.0956,0.0331,0.0692,0.0,0.0,0.1056,0.0,0.0,0.0,0.0,0.0831,0.0235,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0169,0.0165,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0578,0.0,0.0,0.0185,0.0,0.0223,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.219,0.0,0.0,0.0173,0.0249,0.0,0.0,0.0,0.0,0.0,0.0343,0.0,0.0253,0.0,0.047,0.0,0.0,0.0,0.0,0.0304,0.0599,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0821,0.0,0.0498,0.0138,0.0185,0.0,0.0,0.0,0.0,0.0601,0.0,0.0,0.0,0.0509,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.141,0.0,0.0,0.0,0.0,0.0911,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.1352,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.1663,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0149,0.0,0.0484,0.0,0.0,0.0256,0.0,0.0,0.0,0.0,0.0184,0.0,0.0,0.0,0.0,0.0,0.0982,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0663,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]},"sg":{"syn":[0.7571,0.7214,0.67,0.9141,0.8107,0.7261,0.7152,0.7563,0.8149,0.6955,0.7891,0.6841,0.6068,0.6705,0.782,0.8358,0.8331,0.6915,0.7181,0.5871,0.6626,0.9219,0.7804,0.5717,0.853,0.8293,0.7355,0.788,0.7728,0.5673,0.5948,0.5541,0.8506,0.6258,0.569,0.5901,0.6058,0.6223,0.6058,0.6223,0.6058,0.6223,0.7327,0.5484,0.505,0.8418,0.5265,0.8301,0.6216,0.8439,0.5751,0.4922,0.5244,0.4696,0.562,0.5716,0.6322,0.5089,0.8891,0.8667,0.734,0.8762,0.8141,0.8013,0.542,0.8644,0.9047,0.921,0.4596,0.8984,0.3566,0.8553,0.3792,0.4453,0.784,0.6846,0.707,0.5937,0.7213,0.5697,0.3984,0.4359,0.4647,0.3359,0.3417,0.8134,0.7165,0.7364,0.7643,0.8078,0.7827,0.7443,0.7894,0.7718,0.568,0.5113,0.7614,0.6284,0.8185,0.5913,0.7226,0.5278,0.819,0.79,0.8687,0.8689,0.6625,0.598,0.6005,0.5271,0.7182,0.4259,0.8334,0.4918,0.858,0.929,0.722,0.8988,0.8473,0.7151,0.6628,0.7566,0.4857,0.4214,0.7355,0.7058,0.5965,0.8604,0.8621,0.7911,0.6553,0.8341,0.8341,0.7285,0.8959,0.8162,0.7947,0.7424,0.5716,0.9092,0.7442,0.7688,0.6397,0.8743,0.7398,0.7746,0.8815,0.7181,0.8557,0.631,0.9135,0.6673,0.7476,0.7733,0.8954,0.8996,0.9202,0.8889,0.8352,0.7507,0.7502,0.6191,0.6876,0.8183,0.8189,0.8158,0.5844,0.7883,0.8932,0.7775,0.8231,0.7459,0.5367,0.8859,0.8005,0.3246,0.3246,0.5185,0.6555,0.7564,0.7683,1.0,0.7613,0.7904,0.9016,0.6329,0.835,0.5207,0.5207,0.7653,0.5744,0.8177,0.8532,0.7743,0.5372,0.8438,0.7909,0.7521,0.6853,0.5553,0.1773,0.5697,0.7877,0.5877,0.8121,0.7742,0.8407,0.8476,0.7732],"rnd":[0.3908,0.5404,0.5498,0.1832,0.28,0.4858,0.348,0.2824,0.6779,0.5366,0.6726,0.6724,0.713,0.2849,0.5944,0.5137,0.3608,0.6211,0.1798,0.6915,0.4151,0.3504,0.2269,0.5205,0.1352,0.1858,0.3465,0.4976,0.5986,0.397,0.4023,0.1475,0.3632,0.5773,0.3907,0.5484,0.3767,0.2073,0.5175,0.3298,0.157,0.4329,0.6258,0.246,0.2974,0.5829,0.4423,0.2231,0.1495,0.3128,0.4165,0.2724,0.1124,0.6091,0.4877,0.4768,0.8476,0.2848,0.4927,0.4684,0.4417,0.4235,0.5929,0.5771,0.3881,0.4659,0.3099,0.1238,0.3568,0.3437,0.5192,0.2998,0.3293,0.4986,0.2585,0.6886,0.52,0.3135,0.1635,0.4629,0.3623,0.4095,0.4079,0.4757,0.3874,0.0772,0.6135,0.4992,0.4094,0.4834,0.3886,0.318,0.2641,0.5086,0.3952,0.3297,0.3442,0.2408,0.4346,0.459,0.265,0.2353,0.2982,0.3437,0.373,0.3375,0.3413,0.1865,0.5057,0.5511,0.4179,0.2802,0.5733,0.6065,0.4902,0.5173,0.3507,0.6836,0.0817,0.4863,0.5282,0.3298,0.4217,0.3558,0.4259,0.3359,0.6857,0.3198,0.3532,0.295,0.4742,0.3148,0.4505,0.5498,0.6681,0.1999,0.4184,0.3533,0.2406,0.3937,0.0,0.2773,0.6013,0.3687,0.4996,0.5768,0.4683,0.5462,0.4103,0.4852,0.4876,0.574,0.4226,0.3916,0.3493,0.4689,0.2122,0.4875,0.5434,0.4597,0.5233,0.2718,0.4118,0.2694,0.4705,0.2796,0.4428,0.5925,0.4401,0.6486,0.1332,0.2084,0.3312,0.2234,0.4872,0.2987,0.4161,0.4559,0.2329,0.1812,0.2301,0.3694,0.2775,0.2916,0.3976,0.3569,0.1803,0.3457,0.4242,0.1366,0.3279,0.0861,0.4136,0.332,0.399,0.4653,0.2544,0.4219,0.194,0.5378,0.3591,0.2226,0.3157,0.2615,0.478,0.3696,0.4226,0.2552,0.0466]},"sgsum":{"syn":[0.488,0.6037,0.5514,0.871,0.6756,0.5983,0.585,0.628,0.6913,0.4147,0.7083,0.5518,0.3668,0.4628,0.6579,0.7597,0.8441,0.4338,0.58,0.4329,0.4521,0.899,0.7045,0.432,0.7887,0.5902,0.6376,0.7079,0.6913,0.417,0.3127,0.2807,0.7515,0.4509,0.1982,0.2149,0.3567,0.4079,0.3567,0.4079,0.3567,0.4079,0.6654,0.3791,0.3372,0.8091,0.3629,0.8073,0.467,0.8271,0.4476,0.3148,0.3738,0.3047,0.3655,0.3363,0.4258,0.2788,0.8704,0.8482,0.6227,0.8592,0.7745,0.7802,0.453,0.8515,0.8958,0.9165,0.3729,0.8853,0.2307,0.8379,0.2589,0.3462,0.6486,0.4691,0.4979,0.3402,0.5515,0.398,0.0906,0.0407,0.242,-0.0485,0.0244,0.637,0.5246,0.5558,0.5773,0.6448,0.7209,0.6049,0.6118,0.6434,0.1714,0.2642,0.6845,0.4453,0.7151,0.2902,0.573,0.2645,0.7322,0.7446,0.8218,0.8299,0.5109,0.4266,0.4202,0.2768,0.6715,0.194,0.794,0.2697,0.7779,0.9299,0.6282,0.8565,0.7133,0.6171,0.5369,0.6869,0.2905,0.2065,0.6142,0.5725,0.4581,0.7988,0.7996,0.6342,0.3569,0.8054,0.8054,0.5776,0.8412,0.7034,0.6427,0.5603,0.282,0.8671,0.6511,0.6437,0.3577,0.8784,0.4723,0.6208,0.7077,0.6529,0.7848,0.3873,0.903,0.4647,0.6369,0.6451,0.8557,0.785,0.8792,0.8125,0.7004,0.4383,0.5499,0.477,0.4508,0.5658,0.7192,0.7056,0.3765,0.4245,0.81,0.6724,0.6989,0.5435,0.1598,0.8135,0.5851,0.0603,0.0603,0.2814,0.5655,0.6298,0.6608,1.0,0.565,0.738,0.8157,0.4499,0.768,0.3453,0.3453,0.6599,0.4222,0.712,0.8103,0.6931,0.3644,0.6798,0.7457,0.7109,0.4624,0.3773,0.0215,0.398,0.7391,0.4109,0.7639,0.6821,0.8026,0.7747,0.7284],"rnd":[-0.1318,0.1605,-0.0459,-0.1605,-0.1996,0.052,0.0615,-0.1502,0.5402,-0.0955,0.4289,0.5214,0.1058,-0.1951,0.0239,0.3131,0.0033,0.1331,-0.1376,0.3815,-0.0384,0.0882,-0.2219,0.4158,-0.3312,-0.0992,0.0182,0.2916,0.2623,0.1781,-0.0242,-0.0939,-0.082,0.1179,-0.0137,0.2402,0.1529,-0.0602,0.1198,-0.0667,-0.2238,0.1256,0.3759,-0.1151,-0.0498,0.2029,0.0676,-0.2062,-0.3158,-0.0983,0.0081,-0.0352,-0.3627,0.3682,0.1776,0.0086,0.7466,-0.2192,0.1343,0.0364,0.1169,-0.051,0.2028,0.2762,-0.1063,0.2359,-0.0318,-0.2031,-0.1494,-0.2055,-0.14,-0.0292,-0.1714,-0.0215,-0.2308,0.3814,0.1043,-0.1549,-0.1859,0.0848,0.0054,-0.0704,-0.1571,0.1656,0.0655,-0.3604,0.4095,0.2553,0.008,-0.101,-0.0462,-0.2351,-0.2235,0.3392,-0.0398,-0.0417,-0.082,-0.1922,0.0782,0.1533,-0.2282,-0.115,0.0899,-0.0147,-0.1116,-0.0214,-0.0067,-0.2415,0.1239,0.148,0.0977,-0.0391,0.3755,0.3374,-0.1557,0.0835,-0.1581,0.4587,-0.2628,0.0774,0.0132,-0.0708,0.0912,-0.167,0.002,-0.0908,0.554,-0.1698,0.0376,-0.0482,0.0743,0.0116,0.0335,0.2568,0.4355,0.0596,0.0949,-0.1432,-0.1412,0.029,0.0,-0.016,0.1379,-0.1092,0.1547,0.3406,-0.0186,0.1772,0.0227,-0.0807,-0.024,0.2285,0.1772,-0.0419,0.0616,0.2893,-0.174,0.1688,-0.0035,0.1028,0.2797,-0.2266,0.1476,-0.0579,0.106,-0.1397,-0.1105,0.2946,0.048,0.3457,-0.2422,-0.207,-0.1156,-0.1304,0.2567,-0.0636,-0.0514,-0.0209,-0.0885,-0.2995,-0.2021,0.1131,-0.1629,-0.1402,-0.0545,0.0648,-0.2384,-0.0668,-0.0161,-0.0208,-0.1527,-0.2048,0.0322,-0.0719,0.051,0.1458,-0.1356,0.2278,-0.0956,0.2705,-0.1189,-0.1868,0.0116,-0.1893,-0.0899,0.1676,0.1158,-0.2678,-0.4502]},"cbow":{"syn":[0.6966,0.8457,0.8084,0.9252,0.8124,0.8977,0.688,0.6728,0.8619,0.6225,0.8803,0.6048,0.6443,0.6948,0.8407,0.9133,0.8061,0.5697,0.7789,0.5494,0.6357,0.9286,0.916,0.7951,0.9205,0.8448,0.7301,0.8549,0.7986,0.5259,0.6372,0.504,0.8756,0.6647,0.4548,0.515,0.6245,0.6343,0.6245,0.6343,0.6245,0.6343,0.678,0.525,0.5334,0.968,0.5151,0.9699,0.5485,0.7959,0.3778,0.5175,0.5771,0.4035,0.3286,0.5229,0.6372,0.3324,0.9246,0.871,0.6257,0.8851,0.8756,0.9365,0.4479,0.931,0.9636,0.9434,0.3416,0.9078,0.3949,0.8978,0.398,0.3647,0.8085,0.621,0.679,0.6283,0.7064,0.4866,0.5495,0.3679,0.5811,0.2016,0.1698,0.786,0.7145,0.7435,0.7417,0.7735,0.9125,0.8819,0.8053,0.7867,0.4487,0.4475,0.7578,0.6798,0.8296,0.7432,0.6685,0.3994,0.8332,0.9086,0.945,0.9459,0.7443,0.7361,0.7497,0.4702,0.8597,0.3978,0.953,0.4588,0.9087,0.9026,0.8467,0.9838,0.8526,0.7423,0.7099,0.8552,0.4735,0.3887,0.8013,0.7835,0.6337,0.9116,0.9567,0.9216,0.6412,0.9704,0.9704,0.9257,0.9015,0.7586,0.9137,0.7341,0.6446,0.9268,0.8193,0.8085,0.8192,0.8027,0.6293,0.8104,0.7848,0.685,0.9285,0.7083,0.966,0.7458,0.8619,0.8089,0.951,0.9074,0.9245,0.8863,0.8417,0.6691,0.7788,0.6204,0.7536,0.8059,0.757,0.7543,0.5855,0.8244,0.9187,0.7507,0.8967,0.9071,0.501,0.9035,0.8594,0.2523,0.2523,0.7237,0.768,0.6594,0.7987,1.0,0.807,0.8347,0.9432,0.5767,0.9175,0.8237,0.8237,0.7515,0.6388,0.8541,0.8373,0.7143,0.7064,0.9167,0.8724,0.8835,0.7105,0.845,0.3673,0.4866,0.8274,0.5355,0.8522,0.7894,0.8871,0.9101,0.9171],"rnd":[0.2978,0.5545,0.3472,0.0218,0.0519,0.5134,0.3492,0.0857,0.4997,0.1702,0.7628,0.748,0.6415,0.3186,0.436,0.5343,0.2791,0.629,0.2237,0.6113,0.4354,0.1975,0.0216,0.6031,0.1328,0.1209,0.2523,0.4937,0.502,0.5661,0.4219,0.2571,0.1709,0.7438,0.2413,0.7123,0.1295,0.2446,0.4846,0.1655,0.0581,0.5398,0.7812,0.2398,0.2383,0.4974,0.4294,0.2318,-0.0086,0.2033,0.4273,0.3938,0.0748,0.6512,0.4957,0.4914,0.8919,0.2106,0.6299,0.4575,0.4224,0.2336,0.6408,0.7274,0.1761,0.5042,0.2437,0.0932,0.1995,0.0998,0.372,0.4129,0.2278,0.2025,0.0813,0.7871,0.4833,0.3312,0.2532,0.4424,0.3652,0.1194,0.2612,0.4722,0.2115,0.0952,0.6618,0.6512,0.566,0.1833,0.4362,0.3439,0.1457,0.4301,0.2534,0.1858,0.4693,0.21,0.4609,0.565,0.1475,0.3266,0.2455,0.4733,0.3464,0.4171,0.2896,0.1099,0.3952,0.4529,0.4337,0.1246,0.6872,0.5341,0.3241,0.2712,0.4461,0.7312,0.0042,0.5094,0.3543,0.2225,0.1869,0.262,0.2593,0.36,0.8196,0.1662,0.1542,0.1993,0.3991,0.1611,0.4228,0.5733,0.6294,0.2635,0.5043,0.3186,0.3478,0.52,0.0,0.0408,0.5542,0.3627,0.3735,0.7356,0.3224,0.4373,0.2308,0.2266,0.443,0.6079,0.4801,0.3815,0.4816,0.5407,0.1531,0.3544,0.4865,0.571,0.4856,0.2085,0.3747,0.1339,0.4665,0.2515,0.3388,0.6771,0.53,0.4845,-0.0784,0.1629,0.2231,0.3451,0.5991,0.3705,0.1975,0.3224,0.282,0.1621,0.2151,0.5123,0.1531,0.2152,0.5143,0.4638,0.1048,0.1176,0.2566,0.2013,0.0804,0.4772,0.3261,0.2903,0.4398,0.3959,0.2126,0.5114,0.2657,0.4658,0.2295,0.1297,0.3099,0.1416,0.3081,0.4311,0.4753,0.1599,-0.0489]},"cbowsum":{"syn":[0.428,0.8161,0.7584,0.9048,0.7743,0.9016,0.5542,0.4993,0.8025,0.3765,0.8351,0.4812,0.3843,0.494,0.7774,0.9058,0.8313,0.3357,0.7011,0.407,0.4784,0.915,0.8828,0.7049,0.914,0.6799,0.662,0.8322,0.7733,0.3633,0.4046,0.2882,0.8456,0.51,0.2379,0.2039,0.4389,0.4721,0.4389,0.4721,0.4389,0.4721,0.5854,0.3131,0.3321,0.9697,0.332,0.9657,0.3226,0.704,0.1227,0.3179,0.3454,0.166,-0.1482,0.1668,0.3283,-0.0894,0.8946,0.7878,0.5042,0.849,0.8359,0.9174,0.3027,0.915,0.9511,0.9254,0.1546,0.8859,0.2182,0.8696,0.2308,0.1832,0.8093,0.5779,0.5888,0.4832,0.5528,0.2894,0.3853,0.11,0.4023,-0.2978,-0.2826,0.6219,0.5393,0.5801,0.5696,0.6186,0.882,0.8192,0.7943,0.767,0.0339,0.2394,0.6766,0.5257,0.7373,0.6288,0.4008,0.17,0.7587,0.8717,0.9422,0.9301,0.6745,0.6604,0.6723,0.288,0.8556,0.1997,0.9439,0.2451,0.8682,0.8907,0.7964,0.975,0.8235,0.6532,0.6305,0.8079,0.2061,0.0984,0.7384,0.7069,0.4509,0.8747,0.9486,0.8877,0.5126,0.9674,0.9674,0.8924,0.8602,0.6042,0.8502,0.5231,0.4308,0.8928,0.7877,0.6777,0.6431,0.7217,0.347,0.6954,0.5414,0.5613,0.9045,0.5357,0.9688,0.6926,0.7429,0.6844,0.927,0.8206,0.8854,0.8219,0.7183,0.3891,0.5515,0.4196,0.4848,0.6585,0.6399,0.6413,0.3658,0.6326,0.8671,0.6913,0.8706,0.8663,0.0208,0.8442,0.7905,-0.0856,-0.0856,0.6143,0.7502,0.5049,0.6698,1.0,0.591,0.7955,0.8801,0.371,0.9158,0.8048,0.8048,0.695,0.4455,0.8601,0.7982,0.5815,0.5593,0.8411,0.8987,0.8932,0.5736,0.8303,0.2129,0.2894,0.7937,0.3452,0.8165,0.6872,0.8644,0.8637,0.9079],"rnd":[-0.1743,0.1033,-0.269,-0.3176,-0.3763,0.1489,0.0886,-0.2951,0.3544,-0.3191,0.6222,0.546,0.0897,-0.1601,-0.1074,0.3532,-0.0519,0.306,-0.0196,0.3743,0.0335,-0.1244,-0.4839,0.4676,-0.3179,-0.2429,-0.0948,0.2796,0.2559,0.4518,0.0526,0.0128,-0.4146,0.4428,-0.0129,0.4466,-0.3532,-0.0351,0.1243,-0.3076,-0.2982,0.3584,0.5791,-0.069,-0.0764,0.1546,-0.0043,-0.1903,-0.4555,-0.1304,0.1066,0.2014,-0.3262,0.4877,0.2207,0.1419,0.8111,-0.4403,0.2952,0.0001,0.2107,-0.1142,0.4313,0.5058,-0.3679,0.3095,-0.0852,-0.3186,-0.3017,-0.3929,-0.1273,0.1012,-0.2344,-0.2123,-0.3724,0.6583,-0.0149,-0.1617,-0.0873,0.0757,0.0071,-0.2719,-0.1813,0.1644,-0.206,-0.5754,0.6318,0.4545,0.1483,-0.3525,-0.1576,-0.0386,-0.3461,0.0271,-0.1929,-0.2821,0.0645,-0.2005,0.1135,0.4208,-0.3647,-0.1063,-0.0906,-0.0063,-0.1802,0.0173,-0.0711,-0.2611,0.1707,0.1463,-0.002,-0.2544,0.5888,0.2322,-0.2038,-0.0565,-0.131,0.5694,-0.3948,0.1707,-0.0648,-0.1556,0.0569,-0.142,-0.0466,-0.21,0.7741,-0.2596,-0.2506,-0.0528,0.0214,-0.2474,0.0019,0.3117,0.5319,-0.002,0.119,-0.1857,0.0724,0.2235,0.0,-0.4179,0.1898,-0.032,-0.0049,0.5954,-0.0471,0.1966,-0.0674,-0.2059,0.0656,0.3534,0.2244,0.1098,0.1689,0.3056,-0.1678,0.0316,-0.0853,0.249,0.2914,-0.1859,0.1399,-0.2201,0.0885,-0.2515,-0.1841,0.3634,0.153,0.1584,-0.4581,-0.2235,-0.267,0.0387,0.3418,0.131,-0.1632,-0.1751,-0.0519,-0.3447,-0.2771,0.242,-0.2472,-0.0962,0.1934,0.2064,-0.3115,-0.3591,-0.0888,-0.1274,-0.3533,0.1297,-0.035,-0.065,0.2685,0.117,-0.2737,0.4151,-0.0557,0.22,-0.1408,-0.3769,-0.094,-0.375,-0.2172,0.2557,0.2018,-0.2165,-0.6329]}};
+var MAP={"sg":{"w":["файл","помилка","вікно","мережі","пароль","кнопка","колір","звук","вхідний","тимчасовий","стиснутий","об’єктний","файли","замка","каталог","індексний","сталася","спроби","критична","внутрішня","відкриванні","спробі","час","під","діалогове","нагадування","віджету","панель","віджет","вікна","фокус","клацання","переспрямовування","містка","мережевого","інтерфейсу","адреси","з'єднання","інтерфейсів","фільтра","пінкод","паролі","облікового","в'язки","розблокування","жетон","користувача","операційну","клавіша","миші","пера","натискання","прокрутки","кнопок","заливки","вибраним","тла","прозорість","непрозорість","зелений","палітру","чорний","курсор","повноекранний","журнал","планшета","горизонтальний","червоним","розфарбовування","видимим","не","для","у","з","вдалося","на","до","або","в","є","значення","бути","і","за","даних","якщо","має","можна","лише","та","що","може","дані","використовувати","тип","із","буде","як","слід","файла","типу","щодо","вказано","встановити","передбачено","щоб","створити","отримати","використання","чи"],"xy":[[0.57,0.79],[0.748,0.236],[-0.885,0.48],[0.385,-0.992],[0.27,-0.375],[-1.0,0.033],[-0.641,-0.237],[-0.342,0.65],[0.332,0.699],[0.697,0.614],[0.546,0.661],[0.787,0.429],[0.269,0.658],[0.932,0.654],[0.428,0.581],[0.617,0.673],[0.568,0.298],[0.638,0.451],[0.719,0.117],[0.509,0.057],[0.685,0.353],[0.302,0.546],[0.403,0.461],[0.425,0.424],[-0.489,0.335],[-0.57,0.061],[-0.976,0.131],[-0.735,0.357],[-0.889,0.291],[-0.69,0.222],[-0.907,0.268],[-0.63,0.058],[0.019,-0.757],[0.213,-0.755],[0.419,-1.0],[0.425,-0.628],[0.491,-0.724],[0.328,-0.546],[0.433,-0.735],[0.388,-0.708],[0.383,-0.349],[0.344,-0.622],[0.513,-0.264],[0.233,-0.355],[0.305,-0.324],[0.801,-0.213],[0.413,-0.326],[0.07,-0.046],[-0.708,-0.069],[-0.912,-0.085],[-0.765,-0.315],[-0.578,-0.041],[-0.966,0.114],[-0.937,-0.166],[-0.518,-0.357],[-0.827,-0.29],[-0.573,-0.16],[-0.748,0.059],[-0.736,-0.207],[-0.757,-0.359],[-0.665,-0.22],[-0.852,-0.024],[-0.671,0.767],[-0.237,0.064],[0.15,0.947],[-0.362,0.138],[-0.713,0.247],[-0.578,0.225],[-0.221,0.497],[-0.913,0.159],[0.415,0.015],[0.295,-0.219],[0.102,-0.152],[0.281,0.051],[0.8,0.149],[-0.049,-0.068],[0.311,0.19],[0.057,-0.034],[-0.056,0.151],[0.129,-0.033],[-0.018,-0.287],[0.118,-0.192],[-0.04,-0.2],[0.071,0.121],[0.558,0.196],[-0.294,-0.038],[0.09,-0.241],[0.098,-0.243],[0.043,-0.154],[-0.185,-0.111],[-0.22,-0.022],[0.084,-0.181],[0.462,0.352],[0.06,-0.144],[0.141,-0.065],[0.298,-0.459],[-0.212,-0.278],[-0.126,-0.069],[-0.095,-0.033],[0.704,0.514],[0.219,-0.522],[0.441,0.046],[0.351,-0.326],[0.443,-0.201],[0.364,-0.385],[-0.253,0.098],[0.583,0.105],[0.616,-0.026],[0.19,-0.218],[-0.545,0.351]],"nb":{"файл":[["вхідний",0.714],["тимчасовий",0.701],["стиснутий",0.667],["об’єктний",0.637],["файли",0.636],["замка",0.634],["каталог",0.631],["індексний",0.615]],"помилка":[["сталася",0.75],["спроби",0.685],["критична",0.663],["внутрішня",0.637],["відкриванні",0.629],["спробі",0.618],["час",0.587],["під",0.587]],"вікно":[["діалогове",0.717],["нагадування",0.656],["віджету",0.648],["панель",0.633],["віджет",0.62],["вікна",0.611],["фокус",0.607],["клацання",0.607]],"мережі":[["переспрямовування",0.717],["містка",0.69],["мережевого",0.677],["інтерфейсу",0.653],["адреси",0.646],["з'єднання",0.634],["інтерфейсів",0.633],["фільтра",0.626]],"пароль":[["пінкод",0.637],["паролі",0.61],["облікового",0.608],["в'язки",0.605],["розблокування",0.597],["жетон",0.597],["користувача",0.594],["операційну",0.587]],"кнопка":[["віджет",0.645],["клавіша",0.624],["миші",0.618],["пера",0.612],["натискання",0.599],["прокрутки",0.594],["вікно",0.591],["кнопок",0.584]],"колір":[["заливки",0.692],["вибраним",0.659],["тла",0.644],["прозорість",0.64],["непрозорість",0.636],["зелений",0.627],["палітру",0.613],["чорний",0.611]],"звук":[["курсор",0.654],["повноекранний",0.638],["журнал",0.594],["планшета",0.583],["горизонтальний",0.579],["червоним",0.555],["розфарбовування",0.547],["видимим",0.546]]}},"cbow":{"w":["файл","помилка","вікно","мережі","пароль","кнопка","колір","звук","виконуваний","вхідний","тимчасовий","вихідний","створений","новіший","каталог","архів","читанні","створенні","видаленні","відкриванні","критична","сталася","встановленні","закриття","монітор","екран","сторінку","плоский","шар","вкладку","перемістити","діалогове","містка","налаштуваннях","інтерфейсу","переспрямовування","маску","домені","ядрі","вузла","введіть","користувача","розблоковування","пінкод","вкажіть","користувач","розблокування","запам'ятати","горизонталі","вертикалі","штрихів","вниз","передній","штриха","краю","уздовж","тла","заливки","контуру","кольором","кольорів","сітки","заповнення","підтвердити","орієнтація","обгорток","значки","зафіксувати","рамок","повторення","різкості","не","для","у","з","вдалося","на","до","або","в","є","значення","бути","і","за","даних","якщо","час","має","можна","лише","та","що","під","може","дані","використовувати","тип","із","буде","як","слід","файла","типу","щодо","вказано","встановити","передбачено","щоб","створити","отримати"],"xy":[[-0.613,-0.158],[-0.618,0.948],[0.55,-0.104],[-0.745,-0.24],[-0.344,-0.758],[0.891,0.263],[0.695,-0.194],[0.613,-0.029],[-0.538,-0.259],[-0.758,-0.27],[-0.702,0.033],[-0.672,-0.18],[-0.35,-0.455],[-0.601,-0.233],[-0.407,-0.408],[-0.579,-0.215],[-0.376,1.0],[-0.214,0.934],[-0.302,0.937],[-0.41,0.758],[-0.466,0.797],[-0.418,0.932],[-0.426,0.925],[-0.239,0.785],[0.494,-0.091],[0.644,-0.172],[0.52,-0.208],[0.437,-0.021],[0.41,-0.409],[0.34,-0.483],[0.368,-0.043],[0.521,0.088],[-0.784,-0.345],[-0.746,-0.12],[-0.89,-0.351],[-0.371,0.032],[-0.519,-0.237],[-0.395,0.113],[-0.63,0.058],[-0.76,-0.202],[-0.217,-0.653],[-0.587,-0.462],[-0.225,-0.594],[-0.126,-0.38],[-0.282,-0.553],[-0.453,-0.497],[-0.214,-0.327],[-0.084,-0.56],[0.784,0.221],[0.851,0.23],[0.84,0.133],[0.921,0.083],[0.767,0.288],[0.955,0.099],[0.837,0.146],[1.0,0.036],[0.675,-0.074],[0.776,-0.275],[0.797,-0.236],[0.844,-0.085],[0.551,-0.048],[0.872,0.123],[0.603,0.077],[0.514,-0.328],[0.469,0.019],[0.577,0.023],[0.544,-0.125],[0.538,-0.285],[0.679,-0.063],[0.689,0.27],[0.668,0.413],[-0.118,0.017],[-0.229,0.426],[0.036,0.46],[0.211,0.244],[-0.616,-0.112],[0.247,0.454],[-0.031,0.289],[-0.057,-0.531],[0.215,0.727],[-0.327,-0.086],[-0.061,-0.081],[0.013,-0.219],[0.497,-0.269],[0.088,-0.089],[-0.626,0.299],[0.138,-0.447],[-0.174,0.7],[-0.377,-0.079],[-0.355,-0.234],[0.011,-0.074],[0.594,0.117],[0.305,-0.124],[-0.252,0.762],[-0.261,-0.021],[-0.474,-0.062],[-0.154,0.04],[-0.496,0.117],[0.182,-0.142],[0.099,-0.234],[-0.017,-0.23],[-0.236,-0.483],[-0.798,0.11],[-0.314,0.142],[-0.477,0.205],[-0.74,-0.216],[-0.426,-0.05],[-0.533,0.168],[0.462,-0.553],[-0.471,0.104],[-0.651,-0.081]],"nb":{"файл":[["виконуваний",0.874],["вхідний",0.858],["тимчасовий",0.854],["вихідний",0.805],["створений",0.803],["новіший",0.793],["каталог",0.774],["архів",0.77]],"помилка":[["читанні",0.822],["створенні",0.818],["видаленні",0.815],["відкриванні",0.805],["критична",0.8],["сталася",0.794],["встановленні",0.793],["закриття",0.776]],"вікно":[["монітор",0.857],["екран",0.808],["сторінку",0.798],["плоский",0.795],["шар",0.774],["вкладку",0.773],["перемістити",0.771],["діалогове",0.761]],"мережі":[["містка",0.82],["налаштуваннях",0.776],["інтерфейсу",0.77],["переспрямовування",0.766],["маску",0.744],["домені",0.743],["ядрі",0.74],["вузла",0.739]],"пароль":[["введіть",0.846],["користувача",0.845],["розблоковування",0.823],["пінкод",0.795],["вкажіть",0.757],["користувач",0.746],["розблокування",0.745],["запам'ятати",0.726]],"кнопка":[["горизонталі",0.846],["вертикалі",0.839],["штрихів",0.836],["вниз",0.836],["передній",0.825],["штриха",0.82],["краю",0.811],["уздовж",0.807]],"колір":[["тла",0.846],["заливки",0.839],["контуру",0.832],["кольором",0.818],["штриха",0.815],["кольорів",0.788],["сітки",0.787],["заповнення",0.78]],"звук":[["підтвердити",0.794],["орієнтація",0.782],["обгорток",0.774],["значки",0.772],["зафіксувати",0.766],["рамок",0.765],["повторення",0.762],["різкості",0.754]]}}};
+var F4W=[["не",27926],["для",15596],["у",13718],["з",9817],["вдалося",9546],["на",8847],["до",7109],["або",5660],["в",4933],["є",4450],["буде",1924],["запис",924],["налаштувань",458],["архіву",200],["треба",102],["прохід",45],["докладний",26],["довге",18],["просте",13],["сервісів",10]];
+var F4SUM=[6074.0,7268.4979,8727.1253,10516.3291,12721.6288,15453.8283,18857.4999,23122.6591,28500.959,35328.3314,44056.8974,55300.3039,69898.6569,89012.2636,114258.0308,147909.4629,193192.1163,254723.2409,339170.5498,456245.9384,620214.0];
+
+/* ═══════ 1 · вікно контексту на справжньому реченні ═══════ */
+(function(){
+  var TOK=['не','вдається','записати','файл','збереженого','стану','на','диск'];
+  var CORPUS_PAIRS=[0,1057126,1930950,2629588,3171828,3588918];
+  var mode=0;
+  function neigh(pos,win){
+    var lo=Math.max(0,pos-win), hi=Math.min(TOK.length-1,pos+win), out=[], j;
+    for(j=lo;j<=hi;j++) if(j!==pos) out.push(j);
+    return out;
+  }
+  function draw(){
+    var cv=I('cWin'); if(!cv) return;
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var pos=+I('pos1').value, win=+I('win1').value;
+    I('pos1v').value=pos+1; I('win1v').value=win;
+    var ctx=neigh(pos,win);
+    var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair');
+
+    /* розкладка слів */
+    var pad=26, gapx=10, k, wdt=[], total=0;
+    g.font=mono(15,false);
+    for(k=0;k<TOK.length;k++){ wdt[k]=g.measureText(TOK[k]).width+22; total+=wdt[k]; }
+    total+=gapx*(TOK.length-1);
+    var x0=(W-total)/2, xs=[], cx=x0;
+    for(k=0;k<TOK.length;k++){ xs[k]=cx; cx+=wdt[k]+gapx; }
+    var yBox=mode===0?150:76, hBox=34;
+
+    capt(g, mode===0?'skip-gram · центр передбачає кожного сусіда окремо'
+                    :'CBOW · усі сусіди разом передбачають центр', pad, 26, soft, 12, true);
+
+    /* стрілки */
+    var inSet={}; for(k=0;k<ctx.length;k++) inSet[ctx[k]]=1;
+    var cxC=xs[pos]+wdt[pos]/2;
+    for(k=0;k<ctx.length;k++){
+      var j=ctx[k], cxN=xs[j]+wdt[j]/2;
+      var top=mode===0?(yBox-18-Math.abs(j-pos)*17):(yBox+hBox+16+Math.abs(j-pos)*17);
+      g.strokeStyle=teal; g.lineWidth=1.4; g.globalAlpha=.75;
+      g.beginPath();
+      if(mode===0){
+        g.moveTo(cxC,yBox); g.quadraticCurveTo((cxC+cxN)/2, top, cxN, yBox);
+      }else{
+        g.moveTo(cxN,yBox+hBox); g.quadraticCurveTo((cxC+cxN)/2, top, cxC, yBox+hBox);
+      }
+      g.stroke(); g.globalAlpha=1;
+    }
+
+    /* слова */
+    for(k=0;k<TOK.length;k++){
+      var isC=(k===pos), isN=!!inSet[k];
+      g.fillStyle=isC?rose:(isN?css('--teal-w'):css('--paper'));
+      g.strokeStyle=isC?rose:(isN?teal:hair); g.lineWidth=1.2;
+      g.beginPath(); g.rect(xs[k],yBox,wdt[k],hBox); g.fill(); g.stroke();
+      g.fillStyle=isC?css('--raise'):ink; g.font=mono(15,isC||isN);
+      g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(TOK[k], xs[k]+wdt[k]/2, yBox+hBox/2+1);
+    }
+    g.textBaseline='alphabetic';
+
+    /* підпис під рядком */
+    var totalEx=0, p;
+    for(p=0;p<TOK.length;p++) totalEx+=neigh(p,win).length;
+    capt(g, mode===0?('одна стрілка = один навчальний приклад; це слово дає їх '+ctx.length)
+                    :('усі '+ctx.length+' стрілок = ОДИН навчальний приклад'),
+         W/2, mode===0?yBox+hBox+26:yBox-24, soft, 12, false, 'center');
+    capt(g, 'усе речення при вікні ±'+win+': skip-gram '+totalEx+' прикладів, CBOW '+TOK.length,
+         W/2, H-14, soft, 11.5, false, 'center');
+
+    /* табло */
+    I('w1a').textContent=ctx.length;
+    I('w1b').textContent=(mode===0?totalEx:TOK.length);
+    I('w1c').textContent=thin(CORPUS_PAIRS[win]);
+    var full=(ctx.length===2*win);
+    I('w1d').textContent=full?'так':'ні';
+
+    var ratio=totalEx/TOK.length;
+    if(mode===0){
+      if(full) verd('v1','t-no','ВІКНО ПОВНЕ',
+        'У цього центра всі '+(2*win)+' сусідів на місці — рідкісний випадок. Речення дає '+totalEx+
+        ' прикладів проти '+TOK.length+' у CBOW, тобто у '+f2(ratio)+' раза більше. По всьому корпусу при ±'+win+
+        ' виходить '+thin(CORPUS_PAIRS[win])+' пар.');
+      else verd('v1','t-mid','ВІКНО НЕПОВНЕ',
+        'У центра лише '+ctx.length+' сусідів замість '+(2*win)+': речення закінчилось раніше. '+
+        'Так у 87 % позицій корпусу — саме тому вікно ±5 дає не вдесятеро більше пар, ніж ±1, а лише '+
+        f2(CORPUS_PAIRS[5]/CORPUS_PAIRS[1])+' раза.');
+    }else{
+      verd('v1','t-ok','ОДИН ПРИКЛАД',
+        'CBOW складає всі '+ctx.length+' векторів сусідів в один і передбачає центр. Речення дає '+
+        TOK.length+' прикладів замість '+totalEx+' — у '+f2(ratio)+' раза менше роботи, '+
+        'але й порядок сусідів утрачено остаточно.');
+    }
+  }
+  segment('segWin', function(i){ mode=i; draw(); });
+  on('pos1','input',draw); on('win1','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════ 2 · ціна одного прикладу ═══════ */
+(function(){
+  var VOCS=[1000,6074,27078,50000,100000,500000,1000000];
+  var EXAMPLES=7177836;
+  function draw(){
+    var cv=I('cCost'); if(!cv) return;
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var V=VOCS[+I('voc2').value], K=+I('neg2').value, D=+I('dim2').value;
+    I('voc2v').value=thin(V); I('neg2v').value=K; I('dim2v').value=D;
+    var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+    var a=V*D, b=(1+K)*D, ratio=a/b;
+
+    var L=70, R=W-30, T=54, B=H-56;
+    /* логарифмічна шкала множень */
+    var lo=Math.log10(64), hi=Math.log10(1000000*300);
+    function ybar(v){ return B-(Math.log10(v)-lo)/(hi-lo)*(B-T); }
+    g.strokeStyle=hair; g.lineWidth=1;
+    var d;
+    for(d=2;d<=8;d++){
+      var y=ybar(Math.pow(10,d));
+      if(y<T||y>B) continue;
+      g.beginPath(); g.moveTo(L,y); g.lineTo(R,y); g.stroke();
+      capt(g,'10^'+d, L-8, y+4, soft, 10, false, 'right');
+    }
+    capt(g,'множень на один приклад (логарифмічна шкала)', L, T-22, soft, 11, true);
+
+    var bw=150, x1=L+90, x2=L+330;
+    function bar(x,v,color,label,sub){
+      var y=ybar(v);
+      g.fillStyle=color; g.globalAlpha=.85;
+      g.beginPath(); g.rect(x,y,bw,B-y); g.fill(); g.globalAlpha=1;
+      capt(g, thin(v), x+bw/2, y-9, ink, 13, true, 'center');
+      capt(g, label, x+bw/2, B+20, soft, 12, true, 'center');
+      capt(g, sub, x+bw/2, B+36, soft, 10.5, false, 'center');
+    }
+    bar(x1,a,rose,'повний softmax', thin(V)+' x '+D);
+    bar(x2,b,teal,'семплювання','(1 + '+K+') x '+D);
+
+    /* крива залежності від словника */
+    var cL=L+540, cR=R, cT=T+6, cB=B;
+    g.strokeStyle=hair; g.beginPath(); g.rect(cL,cT,cR-cL,cB-cT); g.stroke();
+    capt(g,'ціна softmax і семплювання зі словником', cL, cT-10, soft, 10.5, false);
+    var i, first=true;
+    g.strokeStyle=rose; g.lineWidth=2; g.beginPath();
+    for(i=0;i<=60;i++){
+      var vv=1000*Math.pow(1000,i/60);
+      var xx=cL+(i/60)*(cR-cL), yy=ybar(vv*D);
+      if(first){g.moveTo(xx,yy); first=false;} else g.lineTo(xx,yy);
+    }
+    g.stroke();
+    g.strokeStyle=teal; g.lineWidth=2; g.beginPath();
+    g.moveTo(cL,ybar(b)); g.lineTo(cR,ybar(b)); g.stroke();
+    var px=cL+(Math.log10(V/1000)/3)*(cR-cL);
+    g.strokeStyle=ink; g.lineWidth=1; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(px,cT); g.lineTo(px,cB); g.stroke(); g.setLineDash([]);
+    capt(g,'1 тис.', cL, cB+16, soft, 10, false);
+    capt(g,'1 млн', cR, cB+16, soft, 10, false, 'right');
+
+    I('c2a').textContent=thin(a);
+    I('c2b').textContent=thin(b);
+    I('c2c').textContent=f1(ratio)+'x';
+    var trill=EXAMPLES*a/1e12;
+    I('c2d').textContent=(trill>=1? f2(trill)+' трлн' : f1(EXAMPLES*a/1e9)+' млрд');
+
+    if(ratio<20) verd('v2','t-mid','РІЗНИЦЯ МАЛА',
+      'Словник усього '+thin(V)+' слів, тож softmax дорожчий лише у '+f1(ratio)+
+      ' раза. На такій задачі семплювання не потрібне — його вигода починається зі словника в тисячі слів.');
+    else if(ratio<2000) verd('v2','t-ok','СЕМПЛЮВАННЯ ВИГРАЄ',
+      'Softmax дорожчий у '+f1(ratio)+' раза. На наших '+thin(EXAMPLES)+' прикладах це '+
+      (trill>=1? f2(trill)+' трлн':f1(EXAMPLES*a/1e9)+' млрд')+' множень проти '+
+      f1(EXAMPLES*b/1e9)+' млрд — різниця між півхвилиною й половиною дня.');
+    else verd('v2','t-no','SOFTMAX НЕЖИВИЙ',
+      'Дорожче у '+thin(Math.round(ratio))+' разів. При словнику '+thin(V)+
+      ' слів повний softmax перестає бути варіантом узагалі: ціна росте зі словником, а ціна семплювання — ні.');
+  }
+  on('voc2','input',draw); on('neg2','input',draw); on('dim2','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════ 3 · сигмоїда, втрата й сила тяги ═══════ */
+(function(){
+  var kind=0;   /* 0 — справжня пара, 1 — вигадана */
+  function draw(){
+    var cv=I('cSig'); if(!cv) return;
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var s=(+I('dot3').value)/100;
+    I('dot3v').value=f2(s);
+    var sig=sigmoid(s);
+    var loss=kind===0? -Math.log(Math.max(sig,1e-12)) : -Math.log(Math.max(1-sig,1e-12));
+    var pull=kind===0? (1-sig) : sig;
+    var ink=css('--ink'), soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair');
+
+    var L=64, R=W-330, T=42, B=H-46;
+    function X(v){return L+(v+8)/16*(R-L);}
+    function Y(p){return B-p*(B-T);}
+    /* сітка */
+    g.strokeStyle=hair; g.lineWidth=1;
+    var t;
+    for(t=0;t<=4;t++){
+      var y=Y(t/4);
+      g.beginPath(); g.moveTo(L,y); g.lineTo(R,y); g.stroke();
+      capt(g,f2(t/4), L-8, y+4, soft, 10, false, 'right');
+    }
+    for(t=-8;t<=8;t+=4){
+      var x=X(t);
+      g.beginPath(); g.moveTo(x,T); g.lineTo(x,B); g.stroke();
+      capt(g,String(t), x, B+16, soft, 10, false, 'center');
+    }
+    capt(g,'скалярний добуток s', L, B+34, soft, 11, true);
+    capt(g,'сигмоїда', L, T-16, soft, 11, true);
+
+    /* крива */
+    g.strokeStyle=teal; g.lineWidth=2.2; g.beginPath();
+    var i;
+    for(i=0;i<=200;i++){
+      var v=-8+16*i/200, x=X(v), y=Y(sigmoid(v));
+      if(i===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke();
+
+    /* точка */
+    var px=X(Math.max(-8,Math.min(8,s))), py=Y(sig);
+    g.strokeStyle=rose; g.lineWidth=1; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(px,B); g.lineTo(px,py); g.lineTo(L,py); g.stroke();
+    g.setLineDash([]);
+    /* потрібна відповідь і відстань до неї */
+    var target=kind===0?1:0;
+    g.strokeStyle=rose; g.lineWidth=3; g.globalAlpha=.35;
+    g.beginPath(); g.moveTo(px,py); g.lineTo(px,Y(target)); g.stroke(); g.globalAlpha=1;
+    g.fillStyle=rose; g.beginPath(); g.arc(px,py,5.5,0,6.2832); g.fill();
+    g.fillStyle=css('--raise'); g.strokeStyle=rose; g.lineWidth=2;
+    g.beginPath(); g.arc(px,Y(target),5,0,6.2832); g.fill(); g.stroke();
+    capt(g,'порожнє коло — куди треба дотягнути цю пару', R, B+34, rose, 10.5, false, 'right');
+
+    /* стовпчики праворуч */
+    var bx=R+50, bw=54, bT=T+16, bB=B-6;
+    function col(x,val,max,color,cap1,cap2){
+      var hgt=Math.max(2,Math.min(1,val/max)*(bB-bT));
+      g.fillStyle=color; g.globalAlpha=.85;
+      g.beginPath(); g.rect(x,bB-hgt,bw,hgt); g.fill(); g.globalAlpha=1;
+      capt(g, cap1, x+bw/2, bB-hgt-9, ink, 12, true, 'center');
+      capt(g, cap2, x+bw/2, bB+18, soft, 10.5, false, 'center');
+    }
+    capt(g,'на одну пару', bx, T-2, soft, 11, true);
+    col(bx, Math.min(loss,6), 6, rose, f3(loss), 'втрата');
+    col(bx+96, pull, 1, teal, f3(pull), 'сила тяги');
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(bx-14,bB); g.lineTo(bx+96+bw+10,bB); g.stroke();
+
+    I('s3a').textContent=f4(sig);
+    I('s3b').textContent=f4(loss);
+    I('s3c').textContent=f4(pull);
+    I('s3d').textContent=kind===0?'зближує':'відштовхує';
+
+    var what=kind===0?'справжня пара':'вигадана пара';
+    if(pull<0.1) verd('v3','t-ok','МОДЕЛЬ УЖЕ ПРАВА',
+      'Це '+what+' з добутком '+f2(s)+'. Сигмоїда дає '+f3(sig)+', тобто відповідь майже така, як треба. '+
+      'Сила тяги '+f3(pull)+' — вектори майже не зрушать, і приклад пройде крізь навчання без наслідків.');
+    else if(pull<0.5) verd('v3','t-mid','ЩЕ Є ЩО ВЧИТИ',
+      'Це '+what+', добуток '+f2(s)+', сигмоїда '+f3(sig)+'. Втрата '+f3(loss)+
+      ', сила тяги '+f3(pull)+': крок помітний, але не різкий.');
+    else verd('v3','t-no','МОДЕЛЬ ПОМИЛЯЄТЬСЯ',
+      'Це '+what+', а сигмоїда дає '+f3(sig)+' — майже протилежне тому, що треба. Втрата '+f3(loss)+
+      ', сила тяги '+f3(pull)+'. Саме такі приклади й рухають вектори: крок майже максимальний.');
+  }
+  segment('segSig', function(i){ kind=i; draw(); });
+  on('dot3','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════ 4 · розподіл негативних прикладів ═══════ */
+(function(){
+  var logscale=0;
+  function draw(){
+    var cv=I('cAlp'); if(!cv) return;
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var alpha=(+I('alp4').value)/100;
+    I('alp4v').value=f2(alpha);
+    var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+
+    /* знаменник беремо по ВСЬОМУ словнику з 6074 слів, а не по цих двадцятьох */
+    var n=F4W.length, i, sum=F4SUM[+I('alp4').value/5];
+    var p=[]; for(i=0;i<n;i++) p[i]=Math.pow(F4W[i][1], alpha)/sum;
+    var top10=0; for(i=0;i<10;i++) top10+=p[i];
+    var mx=0; for(i=0;i<n;i++) if(p[i]>mx) mx=p[i];
+
+    var L=64, R=W-24, T=46, B=H-96;
+    var bw=(R-L)/n-8;
+    capt(g, logscale? 'імовірність стати негативним прикладом, логарифмічна шкала'
+                    : 'імовірність стати негативним прикладом', L, T-20, soft, 11.5, true);
+    capt(g, 'рожеві — десять найчастіших слів', R, T-34, rose, 10.5, true, 'right');
+    capt(g, 'бірюзові — десять слів із хвоста словника', R, T-20, teal, 10.5, true, 'right');
+    function bh(v){
+      if(!logscale) return Math.max(1, v/mx*(B-T));
+      var lo=Math.log10(1e-7), hi=Math.log10(Math.max(mx,1e-5));
+      var t=(Math.log10(Math.max(v,1e-6))-lo)/(hi-lo);
+      return Math.max(1, t*(B-T));
+    }
+    for(i=0;i<n;i++){
+      var x=L+i*((R-L)/n)+4, hgt=bh(p[i]);
+      g.fillStyle=i<10?rose:teal; g.globalAlpha=.82;
+      g.beginPath(); g.rect(x,B-hgt,bw,hgt); g.fill(); g.globalAlpha=1;
+    }
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(L,B); g.lineTo(R,B); g.stroke();
+    /* підписи слів під кутом — коротко, щоб не наїжджали */
+    for(i=0;i<n;i++){
+      var x=L+i*((R-L)/n)+4+bw/2;
+      g.save(); g.translate(x, B+8); g.rotate(-Math.PI/2.6);
+      g.fillStyle=soft; g.font=mono(10,false); g.textAlign='right'; g.textBaseline='middle';
+      g.fillText(F4W[i][0], 0, 0);
+      g.restore();
+    }
+
+    I('a4a').textContent=f3(100*p[0])+' %';
+    I('a4b').textContent=(100*p[n-1]).toFixed(5)+' %';
+    I('a4c').textContent=f1(p[0]/p[n-1])+'x';
+    I('a4d').textContent=f1(100*top10)+' %';
+
+    var skew=p[0]/p[n-1];
+    if(alpha<0.2) verd('v4','t-no','ЛЕГКІ НЕГАТИВНІ',
+      'При α = '+f2(alpha)+' усі слова майже рівноймовірні (перекіс '+f1(skew)+
+      'x), тож негативним майже завжди стає рідкісне слово. Модель і так ніколи його не сплутає — такі приклади не вчать нічого.');
+    else if(alpha<=0.85) verd('v4','t-ok','РОБОЧИЙ ДІАПАЗОН',
+      'При α = '+f2(alpha)+' перекіс '+f1(skew)+'x, а на десять найчастіших слів припадає '+
+      f1(100*top10)+' % добору. Частотні слова помітні, але не забирають усього — це те, заради чого 0.75 і брали.');
+    else verd('v4','t-no','ОДНІ СЛУЖБОВІ СЛОВА',
+      'При α = '+f2(alpha)+' перекіс '+f1(skew)+'x, а десять найчастіших слів забирають '+
+      f1(100*top10)+' % усього добору. Модель витратить навчання на те, щоб відштовхувати «не» і «для» від усього підряд.');
+  }
+  segment('segAlp', function(i){ logscale=i; draw(); });
+  on('alp4','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════ 5 · навчання крихітної моделі просто в браузері ═══════ */
+(function(){
+  /* три теми по п'ять слів; речення складаються зі слів однієї теми */
+  var WORDS=['файл','каталог','архів','диск','тека',
+             'мережа','сервер','порт','адреса','вузол',
+             'вікно','кнопка','панель','курсор','екран'];
+  var GROUP=[0,0,0,0,0, 1,1,1,1,1, 2,2,2,2,2];
+  var N=WORDS.length, DIM=2, WIN=2;
+  var centers=[], contexts=[];
+  (function(){
+    var r=LCG(7), s, i, j, sent;
+    for(s=0;s<90;s++){
+      var gsel=Math.floor(r()*3), L=4+Math.floor(r()*2);
+      sent=[];
+      for(i=0;i<L;i++) sent.push(gsel*5+Math.floor(r()*5));
+      for(i=0;i<L;i++)
+        for(j=Math.max(0,i-WIN);j<Math.min(L,i+WIN+1);j++)
+          if(j!==i){ centers.push(sent[i]); contexts.push(sent[j]); }
+    }
+  })();
+  var V, U, steps, hist, rnd, lastLoss;
+  function reset(){
+    rnd=LCG(3); V=[]; U=[]; steps=0; hist=[]; lastLoss=Math.log(2)*4;
+    var i,d;
+    for(i=0;i<64;i++) rnd();        /* розігрів: перші значення лічильника корельовані */
+    for(i=0;i<N;i++){
+      V[i]=[]; U[i]=[];
+      for(d=0;d<DIM;d++){ V[i][d]=(rnd()-0.5)*0.6; U[i][d]=0; }
+    }
+  }
+  function dot(a,b){var s=0,d; for(d=0;d<DIM;d++) s+=a[d]*b[d]; return s;}
+  function step(lr,K){
+    var B=16, b, i, d, loss=0;
+    for(b=0;b<B;b++){
+      var idx=Math.floor(rnd()*centers.length);
+      var c=centers[idx], o=contexts[idx];
+      var s=dot(V[c],U[o]), sg=sigmoid(s);
+      loss+=-Math.log(Math.max(sg,1e-9));
+      var gv=[], k;
+      for(d=0;d<DIM;d++) gv[d]=(sg-1)*U[o][d];
+      for(d=0;d<DIM;d++) U[o][d]-=lr*(sg-1)*V[c][d];
+      for(k=0;k<K;k++){
+        var neg=Math.floor(rnd()*N);
+        var sn=dot(V[c],U[neg]), sgn=sigmoid(sn);
+        loss+=-Math.log(Math.max(1-sgn,1e-9));
+        for(d=0;d<DIM;d++) gv[d]+=sgn*U[neg][d];
+        for(d=0;d<DIM;d++) U[neg][d]-=lr*sgn*V[c][d];
+      }
+      for(d=0;d<DIM;d++) V[c][d]-=lr*gv[d];
+    }
+    steps++;
+    return loss/B;
+  }
+  function cosStats(){
+    var i,j,own=0,no=0,oth=0,not=0;
+    var nrm=[];
+    for(i=0;i<N;i++){ var l=Math.sqrt(dot(V[i],V[i]))||1e-9; nrm[i]=[V[i][0]/l,V[i][1]/l]; }
+    for(i=0;i<N;i++) for(j=i+1;j<N;j++){
+      var c=nrm[i][0]*nrm[j][0]+nrm[i][1]*nrm[j][1];
+      if(GROUP[i]===GROUP[j]){ own+=c; no++; } else { oth+=c; not++; }
+    }
+    return [own/no, oth/not];
+  }
+  function draw(){
+    var cv=I('cTrain'); if(!cv) return;
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var lr=(+I('lr5').value)/100, K=+I('ng5').value;
+    I('lr5v').value=f2(lr); I('ng5v').value=K;
+    var soft=css('--soft'), hair=css('--hair'), ink=css('--ink');
+    var COL=[css('--rose'), css('--teal'), css('--amber')];
+
+    var L=30, R=W-560, T=34, B=H-34, cx=(L+R)/2, cy=(T+B)/2;
+    var rad=Math.min(R-L,B-T)/2-26;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.arc(cx,cy,rad,0,6.2832); g.stroke();
+    capt(g,'напрямки векторів слів (довжину прибрано)', L, T-12, soft, 11, true);
+
+    var i, ang=[];
+    for(i=0;i<N;i++){
+      var l=Math.sqrt(dot(V[i],V[i]))||1e-9;
+      var x=cx+V[i][0]/l*rad, y=cy-V[i][1]/l*rad;
+      g.strokeStyle=COL[GROUP[i]]; g.lineWidth=1.2; g.globalAlpha=.4;
+      g.beginPath(); g.moveTo(cx,cy); g.lineTo(x,y); g.stroke(); g.globalAlpha=1;
+      g.fillStyle=COL[GROUP[i]];
+      g.beginPath(); g.arc(x,y,4,0,6.2832); g.fill();
+    }
+    /* легенда: слова кожної теми списком, щоб підписи не наїжджали на точки */
+    var lx=R+40, gk;
+    capt(g,'теми крихітного корпусу', lx, T-12, soft, 11, true);
+    for(gk=0;gk<3;gk++){
+      var yy=T+18+gk*22, words='';
+      for(i=0;i<N;i++) if(GROUP[i]===gk) words+=(words?' · ':'')+WORDS[i];
+      g.fillStyle=COL[gk];
+      g.beginPath(); g.rect(lx, yy-8, 9, 9); g.fill();
+      capt(g, words, lx+16, yy, COL[gk], 11, false);
+    }
+
+    /* крива втрати */
+    var pL=R+40, pR=W-24, pT=T+96, pB=B-40;
+    g.strokeStyle=hair; g.beginPath(); g.rect(pL,pT,pR-pL,pB-pT); g.stroke();
+    capt(g,'втрата', pL, pT-8, soft, 11, true);
+    if(hist.length>1){
+      var mx=0, j;
+      for(j=0;j<hist.length;j++) if(hist[j]>mx) mx=hist[j];
+      mx=Math.max(mx,0.5);
+      g.strokeStyle=css('--rose'); g.lineWidth=2; g.beginPath();
+      for(j=0;j<hist.length;j++){
+        var x=pL+(j/(hist.length-1))*(pR-pL), y=pB-(hist[j]/mx)*(pB-pT);
+        if(j===0) g.moveTo(x,y); else g.lineTo(x,y);
+      }
+      g.stroke();
+      capt(g, f2(mx), pL-6, pT+6, soft, 10, false, 'right');
+      capt(g, '0', pL-6, pB, soft, 10, false, 'right');
+    } else {
+      capt(g,'тисни «100 кроків»', (pL+pR)/2, (pT+pB)/2, soft, 11, false, 'center');
+    }
+    var st=cosStats();
+    capt(g,'свої '+f2(st[0])+'   чужі '+f2(st[1]), pL, pB+22, soft, 11, false);
+
+    I('t5a').textContent=steps*16;
+    I('t5b').textContent=f4(lastLoss);
+    I('t5c').textContent=f2(st[0]);
+    I('t5d').textContent=f2(st[1]);
+
+    var gapv=st[0]-st[1];
+    if(steps===0) verd('v5','t-mid','ПОЧАТОК',
+      'Вектори випадкові: свої '+f2(st[0])+', чужі '+f2(st[1])+', розрив '+f2(gapv)+
+      '. Тисни «100 кроків» і дивись, як однокольорові точки збираються разом.');
+    else if(K===0) verd('v5','t-no','БЕЗ НЕГАТИВНИХ',
+      'Втрата впала до '+f4(lastLoss)+' — модель майже ідеально вгадує кожну справжню пару. '+
+      'Але чужі слова так і лишились на '+f2(st[1])+' замість відʼємного: розсувати їх нікому. '+
+      'Модель виграла не змістом, а довжиною векторів.');
+    else if(st[1]<0.15) verd('v5','t-ok','ЧУЖІ РОЗІЙШЛИСЬ',
+      'Після '+(steps*16)+' прикладів свої '+f2(st[0])+', чужі '+f2(st[1])+', розрив '+f2(gapv)+
+      '. Ось що роблять негативні приклади: вони відсувають те, що ніколи не траплялось поруч. '+
+      'Модель не бачила жодної мітки теми — поділ виник сам.');
+    else verd('v5','t-mid','ЧУЖІ ЩЕ БЛИЗЬКО',
+      'Свої '+f2(st[0])+', чужі '+f2(st[1])+', розрив '+f2(gapv)+' при '+K+' негативних. '+
+      'У двох вимірах місця обмаль: чим більше негативних, тим сильніше штовхаються всі '+
+      'вектори одразу, і чужі не встигають відійти. У справжній моделі вимірів 64, і простору там незрівнянно більше.');
+  }
+
+  on('go5','click', function(){
+    var lr=(+I('lr5').value)/100, K=+I('ng5').value, i;
+    for(i=0;i<100;i++){
+      lastLoss=step(lr,K);
+      if(i%5===0) hist.push(lastLoss);
+    }
+    draw();
+  });
+  on('rst5','click', function(){ reset(); draw(); });
+  on('lr5','input',draw); on('ng5','input',draw);
+  window.addEventListener('resize',draw);
+  reset(); draw();
+})();
+
+/* ═══════ 6 · карта слів ═══════ */
+(function(){
+  var WORDS=['файл','помилка','вікно','мережі','пароль','кнопка','колір','звук'];
+  var model='sg', pick=0;
+  function draw(){
+    var cv=I('cMap'); if(!cv) return;
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var nb=+I('nb6').value; I('nb6v').value=nb;
+    var D=MAP[model], word=WORDS[pick], list=D.nb[word].slice(0,nb);
+    var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+
+    var pad=44, L=pad, R=W-pad, T=30, B=H-26;
+    var i, hi={}, order={};
+    for(i=0;i<list.length;i++){ hi[list[i][0]]=list[i][1]; order[list[i][0]]=i+1; }
+    function px(k){ return L+(D.xy[k][0]*0.5+0.5)*(R-L); }
+    function py(k){ return T+(0.5-D.xy[k][1]*0.5)*(B-T); }
+
+    capt(g, (model==='sg'?'skip-gram':'CBOW')+' · 64 виміри, спроєктовані на площину',
+         L, T-12, soft, 11, true);
+
+    var focus=D.w.indexOf(word);
+    /* лінії до сусідів */
+    for(i=0;i<list.length;i++){
+      var k=D.w.indexOf(list[i][0]); if(k<0) continue;
+      g.strokeStyle=teal; g.lineWidth=1.4; g.globalAlpha=.55;
+      g.beginPath(); g.moveTo(px(focus),py(focus)); g.lineTo(px(k),py(k)); g.stroke();
+      g.globalAlpha=1;
+    }
+    /* усі точки */
+    for(i=0;i<D.w.length;i++){
+      var w=D.w[i], isF=(i===focus), isN=(hi[w]!==undefined);
+      g.fillStyle=isF?rose:(isN?teal:hair);
+      g.beginPath(); g.arc(px(i),py(i), isF?6:(isN?4.5:2.6), 0, 6.2832); g.fill();
+    }
+    /* підписи лише для центра й сусідів, і з розсуванням по вертикалі:
+       інакше два сусіди з близькими координатами пишуться один поверх одного */
+    var labels=[], j2;
+    for(i=0;i<D.w.length;i++){
+      var w=D.w[i];
+      if(i!==focus && hi[w]===undefined) continue;
+      labels.push({x:px(i), y0:py(i), y:py(i), w:w, foc:(i===focus)});
+    }
+    labels.sort(function(a,b){return a.y-b.y;});
+    for(j2=1;j2<labels.length;j2++)
+      if(labels[j2].y-labels[j2-1].y<15) labels[j2].y=labels[j2-1].y+15;
+    for(j2=0;j2<labels.length;j2++){
+      var it=labels[j2], right=(it.x<W*0.60);
+      var label=it.foc? it.w : (it.w+' '+f3(hi[it.w]));
+      if(Math.abs(it.y-it.y0)>2){
+        g.strokeStyle=hair; g.lineWidth=1;
+        g.beginPath(); g.moveTo(it.x, it.y0); g.lineTo(it.x+(right?7:-7), it.y-3); g.stroke();
+      }
+      capt(g, label, it.x+(right?10:-10), it.y+4, it.foc?rose:ink, it.foc?13:11.5, it.foc, right?'left':'right');
+    }
+    capt(g,'сірі крапки — решта '+(D.w.length-list.length-1)+' слів карти', L, B+18, soft, 10.5, false);
+
+    var txt=[], best=list[0][1], worst=list[list.length-1][1];
+    for(i=0;i<list.length;i++) txt.push(list[i][0]+' '+f3(list[i][1]));
+    I('m6a').textContent=txt.join(' · ');
+    I('m6b').textContent=f3(best);
+    I('m6c').textContent=f3(worst);
+
+    var other=(model==='sg')?MAP.cbow:MAP.sg;
+    var otherList=other.nb[word].slice(0,nb), shared=0, j;
+    for(i=0;i<list.length;i++) for(j=0;j<otherList.length;j++) if(list[i][0]===otherList[j][0]) shared++;
+    var name=(model==='sg')?'skip-gram':'CBOW', oname=(model==='sg')?'CBOW':'skip-gram';
+    if(shared===0) verd('v6','t-no','СПИСКИ НЕ ЗБІГАЮТЬСЯ',
+      'У '+name+' найближчий до «'+word+'» — «'+list[0][0]+'» ('+f3(best)+
+      '). З першими '+nb+' сусідами '+oname+' не збігається жодне слово. Списки сусідів — ілюстрація, а не замір: між зернами однієї моделі збігається лише 0.4820 списку.');
+    else if(shared>=Math.ceil(nb/2)) verd('v6','t-ok','ОБИДВІ МОДЕЛІ ЗГОДНІ',
+      'Найближчий до «'+word+'» — «'+list[0][0]+'» ('+f3(best)+'), найдальший із показаних — '+f3(worst)+
+      '. З '+nb+' сусідів '+shared+' збігається і в '+oname+'. Коли обидва напрямки передбачення дають те саме, у сусідство можна вірити.');
+    else verd('v6','t-mid','ЗБІГ ЧАСТКОВИЙ',
+      'Найближчий — «'+list[0][0]+'» ('+f3(best)+'). З '+nb+' сусідів лише '+shared+' збігається з тим, що дає '+oname+
+      '. Тобто конкретний список залежить від моделі; спільним лишається сам зміст сусідства, а не порядок.');
+  }
+  segment('segMap', function(i){ model=i?'cbow':'sg'; draw(); });
+  segment('segWord', function(i){ pick=i; draw(); });
+  on('nb6','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+/* ═══════ 7 · два розподіли й поріг ═══════ */
+(function(){
+  var KEYS=['tfidf','sg','sgsum','cbow','cbowsum'];
+  var NAMES=['TF-IDF','skip-gram, центральна','skip-gram, сума двох','CBOW, центральна','CBOW, сума двох'];
+  var SEP=[0.8586,0.9300,0.9642,0.9171,0.9325];
+  var GAPM=[0.2101,0.3093,0.5390,0.3728,0.6104];
+  var which=0;
+  function mean(a){var s=0,i; for(i=0;i<a.length;i++) s+=a[i]; return s/a.length;}
+  function draw(){
+    var cv=I('cGap'); if(!cv) return;
+    var g=dpr(cv), W=LW(cv), H=LH(cv);
+    var thr=(+I('thr7').value)/100; I('thr7v').value=f2(thr);
+    var d=GAP[KEYS[which]], syn=d.syn, rnd=d.rnd;
+    var soft=css('--soft'), rose=css('--rose'), teal=css('--teal'), hair=css('--hair'), ink=css('--ink');
+
+    var L=64, R=W-24, T=40, MID=H/2, B=H-76;
+    var lo=-0.25, hi=1.0;
+    function X(v){ return L+(Math.max(lo,Math.min(hi,v))-lo)/(hi-lo)*(R-L); }
+    var BINS=44, i, hs=new Array(BINS).fill(0), hr=new Array(BINS).fill(0);
+    function bin(v){ return Math.max(0,Math.min(BINS-1,Math.floor((v-lo)/(hi-lo)*BINS))); }
+    for(i=0;i<syn.length;i++) hs[bin(syn[i])]++;
+    for(i=0;i<rnd.length;i++) hr[bin(rnd[i])]++;
+    /* максимум окремо для кожної половини: інакше стовпчик випадкових пар
+       біля нуля притискає весь розподіл синонімів до осі */
+    var mxs=1, mxr=1;
+    for(i=0;i<BINS;i++){ if(hs[i]>mxs) mxs=hs[i]; if(hr[i]>mxr) mxr=hr[i]; }
+    var bw=(R-L)/BINS;
+    var topH=MID-T-30, botH=B-MID-8;
+
+    capt(g,'209 пар синонімів', L, T-12, teal, 11.5, true);
+    capt(g,'209 випадкових пар', L, MID+18, rose, 11.5, true);
+    for(i=0;i<BINS;i++){
+      var x=L+i*bw;
+      if(hs[i]>0){
+        var h1=hs[i]/mxs*topH;
+        g.fillStyle=teal; g.globalAlpha=.8;
+        g.beginPath(); g.rect(x+0.6, MID-24-h1, bw-1.2, h1); g.fill(); g.globalAlpha=1;
+      }
+      if(hr[i]>0){
+        var h2=hr[i]/mxr*botH;
+        g.fillStyle=rose; g.globalAlpha=.8;
+        g.beginPath(); g.rect(x+0.6, MID+24, bw-1.2, h2); g.fill(); g.globalAlpha=1;
+      }
+    }
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(L,MID-24); g.lineTo(R,MID-24); g.stroke();
+    g.beginPath(); g.moveTo(L,MID+24); g.lineTo(R,MID+24); g.stroke();
+    var t;
+    for(t=-0.25;t<=1.001;t+=0.25){
+      var x=X(t);
+      capt(g, f2(t), x, MID+6, soft, 10, false, 'center');
+    }
+    capt(g,'косинус між парою документів', L, H-12, soft, 11, true);
+    capt(g,'висоти двох половин масштабовані окремо', R, H-12, soft, 10, false, 'right');
+
+    /* поріг */
+    var tx=X(thr);
+    g.strokeStyle=ink; g.lineWidth=1.6; g.setLineDash([5,4]);
+    g.beginPath(); g.moveTo(tx,T-6); g.lineTo(tx,B); g.stroke(); g.setLineDash([]);
+    capt(g,'поріг '+f2(thr), tx+6, T+2, ink, 11, true, tx>R-90?'right':'left');
+
+    var above=0, aboveR=0;
+    for(i=0;i<syn.length;i++) if(syn[i]>thr) above++;
+    for(i=0;i<rnd.length;i++) if(rnd[i]>thr) aboveR++;
+    var ms=mean(syn), mr=mean(rnd);
+    /* середні */
+    g.strokeStyle=teal; g.lineWidth=2;
+    g.beginPath(); g.moveTo(X(ms),MID-24); g.lineTo(X(ms),MID-24-topH-6); g.stroke();
+    g.strokeStyle=rose;
+    g.beginPath(); g.moveTo(X(mr),MID+24); g.lineTo(X(mr),MID+24+botH+6); g.stroke();
+    capt(g,'середнє '+f4(ms), X(ms)+(X(ms)>R-120?-5:5), MID-24-topH-10, teal, 10.5, false, X(ms)>R-120?'right':'left');
+    capt(g,'середнє '+f4(mr), X(mr)+(X(mr)>R-120?-5:5), MID+24+botH+16, rose, 10.5, false, X(mr)>R-120?'right':'left');
+
+    I('g7a').textContent=above+' з 209';
+    I('g7b').textContent=aboveR+' з 209';
+    I('g7c').textContent=f4(GAPM[which]);
+    I('g7d').textContent=f4(SEP[which]);
+
+    var clean=above-aboveR;
+    if(which===0) verd('v7','t-no','СТІНА БЛОКУ 2',
+      'TF-IDF: при порозі '+f2(thr)+' вище лишається '+above+' пар синонімів і '+aboveR+
+      ' випадкових. Розрив середніх '+f4(GAPM[0])+', розділяє '+f4(SEP[0])+
+      '. Двадцять два відсотки пар синонімів мають рівно нуль — вони не піднімуться за жодного порогу.');
+    else if(which===2||which===4) verd('v7','t-ok','РОЗПОДІЛИ РОЗІЙШЛИСЬ',
+      NAMES[which]+': при порозі '+f2(thr)+' вище '+above+' синонімів проти '+aboveR+
+      ' випадкових — різниця '+clean+' пар. Розрив середніх '+f4(GAPM[which])+' проти '+f4(GAPM[0])+
+      ' у TF-IDF, розділяє '+f4(SEP[which])+'. Випадкові пари сповзли майже до нуля, і це головна причина виграшу.');
+    else verd('v7','t-mid','ЗСУНУЛОСЬ УСЕ',
+      NAMES[which]+': при порозі '+f2(thr)+' вище '+above+' синонімів, але й '+aboveR+
+      ' випадкових пар. Косинус синонімів виріс до '+f4(ms)+', проте разом із ним виріс і косинус випадкових ('+f4(mr)+
+      '). Тому цитувати треба розрив '+f4(GAPM[which])+', а не '+f4(ms)+'.');
+  }
+  segment('segGap', function(i){ which=i; draw(); });
+  on('thr7','input',draw);
+  window.addEventListener('resize',draw);
+  draw();
+})();
+
+})();
+</script>

@@ -1,0 +1,2004 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Оцінка й упередженість ембедингів</title>
+<meta name="description" content="Ембединги дають парам однакового змісту косинус 0.8408 проти 0.2198 у TF-IDF — здається, перемога вчетверо. Але випадковим парам вони дають 0.6198, і чесний розрив виявляється 0.2210 проти 0.2101, тобто в межах розкиду. Заміряно на 93 392 українських перекладах інтерфейсів, три зерна. AUC, єдина мірка без шкали, дає 0.9222 проти 0.8586. Одна деталь реалізації — брати центральну матрицю чи суму Win + Wout — зсуває розрив на 0.3530, тобто в тридцять разів сильніше за заміну самого методу; прибирання спільного напрямку дає 0.5631. І головне: на справжній задачі теми 06 ембединги програють, F1 0.7231 проти 0.8794, а додані до TF-IDF дають 0.9018 проти 0.9006, тобто нічого. Упередженість корпусу заміряна: найближчий сусід із тієї самої програми у 0.3555 випадків проти 0.0873 випадково, побутових слів із вектором 4 із 60, назв професій — жодної.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code, td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+/* заголовок теми короткий, але тримаємо його в колонці про всяк випадок */
+h1{overflow-wrap:break-word}
+
+/* сегменти цієї теми переносяться по два в рядок */
+.seg.wrap button{flex:1 1 46%}
+/* довгі рядки іграшкового корпусу не мусять розпирати сторінку */
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 3 · Тема 15</p>
+    <h1>Оцінка й упередженість ембедингів</h1>
+    <p class="stand">Ембединги дають парам однакового змісту косинус <b>0.8408</b> там,
+      де TF-IDF дає <b>0.2198</b>. Здається, перемога вчетверо. Ця тема показує, чому
+      таке порівняння нічого не варте, якою міркою міряти чесно — і що сталося, коли
+      ми віднесли ембединги на справжню задачу.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Два різні питання про якість</a></li>
+        <li><a href="#s2">Набір пар, який не треба вигадувати</a></li>
+        <li><a href="#s3">Пастка: завищується все</a></li>
+        <li><a href="#s4">Три міри, три відповіді</a></li>
+        <li><a href="#s5">Спільний напрямок</a></li>
+        <li><a href="#s6">Шкала пливе разом із частотою</a></li>
+        <li><a href="#s7">Словоформи однієї леми</a></li>
+        <li><a href="#s8">Зовнішня оцінка: узяти задачу</a></li>
+        <li><a href="#s9">Чи рятує брак розмітки</a></li>
+        <li><a href="#s10">Упередженість: домен</a></li>
+        <li><a href="#s11">Упередженість: сусідство</a></li>
+        <li><a href="#s12">Упередженість: чого немає</a></li>
+        <li><a href="#s13">Як міряти, щоб не обманутись</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../14-vector-arithmetic/lecture.html">← 14. Арифметика векторів</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../16-language-model/lecture.html">16. Мовна модель: наступне слово →</a></nav>
+  </div>
+</header>
+
+<main class="col">
+<p class="lead">Чотири теми поспіль ми будували ембединги й раділи тому, що бачили:
+сусіди осмислені, синоніми поруч, арифметика векторів іноді працює. Жодного разу ми
+не спитали чесно: <b>а звідки ми знаємо, що вони хороші?</b> «Подивись на сусідів» —
+це не замір, а враження. Ця тема ставить питання руба, і відповідь виявляється
+неприємною двічі: спершу зʼясується, що найпоширеніший спосіб міряти ембединги
+завищує їх у рази, а потім — що на справжній задачі вони програють звичайній
+TF-IDF з блоку 2.</p>
+
+<h2 id="s1"><span class="num">01 / Дві оцінки</span>Два різні питання про якість</h2>
+
+<p>Питання «чи хороші ці ембединги» насправді складається з двох різних, і плутати
+їх — найдорожча помилка в усій темі.</p>
+
+<p><b>Перше питання — про сам простір.</b> Чи стоять поруч ті слова й документи, які
+мають стояти поруч? Це <b>внутрішня оцінка</b> (intrinsic evaluation): ми беремо набір
+пар, про які заздалегідь відомо, схожі вони чи ні, і дивимось, чи згодна з нами
+модель. Ніякої задачі тут немає — є лише простір і наша думка про нього.</p>
+
+<p><b>Друге питання — про користь.</b> Чи стане краще справжній задачі, якщо підкласти
+їй ембединги замість того, що там було? Це <b>зовнішня оцінка</b> (extrinsic
+evaluation): беремо готову задачу з готовою метрикою, міняємо тільки подання тексту
+й дивимось на метрику.</p>
+
+<p>Здавалося б, друге випливає з першого: кращий простір — краща задача. У цій темі
+ми побачимо на власних числах, що не випливає. Внутрішня оцінка скаже «ембединги
+кращі», зовнішня — «ембединги гірші», і обидві будуть праві, бо міряють різне.</p>
+<h2 id="s2"><span class="num">02 / Набір пар</span>Набір пар, який не треба вигадувати</h2>
+
+<p>Щоб поставити внутрішню оцінку, потрібен набір пар із відомою відповіддю: ось ці
+два тексти про одне, а ці два — про різне. Для англійської такі набори збирали
+десятиліттями, і люди в них оцінювали схожість слів вручну. Для української готового
+набору немає.</p>
+
+<p>Робити його самому небезпечно: набір, складений із того самого корпусу тим самим
+автором, що й модель, дає <b>кругову оцінку</b> — ми питаємо модель про те, що самі
+щойно в неї заклали. Але одного разу нам пощастило, і тема 05 цим уже скористалась.</p>
+
+<p>Корпус курсу — українські переклади інтерфейсів програм. У ньому той самий
+англійський рядок часто перекладали різні команди, і переклади вийшли різними
+словами. Ось пари, які ми дістаємо задарма:</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <tr><th>переклад A</th><th>переклад B</th><th>спільних слів</th></tr>
+  <tr><td>Не вдалося зареєструватися у потрібній мережі</td><td>Не вдалось зареєструватись з мережею</td><td>1</td></tr>
+  <tr><td>Вважати всі попередження помилками</td><td>Зробити всі попередження критичними</td><td>2</td></tr>
+  <tr><td>Вважати всі попередження помилками</td><td>Зробити усі попередження фатальними</td><td>1</td></tr>
+</table>
+</div>
+
+<p>Ніхто не оцінював їхню схожість на око: вони <b>за побудовою</b> означають одне й
+те саме, бо походять з одного англійського рядка. Пар, у яких спільних слів менш ніж
+третина, набирається <b>209</b>, і в <b>46</b> із них немає жодного спільного слова
+взагалі.</p>
+
+<div class="note"><b>Чому це чесно.</b> Мітка «однаковий зміст» узята з англійського
+боку, а міряємо ми український. Модель ніколи не бачила англійських рядків — вона
+вчилася лише на перекладах. Той самий прийом стоїть у темі
+<a href="../06-text-classification/lecture.html">06 · Класифікація текстів</a>: мітка
+з одного боку паралельного корпусу, ознаки — з іншого.</div>
+
+<p>Тепер міряємо. Документ треба звести до одного вектора; найпростіший спосіб —
+<b>середнє векторів усіх його слів</b>, зведене до одиничної довжини. Він грубий,
+бо втрачає порядок слів, зате не має жодної ручки, яку можна підкрутити під
+потрібну відповідь.</p>
+
+<p>І ось перше число. На тих самих 209 парах, на тій самій вибірці з 20 000
+документів, що й у темі <a href="../05-tfidf/lecture.html">05 · TF-IDF</a>:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>система</th><th>косинус пар однакового змісту</th></tr>
+  <tr><td>TF-IDF</td><td>0.2198 ±0.0027</td></tr>
+  <tr class="hot"><td>ембединги, 64 виміри</td><td>0.8408 ±0.0008</td></tr>
+</table>
+</div>
+
+<p>Спокуса написати «ембединги розуміють зміст у <b>3.82</b> раза краще» тут майже
+непереборна. Саме так це число зазвичай і цитують. І саме тут ховається помилка,
+через яку варто було писати цілу тему.</p>
+
+<h2 id="s3"><span class="num">03 / Пастка</span>Пастка: завищується все</h2>
+
+<p>Питання, яке рятує від помилки, коротке: <b>а скільки та сама система дає парам,
+які нічого спільного не мають?</b></p>
+
+<p>Візьмімо з тієї самої вибірки випадкові пари документів. Вони про різне майже
+напевно: корпус великий, документи короткі, і два навмання витягнені рядки
+інтерфейсу навряд чи про одне.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>система</th><th>однаковий зміст</th><th>випадкові пари</th><th>розрив</th></tr>
+  <tr><td>TF-IDF</td><td>0.2198</td><td>0.0098</td><td>0.2101 ±0.0019</td></tr>
+  <tr class="hot"><td>ембединги</td><td>0.8408</td><td>0.6198</td><td>0.2210 ±0.0079</td></tr>
+</table>
+</div>
+
+<p>Ось воно. TF-IDF дає випадковій парі <b>0.0098</b> — практично нуль, як і має бути.
+Ембединги дають випадковій парі <b>0.6198</b>. Не 0.05, не 0.1 — шість десятих.
+Два тексти, між якими немає нічого спільного, у просторі ембедингів стоять
+<b>ближче</b>, ніж пара справжніх синонімів у TF-IDF.</p>
+
+<p>Тобто ембединги підняли не лише потрібні пари. Вони підняли <b>все</b>. І якщо
+відняти цей загальний підйом, від переваги «в 3.82 раза» лишається <b>+0.0109</b> —
+менше, ніж розкид по трьох зернах (0.0079 у ембедингів). За правилом курсу різниця,
+менша за подвоєний розкид, різницею не є.</p>
+
+<div class="note warn"><b>Головна пастка теми.</b> Косинус ембедингів <b>не має
+абсолютної шкали</b>. Число 0.84 саме по собі не означає «дуже схожі»: щоб дізнатись,
+багато це чи мало, треба знати, скільки та сама модель дає випадковій парі. Цитувати
+0.84, не назвавши 0.62 поруч, — це не помилка в розрахунку, це помилка в
+міркуванні.</div>
+
+<p>Перша фігура показує обидві купи чисел цілком, а не лише їхні середні. Посунь
+поріг і подивись, скільки пар кожного сорту опиняється вище нього.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 1 · Дві купи чисел і поріг між ними</div>
+  <p class="fig-sub">209 пар однакового змісту (бірюзові) і 209 випадкових пар
+    (рожеві), розкладені по кошиках завширшки 0.05. Перемикач міняє подання,
+    повзунок — поріг, вище якого ми оголошуємо пару «схожою».</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">подання</span>
+        <div class="seg wrap" id="seg1">
+          <button data-i="0" aria-pressed="true">TF-IDF</button>
+          <button data-i="1" aria-pressed="false">ембединги <span class="raw">Win</span></button>
+          <button data-i="2" aria-pressed="false">сума <span class="raw">Win + Wout</span></button>
+          <button data-i="3" aria-pressed="false">без спільного напрямку</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="thr1">поріг косинуса <output id="thr1o">0.30</output></label>
+        <input id="thr1" type="range" min="0" max="24" step="1" value="10">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>однакових вище</b><i id="v1a">—</i></div>
+        <div class="cellv"><b>випадкових вище</b><i id="v1b">—</i></div>
+        <div class="cellv"><b>різниця часток</b><i id="v1c">—</i></div>
+        <div class="cellv"><b>найкраща різниця</b><i id="v1d">—</i></div>
+      </div>
+      <div class="verdict" id="v1v"></div>
+    </div>
+  </div>
+  <figcaption>У TF-IDF купи майже не перетинаються зліва: <b>22.0 %</b> пар
+    однакового змісту лежать рівно на нулі, разом із випадковими. У ембедингів
+    перетин величезний, зате він увесь зсунутий праворуч — обидві купи стоять високо.
+    Два останні подання зроблені з <b>тієї самої</b> навченої моделі й показані далі,
+    у розділі 05: купи там розʼїжджаються, і випадкові пари нарешті приходять
+    до нуля.</figcaption>
+</figure>
+
+<h2 id="s4"><span class="num">04 / Три міри</span>Три міри, три відповіді</h2>
+
+<p>З цього виростає загальне правило: <b>одну й ту саму пару систем можна порівняти
+трьома різними мірками й дістати три різні відповіді</b>. Розберімо всі три, бо
+плутанина між ними — найчастіша причина завищених обіцянок у статтях про ембединги.</p>
+
+<p><b>Міра 1 — сирий косинус.</b> Просто середнє по парах однакового змісту. Словами:
+наскільки близько система ставить те, що має бути близько. Формула тут не потрібна —
+це середнє арифметичне 209 чисел.</p>
+
+<p><b>Міра 2 — розрив.</b> Від середнього по парах однакового змісту віднімаємо
+середнє по випадкових парах:</p>
+
+<div class="eq">розрив = середнє(однаковий зміст) − середнє(випадкові пари)</div>
+
+<p>Що означає кожен доданок: перший — наскільки високо система ставить справжню
+схожість, другий — наскільки високо вона ставить будь-що взагалі. Різниця показує,
+скільки в першому числі справжнього змісту, а скільки — загального підйому шкали.
+Навіщо: щоб не порівнювати числа з різних шкал.</p>
+
+<p><b>Міра 3 — AUC.</b> Це ймовірність того, що навмання взята пара однакового змісту
+дістане <b>вищу</b> оцінку, ніж навмання взята випадкова пара. Читач уже бачив цю
+величину в темі <a href="../07-metrics/lecture.html">07 · Метрики й оцінка</a>.
+Порахувати її можна руками: перебрати всі 209 × 209 = 43 681 комбінацій «одна пара
+звідси, одна звідти» й порахувати, у скількох із них перша виявилась вищою. Половина
+означає «система не відрізняє купи взагалі», одиниця — «жодного переплутування».</p>
+
+<div class="note"><b>Чому AUC особлива.</b> Вона дивиться лише на <b>порядок</b> чисел,
+а не на самі числа. Помнож усі косинуси на десять, піднеси до квадрата, додай до всіх
+одну й ту саму сталу — AUC не зрушить, бо порядок пар не змінився. Саме тому вона
+єдина з трьох не залежить від того, у якій шкалі система любить відповідати.</div>
+
+<p>Тепер три мірки на наших числах:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>система</th><th>сирий косинус</th><th>розрив</th><th>AUC</th></tr>
+  <tr><td>TF-IDF</td><td>0.2198 ±0.0027</td><td>0.2101 ±0.0019</td><td>0.8586 ±0.0024</td></tr>
+  <tr class="hot"><td>ембединги</td><td>0.8408 ±0.0008</td><td>0.2210 ±0.0079</td><td>0.9222 ±0.0036</td></tr>
+  <tr><td>наскільки більше</td><td>у 3.82 раза</td><td>+0.0109</td><td>+0.0636</td></tr>
+</table>
+</div>
+
+<p>Три мірки — три вироки. За сирим косинусом ембединги перемагають розгромно.
+За розривом різниця <b>+0.0109</b> при розкиді <b>0.0079</b> — <b>недоведена</b>.
+За AUC різниця <b>+0.0636</b> при розкиді <b>0.0036</b> — доведена, але скромна.</p>
+
+<p>І всі три числа правильні. Просто вони відповідають на різні питання, і лише два
+останні відповідають на те, яке нас цікавить.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 2 · Що станеться з мірою, якщо стиснути шкалу</div>
+  <p class="fig-sub">Помножимо всі косинуси ембедингів на множник <span class="raw">k</span>
+    — тобто просто перепишемо їх в іншій шкалі, нічого не змінивши в порядку пар.
+    Дві мірки з трьох на це піддаються. Одна — ні.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">мірка</span>
+        <div class="seg" id="seg2">
+          <button data-i="0" aria-pressed="true">сирий</button>
+          <button data-i="1" aria-pressed="false">розрив</button>
+          <button data-i="2" aria-pressed="false">AUC</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="k2">множник <span class="raw">k</span> <output id="k2o">1.00</output></label>
+        <input id="k2" type="range" min="10" max="100" step="2" value="100">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>TF-IDF</b><i id="v2a">—</i></div>
+        <div class="cellv"><b>ембединги</b><i id="v2b">—</i></div>
+        <div class="cellv"><b>різниця</b><i id="v2c">—</i></div>
+        <div class="cellv"><b>розкид</b><i id="v2d">—</i></div>
+      </div>
+      <div class="verdict" id="v2v"></div>
+    </div>
+  </div>
+  <figcaption>Множник <span class="raw">k</span> — це не перетворення даних, а зміна
+    одиниць виміру: пари як стояли в тому самому порядку, так і стоять. Сирий косинус
+    і розрив їдуть за ним слухняно, тож ними можна «довести» що завгодно. AUC при
+    будь-якому <span class="raw">k</span> лишається <b>0.9222</b> проти <b>0.8586</b>
+    — до останнього знака.</figcaption>
+</figure>
+<h2 id="s5"><span class="num">05 / Деталь реалізації</span>Той самий простір, три різні оцінки</h2>
+
+<p>Три мірки дали три різні вироки на одній парі систем. Тепер зробимо гірше: не
+змінюючи ані моделі, ані даних, ані набору пар, дістанемо <b>три різні оцінки самих
+ембедингів</b>. Достатньо по-різному зібрати вектор слова з того, що модель уже
+навчила.</p>
+
+<p>Skip-gram тримає <b>дві</b> матриці, і читач бачив це в темі 12 · Word2Vec.
+<code>Win</code> — центральна: рядок для слова, коли воно стоїть у центрі вікна.
+<code>Wout</code> — контекстна: рядок для того самого слова, коли воно стоїть
+сусідом. Ембедингами беруть <code>Win</code> — але це <b>домовленість, а не закон</b>:
+сума <code>Win + Wout</code> так само законна, і саме її радять автори кількох
+пізніших робіт.</p>
+
+<p>Порахуємо для кожного способу дві речі: середній косинус між <b>усіма</b> парами
+слів словника — тобто наскільки простір узагалі «злиплий» — і три наші мірки на тих
+самих 209 парах.</p>
+
+<p>Перш ніж дивитись на числа, назвімо модель, яка їх дала: <b>skip-gram із
+негативним семплюванням, 64 виміри, вікно ±5, пʼять негативних прикладів на пару,
+три епохи, <code>min_count = 10</code>, проріджування частих слів із порогом
+<code>1e-3</code></b>, три зерна.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>вектор</th><th>косинус усіх пар</th><th>той самий зміст</th><th>випадкові</th><th>розрив</th><th>AUC</th></tr>
+  <tr><td>TF-IDF</td><td>—</td><td>0.2198</td><td>0.0098</td><td>0.2101 ±0.0019</td><td>0.8586 ±0.0024</td></tr>
+  <tr><td>центральна Win</td><td>0.6083</td><td>0.8408</td><td>0.6198</td><td>0.2210 ±0.0079</td><td>0.9222 ±0.0036</td></tr>
+  <tr><td>контекстна Wout</td><td>0.6280</td><td>0.8353</td><td>0.6133</td><td>0.2219 ±0.0081</td><td>0.9150 ±0.0012</td></tr>
+  <tr class="hot"><td>сума Win + Wout</td><td>0.0332</td><td>0.6165</td><td>0.0426</td><td>0.5739 ±0.0027</td><td>0.9480 ±0.0027</td></tr>
+</table>
+</div>
+
+<p>Порівняй два числа. Заміна <b>методу</b> — від TF-IDF до ембедингів — рухає розрив
+на <b>+0.0109</b>. Заміна <b>деталі реалізації</b> — брати одну матрицю чи суму двох —
+рухає його на <b>+0.3530</b>. Тобто рядок коду, про який зазвичай навіть не згадують
+у статті, важить у тридцять разів більше за вибір самого підходу.</p>
+
+<div class="note warn"><b>Ось чому внутрішню оцінку не можна цитувати саму по собі.</b>
+Її легко зсунути, не змінивши ані моделі, ані даних. Той, хто хоче показати, що
+ембединги працюють, візьме суму; той, хто хоче показати, що ні, візьме центральну
+матрицю. Обидва скажуть правду й обидва не збрешуть про метод — і обидва числа
+міряють різні речі.</div>
+
+<h3>Чому сума працює краще</h3>
+
+<p>Відповідь у першому стовпчику таблиці. У центральній матриці середній косинус між
+<b>будь-якими</b> двома словами словника — <b>0.6083</b>. Два випадкові слова, між
+якими немає нічого спільного, стоять під кутом, який косинус вважає майже збігом. Це
+означає одне: усі вектори дивляться приблизно в один бік.</p>
+
+<p>Перевірмо це просто. Складімо всі 6074 вектори одиничної довжини й подивімось на
+довжину суми, поділену на 6074. Якби вектори дивилися хто куди, доданки погасили б
+одне одного й вийшов би майже нуль. Наш замір:</p>
+
+<div class="eq">довжина середнього вектора словника = 0.7800</div>
+
+<p>Тобто якщо взяти 6074 стрілки однакової довжини й скласти, сума виявиться майже
+такою ж довгою, як одна стрілка. Простір, у якому так стається, називають
+<b>анізотропним</b> (anisotropic): він розтягнутий уздовж одного напрямку сильніше,
+ніж уздовж усіх решти.</p>
+
+<div class="note warn"><b>0.6083 — це число нашого прогону, а не властивість
+алгоритму.</b> Анізотропія залежить від налаштувань, найсильніше — від кількості
+епох: що довше модель учиться, то більше встигає накопичити спільного штовхана.
+Сусідні теми блоку вчать той самий skip-gram на тому самому корпусі іншу кількість
+епох і дістають помітно інше значення. Це не суперечність, а та сама думка розділу
+на поверх вище: якщо навіть <b>перекіс простору</b> гуляє від налаштувань, то
+оцінка на сирому косинусі — тим паче.</div>
+
+<p>Звідки цей напрямок береться під час навчання. Skip-gram увесь час робить дві
+речі: тягне слово до його справжніх сусідів і відштовхує від пʼятьох випадкових
+«негативів». Відштовхування діє на всі слова майже однаково, бо негативи беруться
+з усього словника, і кожне слово дістає штовхан у той самий бік. За два з половиною
+мільйони кроків він накопичується — і стає окремим виміром змісту, якого немає.
+У контекстній матриці штовхан накопичується в <b>протилежний</b> бік, тому сума їх
+здебільшого гасить: у неї середній косинус усіх пар падає з 0.6083 до <b>0.0332</b>.</p>
+
+<p>Здогад можна перевірити й без другої матриці: відняти від кожного вектора частку
+<span class="raw">α</span> середнього вектора словника й подивитись, що станеться.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>α</th><th>однаковий зміст</th><th>випадкові</th><th>розрив</th><th>AUC</th></tr>
+  <tr><td>0.00</td><td>0.8408</td><td>0.6198</td><td>0.2210 ±0.0079</td><td>0.9222 ±0.0036</td></tr>
+  <tr><td>0.25</td><td>0.7676</td><td>0.4339</td><td>0.3337 ±0.0086</td><td>0.9378 ±0.0030</td></tr>
+  <tr><td>0.50</td><td>0.6759</td><td>0.1958</td><td>0.4801 ±0.0058</td><td>0.9540 ±0.0021</td></tr>
+  <tr class="hot"><td>0.75</td><td>0.6178</td><td>0.0546</td><td>0.5631 ±0.0033</td><td>0.9560 ±0.0032</td></tr>
+  <tr><td>1.00</td><td>0.6599</td><td>0.1824</td><td>0.4775 ±0.0074</td><td>0.9379 ±0.0044</td></tr>
+  <tr><td>1.25</td><td>0.7593</td><td>0.4370</td><td>0.3223 ±0.0029</td><td>0.9184 ±0.0057</td></tr>
+  <tr><td>1.50</td><td>0.8414</td><td>0.6366</td><td>0.2048 ±0.0032</td><td>0.9055 ±0.0054</td></tr>
+</table>
+</div>
+
+<p>Здогад підтвердився повністю, і безкоштовно: жодного перенавчання, одне віднімання.
+Випадкові пари з <b>0.6198</b> падають до <b>0.0546</b> — майже до нуля, як у TF-IDF.
+Пари однакового змісту опускаються теж, але значно менше: з 0.8408 до 0.6178.
+І розрив росте з <b>0.2210</b> до <b>0.5631</b> — тобто у <b>2.68</b> раза більший
+за 0.2101 у TF-IDF. Ось тепер перевага ембедингів справді доведена: 0.5631 при
+розкиді 0.0033 проти 0.2101 при розкиді 0.0019.</p>
+
+<p>Після 0.75 усе псується назад, і це теж повчально. Ми починаємо віднімати більше,
+ніж там було, тож спільний напрямок накопичується в протилежний бік. При α = 1.50
+картина майже така сама, як при α = 0, тільки дзеркальна. Правильної частки наперед
+ніхто не знає — її доводиться підбирати, і це ще одна ручка, якою легко підкрутити
+внутрішню оцінку.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 3 · Скільки спільного напрямку віднімати</div>
+  <p class="fig-sub">Повзунок <span class="raw">α</span> каже, яку частку середнього
+    вектора словника відняти від кожного вектора. Ліворуч — дві купи (пари однакового
+    змісту й випадкові), праворуч — як від цього їдуть розрив і AUC.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="a3">частка <span class="raw">α</span> <output id="a3o">0.00</output></label>
+        <input id="a3" type="range" min="0" max="6" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>однаковий зміст</b><i id="v3a">—</i></div>
+        <div class="cellv"><b>випадкові пари</b><i id="v3b">—</i></div>
+        <div class="cellv"><b>розрив</b><i id="v3c">—</i></div>
+        <div class="cellv"><b>AUC</b><i id="v3d">—</i></div>
+      </div>
+      <div class="verdict" id="v3v"></div>
+    </div>
+  </div>
+  <figcaption>Найдорожче тут не сам прийом, а те, що він показує: <b>більшу частину
+    косинуса ембедингів займало не значення слова</b>. Рожева крива — розрив, бірюзова
+    — AUC; пунктир — рівень TF-IDF. Обидві мірки мають максимум приблизно в тому
+    самому місці, і воно не там, де ми починали.</figcaption>
+</figure>
+
+<h2 id="s6"><span class="num">06 / Частота</span>Шкала пливе разом із частотою</h2>
+
+<p>Спільний напрямок — не єдина причина, чому косинус не має єдиної шкали. Є друга,
+і вона тонша: <b>шкала різна для різних слів того самого простору</b>.</p>
+
+<p>Поділімо словник на чотири смуги за частотою й у кожній візьмімо
+<b>випадкові</b> пари слів — тобто пари, які майже напевно нічого спільного не мають.
+Якби косинус мав єдину шкалу, у всіх смугах вийшло б приблизно однаково.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>смуга рангів</th><th>частота слова</th><th>косинус випадкової пари</th><th>спільних сусідів</th></tr>
+  <tr><td>0-300</td><td>310-27934</td><td>0.2771 ±0.0005</td><td>0.6762</td></tr>
+  <tr><td>300-1000</td><td>102-308</td><td>0.3752 ±0.0010</td><td>0.6017</td></tr>
+  <tr><td>1000-3000</td><td>26-102</td><td>0.5339 ±0.0019</td><td>0.4895</td></tr>
+  <tr class="hot"><td>3000-6074</td><td>10-26</td><td>0.7698 ±0.0004</td><td>0.3455</td></tr>
+</table>
+</div>
+
+<p>Розрив утричі. Два випадкові рідкісні слова дістають <b>0.7698</b> — більше, ніж
+пара справжніх синонімів у першій смузі. Прочитати це можна так: <b>число 0.77 між
+двома рідкісними словами означає «нічого», а між двома частими — «дуже багато»</b>.
+Одне й те саме число, два протилежні висновки.</p>
+
+<p>Останній стовпчик пояснює причину. «Спільних сусідів» — це частка збігу у трьох
+незалежно навчених моделях: беремо пʼятьох найближчих сусідів слова в кожній із
+трьох і дивимось, скільки з них ті самі. У частих слів збігається дві третини,
+у рідкісних — лише третина. Слово, яке трапилось дванадцять разів, просто не
+встигло дістати осмислений вектор: воно лишилось там, куди його поставила
+випадковість початкових значень і кількадесят кроків навчання.</p>
+
+<div class="note warn"><b>Практичний наслідок.</b> Поріг «схожі, якщо косинус вищий
+за 0.7» не існує. Будь-який поріг доводиться підбирати окремо для своєї частотної
+смуги — або ж міряти не сам косинус, а те, наскільки він вищий за косинус
+випадкової пари тієї самої частоти. Друге чесніше, бо не вимагає ніякого порогу
+взагалі.</div>
+
+<figure>
+  <div class="fig-head">Інтерактив 4 · Одне число, чотири різні значення</div>
+  <p class="fig-sub">Кожна смуга — чверть словника за частотою. Стовпчики показують,
+    що дістає <b>випадкова</b> пара слів усередині смуги, і наскільки стійкі там
+    сусіди між трьома зернами.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">смуга рангів</span>
+        <div class="seg wrap" id="seg4">
+          <button data-i="0" aria-pressed="true">0-300</button>
+          <button data-i="1" aria-pressed="false">300-1000</button>
+          <button data-i="2" aria-pressed="false">1000-3000</button>
+          <button data-i="3" aria-pressed="false">3000-6074</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="t4">поріг «схожі» <output id="t4o">0.70</output></label>
+        <input id="t4" type="range" min="20" max="90" step="5" value="70">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>частота слів</b><i id="v4a" class="sm">—</i></div>
+        <div class="cellv"><b>випадкова пара</b><i id="v4b">—</i></div>
+        <div class="cellv"><b>спільних сусідів</b><i id="v4c">—</i></div>
+        <div class="cellv"><b>поріг проходить</b><i id="v4d" class="sm">—</i></div>
+      </div>
+      <div class="verdict" id="v4v"></div>
+    </div>
+  </div>
+  <figcaption>Посунь поріг і подивись, у скількох смугах його проходять <b>випадкові</b>
+    пари. При 0.70 його проходить уся четверта смуга — а це 3074 слова з 6074, тобто
+    трохи більше за половину словника, яка оголошує «схожими» слова, між якими немає
+    нічого. Єдиного правильного порогу не існує: він мусить бути свій у кожній
+    смузі.</figcaption>
+</figure>
+
+<h2 id="s7"><span class="num">07 / Морфологія</span>Друга перевірка: словоформи однієї леми</h2>
+
+<p>209 пар — це небагато, і всі вони про зміст речення. Українська дає нам другий
+набір пар задарма, і він про інше — про <b>морфологію</b>.</p>
+
+<p>Кожна словоформа зводиться до леми — словникової форми (тема
+<a href="../03-morphology/lecture.html">03 · Морфологія</a>). Усі форми однієї леми
+гарантовано про одне й те саме слово: «файл», «файла», «файлу», «файлом». Якщо
+простір хороший, вони мають стояти поруч.</p>
+
+<p>Серед 6074 словоформ нашого словника <code>pymorphy3</code> знаходить <b>2717</b>
+різних лем; пар «дві форми однієї леми» набирається <b>8802</b>.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>що міряємо</th><th>косинус</th></tr>
+  <tr><td>дві форми однієї леми</td><td>0.7181</td></tr>
+  <tr><td>випадкові пари слів</td><td>0.6074</td></tr>
+  <tr class="hot"><td>розрив</td><td>0.1108 ±0.0001</td></tr>
+</table>
+</div>
+
+<p>Розрив є, і він стійкий до четвертого знака — але маленький. Форми однієї леми
+стоять ближче, ніж випадкові слова, лише на <b>0.11</b>. Порівняй із розривом на
+парах документів того самого змісту: там 0.2210, удвічі більше.</p>
+
+<p>Висновок неприємний і чесний: <b>skip-gram майже не зводить словоформи докупи</b>.
+Для нього «файл» і «файла» — два незалежні слова, які випадково трапляються в
+схожих місцях. Це і є та діра, у яку цілять субслівні моделі теми 13 · GloVe і
+FastText: якщо будувати вектор слова зі шматків самого слова, спільний корінь
+працює автоматично.</p>
+
+<h2 id="s8"><span class="num">08 / Зовнішня оцінка</span>А тепер справжня задача</h2>
+
+<p>Усе дотепер було внутрішньою оцінкою: ми міряли простір сам по собі. Тепер
+поставимо друге питання — <b>чи стане краще справжній задачі</b>.</p>
+
+<p>Задачу беремо готову, без жодної зміни: та сама, що в темі
+<a href="../06-text-classification/lecture.html">06 · Класифікація текстів</a>.
+Питання «чи це повідомлення про помилку?», мітка з англійського оригіналу, ознаки
+з українського перекладу, 93 392 документи, частка класу «помилка» — 0.2123, поділ
+70/30, логістична регресія, F1 по класу «помилка», три зерна.</p>
+
+<p>Міняється рівно одне: чим подано документ. Було 14 тисяч колонок TF-IDF — стало
+64 числа, середнє векторів слів. Порівняємо пʼять схем.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>подання документа</th><th>F1 «помилка»</th><th>проц. час навчання</th></tr>
+  <tr><td>TF-IDF</td><td>0.8794 ±0.0013</td><td>0.208 с</td></tr>
+  <tr><td>TF-IDF, class_weight balanced</td><td>0.9006 ±0.0022</td><td>0.154 с</td></tr>
+  <tr class="hot"><td>ембединги, 64 числа</td><td>0.7402 ±0.0075</td><td>0.381 с</td></tr>
+  <tr class="hot"><td>ембединги, 64 числа, balanced</td><td>0.7231 ±0.0041</td><td>0.359 с</td></tr>
+  <tr><td>TF-IDF плюс ембединги</td><td>0.9018 ±0.0016</td><td>0.745 с</td></tr>
+</table>
+</div>
+
+<p>Ембединги <b>програють</b>, і програють упевнено. Різниця з TF-IDF —
+<b>−0.1392</b> при розкиді 0.0075; зі зважуванням класів <b>−0.1775</b> при розкиді
+0.0041. Обидві різниці більш ніж удесятеро перевищують розкид, тож списати їх на
+випадковість не вийде.</p>
+
+<p>І третій рядок не рятує. Додати ембединги <b>до</b> TF-IDF — здавалося б,
+найбезпечніший хід: гірше не стане, а раптом допоможе. Виходить <b>+0.0012</b> при
+розкиді <b>0.0022</b>. Різниця, менша за розкид, різницею не є: 64 нові колонки не
+додали до 14 тисяч старих нічого, крім учетверо довшого навчання.</p>
+
+<div class="note warn"><b>Це головне число теми, і воно не на користь ембедингів.</b>
+Внутрішня оцінка сказала «ембединги кращі» — і після поправки на спільний напрямок
+сказала це впевнено. Зовнішня оцінка на тій самій парі систем каже «гірші на 0.18».
+Обидві праві. Просто внутрішня міряла, чи схожі схожі речі, а зовнішня — чи
+допомагає це відрізняти повідомлення про помилку від решти.</div>
+<h2 id="s9"><span class="num">09 / Мало розмітки</span>А якщо розмічених прикладів мало?</h2>
+
+<p>На це є природне заперечення, і воно правильне за духом. Ембединги вчаться на
+<b>нерозміченому</b> тексті: жодна людина не сказала моделі, які слова схожі, —
+вона дізналась це з самих текстів. Тож їхня перевага має проявитись там, де
+розмічених прикладів мало, а нерозміченого тексту багато. TF-IDF на двохстах
+прикладах будує словник із цих самих двохсот і мусить бути безпорадною.</p>
+
+<p>Перевіряємо кривою. Навчаємо на 200, 1000, 5000 і на всіх 65 375 прикладах; на
+кожному розмірі словник TF-IDF будується <b>лише з цих прикладів</b> — інакше вона
+крадькома дізналась би про весь корпус, і крива збрехала б саме там, де цікаво.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>розмічених</th><th>TF-IDF</th><th>ембединги 64</th><th>різниця</th></tr>
+  <tr class="hot"><td>200</td><td>0.6636 ±0.0266</td><td>0.6282 ±0.0022</td><td>−0.0354</td></tr>
+  <tr><td>1 000</td><td>0.8019 ±0.0097</td><td>0.6665 ±0.0134</td><td>−0.1354</td></tr>
+  <tr><td>5 000</td><td>0.8708 ±0.0014</td><td>0.7038 ±0.0081</td><td>−0.1670</td></tr>
+  <tr><td>65 375</td><td>0.9006 ±0.0022</td><td>0.7231 ±0.0041</td><td>−0.1775</td></tr>
+</table>
+</div>
+
+<p>Заперечення підтвердилось наполовину — і саме ця половинчастість цікава. На
+двохстах прикладах різниця <b>−0.0354</b> при розкиді <b>0.0266</b>: менша за
+подвоєний розкид, тобто <b>недоведена</b>. Це найкраще, чого ембединги досягають:
+не виграти, а перестати програвати.</p>
+
+<p>Далі розрив тільки росте. TF-IDF від 200 до 65 тисяч додає <b>+0.2370</b>,
+ембединги — лише <b>+0.0949</b>. Тобто ембединги впираються в стелю значно раніше,
+і стеля ця низька. Розмічені приклади вони використовують гірше, ніж 14 тисяч
+розріджених колонок.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 5 · Зовнішня оцінка на чотирьох обсягах розмітки</div>
+  <p class="fig-sub">Та сама задача теми 06, той самий поділ, три зерна. Вусики —
+    розкид по зернах. Перемикач міняє обсяг навчальної вибірки.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">розмічених прикладів</span>
+        <div class="seg wrap" id="seg5">
+          <button data-i="0" aria-pressed="false">200</button>
+          <button data-i="1" aria-pressed="false">1000</button>
+          <button data-i="2" aria-pressed="false">5000</button>
+          <button data-i="3" aria-pressed="true">65375</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="m5">у скільки разів розкид <output id="m5o">2</output></label>
+        <input id="m5" type="range" min="1" max="4" step="1" value="2">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>TF-IDF</b><i id="v5a">—</i></div>
+        <div class="cellv"><b>ембединги</b><i id="v5b">—</i></div>
+        <div class="cellv"><b>різниця</b><i id="v5c">—</i></div>
+        <div class="cellv"><b>потрібно більше за</b><i id="v5d">—</i></div>
+      </div>
+      <div class="verdict" id="v5v"></div>
+    </div>
+  </div>
+  <figcaption>Другий повзунок — це не оздоба, а сама методика: він каже, у скільки
+    разів різниця мусить перевищити розкид, щоб її вважати доведеною. Курс тримається
+    двійки. Постав одиницю — і «доведеною» стане навіть різниця на двохстах прикладах;
+    постав чотири — і вона знову зникне. Саме тому поріг називають наперед, а не після
+    того, як побачили числа.</figcaption>
+</figure>
+
+<h2 id="s10"><span class="num">10 / Домен</span>Упередженість перша: слово означає те, що в цій програмі</h2>
+
+<p>Друга половина теми — про те, що ембединги встигли всмоктати з корпусу. Слово
+<b>упередженість</b> (bias) зазвичай означає суспільні перекоси, і ми до них
+дійдемо. Але почнімо з упередженості, яку в нашому корпусі видно найкраще й яку
+недооцінюють: <b>доменної</b>.</p>
+
+<p>Наш корпус — переклади інтерфейсів. Подивись, які сусіди в слів, що поза
+компʼютером означають щось цілком побутове:</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <tr><th>слово</th><th>пʼятеро найближчих сусідів</th></tr>
+  <tr><td>дерево</td><td>робоче · директорію · допис · підмодуля · робочу</td></tr>
+  <tr><td>гілка</td><td>директорія · верхівка · нова · першоджерельне · стара</td></tr>
+  <tr><td>ключ</td><td>закритий · відкликання · сертифікат · відкритий · вторинний</td></tr>
+  <tr><td>сум</td><td>контрольних · пакування · карт · всього · перевірці</td></tr>
+  <tr><td>поле</td><td>поля · бітове · нульовим · кіб · бітовим</td></tr>
+</table>
+</div>
+
+<p>Жодного листя, жодного смутку, жодної пшениці. «Дерево» — це дерево каталогів,
+«гілка» — гілка в git, «ключ» — криптографічний, «сум» — родовий відмінок від
+«контрольних сум», «поле» — поле структури. Модель не помиляється: у цьому корпусі
+слова справді означають саме це. Помилиться той, хто візьме ці вектори для текстів
+про природу.</p>
+
+<p>Тепер число замість враження. У кожного слова є <b>головна програма</b> — та, у
+чиїх рядках воно трапляється найчастіше. Якщо простір розкладено по доменах, то
+найближчий сусід слова має походити з тієї самої програми частіше, ніж це вийшло б
+випадково.</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>що міряємо</th><th>частка</th></tr>
+  <tr class="hot"><td>найближчий сусід із тієї самої головної програми</td><td>0.3555 ±0.0038</td></tr>
+  <tr><td>те саме у випадкової пари слів</td><td>0.0873</td></tr>
+  <tr><td>перевищення</td><td>у 4.1 раза</td></tr>
+</table>
+</div>
+
+<p>Понад третина слів має найближчим сусідом слово з тієї самої програми, тоді як
+випадково вийшло б менш ніж девʼять зі ста. Простір ембедингів розкладено не лише
+за значенням — він розкладений <b>за програмами</b>. Це і є доменна упередженість,
+заміряна числом.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 6 · Звідки прийшли сусіди слова</div>
+  <p class="fig-sub">Для кожного слова — пʼятеро найближчих сусідів і програма, у
+    чиїх рядках кожен із них трапляється найчастіше. Бірюзовий — та сама програма,
+    що й у самого слова.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="380" data-lw="700" data-lh="380"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap">слово</span>
+        <div class="seg wrap" id="seg6">
+          <button data-i="0" aria-pressed="true">дерево</button>
+          <button data-i="1" aria-pressed="false">ключ</button>
+          <button data-i="2" aria-pressed="false">гілка</button>
+          <button data-i="3" aria-pressed="false">вікно</button>
+          <button data-i="4" aria-pressed="false">сум</button>
+          <button data-i="5" aria-pressed="false">поле</button>
+          <button data-i="6" aria-pressed="false">адреса</button>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>головна програма</b><i id="v6a" class="sm">—</i></div>
+        <div class="cellv"><b>частка згадок</b><i id="v6b">—</i></div>
+        <div class="cellv"><b>сусідів звідти</b><i id="v6c">—</i></div>
+        <div class="cellv"><b>по всьому словнику</b><i id="v6d">—</i></div>
+      </div>
+      <div class="verdict" id="v6v"></div>
+    </div>
+  </div>
+  <figcaption>«Гілка» й «дерево» дають пʼятеро й четверо сусідів із git — це вже не
+    мова, а конкретна програма. А «вікно» й «адреса» показують інший бік того самого:
+    їхня головна програма забирає лише <b>0.1814</b> і <b>0.1589</b> згадок, і сусіди
+    приходять звідусіль. Домен тим сильніший, чим вужче слово живе.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Сусідство</span>Упередженість друга: поруч не означає схоже</h2>
+
+<p>Дистрибутивна семантика (тема
+<a href="../11-distributional-semantics/lecture.html">11</a>) каже: слово пізнається
+за компанією. Але «компанія» буває двох різних сортів, і модель їх не розрізняє.</p>
+
+<ul>
+  <li><b>Слова стоять поруч</b>: «програмним забезпеченням», «роздільної здатності».
+    Вони не схожі — вони частини одного звороту.</li>
+  <li><b>Слова стоять у схожих місцях</b>: «файл» і «каталог» рідко стоять поруч,
+    зате оточені тим самим — «відкрити», «створити», «вилучити».</li>
+</ul>
+
+<p>Схожими за змістом є другі. А високий косинус дістають обидва.</p>
+
+<p>Заміряймо. У корпусі <b>532 931</b> пара слів бодай раз стояла поруч у вікні ±5 —
+це <b>2.89 %</b> усіх можливих пар словника. Візьмімо сотню пар із найсильнішим
+звʼязком (найбільша PMI серед тих, що трапились не менш ніж тридцять разів):</p>
+
+<div class="scroll-x">
+<table class="plain">
+  <tr><th>пара</th><th>разів поруч</th><th>косинус</th></tr>
+  <tr><td>програмним · забезпеченням</td><td>32</td><td>0.9902</td></tr>
+  <tr><td>угорська · клавішна</td><td>32</td><td>0.9914</td></tr>
+  <tr><td>здатності · роздільної</td><td>32</td><td>0.9773</td></tr>
+  <tr><td>лампа · флуоресцентна</td><td>38</td><td>0.9527</td></tr>
+  <tr><td>проведіть · пальцем</td><td>38</td><td>0.9871</td></tr>
+</table>
+</div>
+
+<p>Косинус під <b>0.99</b> — вище, ніж у будь-якої пари синонімів у цій темі. Але
+«програмним» і «забезпеченням» не синоніми: це два слова одного звороту, і вони
+різні частини мови.</p>
+
+<p>Одного цього мало, щоб щось довести: слова цих ста пар рідкісні, а рідкісні слова,
+як ми знаємо з розділу 06, мають високий косинус самі по собі. Тому контроль беремо
+не з усього словника, а <b>з тих самих 155 слів</b>:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>що міряємо</th><th>косинус</th></tr>
+  <tr class="hot"><td>сотня найсильніших колокацій</td><td>0.9508 ±0.0007</td></tr>
+  <tr><td>випадкові пари з тих самих 155 слів</td><td>0.5449 ±0.0022</td></tr>
+  <tr><td>надбавка за те, що слова стоять поруч</td><td>+0.4059</td></tr>
+</table>
+</div>
+
+<p>Надбавка <b>+0.4059</b> при розкиді 0.0022 — доведена без будь-яких сумнівів.
+Те саме видно й на всіх парах одразу, окремо в кожній частотній смузі:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>смуга рангів</th><th>пар поруч</th><th>стояли поруч</th><th>випадкові</th><th>надбавка</th></tr>
+  <tr><td>0-300</td><td>27 057</td><td>0.2977</td><td>0.2771</td><td>+0.0206</td></tr>
+  <tr><td>300-1000</td><td>12 586</td><td>0.5254</td><td>0.3752</td><td>+0.1502</td></tr>
+  <tr class="hot"><td>1000-3000</td><td>8 112</td><td>0.6967</td><td>0.5339</td><td>+0.1628</td></tr>
+  <tr><td>3000-6074</td><td>1 995</td><td>0.8812</td><td>0.7698</td><td>+0.1114</td></tr>
+</table>
+</div>
+
+<p>У найчастіших слів надбавка майже нульова (<b>+0.0206</b>) — вони й так стоять
+біля всього. А от у середніх смугах вона сягає <b>+0.16</b>, і це саме той діапазон,
+де живуть змістовні слова. Практичний висновок простий: <b>високий косинус між двома
+словами може означати «вони з одного звороту», а не «вони про одне»</b>. Перевіряти
+доводиться очима — або тримати поруч частоту спільного входження.</p>
+
+<h2 id="s12"><span class="num">12 / Порожнеча</span>Упередженість третя: чого немає взагалі</h2>
+
+<p>Третя упередженість найтихіша з усіх, бо вона не викривляє відповідь — вона робить
+відповідь неможливою. Слова, якого в корпусі немає, для моделі не існує, і вона про
+це не скаржиться.</p>
+
+<p>Візьмімо шістдесят найзвичайніших українських слів — сімʼя, їжа, погода, тварини,
+почуття, місто, одяг:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>що рахуємо</th><th>скільки</th></tr>
+  <tr><td>побутових слів у списку</td><td>60</td></tr>
+  <tr><td>трапляються в корпусі хоч раз</td><td>12 (20.0 %)</td></tr>
+  <tr class="hot"><td>мають вектор при min_count 10</td><td>4 (6.7 %)</td></tr>
+</table>
+</div>
+
+<p>Чотири. «Дерево» (77 разів), «сум» (56), «вікно» (245) і «місто» (10) — і всі
+чотири, як ми щойно бачили, у технічному значенні. Немає слів «мама», «хліб»,
+«сонце», «кіт», «любов», «пісня» — жодного разу на 674 948 слововживань.</p>
+
+<p>А шість технічних слів для порівняння важать разом <b>9175</b> слововживань проти
+<b>404</b> у всіх шістдесяти побутових. Тобто шість слів про компʼютери трапляються у
+<b>22.7</b> раза частіше, ніж шістдесят слів про життя.</p>
+
+<h3>А гендерна упередженість?</h3>
+
+<p>Про упередженість ембедингів найчастіше розповідають один сюжет: у моделі,
+навченій на новинах, «лікар» ближче до «чоловік», а «медсестра» — до «жінка».
+Переказати цей сюжет тут було б легко. Але ми його <b>шукали й не знайшли</b>, і
+чесно назвати це числом важливіше, ніж переказати чужий приклад.</p>
+
+<p>Щоб такий тест поставити, потрібні дві групи слів: позначення статі й назви
+професій. Ось що є в корпусі:</p>
+
+<div class="scroll-x">
+<table class="nums">
+  <tr><th>група</th><th>слів перевірено</th><th>мають вектор</th></tr>
+  <tr><td>стать: чоловік, жінка, батько, сестра…</td><td>14</td><td>3</td></tr>
+  <tr class="hot"><td>професії: інженер, лікар, медсестра, вчителька…</td><td>16</td><td>0</td></tr>
+</table>
+</div>
+
+<p>Назв професій — <b>нуль</b>. Жодної. «Жінка», «дівчина», «брат», «сестра», «пані»
+не трапляються <b>ані разу</b>; «чоловік» — один раз, «батько» — пʼять. Вектор мають
+рівно три слова зі списку: «він», «вона» і «мати». Причому «мати» тут — <b>дієслово</b>:
+у рядках інтерфейсу воно живе у зворотах на кшталт «список повинен мати простий тип»,
+а не в значенні «мама».</p>
+
+<div class="note warn"><b>Правильне формулювання результату.</b> Не «гендерної
+упередженості в цій моделі немає» — так сказати не можна, бо ми її не поміряли.
+А «поставити класичний тест на цьому корпусі <b>нема на чому</b>: із тридцяти
+потрібних слів вектор мають три, і жодне з них не є назвою професії». Відсутність
+самої теми — теж властивість корпусу, і вона важливіша за красивий переказ.</div>
+
+<p>Останній замір цього розділу — про відсутність зсередини. Поріг
+<code>min_count = 10</code> викидає <b>21 004</b> словоформи: це <b>77.57 %</b>
+словника, але лише <b>7.91 %</b> тексту — класичний хвіст Ципфа з теми
+<a href="../01-text-is-hard/lecture.html">01</a>. Скільки з них можна було б
+відновити зі шматків слова, як це робить FastText? Найчесніша оцінка — чи є серед
+відомих слів <b>лема</b> невідомої форми. Відповідь: <b>4742</b>, тобто
+<b>22.6 %</b>. Решта 77.4 % не має в словнику жодного спорідненого слова, і жодне
+складання вектора зі шматків їх не поверне.</p>
+
+<figure>
+  <div class="fig-head">Інтерактив 7 · Поріг min_count і те, що за ним лишається</div>
+  <p class="fig-sub">Кожен квадратик — слово. Ліворуч шістдесят побутових слів,
+    праворуч шість технічних. Заповнений квадратик означає, що слово проходить поріг
+    і дістає вектор.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="mc7">поріг <span class="raw">min_count</span> <output id="mc7o">10</output></label>
+        <input id="mc7" type="range" min="0" max="8" step="1" value="4">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>побутових із вектором</b><i id="v7a">—</i></div>
+        <div class="cellv"><b>технічних із вектором</b><i id="v7b">—</i></div>
+        <div class="cellv"><b>частка побутових</b><i id="v7c">—</i></div>
+        <div class="cellv"><b>частка технічних</b><i id="v7d">—</i></div>
+      </div>
+      <div class="verdict" id="v7v"></div>
+    </div>
+  </div>
+  <figcaption>Опусти поріг до одиниці — і побутових слів стане <b>12 із 60</b>, а не
+    60. Поріг тут ні до чого: решти сорока восьми слів у корпусі немає взагалі.
+    Технічна шістка тримається аж до <b>100</b>, і лише на трьохстах у ній зникає
+    перше слово — тоді як побутових на трьохстах не лишається жодного. Це і є
+    найтихіша упередженість: її не полагодити налаштуванням, бо вона в самих
+    даних.</figcaption>
+</figure>
+
+<h2 id="s13"><span class="num">13 / Як міряти</span>Як міряти, щоб не обманутись</h2>
+
+<p>Зберімо все, чого нас навчили ці числа, у список, який годиться до будь-яких
+ембедингів — і наших саморобних, і тих, що приїдуть із великих моделей у блоках
+далі.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">Крок 1</span>
+    <p><b>Ніколи не цитуй сирий косинус наодинці.</b> Поруч із «пари однакового змісту
+    дають 0.8408» мусить стояти «випадкові пари дають 0.6198». Без другого числа перше
+    нічого не означає: наша перевага «в 3.82 раза» після поправки перетворилась на
+    +0.0109 при розкиді 0.0079, тобто на ніщо.</p></div>
+
+  <div class="step"><span class="lbl">Крок 2</span>
+    <p><b>Тримай контроль тієї самої частоти.</b> Випадкова пара рідкісних слів дає
+    0.7698, частих — 0.2771. Порівнювати схожість слів різних смуг марно; контроль
+    треба брати з тих самих слів, як ми зробили з колокаціями (0.9508 проти 0.5449).</p></div>
+
+  <div class="step"><span class="lbl">Крок 3</span>
+    <p><b>Перевір спільний напрямок.</b> Порахуй довжину середнього вектора словника.
+    У нас 0.7800 — тобто більша частина косинуса була не про зміст. Одне віднімання
+    підняло розрив із 0.2210 до 0.5631.</p></div>
+
+  <div class="step"><span class="lbl">Крок 4</span>
+    <p><b>Бери мірку, яка не залежить від шкали.</b> AUC не змінюється ні від
+    множника, ні від центрування, ні від будь-якого іншого зростаючого перетворення.
+    Якщо треба одне число — бери її.</p></div>
+
+  <div class="step"><span class="lbl">Крок 5</span>
+    <p><b>Закінчуй зовнішньою оцінкою.</b> Внутрішня оцінка дала ембедингам перевагу,
+    зовнішня — програш на 0.1775 при розкиді 0.0041. Вирішує зовнішня, бо задача
+    справжня, а набір пар — наш власний.</p></div>
+
+  <div class="step"><span class="lbl">Крок 6</span>
+    <p><b>Спитай, чого в корпусі немає.</b> Перш ніж шукати перекоси, перевір, чи є
+    там взагалі те, про що ти хочеш питати. У нас із тридцяти слів для гендерного
+    тесту вектор мають три.</p></div>
+</div>
+
+<h3>Чому ембединги все-таки програли — і чому це не вирок</h3>
+
+<p>Причина не в тому, що ідея погана, а в тому, скільки в нас тексту.
+<b>674 948</b> слововживань — це мало. Word2Vec у своїй статті вчили на мільярдах
+слів; ми маємо в тисячі разів менше. При <code>min_count = 10</code> у словник
+потрапляє лише 6074 слова, і навіть у них третина найрідкісніших має нестійкі
+вектори (0.3455 спільних сусідів між зернами).</p>
+
+<p>Додай до цього два наші власні спрощення. Документ ми зводили <b>простим
+середнім</b> векторів — після нього «файл не знайдено» і «не знайдено файл»
+однакові, а вага службових слів така сама, як у змістовних. І вимірів у нас 64
+проти звичних 300. Кожне з цих спрощень коштує якості, і домашнє завдання рівня 3
+пропонує розсудити їх заміром.</p>
+
+<p>Але головний урок теми не про це. Він у тому, що <b>внутрішня оцінка сказала одне,
+а зовнішня — протилежне</b>, і жодна з них не збрехала. Пари синонімів ембединги
+справді ставлять ближче. Просто задачі «чи це повідомлення про помилку» потрібне не
+це: їй потрібне рідкісне слово «вдалося» в потрібній колонці, а не загальне
+відчуття теми. Подання, краще за одним критерієм, буває гіршим за іншим — і
+дізнатися про це можна лише на самій задачі.</p>
+
+<h3>Куди йде курс далі</h3>
+
+<p>Блок 3 на цьому закінчується. Ми пройшли шлях від підрахунку сусідства
+(тема <a href="../11-distributional-semantics/lecture.html">11</a>) через навчені
+вектори (тема 12 · Word2Vec) і субслова (тема 13 · GloVe і FastText) до арифметики
+(тема 14 · Арифметика векторів) — і закінчили тим, що всі ці вектори чесно
+поміряли.</p>
+
+<p>Спільна вада всього блоку лишилась незрушеною, і ця тема показала її числом:
+<b>у слова один вектор на всі випадки</b>. «Ключ» у нас криптографічний назавжди,
+бо в корпусі він такий. Якби корпус містив і замки, і музику, модель усереднила б
+три значення в одну точку — і жодне з них не було б правильним.</p>
+
+<p>Блок 4 «Послідовні моделі» починає це лікувати. Тема 16 · Мовна модель:
+наступне слово ставить перед моделлю задачу, у якій контекст уже не можна
+ігнорувати: щоб угадати наступне слово, треба знати попередні. А з неї виростає
+все інше — рекурентні мережі, увага і зрештою трансформер, де вектор слова
+залежить від речення, у якому слово стоїть.</p>
+
+<p>Але мірку ми забираємо з собою. Питання «а скільки та сама система дає
+випадковій парі» доведеться ставити кожній наступній моделі курсу — і чим вона
+більша, тим наполегливіше.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../14-vector-arithmetic/lecture.html"><span class="dir">попередня</span><span class="ttl">14. Арифметика векторів</span></a>
+    <a class="next" href="../16-language-model/lecture.html"><span class="dir">наступна</span><span class="ttl">16. Мовна модель: наступне слово</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id, fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click', function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'), k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f1(v){return (Math.round(v*10)/10).toFixed(1);}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f3(v){return (Math.round(v*1000)/1000).toFixed(3);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function sgn4(v){return (v>=0?'+':'−')+f4(Math.abs(v));}
+function clip(g,x,y,w,h){g.save(); g.beginPath(); g.rect(x,y,w,h); g.clip();}
+function thou(n){
+  var s=String(n), out='', k=0, i;
+  for(i=s.length-1;i>=0;i--){ out=s.charAt(i)+out; k++; if(k%3===0 && i>0) out=' '+out; }
+  return out;
+}
+function cut(g,txt,max,px,bold){
+  g.font=mono(px||11,!!bold);
+  if(g.measureText(txt).width<=max) return txt;
+  var t=txt;
+  while(t.length>1 && g.measureText(t+'…').width>max) t=t.slice(0,-1);
+  return t+'…';
+}
+function axisX(g,x0,x1,y,lo,hi,step,color){
+  g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+  var v;
+  for(v=lo; v<=hi+1e-9; v+=step){
+    var x=x0+(x1-x0)*(v-lo)/(hi-lo);
+    g.beginPath(); g.moveTo(x+0.5,y); g.lineTo(x+0.5,y+4); g.stroke();
+  }
+}
+
+/* ═══════ числа з зошита ═══════ */
+/* корпус: 93 392 документи, 674 948 слововживань, словник min_count=10 — 6074 слова */
+
+/* фігура 1 · розподіли косинусів по 24 кошиках від -0.2 до 1.0, зерно 0 */
+var HB0 = -0.2, HB1 = 1.0, HBN = 24, NPAIR = 209;
+var REPS = [
+  {n:'TF-IDF',
+   same:[0,0,0,0,55,14,19,19,13,17,16,9,13,17,7,5,4,0,1,0,0,0,0,0],
+   other:[0,0,0,0,192,12,3,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]},
+  {n:'ембединги, центральна Win',
+   same:[0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,3,16,19,22,30,51,44,22],
+   other:[0,0,0,0,0,0,0,0,1,0,3,6,14,15,18,39,29,30,24,19,9,1,0,0]},
+  {n:'ембединги, сума Win + Wout',
+   same:[0,0,1,0,1,2,3,2,1,5,14,9,14,13,10,17,14,23,12,16,18,18,12,4],
+   other:[8,15,19,14,17,19,10,14,6,8,11,10,3,3,3,3,3,2,0,0,1,0,0,0]},
+  {n:'ембединги без спільного напрямку, α = 0.75',
+   same:[0,0,0,0,0,5,0,0,3,3,7,18,16,13,10,19,13,21,17,17,19,15,11,2],
+   other:[12,11,16,14,21,13,18,14,8,13,11,6,3,3,3,4,3,1,0,1,0,0,0,0]}
+];
+var rep1 = 0, thr1i = 10;
+
+function aboveOf(arr, from){ var s=0,i; for(i=from;i<arr.length;i++) s+=arr[i]; return s; }
+function bestOf(rep){
+  var b={j:0, d:-9}, j, ps, po;
+  for(j=0;j<=HBN;j++){
+    ps=aboveOf(rep.same,j)/NPAIR; po=aboveOf(rep.other,j)/NPAIR;
+    if(ps-po>b.d){ b.d=ps-po; b.j=j; }
+  }
+  return b;
+}
+
+function draw1(){
+  var cv=I('c1'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var rep=REPS[rep1], i;
+  var x0=54, x1=W-24, mid=Math.round(H*0.52), half=mid-52, bottom=H-52;
+  var bw=(x1-x0)/HBN;
+  var mx=1;
+  for(i=0;i<HBN;i++){ if(rep.same[i]>mx) mx=rep.same[i]; if(rep.other[i]>mx) mx=rep.other[i]; }
+
+  capt(g, cut(g, rep.n, x1-x0-140, 12.5, true), x0, 22, ink, 12.5, true);
+  capt(g, 'угору — однаковий зміст', x1, 22, teal, 10.5, false, 'right');
+  capt(g, 'униз — випадкові пари', x1, 36, rose, 10.5, false, 'right');
+
+  for(i=0;i<HBN;i++){
+    var bx=x0+i*bw;
+    var hs=(rep.same[i]/mx)*half, ho=(rep.other[i]/mx)*(bottom-mid);
+    var live=i>=thr1i;
+    g.globalAlpha=live?0.9:0.28;
+    g.fillStyle=teal; g.fillRect(bx+1, mid-hs, bw-2, hs);
+    g.fillStyle=rose; g.fillRect(bx+1, mid+1, bw-2, ho);
+    g.globalAlpha=1;
+  }
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,mid+0.5); g.lineTo(x1,mid+0.5); g.stroke();
+
+  /* вісь косинуса */
+  var v;
+  for(v=-0.2; v<=1.0001; v+=0.2){
+    var x=x0+(x1-x0)*(v-HB0)/(HB1-HB0);
+    g.strokeStyle=hair; g.beginPath(); g.moveTo(x+0.5,bottom); g.lineTo(x+0.5,bottom+5); g.stroke();
+    capt(g, f1(v), x, bottom+19, soft, 10, false, 'center');
+  }
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0,bottom+0.5); g.lineTo(x1,bottom+0.5); g.stroke();
+  capt(g, 'косинус', (x0+x1)/2, bottom+35, soft, 10.5, false, 'center');
+  capt(g, 'пар', x0-8, mid-half+10, soft, 10, false, 'right');
+  capt(g, String(mx), x0-8, mid-half+24, soft, 10, false, 'right');
+
+  /* поріг */
+  var tv=HB0+(HB1-HB0)*thr1i/HBN;
+  var tx=x0+(x1-x0)*thr1i/HBN;
+  g.strokeStyle=amber; g.lineWidth=2;
+  g.beginPath(); g.moveTo(tx, mid-half-8); g.lineTo(tx, bottom); g.stroke();
+  capt(g, 'поріг '+f2(tv), tx+5, mid-half-12, amber, 11, true);
+
+  var ns=aboveOf(rep.same, thr1i), no=aboveOf(rep.other, thr1i);
+  var ps=ns/NPAIR, po=no/NPAIR, b=bestOf(rep);
+  I('v1a').textContent=ns+' · '+f1(100*ps)+' %';
+  I('v1b').textContent=no+' · '+f1(100*po)+' %';
+  I('v1c').textContent=f4(ps-po);
+  I('v1d').textContent=f4(b.d)+' при '+f2(HB0+(HB1-HB0)*b.j/HBN);
+
+  var bestThr=f2(HB0+(HB1-HB0)*b.j/HBN);
+  if(thr1i===b.j)
+    verd('v1v','t-ok','НАЙКРАЩИЙ ПОРІГ ДЛЯ ЦЬОГО ПОДАННЯ',
+      'При порозі '+f2(tv)+' вище нього — '+ns+' із 209 пар однакового змісту ('+f1(100*ps)+
+      ' %) і '+no+' із 209 випадкових ('+f1(100*po)+' %). Різниця часток '+f4(ps-po)+
+      ' — найбільша, якої це подання здатне досягти. Зверни увагу, де саме він стоїть: '+
+      'у кожного подання поріг свій, і переносити його з одного на інше не можна.');
+  else if(ps-po<=0)
+    verd('v1v','t-no','ПОРІГ НІЧОГО НЕ ВІДДІЛЯЄ',
+      'При порозі '+f2(tv)+' його проходять '+ns+' із 209 пар однакового змісту і '+no+
+      ' із 209 випадкових: різниця часток '+f4(ps-po)+'. Тобто відповідь «схожі» тут не несе '+
+      'жодної інформації. Найкраще, на що здатне це подання, — '+f4(b.d)+
+      ' при порозі '+bestThr+'.');
+  else
+    verd('v1v','t-mid','ПОРІГ ПРАЦЮЄ, АЛЕ НЕ НАЙКРАЩЕ',
+      'При порозі '+f2(tv)+': '+ns+' із 209 пар однакового змісту ('+f1(100*ps)+' %) проти '+no+
+      ' із 209 випадкових ('+f1(100*po)+' %), різниця часток '+f4(ps-po)+'. Максимум цього '+
+      'подання — '+f4(b.d)+' при порозі '+bestThr+'.');
+}
+
+segment('seg1', function(i){ rep1=i; draw1(); });
+on('thr1','input',function(e){
+  thr1i=+e.target.value;
+  I('thr1o').textContent=f2(HB0+(HB1-HB0)*thr1i/HBN);
+  draw1();
+});
+
+/* ═══════════ фігура 2 · три мірки під множником шкали ═══════════ */
+
+var M2 = {
+  tf:  {raw:0.2198, sraw:0.0027, gap:0.2101, sgap:0.0019, auc:0.8586, sauc:0.0024},
+  emb: {raw:0.8408, sraw:0.0008, gap:0.2210, sgap:0.0079, auc:0.9222, sauc:0.0036}
+};
+var MEASURES = ['сирий косинус', 'розрив', 'AUC'];
+var meas2 = 0, k2 = 1.0;
+
+function values2(){
+  /* множник міняє значення й розкид у сирого косинуса й розриву,
+     але AUC залежить лише від порядку пар, тож на нього не діє */
+  if(meas2 === 0) return {a:M2.tf.raw, sa:M2.tf.sraw, b:M2.emb.raw*k2, sb:M2.emb.sraw*k2, top:1.0};
+  if(meas2 === 1) return {a:M2.tf.gap, sa:M2.tf.sgap, b:M2.emb.gap*k2, sb:M2.emb.sgap*k2, top:0.9};
+  return {a:M2.tf.auc, sa:M2.tf.sauc, b:M2.emb.auc, sb:M2.emb.sauc, top:1.0};
+}
+
+function draw2(){
+  var cv=I('c2'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var v=values2();
+  var x0=90, x1=W-30, base=H-56, top=40;
+  var scale=(base-top)/v.top;
+
+  capt(g, MEASURES[meas2] + (meas2===2 ? '' : (k2===1 ? '' : ', множник k = '+f2(k2))),
+       x0, 24, ink, 13, true);
+
+  /* сітка */
+  var t;
+  for(t=0; t<=v.top+1e-9; t+=0.1){
+    var y=base-t*scale;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g, f1(t), x0-10, y+4, soft, 10, false, 'right');
+  }
+
+  var bars=[{n:'TF-IDF', v:v.a, s:v.sa, c:teal}, {n:'ембединги', v:v.b, s:v.sb, c:rose}];
+  var bw=Math.min(150, (x1-x0)/3), gap=(x1-x0-2*bw)/3, i;
+  for(i=0;i<2;i++){
+    var bx=x0+gap+i*(bw+gap), bv=Math.max(0, Math.min(v.top, bars[i].v));
+    var by=base-bv*scale;
+    g.fillStyle=bars[i].c; g.globalAlpha=0.85;
+    g.fillRect(bx, by, bw, base-by); g.globalAlpha=1;
+    /* вусики розкиду */
+    var yl=base-Math.max(0,Math.min(v.top,bars[i].v-bars[i].s))*scale;
+    var yh=base-Math.max(0,Math.min(v.top,bars[i].v+bars[i].s))*scale;
+    g.strokeStyle=ink; g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(bx+bw/2, yl); g.lineTo(bx+bw/2, yh);
+    g.moveTo(bx+bw/2-7, yl); g.lineTo(bx+bw/2+7, yl);
+    g.moveTo(bx+bw/2-7, yh); g.lineTo(bx+bw/2+7, yh); g.stroke();
+    capt(g, f4(bars[i].v), bx+bw/2, by-9, ink, 14, true, 'center');
+    capt(g, bars[i].n, bx+bw/2, base+18, soft, 12, false, 'center');
+    capt(g, '± '+f4(bars[i].s), bx+bw/2, base+34, soft, 10, false, 'center');
+  }
+  capt(g, 'значення мірки', 8, base+18, soft, 10);
+
+  I('v2a').textContent=f4(v.a);
+  I('v2b').textContent=f4(v.b);
+  I('v2c').textContent=sgn4(v.b-v.a);
+  I('v2d').textContent=f4(Math.max(v.sa, v.sb));
+
+  var diff=v.b-v.a, spread=Math.max(v.sa, v.sb);
+  var ok=Math.abs(diff)>2*spread;
+  if(meas2===2)
+    verd('v2v','t-ok','AUC МНОЖНИКОВІ НЕ ПІДДАЄТЬСЯ',
+      'Хоч як крути повзунок, тут стоїть '+f4(v.b)+' проти '+f4(v.a)+
+      '. AUC дивиться на порядок пар, а множник порядку не міняє. Різниця '+sgn4(diff)+
+      ' при розкиді '+f4(spread)+' — доведена, і це єдина з трьох мірок, якою можна '+
+      'звітувати, не називаючи шкали.');
+  else if(diff>0 && ok)
+    verd('v2v','t-mid','ЧИСЛО ЗАЛЕЖИТЬ ВІД МНОЖНИКА',
+      'При k = '+f2(k2)+' ембединги дають '+f4(v.b)+' проти '+f4(v.a)+' у TF-IDF: різниця '+
+      sgn4(diff)+' при розкиді '+f4(spread)+'. Виглядає як перемога — але посунь повзунок, '+
+      'і та сама модель почне «програвати». Мірка, яку можна зсунути вибором одиниць, '+
+      'нічого не доводить.');
+  else if(diff>0)
+    verd('v2v','t-no','РІЗНИЦЯ В МЕЖАХ РОЗКИДУ',
+      'При k = '+f2(k2)+': '+f4(v.b)+' проти '+f4(v.a)+', тобто '+sgn4(diff)+
+      ' при розкиді '+f4(spread)+'. Менше за подвоєний розкид — не різниця. '+
+      'Саме так виглядає розрив при чесному k = 1.00.');
+  else
+    verd('v2v','t-no','ТЕПЕР ЕМБЕДИНГИ «ГІРШІ»',
+      'При k = '+f2(k2)+' ембединги дають '+f4(v.b)+' проти '+f4(v.a)+' у TF-IDF: '+
+      sgn4(diff)+'. Ми не змінили ані моделі, ані даних — лише одиниці виміру. '+
+      'Ось чому сирий косинус і розрив не можна цитувати без контролю.');
+}
+
+segment('seg2', function(i){ meas2=i; draw2(); });
+on('k2','input',function(e){ k2=(+e.target.value)/100; I('k2o').textContent=f2(k2); draw2(); });
+
+/* ═══════════ фігура 3 · скільки спільного напрямку віднімати ═══════════ */
+
+/* [alpha, однаковий зміст, випадкові, розрив, розкид розриву, AUC, розкид AUC] */
+var SWEEP = [
+  [0.00, 0.8408, 0.6198, 0.2210, 0.0079, 0.9222, 0.0036],
+  [0.25, 0.7676, 0.4339, 0.3337, 0.0086, 0.9378, 0.0030],
+  [0.50, 0.6759, 0.1958, 0.4801, 0.0058, 0.9540, 0.0021],
+  [0.75, 0.6178, 0.0546, 0.5631, 0.0033, 0.9560, 0.0032],
+  [1.00, 0.6599, 0.1824, 0.4775, 0.0074, 0.9379, 0.0044],
+  [1.25, 0.7593, 0.4370, 0.3223, 0.0029, 0.9184, 0.0057],
+  [1.50, 0.8414, 0.6366, 0.2048, 0.0032, 0.9055, 0.0054]
+];
+var TFGAP = 0.2101, TFGAPSD = 0.0019;
+var a3 = 0;
+
+function draw3(){
+  var cv=I('c3'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var row=SWEEP[a3], i;
+
+  /* ліва половина: дві купи як стовпчики */
+  var lx0=70, lx1=W*0.42, base=H-52, top=44, scale=(base-top)/1.0;
+  capt(g, 'косинус при α = '+f2(row[0]), lx0, 24, ink, 13, true);
+  var t;
+  for(t=0;t<=1.0001;t+=0.2){
+    var y=base-t*scale;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(lx0,y+0.5); g.lineTo(lx1,y+0.5); g.stroke();
+    capt(g, f1(t), lx0-8, y+4, soft, 10, false, 'right');
+  }
+  var pair=[{n:'однаковий', v:row[1], c:teal}, {n:'випадкові', v:row[2], c:rose}];
+  var bw=64, gp=(lx1-lx0-2*bw)/3;
+  for(i=0;i<2;i++){
+    var bx=lx0+gp+i*(bw+gp), by=base-Math.max(0,pair[i].v)*scale;
+    g.fillStyle=pair[i].c; g.globalAlpha=0.85; g.fillRect(bx,by,bw,base-by); g.globalAlpha=1;
+    capt(g, f4(pair[i].v), bx+bw/2, by-8, ink, 12, true, 'center');
+    capt(g, pair[i].n, bx+bw/2, base+18, soft, 11, false, 'center');
+  }
+  capt(g, 'зміст', lx0+gp+bw/2, base+33, soft, 10, false, 'center');
+  capt(g, 'пари', lx0+gp*2+bw+bw/2, base+33, soft, 10, false, 'center');
+
+  /* права половина: криві розриву й AUC */
+  var rx0=W*0.53, rx1=W-24, ry0=top, ry1=base;
+  capt(g, 'як їдуть мірки', rx0, 24, ink, 13, true);
+  var xOf=function(k){ return rx0+(rx1-rx0)*k/(SWEEP.length-1); };
+  var yGap=function(v){ return ry1-(ry1-ry0)*v/0.7; };
+  var yAuc=function(v){ return ry1-(ry1-ry0)*(v-0.85)/0.15; };
+  for(t=0;t<=0.7001;t+=0.1){
+    var yy=yGap(t);
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(rx0,yy+0.5); g.lineTo(rx1,yy+0.5); g.stroke();
+  }
+  /* рівень TF-IDF як орієнтир */
+  g.strokeStyle=amber; g.lineWidth=1.5; g.setLineDash([5,4]);
+  g.beginPath(); g.moveTo(rx0,yGap(TFGAP)); g.lineTo(rx1,yGap(TFGAP)); g.stroke();
+  g.setLineDash([]);
+  capt(g, 'розрив TF-IDF '+f4(TFGAP), rx1, yGap(TFGAP)-9, amber, 10, false, 'right');
+
+  var series=[{k:3, c:rose, y:yGap, n:'розрив'}, {k:5, c:teal, y:yAuc, n:'AUC'}];
+  var s;
+  for(s=0;s<series.length;s++){
+    g.strokeStyle=series[s].c; g.lineWidth=2; g.beginPath();
+    for(i=0;i<SWEEP.length;i++){
+      var x=xOf(i), y=series[s].y(SWEEP[i][series[s].k]);
+      if(i===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke();
+    for(i=0;i<SWEEP.length;i++){
+      g.fillStyle=series[s].c;
+      g.beginPath(); g.arc(xOf(i), series[s].y(SWEEP[i][series[s].k]), i===a3?5:2.5, 0, 6.2832); g.fill();
+    }
+  }
+  g.strokeStyle=ink; g.lineWidth=1; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(xOf(a3), ry0); g.lineTo(xOf(a3), ry1); g.stroke(); g.setLineDash([]);
+  for(i=0;i<SWEEP.length;i++) capt(g, f2(SWEEP[i][0]), xOf(i), ry1+16, i===a3?ink:soft, 9.5, i===a3, 'center');
+  capt(g, 'частка α, яку віднімаємо', (rx0+rx1)/2, ry1+32, soft, 10, false, 'center');
+  capt(g, 'розрив 0 … 0.7', rx0+4, ry0-6, rose, 10, true);
+  capt(g, 'AUC 0.85 … 1.00', rx1, ry0-6, teal, 10, true, 'right');
+
+  I('v3a').textContent=f4(row[1]);
+  I('v3b').textContent=f4(row[2]);
+  I('v3c').textContent=f4(row[3]);
+  I('v3d').textContent=f4(row[5]);
+
+  var best=0, bi;
+  for(bi=0;bi<SWEEP.length;bi++) if(SWEEP[bi][3]>SWEEP[best][3]) best=bi;
+  var diff=row[3]-TFGAP, spread=Math.max(row[4], TFGAPSD);
+  if(a3===best)
+    verd('v3v','t-ok','НАЙКРАЩЕ НАЛАШТУВАННЯ',
+      'При α = '+f2(row[0])+' випадкові пари падають до '+f4(row[2])+
+      ' — майже до нуля, як у TF-IDF, — а пари однакового змісту тримаються на '+f4(row[1])+
+      '. Розрив '+f4(row[3])+' проти '+f4(TFGAP)+' у TF-IDF, тобто у '+
+      f2(row[3]/TFGAP)+' раза більший. Ось тепер перевага доведена.');
+  else if(a3===0)
+    verd('v3v','t-no','НІЧОГО НЕ ЧІПАЛИ',
+      'Випадкові пари дістають '+f4(row[2])+' — стільки, скільки в TF-IDF дають справжні '+
+      'синоніми. Розрив '+f4(row[3])+' проти '+f4(TFGAP)+' при розкиді '+f4(spread)+
+      ': різниця '+sgn4(diff)+' менша за подвоєний розкид, тобто недоведена.');
+  else if(Math.abs(diff)>2*spread)
+    verd('v3v','t-mid','КРАЩЕ ЗА TF-IDF, АЛЕ НЕ МЕЖА',
+      'При α = '+f2(row[0])+' розрив '+f4(row[3])+' проти '+f4(TFGAP)+' у TF-IDF — різниця '+
+      sgn4(diff)+' при розкиді '+f4(spread)+', доведена. Найкраще ж значення '+
+      f4(SWEEP[best][3])+' стоїть при α = '+f2(SWEEP[best][0])+'.');
+  else
+    verd('v3v','t-no','ПЕРЕВИДАЛИЛИ',
+      'При α = '+f2(row[0])+' ми віднімаємо більше, ніж там було, і спільний напрямок '+
+      'починає накопичуватись у протилежний бік: випадкові пари знову '+f4(row[2])+
+      '. Розрив '+f4(row[3])+' проти '+f4(TFGAP)+' у TF-IDF при розкиді '+f4(spread)+
+      ' — різниця недоведена.');
+}
+
+on('a3','input',function(e){ a3=+e.target.value; I('a3o').textContent=f2(SWEEP[a3][0]); draw3(); });
+
+/* ═══════════ фігура 4 · частотні смуги ═══════════ */
+
+var BANDS = [
+  {lab:'0-300',     f:'310-27934', rnd:0.2771, sd:0.0005, stab:0.6762},
+  {lab:'300-1000',  f:'102-308',   rnd:0.3752, sd:0.0010, stab:0.6017},
+  {lab:'1000-3000', f:'26-102',    rnd:0.5339, sd:0.0019, stab:0.4895},
+  {lab:'3000-6074', f:'10-26',     rnd:0.7698, sd:0.0004, stab:0.3455}
+];
+var band4 = 0, thr4 = 0.70;
+
+function draw4(){
+  var cv=I('c4'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var x0=76, x1=W-30, base=H-58, top=44, scale=(base-top)/1.0, i, t;
+
+  capt(g, 'косинус ВИПАДКОВОЇ пари всередині смуги та стійкість сусідів', x0, 24, ink, 12.5, true);
+  capt(g, 'поріг «схожі» '+f2(thr4), x1, 24, css('--amber'), 12, true, 'right');
+  for(t=0;t<=1.0001;t+=0.2){
+    var y=base-t*scale;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g, f1(t), x0-8, y+4, soft, 10, false, 'right');
+  }
+
+  var slot=(x1-x0)/BANDS.length, bw=Math.min(46, slot/3);
+  for(i=0;i<BANDS.length;i++){
+    var cx=x0+slot*i+slot/2;
+    if(i===band4){
+      g.fillStyle=css('--rose-w');
+      g.fillRect(x0+slot*i+3, top-16, slot-6, base-top+16);
+    }
+    var b=BANDS[i];
+    var y1=base-b.rnd*scale, y2=base-b.stab*scale;
+    g.fillStyle=rose; g.globalAlpha=i===band4?0.95:0.5;
+    g.fillRect(cx-bw-3, y1, bw, base-y1);
+    g.fillStyle=teal; g.globalAlpha=i===band4?0.95:0.5;
+    g.fillRect(cx+3, y2, bw, base-y2);
+    g.globalAlpha=1;
+    capt(g, f4(b.rnd), cx-bw/2-3, y1-7, i===band4?ink:soft, 11, i===band4, 'center');
+    capt(g, f4(b.stab), cx+bw/2+3, y2-7, i===band4?ink:soft, 11, i===band4, 'center');
+    capt(g, b.lab, cx, base+18, i===band4?ink:soft, 11, i===band4, 'center');
+    capt(g, b.f+' разів', cx, base+33, soft, 9.5, false, 'center');
+  }
+
+  var yt=base-thr4*scale;
+  g.strokeStyle=amber; g.lineWidth=2; g.setLineDash([6,4]);
+  g.beginPath(); g.moveTo(x0,yt); g.lineTo(x1,yt); g.stroke(); g.setLineDash([]);
+
+  capt(g, 'рожевий — випадкова пара', x0, base+50, rose, 10);
+  capt(g, 'бірюзовий — спільних сусідів між зернами', x0+190, base+50, teal, 10);
+
+  var passing=[], count=0;
+  for(i=0;i<BANDS.length;i++) if(BANDS[i].rnd>=thr4){ passing.push(BANDS[i].lab); count++; }
+
+  I('v4a').textContent=BANDS[band4].f;
+  I('v4b').textContent=f4(BANDS[band4].rnd);
+  I('v4c').textContent=f4(BANDS[band4].stab);
+  I('v4d').textContent=count===0 ? 'жодна смуга' : passing.join(', ');
+
+  var here=BANDS[band4].rnd>=thr4;
+  var st=BANDS[band4].stab;
+  var stabNote = st>=0.60
+    ? 'Сусіди тут ще сяк-так стійкі: частка спільних між трьома зернами — '+f4(st)+'.'
+    : 'І сусіди тут хисткі: частка спільних між трьома зернами — лише '+f4(st)+'.';
+  if(count===0)
+    verd('v4v','t-mid','ПОРІГ ТРИМАЄ ВСІ СМУГИ',
+      'При порозі '+f2(thr4)+' випадкові пари не проходять ніде: найвище значення — '+
+      f4(BANDS[3].rnd)+' у найрідкісніших слів. Але й змістовні пари при такому порозі '+
+      'відсіються разом із ними — у смузі '+BANDS[band4].lab+' навіть випадкова пара дає '+
+      f4(BANDS[band4].rnd)+'.');
+  else if(here)
+    verd('v4v','t-no','У ЦІЙ СМУЗІ ПОРІГ НЕ ПРАЦЮЄ',
+      'Смуга '+BANDS[band4].lab+': слова тут трапляються '+BANDS[band4].f+' разів, і '+
+      'ВИПАДКОВА пара дістає '+f4(BANDS[band4].rnd)+' — вище за поріг '+f2(thr4)+
+      '. Тобто поріг оголосить схожими будь-які два слова цієї смуги. '+stabNote);
+  else
+    verd('v4v','t-mid','ТУТ ПОРІГ ЩЕ ТРИМАЄ, А ПОРУЧ УЖЕ НІ',
+      'У смузі '+BANDS[band4].lab+' випадкова пара дає '+f4(BANDS[band4].rnd)+
+      ', і поріг '+f2(thr4)+' її відсікає. Але той самий поріг проходять смуги: '+
+      passing.join(', ')+'. Один поріг на весь словник не існує.');
+}
+
+segment('seg4', function(i){ band4=i; draw4(); });
+on('t4','input',function(e){ thr4=(+e.target.value)/100; I('t4o').textContent=f2(thr4); draw4(); });
+
+/* ═══════════ фігура 5 · зовнішня оцінка на чотирьох обсягах ═══════════ */
+
+var EXT = [
+  {n:200,   t:0.6636, ts:0.0266, e:0.6282, es:0.0022},
+  {n:1000,  t:0.8019, ts:0.0097, e:0.6665, es:0.0134},
+  {n:5000,  t:0.8708, ts:0.0014, e:0.7038, es:0.0081},
+  {n:65375, t:0.9006, ts:0.0022, e:0.7231, es:0.0041}
+];
+var size5 = 3, mult5 = 2;
+
+function draw5(){
+  var cv=I('c5'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var x0=70, x1=W*0.46, base=H-56, top=44, lo=0.55, hi=0.95;
+  var scale=(base-top)/(hi-lo), i, t;
+  var row=EXT[size5];
+
+  capt(g, 'F1 класу «помилка» на '+thou(row.n)+' розмічених', x0, 24, ink, 12.5, true);
+  for(t=lo;t<=hi+1e-9;t+=0.05){
+    var y=base-(t-lo)*scale;
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x0,y+0.5); g.lineTo(x1,y+0.5); g.stroke();
+    capt(g, f2(t), x0-8, y+4, soft, 10, false, 'right');
+  }
+  var bars=[{n:'TF-IDF', v:row.t, s:row.ts, c:teal}, {n:'ембединги', v:row.e, s:row.es, c:rose}];
+  var bw=62, gp=(x1-x0-2*bw)/3;
+  for(i=0;i<2;i++){
+    var bx=x0+gp+i*(bw+gp), by=base-(bars[i].v-lo)*scale;
+    g.fillStyle=bars[i].c; g.globalAlpha=0.85; g.fillRect(bx,by,bw,base-by); g.globalAlpha=1;
+    var yl=base-(bars[i].v-bars[i].s-lo)*scale, yh=base-(bars[i].v+bars[i].s-lo)*scale;
+    g.strokeStyle=ink; g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(bx+bw/2,yl); g.lineTo(bx+bw/2,yh);
+    g.moveTo(bx+bw/2-6,yl); g.lineTo(bx+bw/2+6,yl);
+    g.moveTo(bx+bw/2-6,yh); g.lineTo(bx+bw/2+6,yh); g.stroke();
+    capt(g, f4(bars[i].v), bx+bw/2, by-9, ink, 12, true, 'center');
+    capt(g, bars[i].n, bx+bw/2, base+18, soft, 11, false, 'center');
+  }
+
+  /* права половина: обидві криві по обсягах */
+  var rx0=W*0.57, rx1=W-24, ry0=top, ry1=base;
+  capt(g, 'уся крива', rx0, 24, ink, 12.5, true);
+  var xOf=function(k){ return rx0+(rx1-rx0)*k/(EXT.length-1); };
+  var yOf=function(v){ return ry1-(ry1-ry0)*(v-lo)/(hi-lo); };
+  for(t=lo;t<=hi+1e-9;t+=0.05){
+    g.strokeStyle=hair; g.lineWidth=1;
+    g.beginPath(); g.moveTo(rx0,yOf(t)+0.5); g.lineTo(rx1,yOf(t)+0.5); g.stroke();
+  }
+  var lines=[{key:'t', c:teal}, {key:'e', c:rose}], s;
+  for(s=0;s<lines.length;s++){
+    g.strokeStyle=lines[s].c; g.lineWidth=2; g.beginPath();
+    for(i=0;i<EXT.length;i++){
+      var x=xOf(i), y=yOf(EXT[i][lines[s].key]);
+      if(i===0) g.moveTo(x,y); else g.lineTo(x,y);
+    }
+    g.stroke();
+    for(i=0;i<EXT.length;i++){
+      g.fillStyle=lines[s].c;
+      g.beginPath(); g.arc(xOf(i), yOf(EXT[i][lines[s].key]), i===size5?5:2.5, 0, 6.2832); g.fill();
+    }
+  }
+  g.strokeStyle=ink; g.lineWidth=1; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(xOf(size5), ry0); g.lineTo(xOf(size5), ry1); g.stroke(); g.setLineDash([]);
+  for(i=0;i<EXT.length;i++)
+    capt(g, thou(EXT[i].n), xOf(i), ry1+16, i===size5?ink:soft, 9.5, i===size5, 'center');
+  capt(g, 'розмічених прикладів', (rx0+rx1)/2, ry1+32, soft, 10, false, 'center');
+
+  var diff=row.e-row.t, spread=Math.max(row.ts, row.es), need=mult5*spread;
+  I('v5a').textContent=f4(row.t);
+  I('v5b').textContent=f4(row.e);
+  I('v5c').textContent=sgn4(diff);
+  I('v5d').textContent=f4(need);
+
+  var rule='за правилом «більше за '+mult5+' розкиди» ';
+  if(Math.abs(diff)<=need)
+    verd('v5v','t-mid','РІЗНИЦЯ НЕДОВЕДЕНА',
+      'На '+thou(row.n)+' прикладах ембединги дають '+f4(row.e)+' проти '+f4(row.t)+
+      ' у TF-IDF: '+sgn4(diff)+' при розкиді '+f4(spread)+'. Щоб назвати це різницею '+
+      rule+', потрібно більше за '+f4(need)+' — а маємо менше. Тобто ембединги тут '+
+      'не виграють, а лише перестають програвати.');
+  else
+    verd('v5v','t-no','ЕМБЕДИНГИ ПРОГРАЮТЬ, І ЦЕ ДОВЕДЕНО',
+      'На '+thou(row.n)+' прикладах: '+f4(row.e)+' проти '+f4(row.t)+', тобто '+sgn4(diff)+
+      ' при розкиді '+f4(spread)+'. Треба було '+rule+'перевищити '+f4(need)+
+      ' — перевищено у '+f1(Math.abs(diff)/spread)+' раза. Що більше розмітки, то ширший '+
+      'розрив: TF-IDF від 200 до 65 375 додає +0.2370, ембединги — лише +0.0949.');
+}
+
+segment('seg5', function(i){ size5=i; draw5(); });
+on('m5','input',function(e){ mult5=+e.target.value; I('m5o').textContent=String(mult5); draw5(); });
+
+/* ═══════════ фігура 6 · звідки прийшли сусіди слова ═══════════ */
+
+var SAME_PROG = 0.3555, SAME_SD = 0.0038, CHANCE_PROG = 0.0873;
+var WORDS = [
+  {w:'дерево', p:'git', share:0.7368, n:[
+    ['робоче','git',1],['директорію','git',1],['допис','git',1],
+    ['підмодуля','git',1],['робочу','libwnck-3.0',0]]},
+  {w:'ключ', p:'gnupg2', share:0.1974, n:[
+    ['закритий','gnupg2',1],['відкликання','gnupg2',1],['сертифікат','gnupg2',1],
+    ['відкритий','gnupg2',1],['вторинний','NetworkManager-openconnect',0]]},
+  {w:'гілка', p:'git', share:0.6000, n:[
+    ['директорія','git',1],['верхівка','git',1],['нова','git',1],
+    ['першоджерельне','git',1],['стара','git',1]]},
+  {w:'вікно', p:'gsettings-desktop-schemas', share:0.1814, n:[
+    ['діалогове','inkscape',0],['екран','gnome-control-center-2.0',0],
+    ['монітор','gnome-system-monitor',0],['фокус','gtk30-properties',0],
+    ['край','gsettings-desktop-schemas',1]]},
+  {w:'сум', p:'coreutils', share:0.2453, n:[
+    ['контрольних','coreutils',1],['пакування','gas',0],['карт','inkscape',0],
+    ['всього','libgphoto2-6',0],['перевірці','coreutils',1]]},
+  {w:'поле', p:'gcc', share:0.2203, n:[
+    ['поля','gcc',1],['бітове','gas',0],['нульовим','gcc',1],
+    ['кіб','libvirt',0],['бітовим','gas',0]]},
+  {w:'адреса', p:'libvirt', share:0.1589, n:[
+    ['маска','libvirt',1],['електронної','git',0],['некоректною','NetworkManager',0],
+    ['нова','git',0],['назва','libvirt',1]]}
+];
+var word6 = 0;
+
+function draw6(){
+  var cv=I('c6'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var it=WORDS[word6], i, same=0;
+  for(i=0;i<it.n.length;i++) if(it.n[i][2]) same++;
+
+  var x0=26, x1=W-26, rowH=42, top=96;
+
+  capt(g, it.w, x0, 40, ink, 26, true);
+  capt(g, 'головна програма: '+cut(g, it.p, 320, 12, false), x0, 62, teal, 12);
+  capt(g, 'вона дає '+f4(it.share)+' усіх згадок слова', x0, 80, soft, 11);
+
+  capt(g, 'пʼятеро найближчих сусідів', x1, 40, soft, 11, false, 'right');
+  capt(g, 'бірюзовий — та сама програма', x1, 58, teal, 10.5, false, 'right');
+  capt(g, 'рожевий — інша', x1, 74, rose, 10.5, false, 'right');
+
+  for(i=0;i<it.n.length;i++){
+    var y=top+i*rowH, c=it.n[i][2]?teal:rose;
+    g.fillStyle=it.n[i][2]?css('--teal-w'):css('--rose-w');
+    g.fillRect(x0, y, x1-x0, rowH-8);
+    g.fillStyle=c; g.fillRect(x0, y, 4, rowH-8);
+    capt(g, cut(g, it.n[i][0], 210, 15, true), x0+16, y+24, ink, 15, true);
+    capt(g, cut(g, it.n[i][1], (x1-x0)-260, 12, false), x0+240, y+24, c, 12);
+  }
+
+  var by=top+5*rowH+16, bw=x1-x0-160;
+  capt(g, 'сусідів із тієї самої програми: '+same+' із 5', x0, by+12, ink, 12, true);
+  g.fillStyle=hair; g.fillRect(x0, by+20, bw, 8);
+  g.fillStyle=teal; g.fillRect(x0, by+20, bw*same/5, 8);
+  g.fillStyle=css('--amber');
+  g.fillRect(x0+bw*SAME_PROG-1, by+16, 2, 16);
+  capt(g, 'по всьому словнику '+f4(SAME_PROG), x0+bw+10, by+29, css('--amber'), 10.5);
+
+  I('v6a').textContent=it.p;
+  I('v6b').textContent=f4(it.share);
+  I('v6c').textContent=same+' із 5';
+  I('v6d').textContent=f4(SAME_PROG);
+
+  if(same>=4 && it.share>=0.5)
+    verd('v6v','t-no','ЦЕ ВЖЕ НЕ МОВА, А ПРОГРАМА',
+      '«'+it.w+'» живе переважно в '+it.p+': на неї припадає '+f4(it.share)+
+      ' усіх згадок слова, і '+same+' із пʼятьох сусідів прийшли звідти ж. По всьому '+
+      'словнику найближчий сусід із тієї самої програми буває у '+f4(SAME_PROG)+
+      ' випадків, а випадково вийшло б '+f4(CHANCE_PROG)+' — тобто у '+
+      f1(SAME_PROG/CHANCE_PROG)+' раза рідше.');
+  else if(same>=4)
+    verd('v6v','t-no','СЛОВО РОЗКИДАНЕ, А СУСІДИ — НІ',
+      '«'+it.w+'» саме по собі не належить одній програмі: на головну припадає лише '+
+      f4(it.share)+' згадок. Зате '+same+' із пʼятьох найближчих сусідів прийшли саме '+
+      'з '+it.p+' — тобто модель обрала одне значення слова з багатьох і поставила його '+
+      'вектор поруч із сусідами цього значення. Решта значень у просторі просто '+
+      'не подані.');
+  else if(same>=2)
+    verd('v6v','t-mid','ДОМЕН ВИДНО, АЛЕ НЕ ЦІЛКОМ',
+      '«'+it.w+'» має головною програмою '+it.p+', і на неї припадає лише '+f4(it.share)+
+      ' усіх згадок слова. Сусідів звідти '+same+' із пʼятьох — приблизно як у середньому по '+
+      'словнику ('+f4(SAME_PROG)+'). Слово вживають у багатьох програмах, тож і сусіди '+
+      'приходять звідусіль.');
+  else
+    verd('v6v','t-ok','СЛОВО ЖИВЕ СКРІЗЬ',
+      '«'+it.w+'» трапляється в багатьох програмах: на головну припадає всього '+
+      f4(it.share)+' усіх згадок слова. Сусідів із неї '+same+' із пʼятьох — менше, ніж середні '+
+      f4(SAME_PROG)+' по словнику. Доменна упередженість тим сильніша, чим вужче '+
+      'живе слово.');
+}
+
+segment('seg6', function(i){ word6=i; draw6(); });
+
+/* ═══════════ фігура 7 · поріг min_count і те, що за ним лишається ═══════════ */
+
+var EVERYDAY = [['мама',0],['тато',0],['брат',0],['сестра',0],['дитина',2],['бабуся',0],
+['хліб',0],['молоко',0],['сіль',6],['цукор',0],['борщ',0],['вечеря',0],['сніданок',0],
+['яблуко',0],['картопля',0],['дощ',0],['сніг',0],['сонце',0],['вітер',0],['хмара',0],
+['дерево',77],['квітка',0],['трава',0],['ліс',0],['річка',0],['море',0],['гора',0],
+['кіт',0],['собака',0],['кінь',0],['корова',0],['птах',0],['риба',0],['любов',0],
+['щастя',0],['сум',56],['страх',1],['радість',0],['сміх',0],['сльози',0],['вулиця',1],
+['місто',10],['село',0],['дорога',1],['школа',0],['лікарня',0],['магазин',2],['базар',0],
+['церква',0],['поїзд',0],['сорочка',0],['взуття',0],['ліжко',0],['стіл',1],['стілець',0],
+['вікно',245],['двері',0],['пісня',2],['танець',0],['свято',0]];
+var TECHNICAL = [['файл',3471],['помилка',3522],['каталог',1015],['сервер',386],
+['пароль',530],['сертифікат',251]];
+var MINC = [1,2,3,5,10,20,50,100,300];
+var mc7 = 4;
+
+function draw7(){
+  var cv=I('c7'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair');
+  var rose=css('--rose'), teal=css('--teal');
+  var t=MINC[mc7], i, ok=0, okT=0;
+
+  capt(g, 'шістдесят побутових слів', 26, 26, ink, 12.5, true);
+  var cols=6, cw=Math.floor((W*0.58-26)/cols), ch=29, x0=26, y0=42;
+  for(i=0;i<EVERYDAY.length;i++){
+    var cx=x0+(i%cols)*cw, cy=y0+Math.floor(i/cols)*ch;
+    var live=EVERYDAY[i][1]>=t; if(live) ok++;
+    g.fillStyle=live?teal:css('--paper');
+    g.globalAlpha=live?0.85:1; g.fillRect(cx, cy, cw-4, ch-6); g.globalAlpha=1;
+    g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(cx+0.5, cy+0.5, cw-5, ch-7);
+    capt(g, cut(g, EVERYDAY[i][0], cw-12, 10, false), cx+(cw-4)/2, cy+13, live?ink:soft, 10, live, 'center');
+    capt(g, String(EVERYDAY[i][1]), cx+(cw-4)/2, cy+23, live?ink:hair, 9, false, 'center');
+  }
+
+  var tx=W*0.62;
+  capt(g, 'шість технічних', tx, 26, ink, 12.5, true);
+  for(i=0;i<TECHNICAL.length;i++){
+    var ty=y0+i*(ch+4), liveT=TECHNICAL[i][1]>=t; if(liveT) okT++;
+    g.fillStyle=liveT?rose:css('--paper');
+    g.globalAlpha=liveT?0.85:1; g.fillRect(tx, ty, W-26-tx, ch-6); g.globalAlpha=1;
+    g.strokeStyle=hair; g.strokeRect(tx+0.5, ty+0.5, W-27-tx, ch-7);
+    capt(g, TECHNICAL[i][0], tx+10, ty+18, liveT?ink:soft, 12, liveT);
+    capt(g, String(TECHNICAL[i][1]), W-34, ty+18, liveT?ink:hair, 11, false, 'right');
+  }
+
+  capt(g, 'поріг min_count = '+t+' · заповнений квадратик означає, що слово дістає вектор',
+       26, H-16, soft, 11);
+
+  I('v7a').textContent=ok+' із 60';
+  I('v7b').textContent=okT+' із 6';
+  I('v7c').textContent=f1(100*ok/60)+' %';
+  I('v7d').textContent=f1(100*okT/6)+' %';
+
+  if(t===1)
+    verd('v7v','t-no','ПОРІГ НІ ДО ЧОГО',
+      'Опустили поріг до одиниці — тобто взяли геть усе, що бодай раз трапилось. '+
+      'Побутових слів усе одно лише '+ok+' із 60 ('+f1(100*ok/60)+' %). Решти сорока '+
+      'восьми в корпусі немає взагалі: ані «мами», ані «хліба», ані «сонця». '+
+      'Технічних при цьому '+okT+' із 6.');
+  else if(okT===6)
+    verd('v7v','t-mid','ТЕХНІЧНІ ТРИМАЮТЬСЯ, ПОБУТОВІ НІ',
+      'При min_count = '+t+' вектор дістають '+ok+' із 60 побутових слів ('+f1(100*ok/60)+
+      ' %) і всі 6 технічних. Найрідкісніше технічне слово тут — «сертифікат» '+
+      'із 251 згадкою; найчастіше побутове — «вікно» з 245, і воно ж означає вікно '+
+      'програми, а не те, що в стіні.');
+  else
+    verd('v7v','t-no','ПОБУТОВИХ НЕ ЛИШИЛОСЬ ЖОДНОГО',
+      'При min_count = '+t+' поріг дістав уже й «сертифікат»: технічних лишилось '+okT+
+      ' із 6, а побутових — '+ok+' із 60. Порівняй ціну: шість технічних слів разом '+
+      'важать 9175 слововживань проти 404 у всіх шістдесяти побутових, тобто у 22.7 '+
+      'раза більше.');
+}
+
+on('mc7','input',function(e){ mc7=+e.target.value; I('mc7o').textContent=String(MINC[mc7]); draw7(); });
+
+/* ═══════════ старт ═══════════ */
+function drawAll(){ draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7(); }
+I('thr1o').textContent=f2(HB0+(HB1-HB0)*thr1i/HBN);
+I('k2o').textContent=f2(k2);
+I('a3o').textContent=f2(SWEEP[a3][0]);
+I('t4o').textContent=f2(thr4);
+I('m5o').textContent=String(mult5);
+I('mc7o').textContent=String(MINC[mc7]);
+drawAll();
+window.addEventListener('resize', drawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', drawAll);
+}
+
+})();
+</script>
+</html>

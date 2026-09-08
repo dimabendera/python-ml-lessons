@@ -1,0 +1,2902 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG і векторні бази</title>
+<meta name="description" content="RAG тримається на пошуку, і саме пошук у ньому ламається найчастіше. Тема будує стенд із безкоштовним еталоном — 1648 описів програм, у кожного людське резюме як запит — і міряє все чесно: BM25 дає MRR 0.7773, щільний вектор із тієї самої матриці — 0.6770, а на повному ранзі 0.7376 проти 0.7373 у вихідної матриці, тобто стиснення нічого не додає. Суміш RRF із рівною вагою програє чистому BM25 (0.7286). Наближений пошук: комірка й nprobe — дві ручки одного налаштування, і при nlist=256, nprobe=64 пошук стає повільнішим за точний перебір. Двобічний енкодер, контрастна втрата, переранжування і чотири ланки RAG — де кожна рветься.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#edf0f3; --raise:#ffffff; --ink:#17212b; --soft:#5b6b7c; --hair:#d3dae1;
+  --rose:#c2185b; --teal:#0f766e; --amber:#c2620f; --rose-w:#c2185b22; --teal-w:#0f766e1a;
+  --amber-w:#c2620f22;
+  --shadow:0 1px 2px #17212b0d, 0 8px 24px #17212b0f;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+    --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+    --amber-w:#f5a52426;
+    --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171d; --raise:#1a2029; --ink:#e6ecf2; --soft:#93a3b4; --hair:#2b343f;
+  --rose:#f06292; --teal:#2dd4bf; --amber:#f5a524; --rose-w:#f0629222; --teal-w:#2dd4bf1a;
+  --amber-w:#f5a52426;
+  --shadow:0 1px 2px #0006, 0 8px 24px #0007;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Literata,Georgia,serif; font-size:18px; line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.col{max-width:660px; margin:0 auto; padding:0 22px}
+
+header{padding:64px 0 22px; border-bottom:1px solid var(--hair)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 18px;
+}
+h1{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:800;
+  font-size:clamp(38px,7vw,66px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 16px; text-wrap:balance;
+}
+.stand{font-size:20px; color:var(--soft); margin:0 0 26px; text-wrap:balance}
+.meta{
+  display:flex; gap:18px; flex-wrap:wrap; font-family:"JetBrains Mono",monospace;
+  font-size:12px; color:var(--soft); padding-bottom:8px;
+}
+.meta b{color:var(--ink); font-weight:700}
+
+/* зміст */
+.toc{margin:34px 0 0; padding:20px 22px; background:var(--raise);
+  border:1px solid var(--hair); border-radius:12px}
+.toc h4{font-family:Unbounded,sans-serif; font-size:12px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--soft); margin:0 0 12px; font-weight:600}
+.toc ol{margin:0; padding-left:20px; columns:2; column-gap:26px; font-size:15px}
+@media(max-width:620px){.toc ol{columns:1}}
+.toc li{margin-bottom:5px; break-inside:avoid}
+.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent}
+.toc a:hover{border-bottom-color:var(--rose); color:var(--rose)}
+
+h2{
+  font-family:Unbounded,system-ui,sans-serif; font-weight:600;
+  font-size:clamp(24px,3.4vw,32px); line-height:1.15; letter-spacing:-.015em;
+  margin:66px 0 6px; text-wrap:balance; scroll-margin-top:20px;
+}
+h2 .num{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:12px;
+  font-weight:400; letter-spacing:.16em; color:var(--rose); margin-bottom:10px;
+}
+h3{font-family:Unbounded,system-ui,sans-serif; font-weight:600; font-size:19px; margin:36px 0 4px}
+p{margin:16px 0}
+a{color:var(--teal)}
+strong{font-weight:600}
+ul,ol.steps{margin:16px 0; padding-left:22px}
+li{margin:8px 0}
+
+.lead::first-letter{
+  float:left; font-family:Unbounded,sans-serif; font-weight:800; font-size:64px;
+  line-height:.82; margin:6px 10px 0 0; color:var(--rose);
+}
+
+.eq{
+  font-family:"JetBrains Mono",monospace; font-size:16px; text-align:center;
+  background:var(--raise); border:1px solid var(--hair); border-radius:10px;
+  padding:16px 12px; margin:22px 0; overflow-x:auto; box-shadow:var(--shadow);
+}
+.eq.left{text-align:left; white-space:pre; line-height:1.6; font-size:14.5px}
+code{font-family:"JetBrains Mono",monospace; font-size:.88em; background:var(--rose-w); padding:1px 5px; border-radius:4px}
+.sub{font-size:.75em; vertical-align:-.25em}
+.sup{font-size:.75em; vertical-align:.42em}
+
+/* покрокове виведення */
+.derive{margin:26px 0; border-left:2px solid var(--hair); padding-left:20px}
+.derive .step{margin:20px 0}
+.derive .lbl{
+  font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--rose); display:block; margin-bottom:6px;
+}
+.derive .eq{margin:10px 0; text-align:left; padding:12px 14px}
+.derive p{margin:8px 0; font-size:16.5px}
+
+.note{
+  border-left:3px solid var(--teal); background:var(--teal-w);
+  padding:14px 18px; margin:26px 0; border-radius:0 8px 8px 0; font-size:16.5px;
+}
+.note b{font-family:Unbounded,sans-serif; font-size:13px; letter-spacing:.02em}
+.warn{border-left-color:var(--rose); background:var(--rose-w)}
+
+figure{
+  width:min(1000px, calc(100vw - 40px));
+  margin:52px 0 52px 50%; transform:translateX(-50%);
+  background:var(--raise); border:1px solid var(--hair);
+  border-radius:14px; padding:22px; box-shadow:var(--shadow);
+}
+figcaption{
+  font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--soft);
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--hair); line-height:1.55;
+}
+figcaption b{color:var(--ink)}
+.fig-head{
+  font-family:Unbounded,sans-serif; font-weight:600; font-size:15px;
+  margin:0 0 4px; display:flex; align-items:center; gap:9px;
+}
+.fig-head::before{content:""; width:9px; height:9px; border-radius:2px; background:var(--rose); flex:none}
+.fig-sub{font-size:14px; color:var(--soft); margin:0 0 16px}
+
+.panel{display:grid; grid-template-columns:1fr 250px; gap:20px; align-items:start}
+@media(max-width:720px){.panel{grid-template-columns:1fr}}
+canvas{width:100%; height:auto; display:block; border-radius:8px; touch-action:none}
+
+.ctl{margin-bottom:15px}
+.ctl label{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  font-family:"JetBrains Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); margin-bottom:7px;
+}
+.ctl label output{color:var(--rose); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums}
+.ctl label .raw{text-transform:none; font-size:13px; color:var(--ink)}
+input[type=range]{width:100%; accent-color:var(--rose); cursor:pointer}
+input[type=range]:focus-visible{outline:2px solid var(--teal); outline-offset:4px}
+
+.readout{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px}
+.readout.one{grid-template-columns:1fr}
+.cellv{background:var(--paper); border:1px solid var(--hair); border-radius:8px; padding:8px 10px}
+.cellv b{
+  display:block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+.cellv i{
+  font-style:normal; font-family:"JetBrains Mono",monospace; font-size:15px;
+  font-variant-numeric:tabular-nums; font-weight:700; overflow-wrap:anywhere;
+}
+.cellv i.sm{font-size:12px; font-weight:400}
+
+button{
+  width:100%; margin-top:12px; padding:9px 12px; cursor:pointer; border-radius:8px;
+  font-family:Unbounded,sans-serif; font-size:12px; font-weight:600;
+  border:1.5px solid var(--teal); background:transparent; color:var(--teal);
+  transition:background .15s,color .15s;
+}
+button:hover{background:var(--teal); color:var(--raise)}
+button:focus-visible{outline:2px solid var(--rose); outline-offset:3px}
+button:disabled{opacity:.4; cursor:default}
+button:disabled:hover{background:transparent; color:var(--teal)}
+.seg{display:flex; margin-bottom:15px; border:1.5px solid var(--hair); border-radius:8px; overflow:hidden}
+.seg button{
+  margin:0; border:0; border-radius:0; flex:1; font-size:11px; padding:8px 4px;
+  color:var(--soft); background:transparent; border-right:1px solid var(--hair);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--rose); color:#fff}
+.seg button:hover{background:var(--rose-w); color:var(--ink)}
+.seg button[aria-pressed=true]:hover{background:var(--rose); color:#fff}
+.seg.wrap{flex-wrap:wrap}
+.seg.wrap button{flex:1 1 44%; border-bottom:1px solid var(--hair); font-size:10.5px; padding:8px 2px}
+
+.verdict{margin-top:12px; font-size:13.5px; line-height:1.5; color:var(--soft); min-height:62px}
+.tag{
+  display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10px;
+  letter-spacing:.1em; padding:3px 8px; border-radius:20px; margin-bottom:6px; font-weight:700;
+}
+.t-ok{background:var(--teal-w); color:var(--teal)}
+.t-no{background:var(--rose-w); color:var(--rose)}
+.t-mid{background:var(--amber-w); color:var(--amber)}
+
+.chk{display:flex; align-items:flex-start; gap:8px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--soft); margin-top:10px; cursor:pointer; line-height:1.45}
+.chk input{accent-color:var(--teal); width:15px; height:15px; cursor:pointer; flex:none; margin-top:2px}
+
+table{width:100%; border-collapse:collapse; margin:24px 0; font-size:15.5px}
+th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--hair)}
+th{
+  font-family:"JetBrains Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--soft); font-weight:400;
+}
+td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px; color:var(--rose); white-space:nowrap}
+.scroll-x{overflow-x:auto}
+
+footer{margin:80px 0 60px; padding-top:26px; border-top:1px solid var(--hair);
+  font-size:14px; color:var(--soft)}
+footer a{color:var(--teal)}
+
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+
+.topnav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0}
+.topnav a{font-family:"JetBrains Mono",monospace;font-size:12px;padding:7px 13px;
+  border-radius:8px;border:1px solid var(--hair);background:var(--raise);
+  color:var(--teal);text-decoration:none}
+.topnav a:hover{border-color:var(--teal);background:var(--teal-w)}
+.topnav .spacer{flex:1}
+.nextsteps{margin:64px 0 0;padding-top:28px;border-top:1px solid var(--hair)}
+.nextsteps h3{font-family:Unbounded,sans-serif;font-size:17px;margin:0 0 4px}
+.nextsteps .lead-sub{color:var(--soft);font-size:15px;margin:0 0 18px}
+.nextsteps .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.step{display:flex;flex-direction:column;gap:5px;padding:15px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.step:hover{border-color:var(--rose);background:var(--rose-w)}
+.step .k{font-family:Unbounded,sans-serif;font-size:14px}
+.step .d{font-size:13.5px;color:var(--soft);line-height:1.45}
+.step .dl{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--teal)}
+.pager{display:flex;flex-wrap:wrap;gap:12px;margin:34px 0 0}
+.pager a{flex:1;min-width:210px;padding:14px 17px;border-radius:11px;
+  border:1px solid var(--hair);background:var(--raise);text-decoration:none;color:var(--ink)}
+.pager a:hover{border-color:var(--teal);background:var(--teal-w)}
+.pager .dir{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--soft);margin-bottom:3px}
+.pager .ttl{font-family:Unbounded,sans-serif;font-size:14px}
+.pager .next{text-align:right}
+
+/* Лігатури JetBrains Mono склеюють оператори: != малюється як ≠, <= як ⩽,
+   -> як →. У курсі програмування це вада — читач бачить символ, якого
+   немає на клавіатурі, і не може відтворити код. */
+code, pre, kbd, samp, .mono, .eyebrow, .meta, h2 .num, .eq, .derive .lbl, figcaption, .ctl label, .cellv b, .cellv i, .code, .tag, .chk, th, td:first-child, .topnav a, .step .dl, .pager .dir, .meth td:first-child, .nums td, .nums th, .ctl .cap{font-variant-ligatures:none}
+
+</style><style>
+/* ── компоненти саме цієї теми ────────────────────────────────── */
+
+/* грабля №14: лігатури живуть у КОЖНОМУ моноширинному блоці, а не лише в <code> */
+.eq, .code, .cellv, .cellv i, .cellv b, figcaption, th, td, .ctl label, .tag,
+.toc, .eyebrow, .meta, h2 .num, .derive .lbl, .chk, .topnav a, .pager .dir,
+.step .dl, .ctl .cap, .nums td, .nums th, .nums td:first-child,
+.plain td:first-child, td:first-child, code, pre, kbd, samp,
+.mono{font-variant-ligatures:none}
+
+/* довгі імена не мають де перенестись і розпирають сторінку на телефоні (грабля №10) */
+code{overflow-wrap:anywhere}
+
+/* елемент сітки за замовчуванням не вужчий за свій вміст */
+.panel > *{min-width:0}
+
+/* короткі імена в заголовках, змісті й підписах не рвемо посередині */
+h2 code, .fig-head code, .toc code, .chk code, .cellv code,
+td code{overflow-wrap:normal; white-space:nowrap}
+
+/* словесні таблиці: перша колонка моноширинна, але переноситься по словах */
+.plain td:first-child{font-family:"JetBrains Mono",monospace; font-size:13px;
+  color:var(--rose); white-space:normal; font-weight:400}
+.plain td{font-size:14.5px}
+
+/* таблиця з числами: колонки праворуч моноширинні й вирівняні по правому краю */
+.nums td, .nums th{font-family:"JetBrains Mono",monospace; font-size:13.5px;
+  text-align:right; white-space:nowrap}
+.nums td:first-child{color:var(--rose); text-align:left; white-space:normal;
+  font-family:"JetBrains Mono",monospace; font-size:13px}
+.nums th{text-align:right; font-size:10.5px}
+.nums th:first-child{text-align:left}
+.nums tr.hot td{background:var(--rose-w)}
+
+/* підпис над групою кнопок у бічній колонці */
+.ctl .cap{font-family:"JetBrains Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--soft); display:block; margin-bottom:7px}
+
+/* грабля №3 і №15: під uppercase латиниця й кирилиця псуються.
+   .raw мусить діяти в КОЖНОМУ місці, де стоїть text-transform */
+.ctl .cap .raw, .cellv b .raw, .seg button .raw, .ctl label .raw,
+.eyebrow .raw, h2 .num .raw{text-transform:none}
+
+h1{overflow-wrap:break-word}
+.seg.wrap button{flex:1 1 46%}
+.eq.left{overflow-x:auto}
+</style><body>
+<header>
+  <div class="col">
+    <p class="eyebrow">Обробка природної мови · Блок 7 · Тема 36</p>
+    <h1>RAG і векторні бази</h1>
+    <p class="stand">Схема, яку сьогодні малюють у кожному другому туторіалі, виглядає
+      так: покласти документи у векторну базу, знайти найближчі за змістом, віддати
+      мовній моделі — і вона відповість. Кожен крок цієї схеми тут буде розібраний
+      до дна, а потім заміряний. Виявиться, що на нашій колекції алгоритм 1994 року
+      обганяє щільні вектори, що суміш двох способів гірша за кращий із них, і що
+      наближений пошук уміє бути повільнішим за перебір усього підряд. Жоден із цих
+      результатів не є вироком векторним базам — але кожен пояснює, чому «зробіть
+      семантичний пошук» не є інженерним рішенням.</p>
+    <div class="toc">
+      <h4>Що всередині</h4>
+      <ol>
+        <li><a href="#s1">Обіцянка, яку лишила тема 09</a></li>
+        <li><a href="#s2">Стенд, у якого еталон безкоштовний</a></li>
+        <li><a href="#s3">Чим міряти пошук</a></li>
+        <li><a href="#s4">BM25 покроково</a></li>
+        <li><a href="#s5">Що насправді роблять <span class="raw">k</span><span class="sub">1</span> і <span class="raw">b</span></a></li>
+        <li><a href="#s6">Щільний вектор: що він обіцяє</a></li>
+        <li><a href="#s7">Стиснення не створює змісту</a></li>
+        <li><a href="#s8">Замір: хто виграв</a></li>
+        <li><a href="#s9">Суміш, яка мала бути кращою</a></li>
+        <li><a href="#s10">Двобічний енкодер і як його вчать</a></li>
+        <li><a href="#s11">Температура й контрастна втрата</a></li>
+        <li><a href="#s12">Чесне зусилля — і що воно змінило</a></li>
+        <li><a href="#s13">Перехресний енкодер і переранжування</a></li>
+        <li><a href="#s14">Наближений пошук: комірки й <span class="raw">nprobe</span></a></li>
+        <li><a href="#s15">Дві ручки одного налаштування</a></li>
+        <li><a href="#s16">RAG як конструкція</a></li>
+        <li><a href="#s17">Межі цього заміру</a></li>
+        <li><a href="#s18">Куди це веде</a></li>
+      </ol>
+    </div>
+    <nav class="topnav"><a href="../35-sentiment-in-production/lecture.html">← 35. Аналіз тональності в бою</a><a href="../index.html">Усі теми</a><span class="spacer"></span><a href="../37-scaling/lecture.html">37. Що змінює масштаб →</a></nav>
+  </div>
+</header>
+<main class="col">
+<p class="lead">Уяви, що ти шукаєш програму, яка вміє стискати файли швидко. Пишеш
+у пошук три слова — <b>real-time file compressor</b>. У базі лежить опис програми
+<code>lzop</code>, і починається він так: «lzop is a compression utility which is
+designed to be a companion to gzip». Це саме те, що тобі потрібно. І жодне слово
+запиту в цьому описі не зустрічається.</p>
+
+<p>Такий запит — не рідкість і не помилка користувача. Людина назвала річ своїми
+словами, автор опису — своїми, і обидва мають рацію. Уся ця тема виросла з одного
+питання: <b>що треба зробити, щоб машина зрозуміла, що ці два тексти про одне й
+те саме</b>.</p>
+
+<p>Відповідь, яку дає індустрія останніх років, звучить упевнено: перевести
+тексти у вектори, покласти вектори у векторну базу, шукати за близькістю векторів,
+а знайдене віддати мовній моделі, щоб вона написала відповідь. Ця конструкція
+зветься <b>RAG</b> — <i>retrieval-augmented generation</i>, породження з опертям
+на пошук. Ми розберемо кожну її ланку. А потім заміряємо, і в цьому місці буде
+неприємно.</p>
+
+<h2 id="s1"><span class="num">01 / Борг</span>Обіцянка, яку лишила тема 09</h2>
+
+<p>Курс уже будував пошук. У <a href="../09-search/lecture.html">темі 09</a> ми
+склали його з інвертованого індексу й формули <b>BM25</b>, заміряли й уперлися
+в стіну, яку тоді не полагодили: <b>лексичний пошук не бачить синонімів</b>.
+Два різні українські переклади одного англійського рядка інтерфейсу означають
+буквально те саме — і якщо вони написані різними словами, жодна вагова схема їх
+не звʼяже. Тоді ми зафіксували число й пішли далі, пообіцявши повернутись.</p>
+
+<p>Причина поломки видна прямо з формули, і вона не лікується підбором параметрів.
+Будь-яка вагова схема — і TF-IDF, і BM25 — складає внески <b>однакових</b> слів.
+Слово в такій схемі є номером колонки у величезній таблиці. «Компресор» і
+«стискач» — дві різні колонки, рівно настільки ж далекі одна від одної, як
+«компресор» і «принтер». Місця, куди можна покласти знання про те, що дві колонки
+означають те саме, у цій конструкції просто немає.</p>
+
+<div class="note"><b>Лексичний і семантичний — що ці слова означають тут.</b>
+<b>Лексичний</b> пошук зіставляє слова як рядки символів: збігся рядок — є внесок,
+не збігся — немає. <b>Семантичний</b> пошук мав би зіставляти значення: знаходити
+документ, який відповідає на запит, навіть якщо написаний він іншими словами.
+Уся тема — про те, наскільки друге вдається зробити насправді.</div>
+
+<p>Ліки курс уже приготував. У блоці 3 слово перестало бути номером колонки й
+стало <b>ембедингом</b> — коротким вектором із кількох сотень чисел, який вивчено
+так, що слова, які трапляються в схожих контекстах, дістають схожі вектори. Далі
+здається природним: якщо слово можна перетворити на вектор, то й документ можна,
+і тоді пошук зведеться до пошуку найближчих векторів. Це і є ідея <b>щільного
+пошуку</b> (dense retrieval) та векторних баз.</p>
+
+<p>Питання цієї теми звучить грубо й вимагає числа: <b>наскільки щільний пошук
+виконав обіцянку</b>. Не «чи модно», не «чи так роблять у продуктах», а скільки
+пунктів він додав до лексичного рубежу на тій самій колекції з тим самим еталоном.
+Щоб відповісти, потрібен стенд.</p>
+
+<h2 id="s2"><span class="num">02 / Стенд</span>Стенд, у якого еталон безкоштовний</h2>
+
+<p>Найдорожче в оцінюванні пошуку — розмітка. Щоб сказати «система A краща за
+систему B», потрібні запити й позначка, який документ на кожен запит правильний.
+Зазвичай це роблять руками: наймають людей, ті читають видачу й ставлять оцінки.
+Виходить довго й дорого, і саме тому наборів для пошуку мало.</p>
+
+<p>Нам пощастило: у звичайній Linux-машині лежить готовий набір, якого ніхто не
+розмічав спеціально. Це база встановлених пакетів. У кожного пакета є <b>опис</b>
+на кілька речень і <b>коротке резюме</b> в один рядок, і обидва писала жива
+людина — супровідник пакета. Наприклад:</p>
+
+<div class="eq left">резюме:  Real-time file compressor
+опис:    lzop is a compression utility which is designed to be a
+         companion to gzip. It is based on the LZO data compression
+         library and its main advantages over gzip are much higher
+         compression and decompression speed…</div>
+
+<p>Резюме поводиться точно як пошуковий запит: коротке, своїми словами, називає
+суть. Опис поводиться точно як документ. І ми <b>точно знаємо</b>, який документ
+правильний, — той, у якого це резюме. Розмітка вийшла безкоштовна й не вигадана:
+її зробили сотні різних людей, і жоден із них не знав, що робить набір для
+оцінювання пошуку.</p>
+
+<h3>Перше, що робимо з колекцією, — дивимось на неї очима</h3>
+
+<p>Спокуса взяти вивантажені дані й одразу рахувати метрики дуже сильна. Ми
+подивились — і знайшли поломку. База пакетів тримає <b>окремі записи для різних
+архітектур</b> тієї самої програми: 64-бітної і 32-бітної. Резюме й опис у них
+збігаються символ у символ.</p>
+
+<p>Для еталона пошуку це не дрібниця. Виходить, що в запиту <b>два</b> однаково
+правильні документи, а зараховується лише один — і будь-яка система, яка
+поставила першим «не того» близнюка, дістає штраф ні за що. Таких зайвих
+записів у нас виявилось <b>85 із 1733</b>, тобто 4.9 %. Ми їх прибрали.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><td>вивантажено записів</td><td>1733</td></tr>
+<tr><td>дублікатів прибрано</td><td>85</td></tr>
+<tr class="hot"><td>документів у колекції</td><td>1648</td></tr>
+<tr><td>запитів</td><td>1648</td></tr>
+<tr><td>правильних документів на запит</td><td>рівно 1</td></tr>
+<tr><td>довжина запиту, медіана</td><td>6 слів</td></tr>
+<tr><td>довжина документа, медіана</td><td>42 слова</td></tr>
+<tr><td>різних слів у колекції</td><td>13 589</td></tr>
+</table></div>
+
+<p>У кожного запиту рівно один правильний документ — це важлива особливість, і
+вона спрощує оцінювання. Не треба вирішувати, «наскільки» документ доречний:
+він або той самий, або ні. Але ця зручність тримається рівно на тому, що
+однакових документів у колекції немає, — і саме тому дублікати довелось
+шукати до, а не після.</p>
+
+<div class="note warn"><b>Одразу про межу, а не наприкінці.</b> Резюме й опис
+писала одна людина, тож частина запитів лексично сидить усередині свого документа.
+Ми це порахували: <b>72.74 %</b> слів середнього запиту зустрічаються в потрібному
+документі, у <b>30.9 %</b> запитів там є <b>всі</b> слова, а <b>11.3 %</b> резюме
+є дослівним шматком опису. Такий стенд прихильний до лексичного пошуку <b>за
+побудовою</b>, і будь-який висновок на ньому треба читати з цією поправкою.
+Ми повернемось до неї в розділі 17 і подивимось, що з висновків витримує цю
+поправку, а що ні.</div>
+
+<h2 id="s3"><span class="num">03 / Лінійка</span>Чим міряти пошук</h2>
+
+<p>Пошук видає не відповідь, а <b>впорядкований список</b>. Тому й міряти треба
+не «правильно / неправильно», а «на якому місці опинилось потрібне». Дві міри
+роблять це по-різному, і вони обидві знадобляться далі.</p>
+
+<h3>recall@k — «потрапило в першу <span class="raw">k</span>?»</h3>
+
+<p><b>recall@k</b> (повнота на глибині <span class="raw">k</span>) — це частка
+запитів, у яких потрібний документ опинився серед перших
+<span class="raw">k</span> позицій видачі. Читається просто: recall@10 = 0.90
+означає, що для дев'яти запитів із десяти потрібний документ є десь на першій
+сторінці. Що саме на першій позиції — ця міра не розрізняє.</p>
+
+<h3>MRR — «на якому саме місці?»</h3>
+
+<p><b>MRR</b> (mean reciprocal rank, середній обернений ранг) дивиться на позицію.
+Для одного запиту беруть <b>обернений ранг</b>: якщо потрібний документ стоїть
+першим, це 1/1 = 1; другим — 1/2 = 0.5; третім — 1/3 ≈ 0.333; десятим — 0.1.
+Якщо його немає у видачі взагалі, беруть 0. Далі ці числа усереднюють по всіх
+запитах — це й буде MRR.</p>
+
+<div class="eq">MRR = (1/N) × Σ<span class="sub">i</span> 1 / rank<span class="sub">i</span></div>
+
+<p>Символ Σ (грецька «сигма») означає «додай усе, що написано праворуч, по всіх
+запитах». <span class="raw">N</span> — скільки всього запитів,
+<span class="raw">rank<span class="sub">i</span></span> — позиція правильного
+документа у видачі на <span class="raw">i</span>-й запит. Ділення на
+<span class="raw">N</span> перетворює суму на середнє.</p>
+
+<p>Чому обернений, а не сам ранг? Бо різниця між першим і другим місцем для
+людини величезна, а між сотим і сто першим — ніяка. Обернення саме це й робить:
+1 → 0.5 — падіння вдвічі, 100 → 101 — падіння на одну соту відсотка.</p>
+
+<figure>
+  <p class="fig-head">Обидві міри на пʼятьох запитах</p>
+  <p class="fig-sub">Ті самі пʼять видач, дві різні лінійки. Порахуй разом із малюнком.</p>
+  <div class="panel">
+    <canvas id="c1" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>recall@1</b><i id="v1a">0.4000</i></div>
+        <div class="cellv"><b>recall@5</b><i id="v1b">0.6000</i></div>
+        <div class="cellv"><b>recall@10</b><i id="v1c">0.8000</i></div>
+        <div class="cellv"><b>MRR</b><i id="v1d">0.4917</i></div>
+      </div>
+      <p class="verdict" id="v1"></p>
+    </div>
+  </div>
+  <figcaption>Пʼять запитів, позиції правильного документа: <b>1, 1, 3, 8</b> і
+    «не знайдено». recall@1 рахує два влучання з пʼятьох = 0.4000; recall@5 —
+    три = 0.6000; recall@10 — чотири = 0.8000. MRR складає обернені ранги:
+    1 + 1 + 1/3 + 1/8 + 0 = 2.4583, ділить на 5 і дає <b>0.4917</b>. Зверни увагу
+    на четвертий запит: для recall@10 він такий самий успіх, як перший, а для MRR
+    важить у вісім разів менше.</figcaption>
+</figure>
+
+<p>Далі в темі MRR буде головним числом, а recall@10 — контрольним. Причина
+проста: RAG віддає мовній моделі не одну знахідку, а кілька, тож важливо і те,
+чи документ узагалі знайшовся (recall), і те, чи не потонув він під сміттям
+(MRR).</p>
+<h2 id="s4"><span class="num">04 / Рубіж</span>BM25 покроково</h2>
+
+<p>Перш ніж перевіряти, чи щільні вектори кращі, треба чесно збудувати те, з чим
+порівнюємо. Це <b>BM25</b> — формула ранжування, придумана на початку 1990-х
+і досі стандартна база в будь-якому серйозному порівнянні. Її не можна брати
+«приблизно»: слабкий суперник нічого не доводить.</p>
+
+<h3>Крок 0: чому пошук узагалі швидкий</h3>
+
+<p>Наївний спосіб — пройти всі 1648 документів й кожному нарахувати оцінку.
+На тисячах документів це терпимо, на мільйонах — ні. Рятує
+<b>інвертований індекс</b> (inverted index): замість таблиці «документ → його
+слова» тримають протилежну — <b>слово → список документів, у яких воно
+трапилось</b>. Такий список звуть <b>списком входжень</b> (postings list).</p>
+
+<p>Щоб відповісти на запит із трьох слів, не треба чіпати колекцію взагалі:
+досить узяти три списки й обійти лише їх обʼєднання. Слово, якого в запиті немає,
+не коштує нічого — а таких у колекції 13 586 із 13 589.</p>
+
+<figure>
+  <p class="fig-head">Інвертований індекс: слово знає своїх</p>
+  <p class="fig-sub">Запит із трьох слів чіпає три списки, а не всю колекцію.</p>
+  <div class="panel">
+    <canvas id="c2" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>документів у колекції</b><i>1648</i></div>
+        <div class="cellv"><b>торкнулись при запиті</b><i>обʼєднання трьох списків</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-ok">чому це працює</span><br>
+        Слова розподілені вкрай нерівномірно: рідкісне слово має список на кілька
+        документів, часте — на сотні. Саме тому рідкісні слова запиту і швидкі,
+        і корисні водночас.</p>
+    </div>
+  </div>
+  <figcaption>Пряма таблиця (ліворуч) відповідає на питання «які слова в цьому
+    документі». Інвертована (праворуч) — на питання «у яких документах це слово».
+    Пошуку потрібне саме друге. Побудова індексу коштує один прохід по колекції,
+    далі кожен запит платить лише за свої слова.</figcaption>
+</figure>
+
+<h3>Крок 1: рідкісне слово важить більше</h3>
+
+<p>Слово <i>compressor</i> у колекції описів програм трапляється в кількох
+документах, слово <i>the</i> — майже в усіх. Перше майже однозначно вказує на
+потрібний документ, друге не вказує ні на що. Величина, яка це виражає, зветься
+<b>idf</b> (inverse document frequency, обернена документна частота):</p>
+
+<div class="eq">idf(w) = ln( 1 + (N − df(w) + 0.5) / (df(w) + 0.5) )</div>
+
+<p>Тут <span class="raw">N</span> — скільки всього документів у колекції,
+<span class="raw">df(w)</span> — у скількох із них зустрічається слово
+<span class="raw">w</span>, а <span class="raw">ln</span> — натуральний логарифм,
+тобто функція, яка перетворює «у скільки разів більше» на «наскільки більше»
+й тим самим гасить величезні відношення. Половинки в чисельнику й знаменнику —
+запобіжники, щоб формула не ділила на нуль і не вибухала на словах, які
+трапились один раз.</p>
+
+<p>Порахуймо руками на колекції з пʼятьох документів.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">рідкісне слово</span>
+    <p>«стиснення» є в одному документі з пʼятьох, тобто
+      <span class="raw">df</span> = 1:</p>
+    <div class="eq">idf = ln(1 + (5 − 1 + 0.5)/(1 + 0.5)) = ln(1 + 4.5/1.5) = ln 4 = <b>1.3863</b></div>
+  </div>
+  <div class="step"><span class="lbl">часте слово</span>
+    <p>«файл» є в чотирьох документах із пʼятьох,
+      <span class="raw">df</span> = 4:</p>
+    <div class="eq">idf = ln(1 + (5 − 4 + 0.5)/(4 + 0.5)) = ln(1 + 1.5/4.5) = ln 1.3333 = <b>0.2877</b></div>
+  </div>
+  <div class="step"><span class="lbl">що це означає</span>
+    <p>Одна згадка «стиснення» важить приблизно як пʼять згадок «файла».
+      Це не налаштування — це прямий наслідок того, як слова розподілені
+      в мові.</p>
+  </div>
+</div>
+
+<h3>Крок 2: десять згадок не вдесятеро важливіші</h3>
+
+<p>Якщо слово зустрілось у документі десять разів замість одного, документ
+справді ймовірніше про нього. Але не вдесятеро ймовірніше. Перша згадка каже
+головне — «ця тема тут узагалі є», — а десята додає майже нічого. BM25 виражає
+це <b>насиченням</b>:</p>
+
+<div class="eq">насичення(f) = f × (k<span class="sub">1</span> + 1) / (f + k<span class="sub">1</span>)</div>
+
+<p><span class="raw">f</span> — скільки разів слово трапилось у документі,
+а <span class="raw">k</span><span class="sub">1</span> — параметр, який вирішує,
+<b>як швидко</b> настає насичення. Подивись на форму: коли
+<span class="raw">f</span> росте нескінченно, дріб прямує до
+<span class="raw">k</span><span class="sub">1</span> + 1 і далі не йде. Тобто
+внесок одного слова має <b>стелю</b>, скільки б разів воно не повторювалось.</p>
+
+<figure>
+  <p class="fig-head">Насичення: чому сота згадка не рахується</p>
+  <p class="fig-sub">Посунь <span class="raw">k</span><span class="sub">1</span> і подивись, як міняється форма кривої.</p>
+  <div class="panel">
+    <canvas id="c3" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="k1a"><span class="raw">k<span class="sub">1</span></span><output id="k1o">1.5</output></label>
+        <input type="range" id="k1a" min="1" max="30" step="1" value="15">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>f = 1</b><i id="v3a">1.0000</i></div>
+        <div class="cellv"><b>f = 10</b><i id="v3b">2.1739</i></div>
+        <div class="cellv"><b>стеля</b><i id="v3c">2.5000</i></div>
+        <div class="cellv"><b>f=10 проти f=1</b><i id="v3d">2.17×</i></div>
+      </div>
+      <p class="verdict" id="v3"></p>
+    </div>
+  </div>
+  <figcaption>Крива без нормалізації довжини, щоб було видно саме насичення.
+    Пряма лінія показує, як виглядав би простий підрахунок «скільки разів
+    трапилось». Головне в цій картинці — не значення, а <b>форма</b>: BM25
+    купує різницю між нулем і одиницею дорого, а між десятьма й сотнею —
+    майже задарма.</figcaption>
+</figure>
+
+<h3>Крок 3: довгий документ виграє нечесно</h3>
+
+<p>У довгому тексті будь-яке слово трапляється частіше просто тому, що слів
+багато. Якщо це не виправити, пошук почне піднімати нагору найбалакучіші
+документи. Виправлення вбудоване в той самий знаменник:</p>
+
+<div class="eq">BM25(q, d) = Σ<span class="sub">w∈q</span> idf(w) × f(w,d) × (k<span class="sub">1</span>+1) / ( f(w,d) + k<span class="sub">1</span> × (1 − b + b × dl/avgdl) )</div>
+
+<p>Нове тут одне: множник <span class="raw">(1 − b + b × dl/avgdl)</span>.
+<span class="raw">dl</span> — довжина цього документа в словах,
+<span class="raw">avgdl</span> — середня довжина документа в колекції, а
+<span class="raw">b</span> — параметр від 0 до 1, який вирішує, <b>наскільки
+сильно</b> карати за довжину. При <span class="raw">b</span> = 0 множник
+дорівнює одиниці, і довжина не впливає взагалі. При
+<span class="raw">b</span> = 1 множник дорівнює
+<span class="raw">dl/avgdl</span>, і документ удвічі довший за середній
+дістає вдвічі більший знаменник.</p>
+
+<figure>
+  <p class="fig-head">Нормалізація довжини: та сама трійка згадок у двох документах</p>
+  <p class="fig-sub">Обидва документи згадують слово тричі. Один короткий, другий у пʼять разів довший.</p>
+  <div class="panel">
+    <canvas id="c4" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="b4"><span class="raw">b</span><output id="b4o">0.75</output></label>
+        <input type="range" id="b4" min="0" max="100" step="5" value="75">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>короткий, 40 слів</b><i id="v4a">1.7544</i></div>
+        <div class="cellv"><b>довгий, 200 слів</b><i id="v4b">0.9524</i></div>
+        <div class="cellv"><b>у скільки разів</b><i id="v4c">1.84×</i></div>
+        <div class="cellv"><b>середня довжина</b><i>50</i></div>
+      </div>
+      <p class="verdict" id="v4"></p>
+    </div>
+  </div>
+  <figcaption>Обидва документи згадують слово тричі, <span class="raw">k</span><span class="sub">1</span> = 1.5.
+    При <span class="raw">b</span> = 0 внески однакові — довжина ігнорується.
+    При <span class="raw">b</span> = 1 довгий документ отримує майже вдвічі
+    менше. Проміжні значення — компроміс, і саме через нього
+    <span class="raw">b</span> роблять параметром, а не константою.</figcaption>
+</figure>
+
+<h3>Крок 4: складаємо все на живому прикладі</h3>
+
+<p>Запит: <b>стиснення файл</b>. Документ: 40 слів, «стиснення» в ньому тричі,
+«файл» двічі. Середня довжина в колекції — 50 слів,
+<span class="raw">k</span><span class="sub">1</span> = 1.5,
+<span class="raw">b</span> = 0.75.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">спільний множник довжини</span>
+    <div class="eq">1 − 0.75 + 0.75 × 40/50 = 0.25 + 0.6 = <b>0.85</b></div>
+    <p>Документ трохи коротший за середній, тож штраф на його користь.</p>
+  </div>
+  <div class="step"><span class="lbl">внесок слова «стиснення»</span>
+    <div class="eq">1.3863 × (3 × 2.5) / (3 + 1.5 × 0.85) = 1.3863 × 7.5 / 4.275 = 1.3863 × 1.7544 = <b>2.4321</b></div>
+  </div>
+  <div class="step"><span class="lbl">внесок слова «файл»</span>
+    <div class="eq">0.2877 × (2 × 2.5) / (2 + 1.275) = 0.2877 × 5 / 3.275 = 0.2877 × 1.5267 = <b>0.4392</b></div>
+  </div>
+  <div class="step"><span class="lbl">оцінка документа</span>
+    <div class="eq">2.4321 + 0.4392 = <b>2.8713</b></div>
+    <p>Порівнюючи це число з такими самими числами інших документів, ми й дістаємо
+      порядок видачі. Зверни увагу на пропорцію: рідкісне слово дало
+      <b>84.7 %</b> оцінки, хоча трапилось лише в півтора раза частіше за часте.</p>
+  </div>
+</div>
+
+<p>Оце і є весь BM25. Три ідеї — рідкість слова, насичення частоти, поправка на
+довжину — і жодного навчання: формула не має ваг, які треба звідкись узяти.
+Вона працює на будь-якій колекції з коробки, і саме тому є настільки незручним
+суперником.</p>
+<h2 id="s5"><span class="num">05 / Ручки</span>Що насправді роблять <span class="raw">k</span><span class="sub">1</span> і <span class="raw">b</span></h2>
+
+<p>Два параметри — спокуса щось покрутити. Типові значення, які радять усі,
+це <span class="raw">k</span><span class="sub">1</span> = 1.2…2.0 і
+<span class="raw">b</span> = 0.75. Питання, на яке варто мати відповідь до
+того, як витрачати на це день: <b>скільки взагалі можна виграти підбором</b>.</p>
+
+<p>Ми перебрали сітку 5 × 5 на нашій колекції описів. Кожна клітинка — окремий
+повний прогін усіх 1648 запитів.</p>
+
+<figure>
+  <p class="fig-head">Уся сітка параметрів, заміряна</p>
+  <p class="fig-sub">MRR на 1648 запитах. Що темніша клітинка, то краще.</p>
+  <div class="panel">
+    <canvas id="c5" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>найгірша клітинка</b><i>0.7378</i></div>
+        <div class="cellv"><b>найкраща клітинка</b><i>0.7835</i></div>
+        <div class="cellv"><b>типові значення</b><i>0.7773</i></div>
+        <div class="cellv"><b>виграш від підбору</b><i>+0.0062</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-mid">не тут заритий собака</span><br>
+        Уся сітка вкладається в 0.0457 пункту, а перехід від типових значень до
+        найкращих дає <b>+0.0062</b>. Єдина ручка, яка справді щось важить, —
+        це <span class="raw">b</span> = 0: вимкнена нормалізація довжини
+        коштує від 0.0229 до 0.0352 залежно від
+        <span class="raw">k</span><span class="sub">1</span>, тоді як зміна самого
+        <span class="raw">k</span><span class="sub">1</span> при
+        <span class="raw">b</span> = 0.75 дає лише 0.0089.</p>
+    </div>
+  </div>
+  <figcaption>Найкраще на цій колекції — <span class="raw">k</span><span class="sub">1</span> = 0.6,
+    <span class="raw">b</span> = 1.0 (MRR <b>0.7835</b>). Типові
+    1.5 / 0.75 дають <b>0.7773</b>. Це різниця, якої ніхто не помітить,
+    і далі в темі ми користуємось саме типовими значеннями — щоб не давати
+    BM25 переваги, добраної на тому самому наборі, на якому міряємо.</figcaption>
+</figure>
+
+<p>Висновок «параметри BM25 не важать» був би зручним — і був би неправдою.
+Він вірний <b>на цій колекції</b>, і причина видна: наші документи схожі
+завдовжки й нормальної довжини, тож нормалізації майже нема чого нормалізувати.
+На колекції з коротких рядків інтерфейсу, яку курс міряв
+<a href="../09-search/lecture.html">у темі 09</a>, підбір тих самих двох
+параметрів дав приріст на порядок більший. Тобто чутливість до
+<span class="raw">k</span><span class="sub">1</span> і
+<span class="raw">b</span> — властивість <b>даних</b>, а не формули, і
+переносити чуже «нам підбір нічого не дав» на свою колекцію не можна.</p>
+
+<div class="note"><b>Практичне правило.</b> Перебрати сітку 5 × 5 для BM25
+коштує кілька хвилин і робиться <b>один раз</b>. Роби це не заради приросту,
+а щоб знати, у якому режимі живуть твої дані: якщо
+<span class="raw">b</span> = 0 нічого не змінює, документи однакові завдовжки;
+якщо міняє все — у колекції є дуже довгі тексти, і їх, можливо, варто різати
+на шматки, а не карати коефіцієнтом.</div>
+
+<h2 id="s6"><span class="num">06 / Обіцянка</span>Щільний вектор: що він обіцяє</h2>
+
+<p>Тепер до другої половини теми. Ідея щільного пошуку в одному реченні:
+<b>перетворити запит і документ на короткі вектори так, щоб близькість векторів
+означала близькість змісту</b>.</p>
+
+<p>Слово «щільний» тут — протилежність до «розрідженого». У BM25 документ — це
+вектор на 13 589 чисел, з яких ненульові лише кілька десятків: розріджений.
+У щільному пошуку документ — це, скажімо, 256 чисел, і <b>всі</b> вони ненульові.
+Інформація не лежить у конкретній колонці, вона розмазана по всіх координатах.</p>
+
+<figure>
+  <p class="fig-head">Дві геометрії одного документа</p>
+  <p class="fig-sub">13 589 колонок, з яких ненульові одиниці, проти 256 чисел, з яких ненульові всі.</p>
+  <div class="panel">
+    <canvas id="c6" width="700" height="290" data-lw="700" data-lh="290"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>розріджений</b><i class="sm">13 589 координат, ненульових ~40</i></div>
+        <div class="cellv"><b>щільний</b><i class="sm">256 координат, ненульові всі</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-ok">у чому надія</span><br>
+        У розрідженому векторі «компресор» і «стискач» — дві незалежні координати,
+        і їхня схожість тотожно дорівнює нулю. У щільному вони можуть дивитись
+        приблизно в один бік — <b>якщо вектори збудовані так, щоб це сталось</b>.
+        Уся тема далі про те, що ховається за словом «якщо».</p>
+    </div>
+  </div>
+  <figcaption>Ліворуч — розріджений вектор: довгий, майже порожній, кожна
+    координата підписана словом. Праворуч — щільний: короткий, повністю
+    заповнений, окрема координата нічого не означає. Схожість в обох випадках
+    рахують однаково — косинусом кута між векторами.</figcaption>
+</figure>
+
+<div class="note"><b>Косинусна близькість, якщо забулось.</b> Два вектори
+однакової довжини перемножують покоординатно й додають — це
+<b>скалярний добуток</b>. Якщо обидва вектори попередньо нормувати (поділити
+на власну довжину), результат лежить між −1 і 1 і дорівнює косинусу кута між
+ними: 1 — «дивляться в один бік», 0 — «перпендикулярні», −1 — «у протилежні».
+Уся векторна база тримається на цій одній операції, і швидкість пошуку — це
+швидкість мільйонів таких добутків.</div>
+
+<p>Звідки взяти щільні вектори — питання, на яке є щонайменше три різні
+відповіді, і вони дають різні результати. Найдешевша: <b>стиснути</b> ту саму
+лексичну матрицю. Найдорожча: <b>навчити</b> енкодер на парах «запит —
+правильний документ». Ми зробимо обидві. Почнемо з дешевої, бо вона доводить
+річ, про яку зазвичай мовчать.</p>
+
+<h2 id="s7"><span class="num">07 / Доказ</span>Стиснення не створює змісту</h2>
+
+<p>Найстарший спосіб зробити щільні вектори зветься <b>LSA</b> (latent semantic
+analysis, латентно-семантичний аналіз). Ідея: узяти велику розріджену матрицю
+«документи × слова» і замінити її наближенням меншого рангу. Технічно це
+<b>сингулярний розклад</b> (SVD) — той самий інструмент, яким
+<a href="../11-distributional-semantics/lecture.html">тема 11</a> стискала
+матрицю «слово × контекст».</p>
+
+<p>Словами, без формул: SVD знаходить у матриці кілька сотень «головних
+напрямків» і переписує кожен документ як набір координат уздовж них.
+Напрямки виходять осмислені — слова, які часто трапляються разом, тягнуть
+в один бік. Тому LSA прийнято подавати як «дешеву семантику»: мовляв,
+синоніми злипаються самі собою.</p>
+
+<p>Ось перевірка цього твердження, і вона вирішальна. Ми взяли ту саму матрицю
+TF-IDF і стиснули її до різної кількості напрямків: 32, 64, 128, 256, 512,
+1024 і, нарешті, до <b>повного рангу</b> — стільки напрямків, скільки взагалі
+є в матриці.</p>
+
+<figure>
+  <p class="fig-head">Що дає розмірність стиснення</p>
+  <p class="fig-sub">Посунь повзунок і подивись, куди прямує крива.</p>
+  <div class="panel">
+    <canvas id="c7" width="700" height="340" data-lw="700" data-lh="340"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="d7">розмірність<output id="d7o">256</output></label>
+        <input type="range" id="d7" min="0" max="6" step="1" value="3">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>MRR стиснутого</b><i id="v7a">0.6770</i></div>
+        <div class="cellv"><b>MRR вихідного TF-IDF</b><i>0.7373</i></div>
+        <div class="cellv"><b>recall@10</b><i id="v7b">0.8701</i></div>
+        <div class="cellv"><b>різниця</b><i id="v7c">−0.0603</i></div>
+      </div>
+      <p class="verdict" id="v7"></p>
+    </div>
+  </div>
+  <figcaption>Крива монотонна й підходить до горизонтальної лінії
+    <b>знизу</b>, а на повному ранзі зупиняється рівно на ній: стиснутий вектор
+    дає <b>0.7376</b>, вихідна матриця TF-IDF — <b>0.7373</b>. Різниця в
+    четвертому знаку, до того ж у «плюс», — це похибка чисельного розкладу, а не
+    перевага. Тотожність тут не випадкова: повний розклад є поворотом системи
+    координат, а поворот не міняє кутів між векторами.</figcaption>
+</figure>
+
+<p>Ось що з цього випливає, і це головна думка розділу. <b>Стиснення нічого
+не додає до того, що вже було у вхідній матриці — воно тільки перерозподіляє
+наявне.</b> Повний ранг дає тотожність, а кожен крок униз від нього — це те чи
+інше викидання. Викидають розумно, з найменшою середньою втратою, — але
+викидають.</p>
+
+<div class="note"><b>Але «викинути» не завжди означає «зіпсувати».</b> Курс уже
+бачив протилежний випадок: у <a href="../11-distributional-semantics/lecture.html">темі 11</a>
+той самий SVD, застосований до дуже розрідженої матриці «слово × контекст»,
+<b>підняв</b> якість більш ніж удвічі. Різниця не в методі, а в тому, що
+викидається. Там більшість підрахунків були нуль-або-один, тобто шум, і
+стиснення гасило його. Тут запит здебільшого має зі своїм документом кілька
+спільних <b>рідкісних</b> слів — а це найточніший наявний сигнал, і саме він
+першим гине при стисненні. Тому правило звучить не «стиснення шкодить», а
+<b>«стиснення обмінює точність рідкісного на згладженість частого», і корисність
+обміну залежить від задачі</b>.</div>
+
+<p>Що з цього точно не випливає: щільність сама собою не робить вектор
+«семантичним». Вектор може бачити зміст рівно настільки, наскільки цей зміст
+поклали в нього <b>ззовні</b> — навчанням на сигналі, якого в підрахунку слів
+не було. Якщо єдиний вхід — та сама матриця підрахунків, новому знанню
+взятись немає звідки.</p>
+
+<h3>Перевірка на тому, що не вийшло в темі 09</h3>
+
+<p>Твердження треба перевірити не міркуванням, а заміром — і саме на тій задачі,
+де лексичний пошук провалився. Курс має для цього готовий стенд: пари різних
+українських перекладів <b>одного</b> англійського рядка інтерфейсу. Два тексти
+означають те саме гарантовано, бо перекладали одне речення. Слова при цьому
+різні.</p>
+
+<p>Ми поклали 20 000 таких рядків у колекцію, взяли <b>420</b> пар, запитували
+словами варіанта A і дивились, чи знайдеться варіант B. Обовʼязковий контроль:
+той самий замір, але запит складено зі слів <b>самого документа-мішені</b>.
+Якщо контроль високий, а основний замір низький, значить, зламана не колекція
+й не метрика, а саме здатність бачити перефраз.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>спосіб</th><th>перефраз, recall@10</th><th>контроль</th></tr>
+<tr class="hot"><td>BM25</td><td>0.7786</td><td>0.9976</td></tr>
+<tr><td>TF-IDF косинус</td><td>0.7357</td><td>0.9976</td></tr>
+<tr><td>LSA 512</td><td>0.6476</td><td>0.9976</td></tr>
+<tr><td>LSA 256</td><td>0.5833</td><td>0.9976</td></tr>
+<tr><td>LSA 128</td><td>0.4881</td><td>0.9976</td></tr>
+</table></div>
+
+<p>Контроль близький до одиниці в усіх — стенд справний. А на перефразі
+щільний вектор не просто не виграв: він <b>програв</b> лексичному, і що сильніше
+стиснення, то більше програв. Обіцянка теми 09 не виконана — принаймні цим
+способом здобуття векторів.</p>
+
+<p>Розріж замір за тим, наскільки різними словами сказано те саме, і картина
+стане ще виразнішою.</p>
+
+<figure>
+  <p class="fig-head">Перефраз: чим менше спільних слів, тим гірше всім</p>
+  <p class="fig-sub">420 пар, розрізані за часткою спільних слів. Стовпчик — recall@10.</p>
+  <div class="panel">
+    <canvas id="c8" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>пар без жодного спільного слова</b><i>22 із 420</i></div>
+        <div class="cellv"><b>recall@10 на них, усі способи</b><i>0.0000</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-no">там, де щільний мав рятувати</span><br>
+        На зрізі «до 25 % спільних слів» BM25 дає 0.2222, а найкращий щільний —
+        0.1944. Саме там, де лексичний пошук ламається, щільний ламається теж.
+        А на 22 парах, де спільних слів немає зовсім, <b>усі</b> способи дають
+        рівно нуль.</p>
+    </div>
+  </div>
+  <figcaption>Читай зліва направо: що більше спільних слів у двох формулюваннях,
+    то легше задача — і то більший розрив на користь лексичного пошуку.
+    Щільний вектор наздоганяє тільки там, де задача й так тривіальна.
+    Ліворуч, де він мав би виграти, виграти нема чим.</figcaption>
+</figure>
+
+<div class="note warn"><b>Обережно з узагальненням.</b> Заміряно тут одне:
+<b>щільний вектор, здобутий стисненням лексичної матриці</b>, семантики не
+додає. Це не вирок щільному пошуку взагалі — енкодер, навчений на справжніх
+парах, дістає сигнал <b>ззовні</b> й може вміти більше. Розділи 10-12 саме
+про це, і там ми дамо йому чесний шанс.</div>
+<h2 id="s8"><span class="num">08 / Табло</span>Замір: хто виграв</h2>
+
+<p>Тепер поставимо всі чотири способи на одну колекцію, з тим самим еталоном
+і тими самими 1648 запитами. Жодних піддавків: BM25 працює з типовими
+параметрами, LSA дістала свою сітку розмірності, і найкраща з неї теж у
+таблиці.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>спосіб</th><th>recall@1</th><th>recall@5</th><th>recall@10</th><th>MRR</th></tr>
+<tr class="hot"><td>BM25</td><td>0.7008</td><td>0.8714</td><td>0.8999</td><td>0.7773</td></tr>
+<tr><td>TF-IDF косинус</td><td>0.6432</td><td>0.8604</td><td>0.8975</td><td>0.7373</td></tr>
+<tr><td>LSA, найкраща розмірність</td><td>0.6438</td><td>0.8604</td><td>0.8975</td><td>0.7376</td></tr>
+<tr><td>LSA 256 — типовий вибір</td><td>0.5716</td><td>0.8113</td><td>0.8701</td><td>0.6770</td></tr>
+<tr><td>суміш BM25 + LSA (RRF)</td><td>0.6244</td><td>0.8562</td><td>0.8956</td><td>0.7286</td></tr>
+</table></div>
+
+<figure>
+  <p class="fig-head">Табло, чотири способи</p>
+  <p class="fig-sub">MRR і recall@10 на 1648 запитах. Одна колекція, один еталон.</p>
+  <div class="panel">
+    <canvas id="c9" width="700" height="320" data-lw="700" data-lh="320"></canvas>
+    <div>
+      <div class="seg" id="seg9">
+        <button data-i="0" aria-pressed="true">MRR</button>
+        <button data-i="1" aria-pressed="false">recall@10</button>
+      </div>
+      <div class="readout one">
+        <div class="cellv"><b>переможець</b><i id="v9a">BM25 · 0.7773</i></div>
+      </div>
+      <p class="verdict" id="v9"></p>
+    </div>
+  </div>
+  <figcaption>Формула 1994 року, у якої немає жодної навченої ваги, стоїть вище
+    за все інше. Перемикач змінює міру: за recall@10 розрив між BM25 і
+    найкращою LSA скорочується до <b>0.0023</b>, за MRR він
+    <b>0.0421</b>. Це не суперечність — це різні питання: «чи знайшлось узагалі»
+    і «чи знайшлось першим».</figcaption>
+</figure>
+
+<p>Перечитай перемикач уважно, бо він показує рідкісну річ: <b>міра змінює
+розмір висновку</b>. За повнотою на глибині 10 всі лексичні способи практично
+рівні — 0.8975…0.8999, — а щільна LSA 256 відстає на 0.0298. За MRR розкид
+утричі більший. Причина в тому, що стиснення розмиває саме верх видачі:
+документ здебільшого лишається в десятці, але зʼїжджає з першого місця.
+Для класичного пошуку це погано, для RAG — залежить від того, скільки
+документів ти віддаєш моделі.</p>
+
+<h3>Де щільний вектор мав рятувати</h3>
+
+<p>Головна надія була така: хай щільний програє в середньому, зате він
+витягне запити, у яких лексичного збігу немає. Перевіримо. Розріжемо всі 1648
+запити за тим, скільки слів запиту взагалі присутні в потрібному документі.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>спільних слів</th><th>запитів</th><th>BM25</th><th>TF-IDF</th><th>LSA 256</th></tr>
+<tr><td>жодного</td><td>19</td><td>0.0000</td><td>0.0000</td><td>0.0000</td></tr>
+<tr><td>одне</td><td>87</td><td>0.3678</td><td>0.4713</td><td>0.3448</td></tr>
+<tr><td>два</td><td>190</td><td>0.7526</td><td>0.7526</td><td>0.6842</td></tr>
+<tr><td>три</td><td>308</td><td>0.9156</td><td>0.8961</td><td>0.8929</td></tr>
+<tr><td>чотири</td><td>314</td><td>0.9682</td><td>0.9650</td><td>0.9586</td></tr>
+<tr><td>пʼять і більше</td><td>730</td><td>0.9890</td><td>0.9808</td><td>0.9562</td></tr>
+</table></div>
+
+<p>Числа в таблиці — recall@10. Прочитай <b>кожну</b> клітинку, а не лише перший
+рядок. Щільний вектор програє в кожному зрізі: не «виграє на важких і програє на
+легких», а програє скрізь. BM25 не перемагає лише двічі — на зрізі «одне спільне
+слово», де вище стоїть TF-IDF (0.4713), теж лексичний, і на зрізі «два слова»,
+де вони рівні до четвертого знака (0.7526).</p>
+
+<div class="note warn"><b>Про перший рядок таблиці — окремо, бо його легко
+роздути.</b> Запитів, у яких із потрібним документом немає <b>жодного</b>
+спільного слова, у нас <b>19 із 1648</b>, тобто 1.15 %. На них усі три способи
+дають рівно нуль. Це <b>анекдот, а не замір</b>: на двадцяти прикладах не
+можна побудувати висновок про семантичний пошук, і ми його не будуємо.
+Чесне формулювання — «на нашій колекції таких запитів майже немає, а ті, що
+є, не даються нікому». Друга, незалежна поява того самого нуля — 22 пари
+перекладів без спільних слів із розділу 07 — робить факт трохи менш
+випадковим, але й разом це 41 приклад, а не доказ.</div>
+
+<h2 id="s9"><span class="num">09 / Гібрид</span>Суміш, яка мала бути кращою</h2>
+
+<p>Стандартна порада, коли є два різні способи пошуку: <b>змішай їх</b>.
+Логіка звучить переконливо — лексичний ловить точні збіги, щільний ловить
+перефраз, разом вони покриють більше. Найпопулярніший спосіб змішування
+зветься <b>RRF</b> (reciprocal rank fusion, злиття за оберненими рангами)
+і робиться так:</p>
+
+<div class="eq">RRF(d) = Σ<span class="sub">системи</span> 1 / (K + rank<span class="sub">системи</span>(d))</div>
+
+<p>Кожна система дає документу <span class="raw">d</span> свій ранг; беруть
+обернені ранги, зсунуті на константу <span class="raw">K</span> (звичайно 60,
+щоб перші місця не давали надто великих чисел), і додають. Документ, який
+обидві системи поставили високо, дістає велику суму. Перевага методу в тому,
+що складати ранги можна навіть тоді, коли оцінки систем узагалі непорівнянні —
+у BM25 це число на кшталт 2.87, у косинуса — від −1 до 1.</p>
+
+<p>Заміряймо. Ліворуч на повзунку — чистий BM25, праворуч — рівний внесок обох.</p>
+
+<figure>
+  <p class="fig-head">Скільки щільного домішати до лексичного</p>
+  <p class="fig-sub">Вага LSA у злитті рангів. 0 — чистий BM25, 1 — рівна вага, як радять туторіали.</p>
+  <div class="panel">
+    <canvas id="c10" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="w10">вага LSA<output id="w10o">0.00</output></label>
+        <input type="range" id="w10" min="0" max="6" step="1" value="0">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>MRR суміші</b><i id="v10a">0.7773</i></div>
+        <div class="cellv"><b>чистий BM25</b><i>0.7773</i></div>
+        <div class="cellv"><b>recall@10</b><i id="v10b">0.8999</i></div>
+        <div class="cellv"><b>різниця MRR</b><i id="v10c">+0.0000</i></div>
+      </div>
+      <p class="verdict" id="v10"></p>
+    </div>
+  </div>
+  <figcaption>Крива монотонно спадає: будь-яка домішка щільного псує результат,
+    а рівна вага — та, яку радять за замовчуванням, — псує найсильніше
+    (<b>0.7286</b> проти <b>0.7773</b>). Це прямий наслідок того, як влаштоване
+    RRF: воно нічого не знає про те, що одна система вдвічі надійніша за іншу,
+    і чесно ділить голоси порівну.</figcaption>
+</figure>
+
+<p>Тепер найважливіше, і саме тут легко написати неправду. Спокусливо
+підсумувати «гібрид гірший». Але ми перевірили ще один спосіб змішування —
+не за рангами, а за <b>нормованими оцінками</b> (у кожної системи оцінки
+зводять до нульового середнього й одиничного розкиду, тоді додають). І він
+дав ось що:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>суміш</th><th>MRR</th><th>recall@10</th></tr>
+<tr class="hot"><td>чистий BM25</td><td>0.7773</td><td>0.8999</td></tr>
+<tr><td>оцінки, вага LSA 0.1</td><td>0.7793</td><td>0.9023</td></tr>
+<tr><td>оцінки, вага LSA 0.5</td><td>0.7758</td><td>0.9035</td></tr>
+<tr><td>оцінки, вага LSA 1.0</td><td>0.7731</td><td>0.9035</td></tr>
+<tr><td>ранги RRF, вага LSA 0.25</td><td>0.7680</td><td>0.9035</td></tr>
+<tr><td>ранги RRF, рівна вага</td><td>0.7286</td><td>0.8956</td></tr>
+</table></div>
+
+<p>Прочитай тепер <b>кожну</b> клітинку, а не лише колонку MRR — інакше
+висновок вийде неправдивий. За MRR найкраща суміш дає <b>0.7793</b> проти
+<b>0.7773</b>, тобто <b>+0.0020</b>: це на межі округлення, а не перемога. Але
+колонка recall@10 поводиться інакше — найкраще число в усій таблиці належить
+саме сумішам (<b>0.9035</b> проти 0.8999 у чистого BM25), і воно тримається
+одразу в кількох рядках. Тобто домішка щільного справді дістає з колекції
+кілька документів, яких BM25 не бачить, але водночас псує порядок нагорі, і
+в MRR виграш зʼїдається.</p>
+
+<p>Скільки саме тих документів — теж заміряно. Із 1648 запитів на глибині 10
+<b>28</b> розвʼязує лише щільний, а <b>77</b> — лише BM25; решту 1406
+розвʼязують обидва, а 137 не розвʼязує ніхто. Множина, заради якої
+змішують, існує — вона просто втричі менша за симетричну їй.</p>
+
+<p>Чесне формулювання виходить довшим за гасло, і воно таке:</p>
+
+<ul>
+  <li><b>«Гібрид завжди кращий» — неправда.</b> За головною мірою цієї теми
+    суміш не дала нічого, що вартувало б згадки.</li>
+  <li><b>«Гібрид гірший» — теж неправда.</b> Правильно зважена суміш ледь-ледь
+    піднімає повноту й ледь-ледь опускає MRR.</li>
+  <li><b>Шкодить конкретна порада</b> — RRF із рівною вагою. Вона забирає
+    0.0487 MRR, і забирає їх саме тому, що припускає рівну надійність систем.</li>
+</ul>
+
+<div class="note"><b>Правило, яке варто винести.</b> Суміш двох систем має
+сенс рівно тоді, коли слабша система <b>знаходить те, чого не знаходить
+сильніша</b>, і достатньо часто. Перевіряється це <b>до</b> змішування й одним
+числом: скільки запитів слабша розвʼязує, а сильніша ні. У нас це 28 запитів
+з 1648 — забагато, щоб сказати «нуль», і замало, щоб окупити зіпсований
+порядок. Змішувати треба різне, а не будь-що.</div>
+<h2 id="s10"><span class="num">10 / Навчання</span>Двобічний енкодер і як його вчать</h2>
+
+<p>Ми зʼясували, що вектор, вичавлений із підрахунку слів, нічого нового не
+знає. Отже, знання треба покласти ззовні — навчанням. Конструкція, якою це
+роблять, зветься <b>двобічний енкодер</b> (bi-encoder, у літературі також
+dual encoder).</p>
+
+<p>Улаштована вона так. Є дві функції: одна перетворює <b>запит</b> на вектор,
+друга перетворює <b>документ</b> на вектор. Обидві дають вектори однакової
+довжини — скажімо, по 256 чисел. Схожість запиту й документа — скалярний
+добуток їхніх векторів (після нормування — косинус).</p>
+
+<div class="eq left">запит    → [енкодер запитів]    → q, 256 чисел
+документ → [енкодер документів] → d, 256 чисел
+схожість = q · d</div>
+
+<p>Чому два різні енкодери, а не один на обидва входи? Бо запит і документ —
+різні жанри тексту. Запит короткий, називає річ. Документ довгий, описує її.
+Одна функція мусила б обслуговувати обидва режими, а дві можуть спеціалізуватись:
+енкодер запитів учиться витягати намір із шести слів, енкодер документів —
+стискати сорок слів до головного. Ваги при цьому не спільні.</p>
+
+<div class="note"><b>Чому це взагалі дає швидкий пошук.</b> Ключова
+властивість — <b>документ не бачить запиту</b>. Тому всі документи можна
+пропустити через енкодер один раз наперед, скласти отримані вектори в базу,
+і під час запиту рахувати лише один вектор запиту й міряти близькість.
+Саме ця асиметрія робить векторну базу можливою — і, як ми побачимо в
+розділі 13, саме вона ставить стелю якості.</div>
+
+<h3>Чого навчати, якщо правильної відповіді у вигляді числа немає</h3>
+
+<p>Перша спокуса — навчати регресією: підібрати ваги так, щоб схожість
+правильної пари дорівнювала одиниці, а неправильної — нулю. Спокуса
+хибна, і причина проста: <b>ми не знаємо цих чисел</b>. Ніхто не може сказати,
+що правильна схожість цього запиту з цим документом дорівнює 0.87, а з
+іншим 0.31. Такої величини в реальності немає.</p>
+
+<p>Що ми справді знаємо — це <b>порядок</b>: для запиту <i>q</i> документ
+<i>d</i><span class="sub">+</span> кращий за будь-який інший. Тому й навчати
+треба порівнянням, а не значенням. Формулювання, яке з цього виходить:
+<b>серед кількох кандидатів упізнай правильного</b>. Це вже не регресія,
+а класифікація — і саме тому тут працює звичайна перехресна ентропія.</p>
+
+<h3>Негативи з пачки: неправильні відповіді безкоштовно</h3>
+
+<p>Щоб «упізнати правильного серед кількох», потрібні неправильні кандидати —
+<b>негативи</b>. Збирати їх окремо дорого. Але їх можна дістати задарма:
+під час навчання приклади все одно йдуть <b>пачками</b> (batch) по кілька
+десятків пар. У пачці з 64 пар для запиту номер 3 правильний документ —
+третій, а решта 63 документи належать чужим запитам, тобто майже напевно
+неправильні. Це і є <b>негативи з пачки</b> (in-batch negatives).</p>
+
+<p>Обчислювально це виглядає красиво: перемножуємо матрицю з 64 векторів
+запитів на матрицю з 64 векторів документів і дістаємо квадрат схожостей
+64 × 64. Правильні пари — рівно діагональ.</p>
+
+<figure>
+  <p class="fig-head">Пачка на чотири пари: правильне — на діагоналі</p>
+  <p class="fig-sub">Кожен рядок — один запит, кожна колонка — один документ пачки.</p>
+  <div class="panel">
+    <canvas id="c11" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>пар у пачці</b><i>4</i></div>
+        <div class="cellv"><b>негативів на запит</b><i>3</i></div>
+        <div class="cellv"><b>при пачці 64</b><i>63 негативи</i></div>
+        <div class="cellv"><b>коштує додатково</b><i>нічого</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-ok">чому це працює</span><br>
+        Задача перетворюється на звичайну класифікацію: для рядка
+        <span class="raw">i</span> правильна «мітка» — колонка
+        <span class="raw">i</span>. Далі йде перехресна ентропія, як у будь-якому
+        класифікаторі курсу. Ціна питання — нуль: негативи вже лежать у пачці.</p>
+    </div>
+  </div>
+  <figcaption>Що більша пачка, то більше негативів і то важча задача, тому
+    двобічні енкодери люблять великі пачки. Зворотний бік: серед випадкових
+    негативів майже всі <b>легкі</b> — вони не схожі на правильний документ
+    навіть здалеку. Тому в серйозних системах до пачки домішують
+    <b>важкі негативи</b> — документи, які лексичний пошук поставив високо,
+    але вони неправильні.</figcaption>
+</figure>
+
+<h2 id="s11"><span class="num">11 / Температура</span>Контрастна втрата й температура</h2>
+
+<p>Тепер запишемо саму втрату. Для запиту <span class="raw">i</span> є
+<span class="raw">B</span> схожостей — по одній на кожен документ пачки.
+Перетворюємо їх на ймовірності функцією softmax і вимагаємо, щоб імовірність
+правильного документа була якнайбільшою:</p>
+
+<div class="eq">L<span class="sub">i</span> = − ln [ exp(q<span class="sub">i</span>·d<span class="sub">i</span> / τ) / Σ<span class="sub">j</span> exp(q<span class="sub">i</span>·d<span class="sub">j</span> / τ) ]</div>
+
+<p>Розбираємо по частинах. <span class="raw">exp</span> — піднесення числа
+<i>e</i> ≈ 2.718 до степеня; воно перетворює будь-яке число на додатне.
+Дріб ділить «експоненту правильної схожості» на «суму експонент усіх
+схожостей», тобто дає частку — ймовірність від 0 до 1. Логарифм із мінусом
+перетворює «велика ймовірність» на «мала втрата»: при ймовірності 1 втрата
+дорівнює 0, при 0.1 — приблизно 2.30. Ця конструкція зветься
+<b>контрастною втратою</b>, бо вона протиставляє правильний варіант решті.</p>
+
+<p>Лишилась грецька буква <b>τ</b> (тау) — <b>температура</b>. Це просто число,
+на яке ділять усі схожості перед softmax. Навіщо воно, видно з арифметики.
+Косинус живе в проміжку від −1 до 1. Якщо подати softmax такі числа як є,
+різниця між найкращим і найгіршим кандидатом становить одиницю-дві, а softmax
+на таких близьких числах дає майже рівні ймовірності — тобто модель майже
+завжди «майже права», градієнт малий, і вчитись нема з чого.</p>
+
+<p>Порахуймо руками. Чотири схожості: правильна <b>0.62</b>, негативи
+<b>0.55</b>, <b>0.31</b>, <b>0.10</b>.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">τ = 1, тобто без температури</span>
+    <p>Ймовірності виходять 0.3067 / 0.2860 / 0.2250 / 0.1823, втрата
+      <b>1.1818</b>. Правильний варіант ледь попереду — модель майже не
+      відрізняє його від найгіршого.</p>
+  </div>
+  <div class="step"><span class="lbl">τ = 0.05</span>
+    <p>Ділення на 0.05 множить усі різниці на 20. Ймовірності стають
+      0.8009 / 0.1975 / 0.0016 / 0.0000, втрата <b>0.2221</b>. Тепер уся
+      увага втрати зосереджена на одному небезпечному негативі — тому,
+      що зі схожістю 0.55.</p>
+  </div>
+  <div class="step"><span class="lbl">τ = 0.02</span>
+    <p>0.9707 / 0.0293 / 0 / 0, втрата <b>0.0298</b>. Задача стала майже
+      розвʼязаною — і градієнт майже зник. Занадто мала температура
+      зупиняє навчання так само надійно, як завелика.</p>
+  </div>
+</div>
+
+<figure>
+  <p class="fig-head">Температура: та сама четвірка схожостей</p>
+  <p class="fig-sub">Схожості не міняються. Міняється лише те, наскільки різко softmax їх розводить.</p>
+  <div class="panel">
+    <canvas id="c12" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="t12"><span class="raw">τ</span><output id="t12o">0.05</output></label>
+        <input type="range" id="t12" min="0" max="24" step="1" value="8">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>P(правильний)</b><i id="v12a">0.8009</i></div>
+        <div class="cellv"><b>втрата</b><i id="v12b">0.2221</i></div>
+        <div class="cellv"><b>P(небезпечний негатив)</b><i id="v12c">0.1975</i></div>
+        <div class="cellv"><b>P(дальній негатив)</b><i id="v12d">0.0000</i></div>
+      </div>
+      <p class="verdict" id="v12"></p>
+    </div>
+  </div>
+  <figcaption>Температура не змінює <b>порядок</b> кандидатів — вона змінює,
+    на кого дивиться навчання. Велика температура розмазує увагу по всіх
+    негативах порівну, мала зосереджує її на найближчому. Типові значення
+    для двобічних енкодерів лежать біля 0.02-0.1, і це не магія, а наслідок
+    того, що косинус має вузький діапазон.</figcaption>
+</figure>
+
+<p>Тепер у нас є все, щоб навчити щільний пошук по-справжньому: пари,
+негативи, втрата, температура. І тут починається розділ, заради якого варто
+було читати попередні.</p>
+<h2 id="s12"><span class="num">12 / Метод</span>Чесне зусилля — і що воно змінило</h2>
+
+<p>Тут доведеться на хвилину відкласти пошук і поговорити про те, як узагалі
+порівнюють два методи. Це не відступ: без цього розділу всі числа теми
+нічого не варті.</p>
+
+<div class="note warn"><b>Правило, за яким усе тримається.</b> Порівняння чесне
+не тоді, коли обидві сторони прогнали <b>однакову сітку по одній ручці</b>, а
+тоді, коли обидві дістали <b>однакове зусилля</b>. Найлегший спосіб довести, що
+твій улюблений метод кращий, — налаштувати його як слід, а суперника взяти
+«з типовими значеннями». Це не шахрайство, це неуважність, і вона трапляється
+щоразу.</div>
+
+<p>Практична форма правила проста: перш ніж писати «метод A програє», випиши в
+стовпчик, що саме ти налаштував у A і що в B. Порожні клітинки в одному зі
+стовпчиків і є мірою нечесності.</p>
+
+<p>Подивимось, як це виглядає в нашому випадку.</p>
+
+<div class="scroll-x"><table class="plain">
+<tr><th></th><th>BM25</th><th>щільний енкодер</th></tr>
+<tr><td>чого взагалі можна крутити</td><td>дві ручки: <span class="raw">k</span><span class="sub">1</span>, <span class="raw">b</span></td><td>ознаки, розмірність, кроки, температура, розмір пачки, швидкість навчання</td></tr>
+<tr><td>що ми перебрали</td><td>сітку 5 × 5, тобто <b>все</b></td><td>пʼять ручок, кожну окремо</td></tr>
+<tr><td>де добирали</td><td>на всій колекції</td><td>на відкладеній частині <b>навчальних</b> пакетів</td></tr>
+<tr><td>що дав підбір</td><td>+0.0062</td><td>див. нижче</td></tr>
+</table></div>
+
+<p>Зверни увагу на останній рядок першої колонки. BM25 з коробки вже майже
+у своєму оптимумі: підбір додає йому шість тисячних. Це важлива обставина —
+вона означає, що для BM25 «дати чесне зусилля» коштує майже нічого, а для
+енкодера це вся робота.</p>
+
+<h3>Перший захід і чому його не можна друкувати</h3>
+
+<p>Найпростіший двобічний енкодер — мішок ембедингів по цілих словах, словник
+зібрано з навчальних пакетів. На доборі він дає MRR <b>0.2952</b>. Для порівняння:
+BM25 на перевірній колекції тримає <b>0.8357</b>. Дві частини колекції різні, тож
+точного відношення тут немає — але порядок розриву видно одразу.</p>
+
+<p>Друкувати це як висновок не можна, і причина видна <b>без жодного заміру</b>,
+просто з опису конструкції. Словник зібрано з навчальних пакетів. У відкладених
+пакетах назви програм інші — енкодер їх ніколи не бачив, і мішок ембедингів по
+цілих словах не має чим їх представити: усі вони перетворюються на один і той
+самий «невідоме слово». Тобто ми заміряли не «щільний пошук», а «щільний пошук
+із зав'язаними очима».</p>
+
+<p>Ліки курс уже давав у <a href="../13-glove-fasttext/lecture.html">темі 13</a>:
+<b>символьні n-грами</b>. Слово розбивають на трійки й четвірки літер, і
+незнайоме слово перестає бути порожнім місцем — воно складається зі знайомих
+шматків. Для назв програм це саме те, що треба: <code>libglvnd</code> і
+<code>libgcrypt</code> ділять шматок <code>lib</code>, а <code>compress</code>
+і <code>compressor</code> — майже все.</p>
+
+<h3>Що дала кожна ручка</h3>
+
+<p>Далі ми перебирали ручку за ручкою, щоразу міряючи на відкладеній частині
+<b>навчальних</b> пакетів. Перевірної колекції не торкались до самого кінця —
+інакше «найкраще» виявилось би підігнаним під неї.</p>
+
+<figure>
+  <p class="fig-head">Сходинки чесного зусилля</p>
+  <p class="fig-sub">MRR на доборі. Кожна сходинка — одна ручка, яку ми додали.</p>
+  <div class="panel">
+    <canvas id="c17" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>перший захід</b><i>0.2952</i></div>
+        <div class="cellv"><b>після всього</b><i>0.5302</i></div>
+        <div class="cellv"><b>зросло в</b><i>1.80×</i></div>
+        <div class="cellv"><b>ручок додано</b><i>3</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-mid">зусилля має ціну</span><br>
+        Три ручки підняли щільний енкодер майже вдвічі. Жодна з них не є
+        хитрощами: символьні n-грами, повні ознаки замість урізаних і більша
+        розмірність. Ось стільки коштує різниця між «заміряв» і «заміряв
+        сумлінно».</p>
+    </div>
+  </div>
+  <figcaption>Сіра сходинка — ручка, яка <b>не</b> спрацювала: подвоєння бюджету
+    навчання з 9000 кроків до 18000 дало 0.4658 замість 0.4687, тобто нічого.
+    Її теж треба показувати: перелік того, що не допомогло, — така сама частина
+    чесного заміру, як і перелік того, що допомогло.</figcaption>
+</figure>
+
+<h3>Ручка, якої не було в переліку</h3>
+
+<p>Найцікавіша сходинка на цьому графіку — друга, і знайшлась вона не в сітці,
+а <b>в коді</b>. Ознаки тексту складали так: спершу хеші цілих слів, потім
+символьні n-грами, а загальний список обрізали на 400 позиціях. Виглядає
+невинно. Але опис пакета — це десятки слів, кожне дає близько двадцяти n-грам,
+і межа в 400 позицій означає, що <b>n-грамами покрито лише перші півтора десятка
+слів документа</b>. Тобто ліки, заради яких усе й затівалось, застосовувались
+до чверті тексту.</p>
+
+<p>Підняли межу до 1200 — і дістали <b>+0.0376</b> ні за що. Мораль тут не про
+n-грами: <b>жодна метрика цього не показала б</b>. Число просто було трохи
+нижче, ніж мало бути, і виглядало цілком правдоподібно. Такі речі знаходять
+лише читанням власного коду.</p>
+
+<h3>Край сітки: перевіряємо обидва напрямки</h3>
+
+<p>Коли найкраще значення опиняється <b>скраю</b> перебраного діапазону, це не
+результат, а сигнал «я зупинився зарано». У нас так вийшло двічі, і два краї
+повелися по-різному:</p>
+
+<ul>
+  <li><b>Кроки навчання.</b> Найкраще було на 9000 — верхньому краю. Подовжили
+    до 18000: <b>0.4658</b> замість <b>0.4687</b>. Бюджет наситився, край
+    закрито.</li>
+  <li><b>Розмірність.</b> Найкраще було на 256 — теж верхньому краю. Подвоїли
+    до 512: <b>0.5302</b> замість <b>0.4687</b>. Край <b>не</b> закрито:
+    розмірність усе ще росте, і чесно про це сказати треба.</li>
+</ul>
+
+<div class="note"><b>І ще одна чесна поправка, не на нашу користь.</b>
+Температуру ми перебирали окремо: 0.02 дає <b>0.3173</b>, 0.05 — <b>0.4096</b>,
+0.1 — <b>0.4558</b>. Тобто 0.1 краще за 0.05 приблизно на пʼять сотих. А в
+кінцевому прогоні ми лишили <b>0.05</b>. Отже, наше число щільного енкодера,
+найпевніше, <b>занижене</b> — приблизно на ті самі пʼять сотих. Розрив із BM25
+складає близько тридцяти сотих, тож на вирок це не впливає, але сказати про це
+треба: замір, який шкодить власному висновку, замовчувати не можна.</div>
+
+<h3>Що вийшло на перевірній колекції</h3>
+
+<p>Тепер, коли налаштування обране, торкаємось перевірної колекції — уперше й
+востаннє. BM25 рахується на <b>тій самій</b> колекції, інакше числа непорівнянні.</p>
+
+<figure>
+  <p class="fig-head">Після чесного зусилля</p>
+  <p class="fig-sub">Відкладена колекція, якої енкодер не бачив. Три зерна.</p>
+  <div class="panel">
+    <canvas id="c18" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>BM25, MRR</b><i>0.8357</i></div>
+        <div class="cellv"><b>щільний, MRR</b><i id="v18a">—</i></div>
+        <div class="cellv"><b>розрив</b><i id="v18b">—</i></div>
+        <div class="cellv"><b>на доборі до зусилля</b><i>0.2952</i></div>
+      </div>
+      <p class="verdict" id="v18"></p>
+    </div>
+  </div>
+  <figcaption>Чесне зусилля підняло щільний енкодер <b>майже вдвічі</b> —
+    і не змінило вироку. Саме тому його треба було зробити: без нього ми
+    надрукували б правильний висновок із неправильних підстав, а це те саме,
+    що вгадати.</figcaption>
+</figure>
+
+<div class="note"><b>Що з цього НЕ випливає.</b> Ми показали, що
+<b>маленький енкодер, навчений з нуля на тринадцяти сотнях пар зі своєї ж
+колекції</b>, лексичному пошуку програє. Промислові векторні пошуковики
+влаштовані інакше: там беруть модель, попередньо навчену на сотнях мільйонів
+пар «запит — документ» із багатьох джерел. Наш стенд про таку модель не каже
+нічого — просто тому, що ми її не пробували. До цієї межі ми ще повернемось
+у розділі 17.</div>
+<h2 id="s13"><span class="num">13 / Стеля</span>Перехресний енкодер і переранжування</h2>
+
+<p>У двобічного енкодера є вбудована стеля, і вона не в кількості параметрів.
+Документ перетворюється на вектор <b>наперед, не бачачи запиту</b>. Отже, ці
+кількасот чисел мусять бути придатні для <b>всіх</b> можливих запитів одразу — і
+для «стиснення файлів», і для «сумісність із gzip», і для «бібліотека
+на C». Стиснути документ так, щоб він однаково добре відповідав на будь-яке
+питання, у принципі неможливо.</p>
+
+<p><b>Перехресний енкодер</b> (cross-encoder) знімає це обмеження найпрямішим
+способом: він подає запит і документ <b>разом</b>, одним входом, у ту саму
+мережу. Механізм уваги, який курс розбирав
+у <a href="../22-self-attention/lecture.html">темі 22</a>, дозволяє кожному
+слову запиту дивитись на кожне слово документа. На виході — не два вектори,
+а одне число: наскільки цей документ доречний для цього запиту.</p>
+
+<div class="eq left">двобічний:    [запит] → q        [документ] → d       оцінка = q · d
+перехресний:  [запит ⊕ документ] → одна мережа → оцінка</div>
+
+<p>Якість такий енкодер дає помітно вищу — він бачить взаємодію слів, а не
+двох стиснень. І ним <b>не можна шукати</b>. Причина не в швидкості обчислень,
+а в структурі: оцінка перехресного енкодера не розкладається на «частину від
+запиту» і «частину від документа». Не розкладається — отже, документ не можна
+порахувати наперед. Отже, на кожен запит доводиться пропускати через мережу
+<b>всю колекцію</b>.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>колекція</th><th>двобічний</th><th>перехресний</th></tr>
+<tr><td>наперед, один раз</td><td>N прогонів</td><td>0</td></tr>
+<tr><td>на кожен запит</td><td>1 прогін + N добутків</td><td>N прогонів мережі</td></tr>
+<tr><td>1648 документів</td><td>1 прогін</td><td>1648 прогонів</td></tr>
+<tr><td>1 000 000 документів</td><td>1 прогін</td><td>1 000 000 прогонів</td></tr>
+</table></div>
+
+<p>Різниця в останньому рядку — це різниця між «мілісекунди» і «години».
+Тому перехресний енкодер ставлять не замість пошуку, а <b>після</b> нього.</p>
+
+<h3>Двоступенева схема</h3>
+
+<p>Спершу дешевий спосіб (BM25, щільний або їхня суміш) дістає з колекції
+кандидатів — скажімо, сотню. Потім дорогий перехресний енкодер переоцінює
+цю сотню й переставляє її. Разом виходить сто прогонів мережі на запит,
+а не мільйон.</p>
+
+<figure>
+  <p class="fig-head">Двоступенева схема й де в ній стеля</p>
+  <p class="fig-sub">Дешевий пошук відбирає, дорога модель переставляє. Верхня межа належить першому кроку.</p>
+  <div class="panel">
+    <canvas id="c13" width="700" height="300" data-lw="700" data-lh="300"></canvas>
+    <div>
+      <div class="readout">
+        <div class="cellv"><b>recall@10 першого кроку</b><i>0.8999</i></div>
+        <div class="cellv"><b>recall@100 першого кроку</b><i>0.9654</i></div>
+        <div class="cellv"><b>прогонів мережі</b><i>100</i></div>
+        <div class="cellv"><b>стеля другого кроку</b><i>0.9654</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-mid">де межа</span><br>
+        BM25 на нашій колекції дає повноту <b>0.8999</b> на глибині 10 і
+        <b>0.9654</b> на глибині 100. Перше число — стеля системи, яка віддає
+        десятку. Друге — стеля системи, яка відбирає сотню й переставляє її.
+        Різниця між ними, <b>0.0655</b>, і є вся користь, яку може принести
+        переранжування. Більше він не дістане нізвідки.</p>
+    </div>
+  </div>
+  <figcaption>Переранжувальник не може підняти документ, якого немає серед
+    кандидатів. Тому <b>повнота першого кроку на глибині відбору</b> — це
+    жорстка стеля всієї двоступеневої системи, і саме її треба міряти першою.
+    Глибина відбору — окремий компроміс: більша глибина піднімає стелю
+    й лінійно дорожчає.</figcaption>
+</figure>
+
+<div class="note"><b>Практичний висновок, який економить місяці.</b> Перш ніж
+покращувати переранжування, заміряй повноту відбору на своїй глибині. Якщо
+вона 0.90, то навіть ідеальний переранжувальник дасть 0.90 — і всі зусилля,
+вкладені в другий крок, обмежені десятьма відсотками, яких перший крок не
+приніс. Коли двоступенева система працює погано, у переважній більшості
+випадків винен <b>перший</b> крок, а не другий.</div>
+
+<h2 id="s14"><span class="num">14 / Швидкість</span>Наближений пошук: комірки й <span class="raw">nprobe</span></h2>
+
+<p>Досі ми говорили про якість. Тепер про те, чому взагалі існують векторні
+бази як окремий клас програм: про швидкість на великих колекціях.</p>
+
+<p>Точний пошук найближчих векторів улаштований до нудного просто: порахувати
+скалярний добуток запиту з кожним документом і взяти найбільші. Витрати
+ростуть <b>лінійно</b> — удвічі більша база, удвічі довший пошук.</p>
+
+<p>Тут варто зупинитись і подивитись на реальне число, бо інтуїція зазвичай
+бреше в бік «лінійний перебір безнадійний». Ми заміряли на колекції
+з <b>93 392</b> документів по 128 чисел кожен, в <b>один потік</b>:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>точний перебір, 93 392 × 128</th><th>значення</th></tr>
+<tr><td>процесорного часу на запит</td><td>0.342 мс</td></tr>
+<tr><td>памʼяті під вектори</td><td>45.6 МіБ</td></tr>
+<tr><td>множень-додавань на запит</td><td>близько 12 мільйонів</td></tr>
+</table></div>
+
+<p>Третину мілісекунди. Дванадцять мільйонів операцій за третину мілісекунди
+на одному ядрі — це не диво, а наслідок того, що перебір є
+<b>множенням матриць</b>, а множення матриць — рівно те, що процесор уміє
+робити найкраще. Тому перше практичне правило звучить неочікувано:
+<b>на ста тисячах векторів наближений пошук не потрібен</b>.</p>
+
+<p>Потрібен він там, де ламається одна з двох речей. Перша — час: сто мільйонів
+документів по 768 чисел дадуть уже не третину мілісекунди, а секунди.
+Друга, і частіше саме вона, — <b>памʼять</b>: ті самі сто мільйонів по 768
+чисел займуть близько <b>300 гігабайтів</b>, і питання «як шукати швидко»
+перетворюється на «як це взагалі вмістити».</p>
+
+<h3>IVF: розкласти базу по комірках</h3>
+
+<p><b>IVF</b> (inverted file, той самий інвертований файл, що й в індексі слів,
+але для векторів) робить ось що.</p>
+
+<div class="derive">
+  <div class="step"><span class="lbl">крок 1, один раз</span>
+    <p>Усі вектори бази ділять на <span class="raw">nlist</span> груп методом
+      <b>k-середніх</b>. Це найпростіша кластеризація, і вона робиться так:
+      обираємо <span class="raw">nlist</span> випадкових центрів, приписуємо
+      кожен вектор до найближчого з них, перераховуємо центри як середні
+      своїх груп — і повторюємо кілька разів, поки все не перестане рухатись.
+      Отримані центри звуть <b>центроїдами</b>. Групу зручно уявляти як
+      <b>комірку</b> простору: усе, що ближче до цього центроїда, ніж до
+      інших, належить йому.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 2, на кожен запит</span>
+    <p>Порівнюємо запит із <span class="raw">nlist</span> центроїдами й
+      обираємо <span class="raw">nprobe</span> найближчих комірок.</p>
+  </div>
+  <div class="step"><span class="lbl">крок 3</span>
+    <p>Перебираємо <b>тільки</b> вектори з обраних комірок. Решту бази
+      не чіпаємо взагалі.</p>
+  </div>
+  <div class="step"><span class="lbl">скільки це коштує</span>
+    <div class="eq">вартість ≈ nlist + nprobe × N / nlist</div>
+    <p>Перший доданок — порівняння з центроїдами, він платиться завжди.
+      Другий — власне перебір усередині комірок. Ця формула пояснює всю
+      поведінку IVF, зокрема й дивну.</p>
+  </div>
+</div>
+
+<p>І тут зʼявляється ціна. Найближчий сусід запиту може лежати в комірці,
+яку ми не відкрили — просто тому, що запит стоїть біля межі між комірками.
+Такий сусід втрачається назавжди: жоден наступний крок його не поверне.
+Тому в наближеного пошуку є власна міра — <b>повнота відносно точного
+перебору</b>: яка частка справжніх десяти найближчих потрапила у видачу.</p>
+
+<figure>
+  <p class="fig-head">Чому наближений пошук промахується</p>
+  <p class="fig-sub">Простір поділено на комірки. Посунь <span class="raw">nprobe</span> й подивись, коли знайдеться справжній сусід.</p>
+  <div class="panel">
+    <canvas id="c14" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <label for="np14"><span class="raw">nprobe</span><output id="np14o">1</output></label>
+        <input type="range" id="np14" min="1" max="6" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>відкрито комірок</b><i id="v14a">1</i></div>
+        <div class="cellv"><b>переглянуто точок</b><i id="v14b">—</i></div>
+        <div class="cellv"><b>справжній сусід</b><i id="v14c">—</i></div>
+        <div class="cellv"><b>усього точок</b><i>90</i></div>
+      </div>
+      <p class="verdict" id="v14"></p>
+    </div>
+  </div>
+  <figcaption>Запит (велике коло) стоїть майже на межі двох комірок, а його
+    найближчий сусід (позначений) лежить у <b>сусідній</b>. При
+    <span class="raw">nprobe</span> = 1 пошук його не побачить, хоч би скільки
+    точок він переглянув усередині своєї комірки. Це не помилка реалізації —
+    це те, за що платять швидкістю.</figcaption>
+</figure>
+<h2 id="s15"><span class="num">15 / Ручки</span>Дві ручки одного налаштування</h2>
+
+<p>Скільки коштує повнота — питання, на яке не можна відповісти в загальному
+вигляді, бо відповідь є <b>налаштуванням</b>, а не властивістю бібліотеки.
+Ось уся сітка, заміряна на тих самих 93 392 документах, в один потік,
+процесорним годинником, кожна конфігурація — медіана з трьох прогонів.</p>
+
+<figure>
+  <p class="fig-head">Повнота проти швидкості: уся сітка</p>
+  <p class="fig-sub">Дванадцять налаштувань IVF. Перемикай <span class="raw">nlist</span>, рухай <span class="raw">nprobe</span>.</p>
+  <div class="panel">
+    <canvas id="c15" width="700" height="360" data-lw="700" data-lh="360"></canvas>
+    <div>
+      <div class="ctl">
+        <span class="cap"><span class="raw">nlist</span> — на скільки комірок поділено базу</span>
+        <div class="seg" id="seg15">
+          <button data-i="0" aria-pressed="true">256</button>
+          <button data-i="1" aria-pressed="false">1024</button>
+          <button data-i="2" aria-pressed="false">4096</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <label for="np15"><span class="raw">nprobe</span><output id="np15o">4</output></label>
+        <input type="range" id="np15" min="0" max="3" step="1" value="1">
+      </div>
+      <div class="readout">
+        <div class="cellv"><b>повнота@10</b><i id="v15a">0.6760</i></div>
+        <div class="cellv"><b>швидше за точний</b><i id="v15b">5.5×</i></div>
+        <div class="cellv"><b>мс процесорних</b><i id="v15c">0.0624</i></div>
+        <div class="cellv"><b>сканує документів</b><i id="v15d">1459</i></div>
+      </div>
+      <p class="verdict" id="v15"></p>
+    </div>
+  </div>
+  <figcaption>Точний перебір — <b>0.342 мс</b> і повнота за визначенням 1.0.
+    Кожна точка на кривій — компроміс, і кривих три, по одній на
+    <span class="raw">nlist</span>. Найважливіше в цій фігурі те, що деякі
+    точки лежать <b>праворуч від одиниці по швидкості</b>: наближений пошук
+    там повільніший за точний, а повноту все одно втрачає.</figcaption>
+</figure>
+
+<p>Розберімо три місця цієї таблиці, і кожне з них — окремий урок.</p>
+
+<h3>Перше: наближено буває повільніше за точно</h3>
+
+<p><span class="raw">nlist</span> = 256, <span class="raw">nprobe</span> = 64.
+Повнота <b>0.9080</b> — майже точний результат. Час: <b>0.9225 мс</b> проти
+<b>0.342 мс</b> у точного перебору, тобто <b>у 2.7 раза повільніше</b>.
+Причина в арифметиці з формули вартості: 64 комірки з 256 — це чверть бази,
+близько 23 тисяч векторів, і перебирати їх поштучно виходить дорожче, ніж
+перемножити матриці по всіх 93 тисячах. Наближений пошук програє точному
+не через «погану реалізацію», а тому, що втратив головну перевагу перебору —
+суцільність памʼяті.</p>
+
+<h3>Друге: дрібні комірки мають власну ціну</h3>
+
+<p>Порівняй два рядки, у яких <span class="raw">nprobe</span> = 1:</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>налаштування</th><th>сканує</th><th>мс</th><th>повнота@10</th></tr>
+<tr><td>nlist=1024, nprobe=1</td><td>91</td><td>0.0099</td><td>0.5098</td></tr>
+<tr><td>nlist=4096, nprobe=1</td><td>23</td><td>0.0197</td><td>0.5210</td></tr>
+</table></div>
+
+<p>Друге налаштування переглядає вчетверо <b>менше</b> документів і працює
+вдвічі <b>повільніше</b>. Це не помилка вимірювання: при
+<span class="raw">nlist</span> = 4096 треба порівняти запит із чотирма
+тисячами центроїдів, і саме це порівняння з'їдає весь час. Перший доданок
+формули вартості — <span class="raw">nlist</span> — став більшим за другий.
+Звідси й практичне правило: <b>кількість комірок беруть близько кореня
+з кількості документів</b>. Для 93 тисяч це приблизно 300, і сітка це
+підтверджує — на дрібних <span class="raw">nprobe</span> найшвидший саме
+<span class="raw">nlist</span> = 1024, а не 4096.</p>
+
+<h3>Третє: та сама повнота коштує по-різному</h3>
+
+<p>Повноту приблизно 0.79 дає і <span class="raw">nlist</span> = 256 при
+<span class="raw">nprobe</span> = 16 (0.8102 за 0.2356 мс), і
+<span class="raw">nlist</span> = 4096 при
+<span class="raw">nprobe</span> = 16 (0.7910 за 0.0429 мс). Друге —
+<b>у 5.5 раза швидше</b> за майже ту саму повноту. Тобто вибір
+<span class="raw">nlist</span> і <span class="raw">nprobe</span> — це не
+«швидко або точно», це двовимірне налаштування, у якому є явно погані кутки.</p>
+
+<div class="note warn"><b>Числа часу не відтворяться, і це нормально.</b>
+Повнота — величина детермінована й повторюється між прогонами з точністю
+приблизно до 0.01 (розбіжність дає випадкова ініціалізація кластеризації).
+А час залежить від машини, від того, скільки на ній крутиться чужих програм,
+і від того, чи міряти процесорний годинник, чи стінний. Наші числа —
+процесорний час одного потоку на завантаженій чотириядерній машині без
+відеокарти; стінний був у 1.54 раза більший. Що відтворюється й що варто
+запамʼятати — це <b>форма</b>: повнота росте з <span class="raw">nprobe</span>
+із загасанням, час росте майже лінійно, і десь ці дві криві перетинаються
+в точці, де наближений пошук утрачає сенс.</div>
+
+<h3>HNSW: те саме, але графом</h3>
+
+<p>Другий поширений спосіб наближеного пошуку зветься <b>HNSW</b>
+(hierarchical navigable small world — «ієрархічний навігований малий світ»).
+Замість поділу простору на комірки він будує <b>граф</b>: кожен вектор
+зʼєднують ребрами з кількома десятками найближчих, а над цим шаром надбудовують
+розріджені шари з довгими ребрами. Пошук починається на верхньому шарі,
+жадібно перебігає до найближчого вузла, спускається на шар нижче й повторює —
+як людина, що спершу летить в інше місто, потім їде метро, потім іде пішки.
+Ручка тут одна головна — <span class="raw">efSearch</span>, скільки кандидатів
+тримати в дорозі: більше кандидатів, більше повнота, більше часу.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>спосіб</th><th>повнота@10</th><th>швидше за точний</th><th>побудова</th></tr>
+<tr><td>HNSW M=16, efSearch=16</td><td>0.8254</td><td>7.9×</td><td>11 с</td></tr>
+<tr><td>IVF nlist=4096, nprobe=16</td><td>0.7910</td><td>8.0×</td><td>16 с</td></tr>
+<tr><td>HNSW M=16, efSearch=64</td><td>0.8754</td><td>2.8×</td><td>11 с</td></tr>
+<tr><td>IVF nlist=4096, nprobe=64</td><td>0.8574</td><td>2.8×</td><td>16 с</td></tr>
+<tr class="hot"><td>HNSW M=32, efSearch=16</td><td>0.9112</td><td>4.8×</td><td>19 с</td></tr>
+</table></div>
+
+<p>Перші чотири рядки підібрані так, щоб швидкість збігалась, — і тоді видно,
+що на цій колекції HNSW при однаковій швидкості дає на <b>0.0344</b> і
+<b>0.0180</b> більшу повноту. А останній рядок узагалі не має відповідника
+серед IVF: повнота <b>0.9112</b> при виграші <b>4.8×</b> — жодне з дванадцяти
+налаштувань IVF такої пари не дало. Платить HNSW памʼяттю на граф і довшою
+побудовою. Загальне правило індустрії приблизно таке: HNSW — кращий компроміс
+за швидкістю, IVF — за памʼяттю й за можливістю дешево додавати нове до вже
+побудованого індексу.</p>
+
+<h2 id="s16"><span class="num">16 / Конструкція</span>RAG як конструкція</h2>
+
+<p>Тепер зберемо ціле. <b>RAG</b> — це не модель і не бібліотека, а
+<b>конструкція з чотирьох ланок</b>, кожна з яких може зламатись окремо.</p>
+
+<figure>
+  <p class="fig-head">Чотири ланки й де кожна рветься</p>
+  <p class="fig-sub">Ланцюг не буває міцніший за найслабшу ланку — а тут ще й перемножуються.</p>
+  <div class="panel">
+    <canvas id="c16" width="700" height="330" data-lw="700" data-lh="330"></canvas>
+    <div>
+      <div class="readout one">
+        <div class="cellv"><b>стеля системи</b><i>повнота пошуку</i></div>
+        <div class="cellv"><b>наша повнота на глибині 5</b><i>0.8714</i></div>
+        <div class="cellv"><b>отже, максимум обґрунтованих відповідей</b><i>87.14 %</i></div>
+      </div>
+      <p class="verdict"><span class="tag t-no">де рветься найчастіше</span><br>
+        На першій ланці. Якщо потрібного документа немає у видачі, жодна
+        мовна модель його не вигадає — точніше, вигадає, і це буде гірше
+        за відмову.</p>
+    </div>
+  </div>
+  <figcaption>Пошук → добір → підказка → породження. Три останні ланки працюють
+    із тим, що дала перша, і жодна з них не вміє повернути втрачене.</figcaption>
+</figure>
+
+<h3>Ланка 1: пошук</h3>
+
+<p>Знайти в базі документи, які стосуються питання. Уся ця тема — про цю ланку.
+Ламається вона так: потрібного документа у видачі немає. На нашій колекції з
+глибиною 5 це трапляється в <b>12.86 %</b> запитів навіть у найкращого
+способу, і жодне покращення далі по ланцюгу цих запитів не рятує.</p>
+
+<h3>Ланка 2: добір</h3>
+
+<p>Із знайденого треба обрати, що саме класти в підказку, бо вікно контексту
+скінченне. Тут два типові збої. Перший: документи довгі, і в бюджет
+влазить два замість десяти — тоді ефективна глибина видачі не та, яку ти
+міряв. Другий, менш очевидний: <b>порядок має значення</b>. Мовні моделі
+помітно гірше користуються тим, що лежить у середині довгої підказки, ніж
+тим, що на початку чи в кінці. Тому найкращого кандидата ставлять першим,
+а не «десь у підбірці».</p>
+
+<h3>Ланка 3: підказка</h3>
+
+<p>Складання самого тексту, який побачить модель: інструкція, знайдені шматки,
+питання. Найчастіший збій — <b>відсутність дозволу не знати</b>. Якщо в
+інструкції не сказано прямо «якщо у наведених фрагментах відповіді немає,
+так і напиши», модель відповість завжди. Курс уже бачив цю саму проблему
+в <a href="../33-question-answering/lecture.html">темі 33</a>: «не знаю» —
+це окрема задача, і без явної постановки вона не розвʼязується сама.</p>
+
+<h3>Ланка 4: породження</h3>
+
+<p>Модель пише відповідь. Збій тут відомий: вона може <b>додати факт,
+якого в наведених документах немає</b>. І окремо неприємно те, що цей збій
+найважче помітити — відповідь виглядає впевнено й доречно.
+<a href="../34-summarization/lecture.html">Тема 34</a> показала на числах,
+чому автоматичні метрики збігу слів цього не бачать узагалі.</p>
+
+<div class="note"><b>Що з цього випливає для налагодження.</b> Коли RAG
+відповідає погано, спокуса — міняти підказку або модель. Правильний
+порядок зворотний: спершу перевір, <b>чи був потрібний документ у видачі</b>.
+Це одна перевірка, вона дешева, і вона в переважній більшості випадків
+відповідає на питання. Мовна модель у цій конструкції — остання ланка,
+і вона працює тільки з тим, що їй принесли.</div>
+<h2 id="s17"><span class="num">17 / Чесність</span>Межі цього заміру</h2>
+
+<p>Тепер найважче: сказати, чого наші числа <b>не</b> доводять. Без цього
+розділу тема була б агітацією проти векторних баз, а вона не про це.</p>
+
+<h3>Стенд прихильний до лексичного пошуку за побудовою</h3>
+
+<p>Запит і документ у нас писала одна людина, і вона природно вживала ті самі
+слова. Ми це порахували на початку: <b>72.74 %</b> слів середнього запиту є
+в потрібному документі, у <b>30.9 %</b> запитів там є всі слова, а
+<b>11.3 %</b> резюме — дослівний шматок опису. У справжньому пошуку такого
+щастя немає: користувач формулює по-своєму.</p>
+
+<p>Це найсерйозніша поправка, і вона діє в один бік — <b>завищує</b> BM25.
+Наскільки завищує, наш стенд сказати не може; він може сказати лише, що
+завищення є. Тому висновок «BM25 виграв» треба читати як «BM25 виграв на
+колекції, де запити лексично близькі до документів», а не як «лексичний
+пошук кращий взагалі».</p>
+
+<div class="note">Зверни увагу, що цю саму поправку витримали <b>не всі</b>
+висновки теми, і в цьому вся користь від того, щоб її назвати. Твердження
+«стиснення матриці не додає інформації» від неї не залежить зовсім: воно
+доведене тотожністю на повному ранзі, а не порівнянням систем. Твердження
+«RRF із рівною вагою шкодить» теж не залежить: воно про спосіб змішування,
+а не про те, хто сильніший. А от «щільний програє лексичному» від неї
+залежить прямо.</div>
+
+<h3>Колекція мала, а еталон грубий</h3>
+
+<p>1648 документів — це маленька колекція. У кожного запиту рівно один
+правильний документ, тобто ми ніколи не питаємо «а чи є ще щось доречне».
+І запитів у нас стільки ж, скільки документів, тож жоден із них не є
+«популярним», як буває в реальному пошуку. Усе це спрощує задачу порівняно
+з життям.</p>
+
+<h3>Наш щільний енкодер малий і навчений з нуля</h3>
+
+<p>Це найважливіше уточнення. Ми вчили невеликий енкодер <b>з нуля</b> на
+тринадцяти сотнях пар зі своєї ж колекції. Промислові векторні пошуковики
+влаштовані інакше: там беруть модель, попередньо навчену на сотнях мільйонів
+пар «запит — документ» із багатьох джерел, і лише потім, можливо, донавчають
+під задачу. Наш замір чесно відповідає на питання «чи варто вчити свій
+маленький енкодер замість того, щоб узяти BM25» — і відповідає «ні». Він
+<b>не</b> відповідає на питання «чи виграла б велика попередньо навчена
+модель».</p>
+
+<p>Що можна сказати про це друге питання, не вигадуючи чисел: воно вже
+досліджене відкрито й на великому матеріалі. Публічний набір
+<a href="https://arxiv.org/abs/2104.08663">BEIR</a> зібрав 18 різних колекцій
+із різних доменів і прогнав по них 10 систем пошуку — лексичних, розріджених,
+щільних, із пізньою взаємодією та з переранжуванням. Головний висновок цієї
+роботи звучить так: BM25 виявився стійкою базою; щільні й розріджені моделі
+поза своїм доменом її загалом не переграють, дарма що обчислювально дешевші;
+а найкраще в середньому працюють переранжування й моделі з пізньою взаємодією —
+і коштують вони дорого. Тобто напрямок, який ми побачили на 1648 описах,
+збігається з тим, що видно на вісімнадцяти наборах.</p>
+
+<h3>Два десятки запитів — це анекдот</h3>
+
+<p>Ми двічі бачили нуль на запитах без спільних слів: 19 із 1648 на описах
+пакетів і 22 із 420 на парах перекладів. Разом 41 приклад. Цього досить,
+щоб сказати «жоден із перевірених способів на них не працює», і замало,
+щоб сказати хоч щось про семантичний пошук узагалі. Ми й не кажемо.</p>
+
+<h3>Сітка енкодера лишилась відкритою з одного боку</h3>
+
+<p>У розділі 12 ми закрили край за кількістю кроків — бюджет наситився. А край
+за <b>розмірністю</b> лишився відкритим: подвоєння з 256 до 512 усе ще
+піднімало якість. Отже, строго кажучи, ми показали не «щільний енкодер
+не може», а «щільний енкодер такого розміру, навчений так, не може». Різниця
+між ним і BM25 у нас <b>0.32 MRR</b>, а весь виграш від подвоєння розмірності
+був <b>0.06</b>; щоб закрити розрив самою розмірністю, її довелось би
+збільшувати в десятки разів — і це вже не той самий метод, а інша задача.
+Але це міркування, а не замір, і подавати його як замір не можна.</p>
+
+<h3>Час не відтворюється</h3>
+
+<p>Усі числа часу в темі — процесорний годинник одного потоку на завантаженій
+чотириядерній машині без відеокарти. Повтори їх у себе — і побачиш інші
+секунди. Відтворюється не абсолютний час, а <b>форма</b>: що перебір є
+множенням матриць і тому швидший, ніж підказує інтуїція; що вартість IVF
+складається з двох доданків і що більший
+<span class="raw">nlist</span> робить перший із них головним; що крива
+«повнота проти швидкості» має ділянку, де наближений пошук уже не
+виграє нічого.</p>
+
+<h2 id="s18"><span class="num">18 / Далі</span>Куди це веде</h2>
+
+<p>Зберімо, що тепер відомо точно.</p>
+
+<div class="scroll-x"><table class="nums">
+<tr><th>твердження</th><th>число</th></tr>
+<tr><td>у колекції були однакові документи, і їх треба було прибрати</td><td>85 із 1733</td></tr>
+<tr><td>BM25 без жодної навченої ваги — сильна база</td><td>MRR 0.7773</td></tr>
+<tr><td>підбір k1 і b на цій колекції майже нічого не дає</td><td>+0.0062</td></tr>
+<tr><td>стиснення лексичної матриці на повному ранзі тотожне їй</td><td>0.7376 проти 0.7373</td></tr>
+<tr><td>щільний вектор із тієї самої матриці програє в кожному зрізі</td><td>шість зрізів із шести</td></tr>
+<tr><td>RRF із рівною вагою шкодить</td><td>−0.0487 MRR</td></tr>
+<tr><td>найкраща знайдена суміш не дає нічого</td><td>+0.0020 MRR</td></tr>
+<tr><td>переранжування обмежене повнотою відбору</td><td>стеля 0.9654 на глибині 100</td></tr>
+<tr><td>наближений пошук уміє бути повільнішим за точний</td><td>0.9225 мс проти 0.342</td></tr>
+<tr><td>перша ланка RAG ставить стелю всій конструкції</td><td>87.14 % на глибині 5</td></tr>
+</table></div>
+
+<p>І одна думка, яка не є числом. Слово «семантичний» у назві технології нічого
+не гарантує. Гарантує <b>сигнал</b>, з якого вчились вектори: якщо він був
+зовнішній і багатий, вектори можуть знати те, чого немає в підрахунку слів;
+якщо його не було, вони знають рівно те саме, тільки коротше. Питання, яке
+варто ставити продавцеві векторної бази і собі самому, звучить не «чи це
+семантичний пошук», а <b>«на чому вчились ці вектори і чи є в моїй задачі
+щось спільне з тим матеріалом»</b>.</p>
+
+<p>Цією темою закінчується блок прикладних задач. Шість тем поспіль показували
+одне й те саме з різних боків: метрика вміє говорити впевнено й не про те.
+Правдоподібність продовження не є його якістю; точність по токенах не є
+точністю по сутностях; тест на розуміння складається без читання питання;
+збіг слів не відрізняє правильного переказу від вигаданого; середня якість
+не є якістю в найгіршому домені; а «семантичний» пошук програє інвертованому
+індексу.</p>
+
+<p>Наступний блок починається з питання, яке всі ці теми обходили: <b>що
+змінює масштаб</b>. Досі ми міряли маленькі моделі на маленьких даних і
+щоразу знаходили, що проста база тримається. Тема 37 питає, чи лишається це
+правдою, коли моделі стають на кілька порядків більшими, — і чи є
+властивості, які зʼявляються лише там і яких у нашому масштабі побачити
+неможливо в принципі.</p>
+
+<div class="nextsteps">
+  <h3>Далі в темі</h3>
+  <p class="lead-sub">Теорію прочитано. Тепер закріпи її на практиці.</p>
+  <div class="steps">
+    <a class="step" href="practice.html"><span class="k">Практика</span><span class="d">Розібрати код разом із результатами просто в браузері.</span><span class="dl">переглянути →</span></a>
+    <a class="step" href="practice.ipynb" download><span class="k">Зошит</span><span class="d">Завантажити .ipynb, щоб запускати й змінювати код у себе.</span><span class="dl">завантажити ↓</span></a>
+    <a class="step" href="quiz.html"><span class="k">Тест</span><span class="d">Вісім питань із поясненням до кожної відповіді.</span><span class="dl">пройти →</span></a>
+    <a class="step" href="homework.html"><span class="k">Домашнє завдання</span><span class="d">Три рівні: повторити, застосувати, зробити з нуля.</span><span class="dl">відкрити →</span></a>
+  </div>
+  <div class="pager">
+    <a href="../35-sentiment-in-production/lecture.html"><span class="dir">попередня</span><span class="ttl">35. Аналіз тональності в бою</span></a>
+    <a class="next" href="../37-scaling/lecture.html"><span class="dir">наступна</span><span class="ttl">37. Що змінює масштаб</span></a>
+  </div>
+</div>
+
+<footer>
+  <p><a href="../index.html">Усі теми курсу</a> · <a href="../glossary.html">Глосарій</a> · <a href="../sources.html">Джерела</a></p>
+</footer>
+</main>
+<script>
+
+(function(){
+"use strict";
+
+/* ═══════ службові функції (спільна основа всіх лекцій курсу) ═══════ */
+function I(id){return document.getElementById(id);}
+function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim();}
+function dpr(cv){
+  var r=window.devicePixelRatio||1;
+  if(cv.dataset.scaled!==String(r)){
+    var w=+cv.dataset.lw||cv.width, h=+cv.dataset.lh||cv.height;
+    cv.dataset.lw=w; cv.dataset.lh=h; cv.dataset.scaled=String(r);
+    cv.width=w*r; cv.height=h*r; cv.style.width='100%';
+  }
+  var g=cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  g.clearRect(0,0,+cv.dataset.lw,+cv.dataset.lh);
+  return g;
+}
+function LW(cv){return +cv.dataset.lw||cv.width;}
+function LH(cv){return +cv.dataset.lh||cv.height;}
+function verd(id,tag,cap,txt){
+  I(id).innerHTML='<span class="tag '+tag+'">'+cap+'</span><br>'+txt;
+}
+function on(id,ev,fn){var e=I(id); if(e) e.addEventListener(ev,fn);}
+function mono(px,bold){return (bold?'700 ':'')+px+'px "JetBrains Mono",monospace';}
+function capt(g,txt,x,y,color,px,bold,align){
+  g.fillStyle=color||css('--soft'); g.font=mono(px||11,!!bold);
+  g.textAlign=align||'left'; g.textBaseline='alphabetic'; g.fillText(txt,x,y);
+}
+function segment(id,fn){
+  var box=I(id); if(!box) return;
+  box.addEventListener('click',function(ev){
+    var b=ev.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'),k;
+    for(k=0;k<all.length;k++) all[k].setAttribute('aria-pressed', all[k]===b?'true':'false');
+    fn(+b.dataset.i);
+  });
+}
+function f2(v){return (Math.round(v*100)/100).toFixed(2);}
+function f4(v){return (Math.round(v*10000)/10000).toFixed(4);}
+function bar(g,x,y,w,h,fill,alpha){
+  g.globalAlpha=(alpha===undefined?1:alpha); g.fillStyle=fill;
+  g.fillRect(x,y,Math.max(w,0),h); g.globalAlpha=1;
+}
+function box(g,x,y,w,h,fill,stroke){
+  if(fill){g.fillStyle=fill; g.fillRect(x,y,w,h);}
+  if(stroke){g.strokeStyle=stroke; g.lineWidth=1.5; g.strokeRect(x+0.5,y+0.5,w-1,h-1);}
+}
+function arrow(g,x0,y0,x1,y1,color,width){
+  g.strokeStyle=color; g.lineWidth=width||1.5;
+  g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke();
+  var a=Math.atan2(y1-y0,x1-x0);
+  g.fillStyle=color; g.beginPath();
+  g.moveTo(x1,y1);
+  g.lineTo(x1-6*Math.cos(a-0.4),y1-6*Math.sin(a-0.4));
+  g.lineTo(x1-6*Math.cos(a+0.4),y1-6*Math.sin(a+0.4));
+  g.closePath(); g.fill();
+}
+function dot(g,x,y,r,color){ g.fillStyle=color; g.beginPath(); g.arc(x,y,r,0,6.2832); g.fill(); }
+function ring(g,x,y,r,color,w){ g.strokeStyle=color; g.lineWidth=w||2;
+  g.beginPath(); g.arc(x,y,r,0,6.2832); g.stroke(); }
+function dash(g,x0,y0,x1,y1,color){
+  g.save(); g.setLineDash([5,4]); g.strokeStyle=color; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0,y0+0.5); g.lineTo(x1,y1+0.5); g.stroke(); g.restore();
+}
+function chip(g,txt,x,y,h,fill,stroke,ink,px){
+  g.font=mono(px||11,false);
+  var w=g.measureText(txt).width+14;
+  box(g,x,y,w,h,fill,stroke);
+  capt(g,txt,x+w/2,y+h/2+4,ink,px||11,false,'center');
+  return w;
+}
+/* осі: рамка й підписи. Малює лише те, що потрібно всім фігурам теми. */
+function frame(g,x0,y0,x1,y1,hair){
+  g.strokeStyle=hair; g.lineWidth=1;
+  g.beginPath(); g.moveTo(x0+0.5,y0); g.lineTo(x0+0.5,y1+0.5); g.lineTo(x1,y1+0.5); g.stroke();
+}
+
+/* ═══════ числа, заміряні для цієї теми ═══════ */
+/* Колекція: 1648 описів пакетів rpm (після того, як прибрано 85 дублікатів),
+   запит — %{SUMMARY} того самого пакета.
+   Наближений пошук: 93 392 українські рядки з .mo, 128 вимірів, faiss, один потік,
+   процесорний годинник, медіана з трьох прогонів. */
+
+/* сітка k1 x b, MRR */
+var K1S=[0.6,0.9,1.2,1.5,2.0], BS=[0,0.3,0.5,0.75,1.0];
+var GRID=[[0.7606,0.7777,0.7827,0.7813,0.7835],
+          [0.7550,0.7770,0.7817,0.7819,0.7782],
+          [0.7532,0.7731,0.7802,0.7797,0.7719],
+          [0.7463,0.7726,0.7764,0.7773,0.7659],
+          [0.7378,0.7664,0.7728,0.7730,0.7591]];
+
+/* LSA: розмірність -> MRR і recall@10 */
+var LDIM=[32,64,128,256,512,1024,1647];
+var LMRR=[0.3278,0.4803,0.5826,0.6770,0.7234,0.7330,0.7376];
+var LR10=[0.5370,0.7015,0.7985,0.8701,0.8950,0.8962,0.8975];
+var TFIDF_MRR=0.7373, TFIDF_R10=0.8975;
+
+/* табло чотирьох способів */
+var TBL_NAME=['BM25','TF-IDF','LSA найкраща','LSA 256','суміш RRF'];
+var TBL_MRR=[0.7773,0.7373,0.7376,0.6770,0.7286];
+var TBL_R10=[0.8999,0.8975,0.8975,0.8701,0.8956];
+
+/* перефраз: зрізи за часткою спільних слів */
+var PAR_LAB=['нуль','до 25 %','25-50 %','50-80 %','понад 80 %'];
+var PAR_N=[22,72,109,168,49];
+var PAR_BM=[0.0000,0.2222,0.8807,0.9881,1.0000];
+var PAR_LS=[0.0000,0.1944,0.6147,0.8452,1.0000];
+
+/* суміш: вага LSA -> MRR і recall@10 */
+var MIXW=[0,0.1,0.25,0.5,0.75,0.9,1.0];
+var MIXM=[0.7773,0.7738,0.7680,0.7534,0.7366,0.7342,0.7286];
+var MIXR=[0.8999,0.9029,0.9035,0.9011,0.8999,0.8987,0.8956];
+
+/* IVF: [nlist][nprobe] -> повнота, мс процесорних, прискорення, сканує */
+var NLIST=[256,1024,4096], NPROBE=[1,4,16,64];
+var IVF_REC=[[0.4704,0.6760,0.8102,0.9080],
+             [0.5098,0.6594,0.7602,0.8550],
+             [0.5210,0.7064,0.7910,0.8574]];
+var IVF_MS =[[0.0185,0.0624,0.2356,0.9225],
+             [0.0099,0.0249,0.0829,0.2817],
+             [0.0197,0.0244,0.0429,0.1239]];
+var IVF_SC =[[365,1459,5837,23348],[91,365,1459,5837],[23,91,365,1459]];
+var FLAT_MS=0.3415;   /* заміряно 0.3415 мс; у тексті теми округлено до 0.342 */
+
+/* температура: чотири схожості з розділу 11 */
+var SIMS=[0.62,0.55,0.31,0.10];
+var TAUS=[1.0,0.8,0.6,0.5,0.4,0.3,0.25,0.2,0.15,0.12,0.1,0.08,0.07,0.06,0.05,
+          0.045,0.04,0.035,0.03,0.028,0.025,0.022,0.02,0.015,0.01];
+
+/* ═══════ 1. дві міри на пʼятьох запитах ═══════ */
+var RANKS=[1,1,3,8,0];   /* 0 — не знайдено в межах десятки */
+function draw1(){
+  var cv=I('c1'), g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper'), rw=css('--rose-w');
+  var x0=96, bw=30, gap=4, i, k;
+  capt(g,'ПОЗИЦІЯ У ВИДАЧІ',x0,20,soft,10,true);
+  for(k=0;k<10;k++) capt(g,String(k+1),x0+k*(bw+gap)+bw/2,34,soft,10,false,'center');
+  for(i=0;i<5;i++){
+    var y=44+i*38;
+    capt(g,'запит '+(i+1),x0-12,y+17,soft,11.5,false,'right');
+    for(k=0;k<10;k++){
+      var hit=(RANKS[i]===k+1);
+      box(g,x0+k*(bw+gap),y,bw,24,hit?rw:paper,hit?rose:hair);
+      if(hit) dot(g,x0+k*(bw+gap)+bw/2,y+12,5,rose);
+    }
+    var rr=RANKS[i]?1/RANKS[i]:0;
+    capt(g,RANKS[i]?('1/'+RANKS[i]+' = '+f4(rr)):'не знайдено',x0+10*(bw+gap)+14,y+17,
+         RANKS[i]?ink:soft,11.5,RANKS[i]===1);
+  }
+  var yb=240;
+  g.strokeStyle=hair; g.beginPath(); g.moveTo(x0-70,yb); g.lineTo(W-20,yb); g.stroke();
+  capt(g,'recall@1  = 2 з 5 = 0.4000',x0-70,yb+24,ink,12.5,false);
+  capt(g,'recall@5  = 3 з 5 = 0.6000',x0-70,yb+44,ink,12.5,false);
+  capt(g,'recall@10 = 4 з 5 = 0.8000',x0-70,yb+64,ink,12.5,false);
+  capt(g,'MRR = (1 + 1 + 0.3333 + 0.1250 + 0) / 5 = 0.4917',x0+180,yb+44,rose,13,true);
+  verd('v1','t-ok','два різні питання',
+    'recall дивиться, чи документ узагалі потрапив у першу <b>k</b>, і не розрізняє '+
+    'перше місце від восьмого. MRR розрізняє: восьме місце дає 0.1250, тобто у вісім '+
+    'разів менше за перше. Тому в одній системі ці дві міри можуть рухатись у різні боки.');
+}
+
+/* ═══════ 2. інвертований індекс ═══════ */
+function draw2(){
+  var cv=I('c2'), g=dpr(cv), W=LW(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), raise=css('--raise'), tw=css('--teal-w');
+  capt(g,'ПРЯМА ТАБЛИЦЯ',20,20,soft,10,true);
+  var docs=[['d1','compressor gzip speed'],['d2','library gzip parser'],['d3','speed parser cache']];
+  var i;
+  for(i=0;i<3;i++){
+    var y=32+i*44;
+    box(g,20,y,270,32,raise,hair);
+    capt(g,docs[i][0],32,y+21,rose,12,true);
+    capt(g,docs[i][1],62,y+21,ink,11.5,false);
+  }
+  capt(g,'ІНВЕРТОВАНА',400,20,soft,10,true);
+  var inv=[['gzip','d1  d2'],['speed','d1  d3'],['parser','d2  d3'],['cache','d3']];
+  for(i=0;i<4;i++){
+    var y2=32+i*38;
+    box(g,400,y2,260,28,i<3?tw:raise,i<3?teal:hair);
+    capt(g,inv[i][0],412,y2+19,i<3?teal:soft,12,true);
+    capt(g,inv[i][1],500,y2+19,ink,12,false);
+  }
+  arrow(g,300,110,390,110,soft,1.5);
+  capt(g,'один прохід',345,100,soft,10,false,'center');
+  capt(g,'ЗАПИТ: gzip speed parser',20,215,rose,11,true);
+  capt(g,'чіпаємо три списки — і жодного документа поза ними',20,238,soft,11.5,false);
+  capt(g,'зі словника 13 589 слів у пошуку бере участь три',20,258,soft,11.5,false);
+  capt(g,'решта 13 586 не коштують нічого',20,278,soft,11.5,false);
+}
+
+/* ═══════ 3. насичення частоти ═══════ */
+function draw3(){
+  var cv=I('c3'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var k1=(+I('k1a').value)/10; I('k1o').textContent=f2(k1);
+  var x0=54, x1=W-24, y0=22, y1=H-42, FM=20, VM=3.6;
+  frame(g,x0,y0,x1,y1,hair);
+  var i;
+  for(i=0;i<=3;i++){
+    var yy=y1-(i/3)*(y1-y0);
+    dash(g,x0,yy,x1,yy,hair);
+    capt(g,f2(i*VM/3),x0-8,yy+4,soft,10,false,'right');
+  }
+  for(i=0;i<=4;i++){
+    var xx=x0+(i/4)*(x1-x0);
+    capt(g,String(i*FM/4),xx,y1+18,soft,10,false,'center');
+  }
+  capt(g,'скільки разів слово в документі (f)',(x0+x1)/2,y1+34,soft,10.5,false,'center');
+  capt(g,'внесок',x0-2,y0-10,soft,10,false,'left');
+  /* пряма «просто рахуємо» */
+  g.strokeStyle=amber; g.lineWidth=1.5; g.setLineDash([4,4]); g.beginPath();
+  var pen=false;
+  for(i=0;i<=100;i++){
+    var f=i*FM/100, v=f*0.35;
+    if(v>VM){ pen=false; continue; }   /* рвемо лінію, а не притискаємо до межі */
+    var X=x0+(f/FM)*(x1-x0), Y=y1-(v/VM)*(y1-y0);
+    if(!pen){ g.moveTo(X,Y); pen=true; } else g.lineTo(X,Y);
+  }
+  g.stroke(); g.setLineDash([]);
+  /* стеля */
+  var ceil=k1+1, yc=y1-(ceil/VM)*(y1-y0);
+  dash(g,x0,yc,x1,yc,teal);
+  capt(g,'стеля k1+1 = '+f2(ceil),x1-6,yc-6,teal,10.5,true,'right');
+  /* крива насичення */
+  g.strokeStyle=rose; g.lineWidth=2.5; g.beginPath();
+  for(i=0;i<=200;i++){
+    var f2v=i*FM/200, v2=f2v*(k1+1)/(f2v+k1);
+    var X2=x0+(f2v/FM)*(x1-x0), Y2=y1-(v2/VM)*(y1-y0);
+    if(i===0) g.moveTo(X2,Y2); else g.lineTo(X2,Y2);
+  }
+  g.stroke();
+  function mark(f,lab){
+    var v=f*(k1+1)/(f+k1);
+    var X=x0+(f/FM)*(x1-x0), Y=y1-(v/VM)*(y1-y0);
+    dot(g,X,Y,4.5,rose); capt(g,lab,X+8,Y-6,ink,10.5,true);
+    return v;
+  }
+  var v1=mark(1,'f=1'), v10=mark(10,'f=10');
+  capt(g,'жовтим пунктиром — простий підрахунок, без насичення',x0+8,y0+16,amber,10.5,false);
+  I('v3a').textContent=f4(v1);
+  I('v3b').textContent=f4(v10);
+  I('v3c').textContent=f4(ceil);
+  I('v3d').textContent=f2(v10/v1)+'×';
+  var tag,cap,txt;
+  if(k1<0.5){
+    tag='t-no'; cap='насичення майже миттєве';
+    txt='При k<span class="sub">1</span> = '+f2(k1)+' друга згадка вже майже нічого не додає: f=10 важить лише в '+
+        f2(v10/v1)+' раза більше за f=1 при стелі '+f4(ceil)+'. Документ, у якому слово '+
+        'згадано один раз, і документ, де воно згадане десять, стають майже нерозрізненними.';
+  }else if(k1<=2.2){
+    tag='t-ok'; cap='робочий діапазон';
+    txt='k<span class="sub">1</span> = '+f2(k1)+' — типовий вибір. Десятикратне зростання частоти дає лише '+
+        f2(v10/v1)+'-кратне зростання внеску ('+f4(v1)+' проти '+f4(v10)+'), '+
+        'і крива вже помітно нижча за пряму.';
+  }else{
+    tag='t-mid'; cap='майже без насичення';
+    txt='При k<span class="sub">1</span> = '+f2(k1)+' крива довго йде поруч із прямою: внесок росте майже '+
+        'пропорційно частоті ('+f2(v10/v1)+'× при десятикратній частоті). Це наближає '+
+        'BM25 до простого підрахунку слів — і повертає перевагу балакучим документам.';
+  }
+  verd('v3',tag,cap,txt);
+}
+
+/* ═══════ 4. нормалізація довжини ═══════ */
+function draw4(){
+  var cv=I('c4'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var b=(+I('b4').value)/100; I('b4o').textContent=f2(b);
+  var k1=1.5, f=3, avg=50;
+  function score(dl){ return f*(k1+1)/(f + k1*(1-b+b*dl/avg)); }
+  var x0=54, x1=W-24, y0=22, y1=H-46, DMAX=260, VM=2.2, i;
+  frame(g,x0,y0,x1,y1,hair);
+  for(i=0;i<=4;i++){
+    var yy=y1-(i/4)*(y1-y0);
+    dash(g,x0,yy,x1,yy,hair);
+    capt(g,f2(i*VM/4),x0-8,yy+4,soft,10,false,'right');
+  }
+  for(i=0;i<=4;i++) capt(g,String(Math.round(i*DMAX/4)),x0+(i/4)*(x1-x0),y1+18,soft,10,false,'center');
+  capt(g,'довжина документа, слів',(x0+x1)/2,y1+34,soft,10.5,false,'center');
+  capt(g,'внесок слова, згаданого тричі',x1-6,y0-10,soft,10.5,false,'right');
+  var xa=x0+(avg/DMAX)*(x1-x0);
+  dash(g,xa,y0,xa,y1,teal);
+  capt(g,'середня 50',xa+6,y1-10,teal,10,true);
+  g.strokeStyle=rose; g.lineWidth=2.5; g.beginPath();
+  for(i=0;i<=200;i++){
+    var dl=8+i*(DMAX-8)/200, v=score(dl);
+    var X=x0+(dl/DMAX)*(x1-x0), Y=y1-(v/VM)*(y1-y0);
+    if(i===0) g.moveTo(X,Y); else g.lineTo(X,Y);
+  }
+  g.stroke();
+  function mark(dl,lab,side){
+    var v=score(dl), X=x0+(dl/DMAX)*(x1-x0), Y=y1-(v/VM)*(y1-y0);
+    dot(g,X,Y,5,rose);
+    if(side<0) capt(g,lab+' = '+f4(v),X-10,Y+18,ink,11,true,'right');
+    else capt(g,lab+' = '+f4(v),X+10,Y-8,ink,11,true);
+    return v;
+  }
+  var vs=mark(40,'40 слів',-1), vl=mark(200,'200 слів',1);
+  I('v4a').textContent=f4(vs); I('v4b').textContent=f4(vl);
+  I('v4c').textContent=f2(vs/vl)+'×';
+  var tag,cap,txt;
+  if(b<0.05){
+    tag='t-no'; cap='довжина не карається';
+    txt='При b = 0 крива горизонтальна: обидва документи дістають однакові '+f4(vs)+
+        '. Це означає, що документ у пʼять разів довший має рівно ті самі шанси, '+
+        'хоч слово в ньому й «розчинене» серед двохсот інших.';
+  }else if(b<0.85){
+    tag='t-ok'; cap='компроміс';
+    txt='При b = '+f2(b)+' короткий документ дістає '+f4(vs)+', довгий — '+f4(vl)+
+        ', тобто у '+f2(vs/vl)+' раза менше. Довжина враховується, але не вирішує все.';
+  }else{
+    tag='t-mid'; cap='повна нормалізація';
+    txt='При b = '+f2(b)+' штраф максимальний: '+f4(vs)+' проти '+f4(vl)+', розрив у '+
+        f2(vs/vl)+' раза. Довгий документ мусить згадати слово помітно частіше, щоб '+
+        'зрівнятись із коротким, — а це не завжди справедливо: довгий текст буває '+
+        'докладнішим, а не багатослівним.';
+  }
+  verd('v4',tag,cap,txt);
+}
+
+/* ═══════ 5. сітка k1 x b ═══════ */
+function draw5(){
+  var cv=I('c5'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'), rose=css('--rose');
+  var lo=0.7378, hi=0.7835, i, j;
+  var x0=76, y0=52, cw=(W-x0-24)/5, ch=(H-y0-34)/5;
+  capt(g,'b - нормалізація довжини',x0+cw*2.5,26,soft,11,true,'center');
+  for(j=0;j<5;j++) capt(g,String(BS[j]),x0+cw*(j+0.5),44,soft,11,false,'center');
+  capt(g,'k1',30,y0-8,soft,11,true);
+  for(i=0;i<5;i++){
+    capt(g,String(K1S[i]),x0-10,y0+ch*(i+0.6),soft,11,false,'right');
+    for(j=0;j<5;j++){
+      var v=GRID[i][j], t=(v-lo)/(hi-lo);
+      g.globalAlpha=0.10+0.72*t; g.fillStyle=rose;
+      g.fillRect(x0+j*cw+1,y0+i*ch+1,cw-2,ch-2); g.globalAlpha=1;
+      g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(x0+j*cw+0.5,y0+i*ch+0.5,cw-1,ch-1);
+      var best=(i===0&&j===4), def=(i===3&&j===3);
+      capt(g,f4(v),x0+cw*(j+0.5),y0+ch*(i+0.5)+4,ink,(best||def)?12:11,best||def,'center');
+      if(best) capt(g,'найкраще',x0+cw*(j+0.5),y0+ch*(i+0.5)+18,ink,9,true,'center');
+      if(def)  capt(g,'типове',x0+cw*(j+0.5),y0+ch*(i+0.5)+18,ink,9,true,'center');
+    }
+  }
+  capt(g,'уся сітка вкладається в 0.0457 пункту MRR',x0,H-10,soft,11,false);
+}
+
+/* ═══════ 6. розріджений проти щільного ═══════ */
+function draw6(){
+  var cv=I('c6'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper'), i;
+  capt(g,'РОЗРІДЖЕНИЙ — 13 589 КООРДИНАТ',20,22,soft,10,true);
+  var x0=20, w=W-44, n=68, cw=w/n;
+  var hits={5:1,17:1,18:1,31:1,44:1,45:1,57:1};
+  for(i=0;i<n;i++){
+    var h=hits[i]?(14+(i%3)*9):0;
+    box(g,x0+i*cw,40,cw-1.5,26,paper,hair);
+    if(h) bar(g,x0+i*cw,66-h,cw-1.5,h,rose,0.9);
+  }
+  capt(g,'кожна колонка — одне слово словника; майже всі нулі',x0,84,soft,10.5,false);
+  capt(g,'ненульові — «compressor», «gzip», «speed»…',x0,102,rose,10.5,false);
+
+  capt(g,'ЩІЛЬНИЙ — 256 КООРДИНАТ',20,144,soft,10,true);
+  var m=44, cw2=w/m, seed=7;
+  for(i=0;i<m;i++){
+    seed=(seed*1103515245+12345)&0x7fffffff;
+    var v=((seed>>7)%1000)/1000;
+    var hh=6+v*26;
+    box(g,x0+i*cw2,160,cw2-1.5,34,paper,hair);
+    bar(g,x0+i*cw2,194-hh,cw2-1.5,hh,teal,0.85);
+  }
+  capt(g,'ненульові всі; окрема координата не означає нічого',x0,212,soft,10.5,false);
+  capt(g,'зміст розмазаний по всіх 256 числах',x0,230,teal,10.5,false);
+  dash(g,x0,124,W-24,124,hair);
+  capt(g,'схожість в обох випадках — той самий косинус між векторами',x0,262,ink,11.5,false);
+}
+
+/* ═══════ 7. LSA: розмірність стиснення ═══════ */
+function draw7(){
+  var cv=I('c7'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var k=+I('d7').value; I('d7o').textContent=String(LDIM[k]);
+  var x0=54, x1=W-24, y0=26, y1=H-46, i;
+  frame(g,x0,y0,x1,y1,hair);
+  for(i=0;i<=4;i++){
+    var yy=y1-(i/4)*(y1-y0);
+    dash(g,x0,yy,x1,yy,hair);
+    capt(g,f2(0.30+i*0.125),x0-8,yy+4,soft,10,false,'right');
+  }
+  function px(j){ return x0+(j/(LDIM.length-1))*(x1-x0); }
+  function py(v){ return y1-((v-0.30)/0.50)*(y1-y0); }
+  for(i=0;i<LDIM.length;i++) capt(g,String(LDIM[i]),px(i),y1+18,soft,10,false,'center');
+  capt(g,'скільки напрямків лишили',(x0+x1)/2,y1+34,soft,10.5,false,'center');
+  capt(g,'MRR',x0-2,y0-10,soft,10,false,'left');
+  var yt=py(TFIDF_MRR);
+  dash(g,x0,yt,x1,yt,teal);
+  capt(g,'вихідна матриця TF-IDF: '+f4(TFIDF_MRR),x0+8,yt-8,teal,11,true);
+  g.strokeStyle=rose; g.lineWidth=2.5; g.beginPath();
+  for(i=0;i<LDIM.length;i++){ if(i===0) g.moveTo(px(i),py(LMRR[i])); else g.lineTo(px(i),py(LMRR[i])); }
+  g.stroke();
+  for(i=0;i<LDIM.length;i++) dot(g,px(i),py(LMRR[i]),i===k?6:3.5,rose);
+  capt(g,f4(LMRR[k]),px(k),py(LMRR[k])-12,ink,12,true,'center');
+  I('v7a').textContent=f4(LMRR[k]);
+  I('v7b').textContent=f4(LR10[k]);
+  var d=LMRR[k]-TFIDF_MRR;
+  I('v7c').textContent=(d>=0?'+':'−')+f4(Math.abs(d));
+  var tag,cap,txt;
+  if(k<=2){
+    tag='t-no'; cap='сильне стиснення';
+    txt='13 589 колонок стиснуто до '+LDIM[k]+'. MRR '+f4(LMRR[k])+' проти '+f4(TFIDF_MRR)+
+        ' у вихідної матриці — втрата '+f4(Math.abs(d))+'. Стиснення викинуло саме те, '+
+        'що визначало документ: рідкісні слова.';
+  }else if(k<=4){
+    tag='t-mid'; cap='наближаємось знизу';
+    txt='При '+LDIM[k]+' напрямках MRR '+f4(LMRR[k])+' — уже близько до '+f4(TFIDF_MRR)+
+        ', але все ще нижче. Крива не піднімається над горизонтальною лінією, а '+
+        'упирається в неї — і це головне спостереження фігури.';
+  }else{
+    tag='t-ok'; cap='повертаємось до початку';
+    txt='При '+LDIM[k]+' напрямках MRR '+f4(LMRR[k])+' — практично тотожно вихідній '+
+        'матриці ('+f4(TFIDF_MRR)+'; різниця в четвертому знаку — похибка чисельного '+
+        'розкладу). Повний розклад є поворотом координат, а поворот не міняє кутів '+
+        'між векторами: стискати було нічого й нікуди.';
+  }
+  verd('v7',tag,cap,txt);
+}
+
+/* ═══════ 8. перефраз: зрізи ═══════ */
+function draw8(){
+  var cv=I('c8'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var x0=50, x1=W-24, y0=44, y1=H-52, i;
+  frame(g,x0,y0,x1,y1,hair);
+  for(i=0;i<=4;i++){
+    var yy=y1-(i/4)*(y1-y0);
+    dash(g,x0,yy,x1,yy,hair);
+    capt(g,f2(i/4),x0-8,yy+4,soft,10,false,'right');
+  }
+  var gw=(x1-x0)/PAR_LAB.length;
+  for(i=0;i<PAR_LAB.length;i++){
+    var cx=x0+gw*i, bw=gw*0.30;
+    bar(g,cx+gw*0.12,y1-PAR_BM[i]*(y1-y0),bw,PAR_BM[i]*(y1-y0),rose,0.9);
+    bar(g,cx+gw*0.50,y1-PAR_LS[i]*(y1-y0),bw,PAR_LS[i]*(y1-y0),teal,0.9);
+    capt(g,f4(PAR_BM[i]),cx+gw*0.12+bw/2,y1-PAR_BM[i]*(y1-y0)-6,rose,10,true,'center');
+    capt(g,f4(PAR_LS[i]),cx+gw*0.50+bw/2,y1-PAR_LS[i]*(y1-y0)-6,teal,10,true,'center');
+    capt(g,PAR_LAB[i],cx+gw/2,y1+18,ink,10.5,false,'center');
+    capt(g,'n = '+PAR_N[i],cx+gw/2,y1+34,soft,10,false,'center');
+  }
+  bar(g,x0,20,14,12,rose,0.9); capt(g,'BM25',x0+20,30,ink,11,false);
+  bar(g,x0+80,20,14,12,teal,0.9); capt(g,'LSA 512 — найкращий щільний',x0+100,30,ink,11,false);
+}
+
+/* ═══════ 9. табло чотирьох способів ═══════ */
+var met9=0;
+function draw9(){
+  var cv=I('c9'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var vals=met9?TBL_R10:TBL_MRR, name=met9?'recall@10':'MRR', i;
+  var x0=150, x1=W-90, y0=30, bh=34, gap=14;
+  var lo=0.60, hi=0.95;
+  function px(v){ return x0+((v-lo)/(hi-lo))*(x1-x0); }
+  for(i=0;i<=7;i++){
+    var v=lo+i*0.05;
+    dash(g,px(v),y0-8,px(v),y0+5*(bh+gap)-gap+6,hair);
+    capt(g,f2(v),px(v),y0+5*(bh+gap)+8,soft,10,false,'center');
+  }
+  for(i=0;i<TBL_NAME.length;i++){
+    var y=y0+i*(bh+gap), col=(i===0)?rose:teal;
+    capt(g,TBL_NAME[i],x0-12,y+22,ink,12,i===0,'right');
+    bar(g,x0,y,px(vals[i])-x0,bh,col,i===0?0.9:0.55);
+    capt(g,f4(vals[i]),px(vals[i])+8,y+22,ink,12.5,true);
+  }
+  capt(g,name+' на 1733 запитах',x0,H-8,soft,11,false);
+  var best=0; for(i=1;i<vals.length;i++) if(vals[i]>vals[best]) best=i;
+  I('v9a').textContent=TBL_NAME[best]+' · '+f4(vals[best]);
+  var gapv=vals[0]-vals[2];
+  if(met9===0){
+    verd('v9','t-no','лексичний попереду',
+      'За MRR перемагає BM25 — '+f4(TBL_MRR[0])+'. Найкращий щільний варіант дає '+
+      f4(TBL_MRR[2])+', тобто на <b>'+f4(gapv)+'</b> менше, а типовий вибір «LSA 256» '+
+      'відстає аж на '+f4(TBL_MRR[0]-TBL_MRR[3])+'. Формула без жодної навченої ваги '+
+      'стоїть вище за все інше.');
+  }else{
+    verd('v9','t-mid','а тут майже нічия',
+      'За recall@10 картина інша: BM25 '+f4(TBL_R10[0])+', найкращий щільний '+
+      f4(TBL_R10[2])+' — розрив лише <b>'+f4(gapv)+'</b>. Тобто документ здебільшого '+
+      'знаходиться в десятці в обох, а різниця в MRR береться з того, на якому саме '+
+      'місці десятки він стоїть.');
+  }
+}
+
+/* ═══════ 10. суміш ═══════ */
+function draw10(){
+  var cv=I('c10'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var k=+I('w10').value; I('w10o').textContent=f2(MIXW[k]);
+  var x0=54, x1=W-24, y0=26, y1=H-48, i;
+  frame(g,x0,y0,x1,y1,hair);
+  var lo=0.71, hi=0.79;
+  function py(v){ return y1-((v-lo)/(hi-lo))*(y1-y0); }
+  function px(j){ return x0+(j/(MIXW.length-1))*(x1-x0); }
+  for(i=0;i<=4;i++){
+    var v=lo+i*0.02;
+    dash(g,x0,py(v),x1,py(v),hair);
+    capt(g,f2(v),x0-8,py(v)+4,soft,10,false,'right');
+  }
+  for(i=0;i<MIXW.length;i++) capt(g,f2(MIXW[i]),px(i),y1+18,soft,10,false,'center');
+  capt(g,'вага щільного у злитті рангів',(x0+x1)/2,y1+34,soft,10.5,false,'center');
+  capt(g,'MRR',x0-2,y0-10,soft,10,false,'left');
+  var y_bm=py(MIXM[0]);
+  dash(g,x0,y_bm,x1,y_bm,teal);
+  capt(g,'чистий BM25: '+f4(MIXM[0]),x1-6,y_bm-8,teal,11,true,'right');
+  g.strokeStyle=rose; g.lineWidth=2.5; g.beginPath();
+  for(i=0;i<MIXW.length;i++){ if(i===0) g.moveTo(px(i),py(MIXM[i])); else g.lineTo(px(i),py(MIXM[i])); }
+  g.stroke();
+  for(i=0;i<MIXW.length;i++) dot(g,px(i),py(MIXM[i]),i===k?6:3.5,rose);
+  capt(g,f4(MIXM[k]),px(k),py(MIXM[k])-12,ink,12,true,'center');
+  I('v10a').textContent=f4(MIXM[k]);
+  I('v10b').textContent=f4(MIXR[k]);
+  var d=MIXM[k]-MIXM[0];
+  I('v10c').textContent=(d>=0?'+':'−')+f4(Math.abs(d));
+  var tag,cap,txt;
+  if(k===0){
+    tag='t-ok'; cap='нічого не домішано';
+    txt='Ліва точка кривої — чистий BM25, '+f4(MIXM[0])+'. Далі праворуч буде видно, '+
+        'що робить із цим числом кожна порція щільного сигналу.';
+  }else if(k<=2){
+    tag='t-mid'; cap='мала домішка';
+    txt='Вага '+f2(MIXW[k])+' дає MRR '+f4(MIXM[k])+', тобто на '+f4(Math.abs(d))+
+        ' менше за чистий BM25. Повнота при цьому '+f4(MIXR[k])+' проти '+f4(MIXR[0])+
+        ' — суміш підбирає окремі документи, але псує порядок нагорі.';
+  }else{
+    tag='t-no'; cap='що більше домішки, то гірше';
+    txt='Вага '+f2(MIXW[k])+': MRR '+f4(MIXM[k])+', тобто мінус '+f4(Math.abs(d))+
+        ' від чистого BM25. Крива монотонна — жодна точка не піднімається вище за '+
+        'ліву. Рівна вага, яку радять за замовчуванням, стоїть у крайній правій точці '+
+        'і є найгіршою на всій кривій.';
+  }
+  verd('v10',tag,cap,txt);
+}
+
+/* ═══════ 11. пачка 4x4 ═══════ */
+function draw11(){
+  var cv=I('c11'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+  var M=[[0.62,0.31,0.18,0.24],
+         [0.27,0.71,0.33,0.19],
+         [0.22,0.29,0.55,0.35],
+         [0.30,0.21,0.28,0.68]];
+  var x0=176, y0=64, cs=52, i, j;
+  capt(g,'ДОКУМЕНТИ ПАЧКИ',x0,26,soft,10,true);
+  for(j=0;j<4;j++) capt(g,'d'+(j+1),x0+cs*(j+0.5),48,soft,11,false,'center');
+  for(i=0;i<4;i++){
+    capt(g,'запит q'+(i+1),x0-12,y0+cs*(i+0.62),soft,11.5,false,'right');
+    for(j=0;j<4;j++){
+      var diag=(i===j);
+      box(g,x0+j*cs,y0+i*cs,cs-3,cs-3,diag?css('--teal-w'):paper,diag?teal:hair);
+      capt(g,f2(M[i][j]),x0+j*cs+(cs-3)/2,y0+i*cs+(cs-3)/2+5,diag?teal:ink,
+           diag?13:12,diag,'center');
+    }
+  }
+  var xr=x0+4*cs+18;
+  capt(g,'правильна',xr,y0+22,teal,11,true);
+  capt(g,'відповідь —',xr,y0+38,teal,11,true);
+  capt(g,'діагональ',xr,y0+54,teal,11,true);
+  capt(g,'решта рядка —',xr,y0+96,rose,11,true);
+  capt(g,'негативи,',xr,y0+112,rose,11,true);
+  capt(g,'їх 3 на запит',xr,y0+128,rose,11,true);
+  capt(g,'втрата вимагає: у кожному рядку найбільше число має стояти на діагоналі',
+       26,H-14,ink,11.5,false);
+}
+
+/* ═══════ 12. температура ═══════ */
+function draw12(){
+  var cv=I('c12'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var k=+I('t12').value, tau=TAUS[k];
+  I('t12o').textContent=(tau<0.1?tau.toFixed(3):tau.toFixed(2));
+  var z=[], i, mx=-1e9;
+  for(i=0;i<4;i++){ z.push(SIMS[i]/tau); if(z[i]>mx) mx=z[i]; }
+  var e=[], S=0;
+  for(i=0;i<4;i++){ e.push(Math.exp(z[i]-mx)); S+=e[i]; }
+  var p=[]; for(i=0;i<4;i++) p.push(e[i]/S);
+  var loss=-Math.log(p[0]);
+  var x0=158, x1=W-30, y0=52, bh=44, gap=16;
+  var LAB=['правильний 0.62','негатив 0.55','негатив 0.31','негатив 0.10'];
+  capt(g,'ЙМОВІРНІСТЬ ПІСЛЯ SOFTMAX',24,26,soft,10,true);
+  for(i=0;i<4;i++){
+    var y=y0+i*(bh+gap), col=(i===0)?teal:(i===1?rose:amber);
+    capt(g,LAB[i],x0-12,y+bh/2+4,i===0?ink:soft,11.5,i===0,'right');
+    box(g,x0,y,x1-x0,bh,css('--paper'),hair);
+    bar(g,x0,y,(x1-x0)*p[i],bh,col,0.85);
+    capt(g,f4(p[i]),x0+10,y+bh/2+5,ink,13,true);
+  }
+  capt(g,'втрата = −ln P(правильний) = '+f4(loss),24,H-14,rose,13,true);
+  I('v12a').textContent=f4(p[0]);
+  I('v12b').textContent=f4(loss);
+  I('v12c').textContent=f4(p[1]);
+  I('v12d').textContent=f4(p[3]);
+  var tag,cap,txt;
+  if(tau>0.3){
+    tag='t-no'; cap='надто гаряче';
+    txt='При τ = '+(tau<0.1?tau.toFixed(3):tau.toFixed(2))+' правильний варіант дістає лише '+f4(p[0])+
+        ', а найдальший негатив — аж '+f4(p[3])+'. Модель майже не відрізняє їх, '+
+        'втрата '+f4(loss)+' велика й розмазана по всіх чотирьох. Навчання йде, але '+
+        'тягне вектори від усіх негативів однаково, зокрема й від очевидно чужих.';
+  }else if(tau>=0.02){
+    tag='t-ok'; cap='робочий діапазон';
+    txt='При τ = '+(tau<0.1?tau.toFixed(3):tau.toFixed(2))+' правильний дістає '+f4(p[0])+', небезпечний негатив '+
+        f4(p[1])+', а дальні — практично нуль. Уся втрата ('+f4(loss)+') зосереджена '+
+        'на одному кандидаті, який справді схожий. Саме цього від температури й хочуть.';
+  }else{
+    tag='t-mid'; cap='надто холодно';
+    txt='При τ = '+(tau<0.1?tau.toFixed(3):tau.toFixed(2))+' правильний дістає '+f4(p[0])+', а втрата падає до '+
+        f4(loss)+'. Задача виглядає розвʼязаною ще до навчання, градієнт майже зникає — '+
+        'і модель перестає вчитись, хоча вектори ще погані.';
+  }
+  verd('v12',tag,cap,txt);
+}
+
+/* ═══════ 13. двоступенева схема ═══════ */
+function draw13(){
+  var cv=I('c13'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), raise=css('--raise'), paper=css('--paper');
+  var y=52, bh=64, i;
+  /* чотири блоки й три стрілки мусять точно вкластись у ширину канви */
+  var bw=(W-48-3*24)/4;
+  var T1=['колекція','дешевий пошук','100 кандидатів','переранжування'];
+  var T2=['1648 документів','BM25 · 1 прохід','повнота 0.9654','100 прогонів'];
+  var CL=[hair,teal,hair,rose];
+  var FL=[paper,css('--teal-w'),paper,css('--rose-w')];
+  capt(g,'ЗАПИТ',24,26,soft,10,true);
+  for(i=0;i<4;i++){
+    var bx=24+i*(bw+24);
+    box(g,bx,y,bw,bh,FL[i],CL[i]);
+    capt(g,T1[i],bx+bw/2,y+27,ink,12,true,'center');
+    capt(g,T2[i],bx+bw/2,y+46,soft,10.5,false,'center');
+    if(i<3) arrow(g,bx+bw+3,y+bh/2,bx+bw+21,y+bh/2,soft,1.5);
+  }
+  var yb=170;
+  capt(g,'СТЕЛЯ ДРУГОГО КРОКУ = ПОВНОТА ПЕРШОГО',24,yb,soft,10,true);
+  var x0=24, x1=W-120, bw=x1-x0;
+  box(g,x0,yb+12,bw,26,paper,hair);
+  bar(g,x0,yb+12,bw*0.9654,26,teal,0.75);
+  capt(g,'0.9654',x0+bw*0.9654-8,yb+30,ink,12,true,'right');
+  capt(g,'глибина 100',x1+10,yb+30,soft,11,false);
+  box(g,x0,yb+48,bw,26,paper,hair);
+  bar(g,x0,yb+48,bw*0.8999,26,teal,0.45);
+  capt(g,'0.8999',x0+bw*0.8999-8,yb+66,ink,12,true,'right');
+  capt(g,'глибина 10',x1+10,yb+66,soft,11,false);
+  capt(g,'різниця 0.0655 — це вся користь, яку може дати переранжування',
+       x0,yb+94,rose,11.5,true);
+}
+
+/* ═══════ 14. комірки й nprobe ═══════ */
+var CENT=[[120,90],[250,80],[380,130],[100,220],[240,215],[380,255]];
+var PTS=null, NEAR=null;
+function buildPts(){
+  if(PTS) return;
+  var s=12345, i, c;
+  function rnd(){ s=(s*1103515245+12345)&0x7fffffff; return ((s>>8)%10000)/10000; }
+  PTS=[];
+  /* навмисна точка: вона найближча до запиту, але лежить у СУСІДНІЙ комірці */
+  PTS.push({x:160,y:95,c:0,special:true});
+  for(c=0;c<CENT.length;c++){
+    var made=0, guard=0;
+    while(made<15 && guard<400){
+      guard++;
+      var x=CENT[c][0]+(rnd()-0.5)*110, yy=CENT[c][1]+(rnd()-0.5)*100;
+      if(x<30||x>460||yy<30||yy>300) continue;
+      /* точка мусить справді належати своїй комірці */
+      var best=0, bd=1e9, j;
+      for(j=0;j<CENT.length;j++){
+        var d=(x-CENT[j][0])*(x-CENT[j][0])+(yy-CENT[j][1])*(yy-CENT[j][1]);
+        if(d<bd){bd=d; best=j;}
+      }
+      if(best!==c) continue;
+      /* не ближче до запиту, ніж навмисна точка */
+      var dq=Math.sqrt((x-190)*(x-190)+(yy-110)*(yy-110));
+      if(dq<46) continue;
+      PTS.push({x:x,y:yy,c:c,special:false}); made++;
+    }
+  }
+  NEAR=PTS[0];
+}
+function draw14(){
+  buildPts();
+  var cv=I('c14'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper'), tw=css('--teal-w');
+  var np=+I('np14').value; I('np14o').textContent=String(np);
+  var qx=190, qy=110, i, j;
+  /* порядок комірок за близькістю до запиту */
+  var ord=[];
+  for(i=0;i<CENT.length;i++) ord.push({i:i,d:(qx-CENT[i][0])*(qx-CENT[i][0])+(qy-CENT[i][1])*(qy-CENT[i][1])});
+  ord.sort(function(a,b){return a.d-b.d;});
+  var open={}; for(i=0;i<np;i++) open[ord[i].i]=1;
+  /* тло: груба мозаїка комірок, відкриті підсвічені */
+  var step=6;
+  for(var X=24;X<470;X+=step) for(var Y=24;Y<310;Y+=step){
+    var best=0, bd=1e9;
+    for(j=0;j<CENT.length;j++){
+      var d=(X-CENT[j][0])*(X-CENT[j][0])+(Y-CENT[j][1])*(Y-CENT[j][1]);
+      if(d<bd){bd=d; best=j;}
+    }
+    g.fillStyle=paper; g.fillRect(X,Y,step,step);
+    if(open[best]){ g.globalAlpha=0.18; g.fillStyle=teal; g.fillRect(X,Y,step,step); g.globalAlpha=1; }
+  }
+  g.strokeStyle=hair; g.lineWidth=1; g.strokeRect(24.5,24.5,446,286);
+  var scanned=0;
+  for(i=0;i<PTS.length;i++){
+    var p=PTS[i], vis=open[p.c];
+    if(vis) scanned++;
+    if(p.special){
+      dot(g,p.x,p.y,5,vis?rose:hair);
+      ring(g,p.x,p.y,10,rose,2);
+    }else{
+      dot(g,p.x,p.y,3.5,vis?teal:hair);
+    }
+  }
+  for(j=0;j<CENT.length;j++){
+    box(g,CENT[j][0]-4,CENT[j][1]-4,8,8,open[j]?teal:soft,null);
+  }
+  dot(g,qx,qy,6,ink); ring(g,qx,qy,12,ink,2);
+  capt(g,'запит',qx+18,qy+16,ink,11,true);
+  capt(g,'справжній найближчий',NEAR.x-14,NEAR.y-14,rose,11,true,'right');
+  capt(g,'квадрат — центроїд комірки',30,302,soft,10,false);
+  /* легенда */
+  var lx=488;
+  capt(g,'КОМІРКИ',lx,40,soft,10,true);
+  capt(g,'усього 6',lx,60,ink,11.5,false);
+  capt(g,'відкрито '+np,lx,78,teal,11.5,true);
+  capt(g,'ТОЧКИ',lx,112,soft,10,true);
+  capt(g,'усього 90',lx,132,ink,11.5,false);
+  capt(g,'переглянуто',lx,150,soft,11,false);
+  capt(g,String(scanned),lx,168,teal,13,true);
+  capt(g,'ЗНАЙШЛИ?',lx,202,soft,10,true);
+  capt(g,open[NEAR.c]?'так':'ні',lx,224,open[NEAR.c]?teal:rose,15,true);
+  I('v14a').textContent=String(np);
+  I('v14b').textContent=String(scanned);
+  I('v14c').textContent=open[NEAR.c]?'знайдено':'втрачено';
+  var tag,cap,txt;
+  if(!open[NEAR.c]){
+    tag='t-no'; cap='сусід у чужій комірці';
+    txt='Відкрито '+np+' комірку з шести, переглянуто '+scanned+' точок із 90 — і '+
+        'справжній найближчий сусід серед них не опинився. Він лежить у комірці, '+
+        'яка не потрапила до '+np+' найближчих <b>центроїдів</b>, хоч сама точка '+
+        'ближча за всі переглянуті. Це і є втрата повноти.';
+  }else if(np<=3){
+    tag='t-ok'; cap='знайшли, і недорого';
+    txt='Відкрито '+np+' комірки, переглянуто '+scanned+' точок із 90 — справжній '+
+        'найближчий тепер серед них. Одна додаткова комірка виправила промах, '+
+        'а перебір зріс лише до '+Math.round(scanned/90*100)+' % бази.';
+  }else{
+    tag='t-mid'; cap='знайшли, але дорого';
+    txt='Відкрито '+np+' комірок із шести, переглянуто '+scanned+' точок із 90, тобто '+
+        Math.round(scanned/90*100)+' % бази. Сусід знайдений, але економія майже зникла: '+
+        'ще трохи — і простіше було перебрати все підряд.';
+  }
+  verd('v14',tag,cap,txt);
+}
+
+/* ═══════ 15. повнота проти швидкості ═══════ */
+var nl15=0;
+function draw15(){
+  var cv=I('c15'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), amber=css('--amber');
+  var pi=+I('np15').value; I('np15o').textContent=String(NPROBE[pi]);
+  var x0=54, x1=W-118, y0=30, y1=H-52, i, j;
+  var LMIN=Math.log(0.008), LMAX=Math.log(1.3);
+  function px(ms){ return x0+((Math.log(ms)-LMIN)/(LMAX-LMIN))*(x1-x0); }
+  function py(r){ return y1-((r-0.40)/0.65)*(y1-y0); }
+  frame(g,x0,y0,x1,y1,hair);
+  for(i=0;i<=5;i++){
+    var r=0.40+i*0.13;
+    dash(g,x0,py(r),x1,py(r),hair);
+    capt(g,f2(r),x0-8,py(r)+4,soft,10,false,'right');
+  }
+  var TICKS=[0.01,0.03,0.1,0.3,1.0];
+  for(i=0;i<TICKS.length;i++) capt(g,String(TICKS[i]),px(TICKS[i]),y1+18,soft,10,false,'center');
+  capt(g,'мс процесорних на запит (шкала логарифмічна)',(x0+x1)/2,y1+34,soft,10.5,false,'center');
+  capt(g,'повнота@10',x0-2,y0-12,soft,10,false,'left');
+  /* точний перебір */
+  var xf=px(FLAT_MS);
+  dash(g,xf,y0,xf,y1,amber);
+  capt(g,'точний перебір',xf-6,y0+14,amber,10.5,true,'right');
+  capt(g,'0.342 мс',xf-6,y0+30,amber,10.5,false,'right');
+  capt(g,'правіше — повільніше',xf+6,y0+14,amber,10.5,false);
+  dot(g,xf,py(1.0),5,amber);
+  var COL=[rose,teal,ink];
+  for(j=0;j<3;j++){
+    g.strokeStyle=COL[j]; g.lineWidth=(j===nl15)?2.6:1.2;
+    g.globalAlpha=(j===nl15)?1:0.42;
+    g.beginPath();
+    for(i=0;i<4;i++){
+      var X=px(IVF_MS[j][i]), Y=py(IVF_REC[j][i]);
+      if(i===0) g.moveTo(X,Y); else g.lineTo(X,Y);
+    }
+    g.stroke();
+    for(i=0;i<4;i++) dot(g,px(IVF_MS[j][i]),py(IVF_REC[j][i]),(j===nl15&&i===pi)?6.5:3,COL[j]);
+    g.globalAlpha=1;
+  }
+  var cx=px(IVF_MS[nl15][pi]), cy=py(IVF_REC[nl15][pi]);
+  capt(g,f4(IVF_REC[nl15][pi]),cx,cy-12,ink,12,true,'center');
+  var lx=x1+14;
+  for(j=0;j<3;j++){
+    bar(g,lx,y0+8+j*22,12,10,COL[j],(j===nl15)?1:0.42);
+    capt(g,'nlist '+NLIST[j],lx+18,y0+17+j*22,(j===nl15)?ink:soft,10.5,(j===nl15));
+  }
+  var rec=IVF_REC[nl15][pi], ms=IVF_MS[nl15][pi], sp=FLAT_MS/ms;
+  I('v15a').textContent=f4(rec);
+  I('v15b').textContent=(sp>=1?f2(sp)+'×':'у '+f2(1/sp)+' раза повільніше');
+  I('v15c').textContent=ms.toFixed(4);
+  I('v15d').textContent=String(IVF_SC[nl15][pi]);
+  var tag,cap,txt;
+  if(sp<1){
+    tag='t-no'; cap='повільніше за точний перебір';
+    txt='nlist = '+NLIST[nl15]+', nprobe = '+NPROBE[pi]+': повнота '+f4(rec)+
+        ' за '+ms.toFixed(4)+' мс. Точний перебір дає повноту 1.0000 за 0.342 мс, '+
+        'тобто <b>у '+f2(1/sp)+' раза швидше</b>. Це налаштування гірше за перебір '+
+        'за обома показниками одразу.';
+  }else if(rec<0.60){
+    tag='t-mid'; cap='швидко, але половина втрачена';
+    txt='nlist = '+NLIST[nl15]+', nprobe = '+NPROBE[pi]+': виграш у '+f2(sp)+
+        '× при повноті '+f4(rec)+'. Кожен другий справжній сусід не потрапляє у видачу. '+
+        'Для першого кроку двоступеневої схеми це зазвичай задорого.';
+  }else{
+    tag='t-ok'; cap='робоча точка';
+    txt='nlist = '+NLIST[nl15]+', nprobe = '+NPROBE[pi]+': повнота '+f4(rec)+
+        ' при виграші '+f2(sp)+'×; сканується близько '+IVF_SC[nl15][pi]+
+        ' документів із 93 392. Саме такі точки й шукають, налаштовуючи індекс.';
+  }
+  verd('v15',tag,cap,txt);
+}
+
+/* ═══════ 16. ланцюг RAG ═══════ */
+function draw16(){
+  var cv=I('c16'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal'), paper=css('--paper');
+  var NAMES=['пошук','добір','підказка','породження'];
+  var FAIL=['документа','не влазить','немає','дописала'];
+  var FAIL2=['немає у видачі','у бюджет','дозволу «не знаю»','зайвий факт'];
+  var x0=22, gapx=10, bw=(W-44-3*gapx)/4, y=54, bh=76, i;
+  capt(g,'ЧОТИРИ ЛАНКИ',x0,26,soft,10,true);
+  for(i=0;i<4;i++){
+    var x=x0+i*(bw+gapx);
+    box(g,x,y,bw,bh,i===0?css('--rose-w'):paper,i===0?rose:hair);
+    capt(g,String(i+1),x+10,y+20,soft,10,true);
+    capt(g,NAMES[i],x+bw/2,y+34,ink,13,true,'center');
+    capt(g,FAIL[i],x+bw/2,y+54,i===0?rose:soft,10.5,false,'center');
+    capt(g,FAIL2[i],x+bw/2,y+69,i===0?rose:soft,10.5,false,'center');
+    if(i<3) arrow(g,x+bw+1,y+bh/2,x+bw+gapx-1,y+bh/2,soft,1.4);
+  }
+  var yb=168;
+  capt(g,'СТЕЛЮ СТАВИТЬ ПЕРША ЛАНКА',x0,yb,soft,10,true);
+  var w=W-44;
+  box(g,x0,yb+14,w,30,paper,hair);
+  bar(g,x0,yb+14,w*0.8714,30,teal,0.75);
+  capt(g,'0.8714 — повнота пошуку на глибині 5',x0+12,yb+34,ink,12,true);
+  bar(g,x0+w*0.8714,yb+14,w*0.1286,30,rose,0.5);
+  capt(g,'12.86 %',x0+w*0.8714+w*0.1286/2,yb+34,ink,11,true,'center');
+  capt(g,'у цій частині запитів потрібного документа в підбірці немає взагалі —',x0,yb+68,ink,11.5,false);
+  capt(g,'і три наступні ланки працюють із матеріалом, у якому відповіді нема',x0,yb+88,ink,11.5,false);
+  capt(g,'модель усе одно відповість: саме звідси беруться впевнені вигадки',x0,yb+112,rose,11.5,true);
+}
+
+/* ═══════ 17. сходинки чесного зусилля ═══════ */
+var LADDER=[
+  ['мішок слів, як є',          0.2952, false],
+  ['+ символьні n-грами',       0.4311, false],
+  ['+ повні ознаки замість урізаних', 0.4687, false],
+  ['+ розмірність 512',         0.5302, false],
+  ['бюджет ×2 (не спрацювало)', 0.4658, true]
+];
+function draw17(){
+  var cv=I('c17'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var x0=250, x1=W-80, y0=32, bh=36, gap=14, i;
+  var lo=0.25, hi=0.56;
+  function px(v){ return x0+((v-lo)/(hi-lo))*(x1-x0); }
+  for(i=0;i<=6;i++){
+    var v=lo+i*0.05;
+    dash(g,px(v),y0-10,px(v),y0+LADDER.length*(bh+gap)-gap+4,hair);
+    capt(g,f2(v),px(v),y0+LADDER.length*(bh+gap)+6,soft,10,false,'center');
+  }
+  for(i=0;i<LADDER.length;i++){
+    var y=y0+i*(bh+gap), grey=LADDER[i][2], col=grey?soft:(i===3?teal:rose);
+    capt(g,LADDER[i][0],x0-12,y+23,grey?soft:ink,11.5,i===3,'right');
+    bar(g,x0,y,px(LADDER[i][1])-x0,bh,col,grey?0.35:(0.45+0.15*i));
+    capt(g,f4(LADDER[i][1]),px(LADDER[i][1])+8,y+23,grey?soft:ink,12.5,true);
+  }
+  capt(g,'MRR на доборі — 262 відкладені навчальні пакети',24,H-10,soft,10.5,false);
+}
+
+/* ═══════ 18. після чесного зусилля ═══════ */
+var BM25_TEST=0.8357, DENSE_TEST=[0.5194,0.5220,0.5300];
+function draw18(){
+  var cv=I('c18'), g=dpr(cv), W=LW(cv), H=LH(cv);
+  var ink=css('--ink'), soft=css('--soft'), hair=css('--hair'),
+      rose=css('--rose'), teal=css('--teal');
+  var lo=0, hi=1.0, x0=230, x1=W-90, y0=42, bh=44, gap=22, i;
+  function px(v){ return x0+((v-lo)/(hi-lo))*(x1-x0); }
+  var dmin=Math.min.apply(null,DENSE_TEST), dmax=Math.max.apply(null,DENSE_TEST);
+  var dmid=(dmin+dmax)/2;
+  for(i=0;i<=5;i++){
+    var v=lo+i*0.2;
+    dash(g,px(v),y0-12,px(v),y0+2*(bh+gap)-gap+4,hair);
+    capt(g,f2(v),px(v),y0+2*(bh+gap)+6,soft,10,false,'center');
+  }
+  var ROWS=[['BM25',BM25_TEST,rose,null],
+            ['щільний після зусилля',dmid,teal,[dmin,dmax]]];
+  for(i=0;i<ROWS.length;i++){
+    var y=y0+i*(bh+gap);
+    capt(g,ROWS[i][0],x0-12,y+27,ink,12,i===0,'right');
+    bar(g,x0,y,px(ROWS[i][1])-x0,bh,ROWS[i][2],0.85);
+    if(ROWS[i][3]){
+      g.strokeStyle=ink; g.lineWidth=1.5;
+      g.beginPath(); g.moveTo(px(ROWS[i][3][0]),y+bh/2); g.lineTo(px(ROWS[i][3][1]),y+bh/2); g.stroke();
+      capt(g,(ROWS[i][3][0]===ROWS[i][3][1]?f4(ROWS[i][3][0])
+            :f4(ROWS[i][3][0])+'..'+f4(ROWS[i][3][1])),px(ROWS[i][3][1])+8,y+27,ink,12,true);
+    }else{
+      capt(g,f4(ROWS[i][1]),px(ROWS[i][1])+8,y+27,ink,12.5,true);
+    }
+  }
+  capt(g,'MRR на відкладеній колекції — 341 документ',24,H-10,soft,10.5,false);
+  var one=(dmin===dmax);
+  I('v18a').textContent=one?f4(dmin):(f4(dmin)+'..'+f4(dmax));
+  I('v18b').textContent=f4(BM25_TEST-dmax);
+  verd('v18','t-no','вирок не змінився',
+    'Після чесного зусилля щільний енкодер дає '+(one?f4(dmin):f4(dmin)+'..'+f4(dmax))+
+    ' на '+DENSE_TEST.length+(DENSE_TEST.length===1?' зерні':' зернах')+
+    ' проти <b>'+f4(BM25_TEST)+'</b> у BM25 на тій самій колекції. Розрив — '+
+    f4(BM25_TEST-dmax)+' MRR, і це не та відстань, яку закривають налаштуванням. '+
+    'Але число самого енкодера зросло майже вдвічі проти першого заходу — тобто '+
+    'зусилля не було формальністю, його просто не вистачило.');
+}
+
+/* ═══════ звʼязування ═══════ */
+function redrawAll(){
+  draw1(); draw2(); draw3(); draw4(); draw5(); draw6(); draw7(); draw8();
+  draw9(); draw10(); draw11(); draw12(); draw13(); draw14(); draw15(); draw16();
+  draw17(); draw18();
+}
+on('k1a','input',draw3);
+on('b4','input',draw4);
+on('d7','input',draw7);
+segment('seg9', function(i){ met9=i; draw9(); });
+on('w10','input',draw10);
+on('t12','input',draw12);
+on('np14','input',draw14);
+segment('seg15', function(i){ nl15=i; draw15(); });
+on('np15','input',draw15);
+redrawAll();
+window.addEventListener('resize', redrawAll);
+if(window.matchMedia){
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  if(mq.addEventListener) mq.addEventListener('change', redrawAll);
+}
+})();
+</script>
+
+</body>
+</html>

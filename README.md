@@ -10,7 +10,7 @@
 |---|---|---|---|
 | [Python](courses/01-python/index.html) | 40 із 40 | нічого | [167 термінів](courses/01-python/glossary.html) |
 | [Машинне навчання](courses/02-ai-ml/index.html) | 40 із 40 | Python | [264 терміни](courses/02-ai-ml/glossary.html) |
-| [Компʼютерний зір](courses/03-computer-vision/index.html) | 40 із 40 | машинне навчання | [172 терміни](courses/03-computer-vision/glossary.html) |
+| [Компʼютерний зір](courses/03-computer-vision/index.html) | 40 із 40 | машинне навчання | [179 термінів](courses/03-computer-vision/glossary.html) |
 | [Обробка природної мови](courses/04-nlp/index.html) | 40 із 40 | машинне навчання | [199 термінів](courses/04-nlp/glossary.html) |
 
 **Усі чотири курси готові.** Обробка природної мови веде від «Текст як дані» через

@@ -14,7 +14,7 @@
      <div class="toc" data-auto></div>               — зміст із заголовків h2[id]
      <nav class="topnav" data-auto></nav>            — ← попередня · Усі теми · наступна →
      <h2 id="s3" data-toc="коротше"><span class="num" data-n>Діагноз</span>…  — «03 / Діагноз»
-       (слово «Розділ» дає «Розділ 3»; data-toc — назва для змісту, якщо інша)
+       (слово «Розділ» дає «Розділ 3», з data-n="pad" — «Розділ 03»; data-toc — назва для змісту, якщо інша)
      <p class="fig-head" data-kind="Схема">…         — «Схема 4 · …»
      <main data-figs="kind">                         — фігури рахуються окремо за видами
      <span data-ref="s3">3</span>                    — число підставляється з цілі
@@ -71,7 +71,7 @@
     var n = h.querySelector('.num[data-n]');
     if (!n) return;
     // мітка може містити розмітку (<span class="raw">γ</span>) — дописуємо номер, не чіпаючи її
-    if (n.textContent.trim() === 'Розділ') n.textContent = 'Розділ ' + (i + 1);
+    if (n.textContent.trim() === 'Розділ') n.textContent = 'Розділ ' + (n.getAttribute('data-n') === 'pad' ? pad(i + 1) : i + 1);
     else prepend(n, pad(i + 1) + ' / ');
   });
 
@@ -89,7 +89,8 @@
   // 5. числа в посиланнях на розділи й фігури
   qa('[data-ref]').forEach(function (r) {
     var id = r.getAttribute('data-ref'), n = secN[id] || figN[id];
-    if (n) r.textContent = r.textContent.replace(/^\d+/, n);   // знак після числа лишається
+    // знак після числа лишається; «03» лишається «03» — автор пише так, як у мітці «03 / …»
+    if (n) r.textContent = r.textContent.replace(/^\d+/, function (d) { return d.length > 1 && d[0] === '0' ? pad(n) : String(n); });
     else if (window.console) console.warn('course.js: посилання на відсутню ціль', id);
   });
 

@@ -14,6 +14,7 @@
      <div class="toc" data-auto></div>               — зміст із заголовків h2[id]
      <nav class="topnav" data-auto></nav>            — ← попередня · Усі теми · наступна →
      <h2 id="s3" data-toc="коротше"><span class="num" data-n>Діагноз</span>…  — «03 / Діагноз»
+       (data-no-toc — нумерується, але у зміст не йде)
        (слово «Розділ» дає «Розділ 3», з data-n="pad" — «Розділ 03»; data-toc — назва для змісту, якщо інша)
      <p class="fig-head" data-kind="Схема">…         — «Схема 4 · …»
      <main data-figs="kind">                         — фігури рахуються окремо за видами
@@ -59,7 +60,10 @@
   // 2. зміст (до нумерації: йому потрібні лише назви)
   var heads = qa('main h2[id]');
   var toc = q('.toc[data-auto]');
-  if (toc) toc.innerHTML = '\n      <h4>Що всередині</h4>\n      <ol>\n' + heads.map(function (h) {
+  // data-no-toc — розділ нумерується, але у зміст не йде (підсумок наприкінці)
+  if (toc) toc.innerHTML = '\n      <h4>Що всередині</h4>\n      <ol>\n' + heads.filter(function (h) {
+    return !h.hasAttribute('data-no-toc');
+  }).map(function (h) {
     // data-toc — коротша назва для змісту, якщо автор її дав (HTML)
     return '        <li><a href="#' + h.id + '">' + (h.getAttribute('data-toc') || titleHTML(h)) + '</a></li>';
   }).join('\n') + '\n      </ol>\n    ';

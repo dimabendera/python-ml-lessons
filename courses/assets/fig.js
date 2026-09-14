@@ -96,7 +96,9 @@ function plural(n,one,few,many){
   return many;
 }
 
-function fmt(v){return Math.round(v).toLocaleString('uk-UA');}
+// ⚠️ НЕ toLocaleString('uk-UA'): він розділяє тисячі НЕРОЗРИВНИМ пробілом (U+00A0),
+// а правило курсу — звичайний. Групуємо самі, як gr() і thou().
+function fmt(v){return gr(v);}
 
 function mkNorm(r){return function(){var u=0,v=0;while(!u)u=r();while(!v)v=r();
   return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};}
